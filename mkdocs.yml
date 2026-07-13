@@ -1,0 +1,60 @@
+site_name: polars2svg
+site_description: Polars-native DataFrame → SVG visualizations for Jupyter
+site_url: https://datrcode.github.io/polars2svg_prod/
+repo_url: https://github.com/datrcode/polars2svg_prod
+repo_name: datrcode/polars2svg_prod
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: teal
+      accent: deep orange
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: teal
+      accent: deep orange
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.sections
+    - navigation.top
+    - navigation.footer
+    - content.code.copy
+    - toc.integrate
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - pymdownx.highlight
+  - pymdownx.superfences
+  - pymdownx.details
+
+nav:
+  - Home: index.md
+  - Getting started: getting-started.md
+  - Components:
+      - Gallery: components/index.md
+      - xyp — scatter: components/xyp.md
+      - histop — histogram: components/histop.md
+      - timep — temporal bars: components/timep.md
+      - piep — pie / donut: components/piep.md
+      - linkp — network: components/linkp.md
+      - chordp — chord diagram: components/chordp.md
+      - spreadlinesp — spread lines: components/spreadlinesp.md
+      - smallp — small multiples: components/smallp.md
+  - Guides:
+      - count= and color=: guides/count-color.md
+      - Time fields (t-fields): guides/t-fields.md
+      - Interactivity: guides/interactivity.md
+
+exclude_docs: |
+  gen_examples.py
+  __pycache__/

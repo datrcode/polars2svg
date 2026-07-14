@@ -1,0 +1,194 @@
+[build-system]
+requires      = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name            = "polars2svg"
+version         = "0.1.0"
+authors         = [{ name = "D. Trimm", email = "dave.trimm+polars2svg@gmail.com" }]
+description     = "Visualization Package Leveraging Polars and SVG in Jupyter Notebooks"
+readme          = { file = "README.md", content-type = "text/markdown" }
+requires-python = ">=3.12"
+license         = "Apache-2.0"
+license-files   = ["LICENSE"]
+keywords        = ["polars", "svg", "visualization", "jupyter", "dataframe", "charts"]
+# Lower bounds are recent, py3.12-compatible floors with headroom below the
+# versions pinned in uv.lock (the known-good set). They guard against an install
+# resolving an ancient release while staying wide enough to avoid downstream
+# dependency conflicts. Exception: pillow's floor is security-driven, not a
+# compatibility floor — 12.3 is the first release fixing PYSEC-2026-2253..2257,
+# so it sits at the locked version with no headroom on purpose.
+#
+# Core is deliberately slim: xyp/histop/timep/piep/smallp/spreadlinesp only need
+# polars + numpy (+ pyarrow/pillow/platformdirs for I/O). linkp's/chordp's
+# pluggable-layout algorithms, the graph-layout mixin (treemaps, force-directed,
+# neighborhood clustering, ...), and shapely-typed background= shapes all live
+# behind the `layouts` extra instead — see p2s_graph_mixin.py / chordp.py /
+# xyp.py / linkp.py, each of which guards its heavy import and raises a clear
+# ImportError naming `polars2svg[layouts]` if the feature is actually used
+# without it. Interactive variants (panelize/xypi/histopi/.../linkpi) similarly
+# live behind `interactive`. `pip install polars2svg[all]` restores the
+# previous "batteries included" install.
+dependencies    = [
+  "numpy>=1.26",
+  "polars>=1.25",
+  "pyarrow>=16",
+  "pillow>=12.3",
+  "platformdirs>=4.0",
+]
+
+classifiers=[
+"Development Status :: 4 - Beta",
+"Intended Audience :: Science/Research",
+"Framework :: Jupyter",
+"Programming Language :: Python :: 3",
+"Programming Language :: Python :: 3.12",
+"Programming Language :: Python :: 3.13",
+"Operating System :: OS Independent",
+"Topic :: Scientific/Engineering :: Visualization",
+]
+
+[project.optional-dependencies]
+# TFDPLayout (tfdp_layout.py) — t-FDP force-directed graph layout on the MLX GPU.
+# It also imports scipy/networkx/scikit-learn, so it chains `layouts`; without that
+# chain `pip install polars2svg[mlx]` resolves but the module cannot import.
+#
+# `mlx` picks whatever backend suits the platform: Metal on Apple silicon, CPU-only
+# elsewhere. MLX also has a CUDA backend, exposed here as the explicit `mlx-cuda`
+# (CUDA 12) / `mlx-cuda13` (CUDA 13) extras — explicit because the CUDA wheels are
+# Linux-only and must not be resolved on macOS. The same tfdp_layout.py code runs on
+# both backends; only the device MLX binds to changes.
+#
+# The CUDA backend needs: NVIDIA SM >= 7.5 (Turing+), driver >= 550.54.14 (>= 580 for
+# CUDA 13), CUDA toolkit >= 12.0, glibc >= 2.35, Linux x86_64/aarch64. There are no
+# Windows CUDA wheels. Off that envelope MLX falls back to CPU (TFDPLayout still
+# works, just slower) — see _default_device() in tfdp_layout.py.
+mlx        = ["mlx", "polars2svg[layouts]"]
+mlx-cuda   = ["mlx[cuda12]; sys_platform == 'linux'", "polars2svg[layouts]"]
+mlx-cuda13 = ["mlx[cuda13]; sys_platform == 'linux'", "polars2svg[layouts]"]
+
+# PNG export (component.save('x.png') / .savePNG()). Pillow is already a core
+# dependency; svglib+reportlab do the SVG->PNG rasterization, rlPyCairo is the
+# renderPM backend needed on Linux. Install with: pip install polars2svg[export]
+export = ["svglib>=1.5", "reportlab>=4.0", "rlPyCairo>=0.3"]
+
+# Graph-layout algorithms: linkp's/chordp's pluggable layouts, the graph-layout
+# mixin (treemaps, force-directed, neighborhood clustering, ...), and shapely
+# background= shapes on xyp/linkp. chordp's node-ordering is core to every
+# chord render, so chordp effectively requires this extra. Install with:
+# pip install polars2svg[layouts]
+layouts = ["networkx>=3.2", "scikit-learn>=1.5", "scipy>=1.13", "shapely>=2.0", "squarify>=0.4.4"]
+
+# Interactive, cross-linked variants (panelize/xypi/histopi/timepi/linkpi/smallpi)
+# built on Panel. Includes `layouts`: interactive_controller.py's graph views
+# (linkpi's layout switcher, MDS/force-directed re-layout on selection) need
+# networkx/scipy/scikit-learn the same as the static components do. pyperclip
+# backs linkpi's ctrl-C copy-selection-to-clipboard; the import stays lazy with
+# a clear ImportError, so environments assembled without this extra degrade
+# gracefully. Install with: pip install polars2svg[interactive]
+interactive = ["panel>=1.5", "jupyter_bokeh>=4.0", "param>=2.0", "pyperclip>=1.9", "polars2svg[layouts]"]
+
+# Union of every extra — restores the pre-extras "batteries included" install.
+# Chains plain `mlx`, not `mlx-cuda`: `all` has to stay installable on macOS, and the
+# CUDA wheels are Linux-only. NVIDIA users add it explicitly: polars2svg[all,mlx-cuda]
+all = ["polars2svg[interactive,layouts,export,mlx]"]
+
+# Dev/test-only tooling (PEP 735). Not published to wheel METADATA.
+# Install with: uv pip install -e . --group dev   (or `uv sync`, which includes it by default)
+# svglib rasterization needs reportlab at use-time — keep them together here.
+# Includes every optional extra (layouts, interactive, export) so the full test
+# suite — which exercises linkp/chordp/interactive variants — runs unmodified.
+[dependency-groups]
+dev = [
+  "pytest",
+  "coverage",
+  "ipykernel",
+  "kagglehub",
+  "svglib",
+  "reportlab",
+  "rlPyCairo",  # reportlab 5.x renderPM backend (Linux); rasterizes SVG->PNG in golden tests
+  "networkx>=3.2",
+  "scikit-learn>=1.5",
+  "scipy>=1.13",
+  "shapely>=2.0",
+  "squarify>=0.4.4",
+  "panel>=1.5",
+  "jupyter_bokeh>=4.0",
+  "param>=2.0",
+  "pyperclip>=1.9",
+]
+
+[project.urls]
+Homepage   = "https://github.com/datrcode/polars2svg"
+Repository = "https://github.com/datrcode/polars2svg"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+# polars2svg ships a py.typed marker so downstream type checkers read the type
+# hints on the public surface (Polars2SVG.__init__, the component factory methods,
+# tField, panelize, and the exported layout classes). Internally the library is
+# dynamically typed on purpose — enum members are bound onto the instance via
+# setattr(), aggregation/kwargs flow through polars expressions, and locals use
+# the repo's _underscore_ style with inferred types. Fully annotating those paths
+# would be boiling the ocean for no downstream benefit, so this config runs mypy
+# as a guard on the public signatures while relaxing the error codes that fire
+# only on the internal dynamic idiom. Re-enable a code here when tightening a
+# module's internals; do not weaken the public annotations to satisfy it.
+[tool.mypy]
+ignore_missing_imports = true
+disable_error_code = [
+  "attr-defined",       # p2s.PT_mp etc. are bound via setattr in __init__
+  "var-annotated",      # untyped module/class-level containers built imperatively
+  "assignment",         # narrowing reassignments in polars expression building
+  "has-type",           # forward-referenced attrs set across mixins
+  "index",              # dynamic subscripting of polars/struct results
+  "func-returns-value", # helpers used for side effects whose return is ignored
+  "misc",               # dynamic base/enum construction
+  "dict-item",          # heterogeneous wrapper-dispatch tables
+  "return-value",       # helpers that return polars Collections typed as dict
+]
+
+# Minimal rule set (PyPI nice-to-have #5): E9 (syntax errors) and F (pyflakes —
+# undefined names, unused imports/variables, duplicate dict keys, ...). This
+# codebase has a distinctive style (aligned assignments, _underscore_ locals,
+# dynamic setattr()-bound enums) that stricter rulesets (style/import-sorting/
+# complexity) would fight, so the wider rule catalog is deliberately not
+# enabled here.
+[tool.ruff]
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E9", "F"]
+
+[tool.ruff.lint.per-file-ignores]
+# __init__.py re-exports the public API (Polars2SVGError, TField, the optional
+# layout classes, ...) purely for `import polars2svg as p2s; p2s.X` access —
+# every name is intentionally "unused" within the file itself.
+"polars2svg/__init__.py" = ["F401"]
+
+[tool.coverage.run]
+branch = true
+command_line = "-m unittest discover -s tests/"
+source = ["."]
+
+[tool.hatch.build.targets.wheel]
+packages = ["polars2svg"]
+
+# Excludes working docs/tooling files that don't belong in a source release.
+# README.md/LICENSE are included regardless (hatchling always ships files
+# referenced by the readme/license metadata) — verified by inspecting the
+# built sdist.
+[tool.hatch.build.targets.sdist]
+exclude = [
+  "notebooks/",
+  "uv.lock",
+  ".python-version",
+  "pypi_instructions.txt",
+  "CLAUDE.md",
+  "20260704_whats_missing_from_framework.md",
+  "20260708_pypi_must_dos.md",
+  "20260708_pypi_nice_to_haves.md",
+  "20260708_pypi_readiness_report.md",
+  "20260708_pypi_should_dos.md",
+]

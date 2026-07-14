@@ -1,0 +1,163 @@
+cff-version: 1.2.0
+message: "If you use polars2svg in your work, please cite it using this metadata."
+title: "polars2svg"
+type: software
+authors:
+  - family-names: "Trimm"
+    given-names: "David"
+license: Apache-2.0
+repository-code: "https://github.com/datrcode/polars2svg"
+url: "https://github.com/datrcode/polars2svg"
+version: 0.1.0
+abstract: >-
+  A Polars-native SVG visualization framework: histograms, temporal bar charts,
+  scatterplots, pie charts, node-link graphs, chord diagrams, small multiples,
+  and SpreadLine layouts rendered directly from Polars DataFrames.
+references:
+  - type: article
+    title: "ColorBrewer.org: An Online Tool for Selecting Colour Schemes for Maps"
+    authors:
+      - family-names: "Harrower"
+        given-names: "Mark"
+      - family-names: "Brewer"
+        given-names: "Cynthia A."
+    journal: "The Cartographic Journal"
+    volume: 40
+    issue: 1
+    year: 2003
+    start: 27
+    end: 37
+    doi: "10.1179/000870403235002042"
+    notes: "ColorBrewer 'Spectral' scheme — spectrum_palette in polars2svg/p2s_colors_mixin.py; license attribution in NOTICE"
+  - type: article
+    title: "Force-Directed Graph Layouts Revisited: A New Force Based on the t-Distribution"
+    authors:
+      - family-names: "Zhong"
+        given-names: "Fahai"
+      - family-names: "Xue"
+        given-names: "Mingliang"
+      - family-names: "Zhang"
+        given-names: "Jian"
+      - family-names: "Zhang"
+        given-names: "Fan"
+      - family-names: "Ban"
+        given-names: "Rui"
+      - family-names: "Deussen"
+        given-names: "Oliver"
+      - family-names: "Wang"
+        given-names: "Yunhai"
+    journal: "IEEE Transactions on Visualization and Computer Graphics"
+    year: 2023
+    url: "https://arxiv.org/abs/2303.03964"
+    notes: "Implemented in polars2svg/tfdp_layout.py (TFDPLayout)"
+  - type: conference-paper
+    title: "Visualization of large hierarchical data by circle packing"
+    authors:
+      - family-names: "Wang"
+        given-names: "Weixin"
+      - family-names: "Wang"
+        given-names: "Hui"
+      - family-names: "Dai"
+        given-names: "Guozhong"
+      - family-names: "Wang"
+        given-names: "Hongan"
+    collection-title: "Proceedings of the SIGCHI Conference on Human Factors in Computing Systems (CHI '06)"
+    year: 2006
+    start: 517
+    end: 520
+    doi: "10.1145/1124772.1124851"
+    notes: "Implemented in polars2svg/circle_packer.py"
+  - type: article
+    title: "Hierarchical Edge Bundles: Visualization of Adjacency Relations in Hierarchical Data"
+    authors:
+      - family-names: "Holten"
+        given-names: "Danny"
+    journal: "IEEE Transactions on Visualization and Computer Graphics"
+    volume: 12
+    issue: 5
+    year: 2006
+    start: 741
+    end: 748
+    doi: "10.1109/TVCG.2006.147"
+    notes: "Implemented in polars2svg/chordp.py (bundled link shapes)"
+  - type: article
+    title: "Drawing Graphs to Convey Proximity: An Incremental Arrangement Method"
+    authors:
+      - family-names: "Cohen"
+        given-names: "Jonathan D."
+    journal: "ACM Transactions on Computer-Human Interaction"
+    volume: 4
+    issue: 3
+    year: 1997
+    start: 197
+    end: 229
+    doi: "10.1145/264645.264657"
+    notes: "Implemented in polars2svg/polars_force_directed_layout.py and polars2svg/convey_proximity_layout.py"
+  - type: conference-paper
+    title: "Global versus local methods in nonlinear dimensionality reduction"
+    authors:
+      - family-names: "de Silva"
+        given-names: "Vin"
+      - family-names: "Tenenbaum"
+        given-names: "Joshua B."
+    collection-title: "Advances in Neural Information Processing Systems (NIPS)"
+    year: 2003
+    start: 721
+    end: 728
+    notes: "Landmark MDS — implemented in polars2svg/mds_at_scale.py"
+  - type: conference-paper
+    title: "Eigensolver Methods for Progressive Multidimensional Scaling of Large Data"
+    authors:
+      - family-names: "Brandes"
+        given-names: "Ulrik"
+      - family-names: "Pich"
+        given-names: "Christian"
+    collection-title: "Proceedings of the 14th International Symposium on Graph Drawing (GD)"
+    year: 2006
+    start: 42
+    end: 53
+    notes: "Pivot MDS — implemented in polars2svg/mds_at_scale.py"
+  - type: article
+    title: "Voronoi Diagram in the Laguerre Geometry and its Applications"
+    authors:
+      - family-names: "Imai"
+        given-names: "Hiroshi"
+      - family-names: "Iri"
+        given-names: "Masao"
+      - family-names: "Murota"
+        given-names: "Kazuo"
+    journal: "SIAM Journal on Computing"
+    volume: 14
+    issue: 1
+    year: 1985
+    start: 93
+    end: 105
+    notes: "Implemented in polars2svg/laguerre_voronoi.py"
+  - type: conference-paper
+    title: "Uniform Sample Distribution in Scatterplots via Sector-based Transformation"
+    authors:
+      - family-names: "Rave"
+        given-names: "Hennes"
+      - family-names: "Molchanov"
+        given-names: "Vladimir"
+      - family-names: "Linsen"
+        given-names: "Lars"
+    collection-title: "2024 IEEE Visualization and Visual Analytics (VIS)"
+    year: 2024
+    start: 156
+    end: 160
+    doi: "10.1109/VIS55277.2024.00039"
+    notes: "Implemented in polars2svg/udist_scatterplots_via_sectors_tile_opt.py"
+  - type: article
+    title: "SpreadLine: Visualizing Egocentric Dynamic Influence"
+    authors:
+      - family-names: "Kuo"
+        given-names: "Yun-Hsin"
+      - family-names: "Liu"
+        given-names: "Dongyu"
+      - family-names: "Ma"
+        given-names: "Kwan-Liu"
+    journal: "IEEE Transactions on Visualization and Computer Graphics (Proc. IEEE VIS 2024)"
+    year: 2024
+    url: "https://arxiv.org/abs/2408.08992"
+    notes: "Implemented in polars2svg/spreadlinesp.py"

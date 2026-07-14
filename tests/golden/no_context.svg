@@ -1,0 +1,5 @@
+<svg id="xyp_TESTID" x="0" y="0" width="100" height="100" xmlns="http://www.w3.org/2000/svg">
+                        
+                        <style> .rect-group-TESTID rect { width: 1px; height: 1px; } </style>
+                        <rect x="0" y="0" width="100" height="100" fill="#ffffff" stroke="#ffffff" />
+                          <g class="rect-group-TESTID" stroke="none" fill="#3939ff"><rect x="2" y="2" /><rect x="26" y="97" /><rect x="50" y="25" /><rect x="74" y="73" /><rect x="97" y="49" /></g>  </svg>

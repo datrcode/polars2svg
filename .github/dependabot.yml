@@ -1,0 +1,14 @@
+version: 2
+updates:
+  # Python dependencies (pyproject.toml: core deps, extras, and the dev
+  # dependency-group).
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+
+  # GitHub Actions used by ci.yml / release.yml.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"

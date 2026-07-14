@@ -1,0 +1,24 @@
+polars2svg
+Copyright 2026 D. Trimm
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+------------------------------------------------------------------------
+Bundled third-party assets
+------------------------------------------------------------------------
+
+Noto Sans (subset)
+  File:      polars2svg/fonts/NotoSans-Regular-subset.ttf
+  Copyright: 2022 The Noto Project Authors
+  License:   SIL Open Font License, Version 1.1
+             (see polars2svg/fonts/OFL.txt)
+
+ColorBrewer color specifications (10-class "Spectral" diverging scheme)
+  File:      polars2svg/p2s_colors_mixin.py (spectrum_palette)
+  Copyright: 2002 Cynthia Brewer, Mark Harrower, and
+             The Pennsylvania State University
+  License:   Apache-Style Software License for ColorBrewer software and
+             ColorBrewer Color Schemes (https://colorbrewer2.org)
+
+  This product includes color specifications and designs developed by
+  Cynthia Brewer (http://colorbrewer.org/).

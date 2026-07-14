@@ -1,0 +1,63 @@
+name: Release
+
+# Publishes polars2svg to PyPI via Trusted Publishing (OIDC) on release tags.
+#
+# This is NOT continuous integration: it runs only when a tag matching v*
+# is pushed (e.g. `git tag v0.1.0 && git push origin v0.1.0`), so it does
+# not run the test suite on every commit (see PyPI must-do #11 — CI-on-every-
+# commit is intentionally disabled; local/standalone-server runs cover testing).
+#
+# One-time setup the maintainer must do (an agent cannot): register this repo
+# as a Trusted Publisher on PyPI. Before the project exists, add it as a
+# "pending publisher" in your PyPI account:
+#   https://pypi.org/manage/account/publishing/
+# with workflow name `release.yml` and environment name `pypi`. This replaces
+# the twine + API-token flow that used to live in pypi_instructions.txt.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build sdist + wheel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Build distributions
+        run: uv build
+
+      - name: Check distribution metadata
+        run: uvx twine check dist/*
+
+      - name: Upload distributions
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    name: Publish to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    # Trusted Publishing: no API token/secret. PyPI verifies the OIDC identity
+    # of this workflow running in the `pypi` environment.
+    environment:
+      name: pypi
+      url: https://pypi.org/project/polars2svg/
+    permissions:
+      id-token: write
+    steps:
+      - name: Download distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1

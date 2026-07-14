@@ -89,12 +89,22 @@ jobs:
         run: python -c "import polars2svg; print('import ok')"
 
       - name: Install test-only dependencies
-        # Mirrors the [dependency-groups] dev set that the wheel METADATA does
-        # not carry: pytest + the rasterization/kaggle test extras. rlPyCairo is
-        # reportlab 5.x's renderPM backend on Linux (macOS has its own); without
-        # it svglib rasterization errors out. The PNG-RMS golden tests skip off
-        # macOS regardless, but the backend is needed for any that force-run.
-        run: pip install --no-cache-dir pytest kagglehub svglib reportlab rlPyCairo
+        # The bare wheel above proves `pip install polars2svg` imports; the suite
+        # itself needs more. Resolve the extras through the wheel rather than
+        # re-listing their contents here — a hand-kept list silently drifts from
+        # [project.optional-dependencies] (it had already lost scipy, networkx,
+        # shapely and param, which is 15 collection errors and zero tests run).
+        # These three are exactly what [dependency-groups] dev carries. mlx is
+        # deliberately absent: the suite is meant to run without it, which is what
+        # exercises tfdp_layout.py's import guard.
+        #
+        # export brings svglib+reportlab+rlPyCairo. rlPyCairo is reportlab 5.x's
+        # renderPM backend on Linux (macOS has its own); without it svglib
+        # rasterization errors out. The PNG-RMS golden tests skip off macOS
+        # regardless, but the backend is needed for any that force-run.
+        run: |
+          pip install --no-cache-dir "$(echo dist/*.whl)[interactive,layouts,export]"
+          pip install --no-cache-dir pytest kagglehub
 
       - name: Run the test suite
         # test_performance.py needs a machine-local baseline (gitignored);

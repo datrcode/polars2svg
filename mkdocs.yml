@@ -1,8 +1,8 @@
 site_name: polars2svg
 site_description: Polars-native DataFrame → SVG visualizations for Jupyter
-site_url: https://datrcode.github.io/polars2svg_prod/
-repo_url: https://github.com/datrcode/polars2svg_prod
-repo_name: datrcode/polars2svg_prod
+site_url: https://datrcode.github.io/polars2svg/
+repo_url: https://github.com/datrcode/polars2svg
+repo_name: datrcode/polars2svg
 
 theme:
   name: material

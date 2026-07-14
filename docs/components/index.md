@@ -1,7 +1,7 @@
 # Gallery
 
 Every chart below is a real polars2svg render, generated from seeded random
-data by [`docs/gen_examples.py`](https://github.com/datrcode/polars2svg_prod/blob/main/docs/gen_examples.py).
+data by [`docs/gen_examples.py`](https://github.com/datrcode/polars2svg/blob/main/docs/gen_examples.py).
 Click through for the code that produced each one.
 
 ## [xyp — scatter](xyp.md)

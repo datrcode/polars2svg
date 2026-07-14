@@ -45,11 +45,13 @@ jobs:
         run: uvx bandit -r polars2svg/
 
       - name: pip-audit (known-vulnerable dependency scan)
-        # Audits the full resolved dependency graph (every extra + the dev
-        # group), not just what a bare `pip install polars2svg` pulls in —
-        # broader coverage than METADATA alone would give.
+        # Audits the published surface: exactly what a bare `pip install
+        # polars2svg` resolves. Deliberately not --all-extras — that includes
+        # mlx-cuda/mlx-cuda13, whose Linux-only NVIDIA wheels are kept out of
+        # `all` on purpose (see [project.optional-dependencies]). They resolve to
+        # a no-op on macOS but pull the whole CUDA stack onto this runner.
         run: |
-          uv export --no-hashes --all-extras --group dev -o /tmp/requirements-audit.txt
+          uv export --no-hashes --no-dev --no-emit-project -o /tmp/requirements-audit.txt
           uvx pip-audit -r /tmp/requirements-audit.txt
 
       - name: ruff (E9, F)
@@ -65,8 +67,13 @@ jobs:
     container: python:3.13-slim
     steps:
       # git lets actions/checkout use a fast clone instead of the REST tarball.
-      - name: Install git
-        run: apt-get update && apt-get install -y --no-install-recommends git
+      # The rest are pycairo's build dependencies: pycairo publishes Windows-only
+      # wheels, so on Linux the rlPyCairo -> pycairo chain compiles from the sdist
+      # and needs a C toolchain plus cairo's headers. slim ships neither.
+      - name: Install git and pycairo's build dependencies
+        run: |
+          apt-get update && apt-get install -y --no-install-recommends \
+            git build-essential libcairo2-dev pkg-config
 
       - uses: actions/checkout@v4
 

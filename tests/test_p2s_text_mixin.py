@@ -90,6 +90,26 @@ class TestTextLength(unittest.TestCase):
         result = self.p2s.textLength('★', 12)  # ★
         self.assertGreater(result, 0.0)
 
+    #
+    # The advances are a property of the bundled font, not of the host.  These previously
+    # came from Pillow's getlength(), which returns fractional advances when Pillow is
+    # built with Raqm and integer-rounded ones when it is not -- so width('A', 12) was
+    # 7.671875 on macOS and 8.0 on Linux, and every text-derived SVG coordinate moved
+    # with it.  Pinning the exact expected widths means any future drift back to a
+    # host-dependent measurement fails here rather than silently in the goldens.
+    #
+    def test_advances_are_exact_and_host_independent(self):
+        # 'A' is 639 font units, unitsPerEm 1000 -> 639 * px / 1000
+        self.assertAlmostEqual(self.p2s.textLength('A', 12), 7.668,  places=6)
+        self.assertAlmostEqual(self.p2s.textLength('A', 24), 15.336, places=6)
+        # unknown codepoints take the font's .notdef advance (600 units), not zero
+        self.assertAlmostEqual(self.p2s.textLength('★', 12), 7.2,    places=6)
+
+    def test_scaling_is_exactly_linear(self):
+        # the Raqm/no-Raqm split showed up first as this ratio being 1.875 instead of 2.0
+        self.assertAlmostEqual(self.p2s.textLength('Hello World', 24) /
+                               self.p2s.textLength('Hello World', 12), 2.0, places=9)
+
 
 class TestCropText(unittest.TestCase):
     def __init__(self, *args, **kwargs):

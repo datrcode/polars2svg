@@ -2,6 +2,7 @@ import math
 import unittest
 
 import polars2svg
+from polars2svg.p2s_font_metrics import textAdvance
 from polars2svg.p2s_glyph_atlas import GlyphAtlas
 
 
@@ -21,22 +22,21 @@ class TestGlyphAtlasLayout(unittest.TestCase):
             for txt_h in [9.6, 12, 16]:
                 glyphs = self.atlas.layoutText(txt, 0, 0, txt_h)
                 size   = int(round(txt_h))
-                font   = self.atlas._sizeFont_(size)
                 # the final glyph's pen position + advance == full string advance
                 total  = self.p2s.textLength(txt, txt_h)
                 # last glyph dx must be < total; pen of a hypothetical next glyph == total
                 self.assertGreater(len(glyphs), 0)
-                self.assertAlmostEqual(float(font.getlength(txt)), float(total), places=4)
+                # both sides must resolve through the same baked advance table
+                self.assertAlmostEqual(float(textAdvance(txt, size)), float(total), places=4)
                 for g in glyphs:
                     self.assertLessEqual(g[2], total + 1.0)   # dx within the run
 
     def test_pen_positions_use_prefix_advances(self):
         txt, txt_h = 'AVAVA', 12
         glyphs = self.atlas.layoutText(txt, 0, 0, txt_h)
-        font   = self.atlas._sizeFont_(12)
         scale  = 12 / 48.0
         for i, g in enumerate(glyphs):
-            expected_pen = float(font.getlength(txt[:i]))
+            expected_pen = float(textAdvance(txt[:i], 12))
             bearing      = self.atlas._glyphs_[txt[i]]['bx'] * scale
             self.assertAlmostEqual(g[2], expected_pen + bearing, places=4)
 
@@ -64,9 +64,8 @@ class TestGlyphAtlasLayout(unittest.TestCase):
     def test_whitespace_advances_but_emits_no_quad(self):
         glyphs = self.atlas.layoutText('a b', 0, 0, 12)
         self.assertEqual(len(glyphs), 2)
-        font = self.atlas._sizeFont_(12)
         # second glyph's pen reflects the space advance
-        self.assertGreater(glyphs[1][2], float(font.getlength('a')))
+        self.assertGreater(glyphs[1][2], float(textAdvance('a', 12)))
 
     def test_uvs_within_unit_square(self):
         for g in self.atlas.layoutText('xyz', 0, 0, 12):

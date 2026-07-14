@@ -1,4 +1,3 @@
-import os
 import html
 
 __name__ = 'p2s_text_mixin'
@@ -9,7 +8,6 @@ class P2STextMixin:
 
     def __p2s_text_mixin_init__(self):
         self.default_font = "'Noto Sans', sans-serif"
-        self._pil_fonts_  = {}
         self._glyph_atlas_ = None
 
     #
@@ -154,17 +152,17 @@ class P2STextMixin:
 
     #
     # textLength() - calculate the expected pixel width of txt rendered at txt_h points
-    # Uses Pillow ImageFont against the bundled NotoSans-Regular-subset.ttf (Apache 2.0).
-    # Font objects are cached by integer size so the TTF is only loaded once per size.
+    # Advances come from the baked NotoSans-Regular-subset.ttf table (p2s_font_metrics.py),
+    # not from Pillow: getlength() answers differently depending on whether the installed
+    # Pillow was built with Raqm, which made SVG output machine-dependent.  See that
+    # module's header.
+    #
+    # The size is still quantized to an integer, matching GlyphAtlas.layoutText() so GPU
+    # text and SVG text agree on every pen position.
     #
     def textLength(self, txt, txt_h):
         if not txt or txt in ('\n', '\r', '\t', ''):
             return 0
-        from PIL import ImageFont
-        size = int(round(txt_h))
-        if size not in self._pil_fonts_:
-            _font_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                      'fonts', 'NotoSans-Regular-subset.ttf')
-            self._pil_fonts_[size] = ImageFont.truetype(_font_path, size=size)
-        return self._pil_fonts_[size].getlength(txt)
+        from polars2svg.p2s_font_metrics import textAdvance
+        return textAdvance(txt, int(round(txt_h)))
 

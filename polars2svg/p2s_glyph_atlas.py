@@ -3,13 +3,16 @@
 #
 # Glyph bitmaps are rendered once at ATLAS_PX from the bundled NotoSans subset into
 # an R8 shelf-packed atlas.  Glyph *positions* never come from scaled atlas metrics:
-# pen advances use the same per-integer-size PIL fonts as P2STextMixin.textLength(),
-# so GPU text layout matches the SVG text layout decisions (cropText, svgAxisLabels,
-# axis label fitting) exactly.
+# pen advances come from p2s_font_metrics.textAdvance(), the same baked table that backs
+# P2STextMixin.textLength(), so GPU text layout matches the SVG text layout decisions
+# (cropText, svgAxisLabels, axis label fitting) exactly.  Pillow still rasterizes the
+# glyph bitmaps below -- it is only the advances that must not come from it.
 #
 import base64
 import math
 import os
+
+from polars2svg.p2s_font_metrics import textAdvance
 
 __name__ = 'p2s_glyph_atlas'
 
@@ -26,19 +29,12 @@ class GlyphAtlas:
         self.version    = 0
         self._charset_  = set()
         self._glyphs_   = {}    # ch -> {'u0','v0','u1','v1','bx','by','w','h'} (px metrics at ATLAS_PX)
-        self._size_fonts_ = {}  # int size -> PIL font (advance metrics, mirrors textLength caching)
         self._img_      = None
         self._png_b64_  = None
         from PIL import ImageFont
         self._font48_   = ImageFont.truetype(self.font_path, size=ATLAS_PX)
         self._ascent48_, self._descent48_ = self._font48_.getmetrics()
         self._build_(_INITIAL_CHARSET_)
-
-    def _sizeFont_(self, size):
-        if size not in self._size_fonts_:
-            from PIL import ImageFont
-            self._size_fonts_[size] = ImageFont.truetype(self.font_path, size=size)
-        return self._size_fonts_[size]
 
     #
     # _build_() - (re)render and shelf-pack the atlas for the union of the current charset and new_chars
@@ -92,9 +88,8 @@ class GlyphAtlas:
         if _size_ <= 0 or not txt: return []
         _missing_ = set(txt) - self._charset_
         if _missing_: self._build_(_missing_)
-        _font_  = self._sizeFont_(_size_)
         _scale_ = _size_ / float(ATLAS_PX)
-        _total_ = _font_.getlength(txt)
+        _total_ = textAdvance(txt, _size_)
         if   anchor == 'middle': _anchor_dx_ = -_total_ / 2.0
         elif anchor == 'end':    _anchor_dx_ = -_total_
         else:                    _anchor_dx_ = 0.0
@@ -107,7 +102,7 @@ class GlyphAtlas:
         for i, ch in enumerate(txt):
             _g_ = self._glyphs_.get(ch)
             if _g_ is None: continue   # whitespace / unrenderable -- advance handled by prefix length
-            _pen_x_ = _font_.getlength(txt[:i])
+            _pen_x_ = textAdvance(txt[:i], _size_)
             _out_.append((float(x), float(y),
                           _anchor_dx_ + _pen_x_ + _g_['bx'] * _scale_,
                           _g_['by'] * _scale_ + dy,

@@ -31,13 +31,22 @@ class ConveyProximityLayout(object):
     use_resistive_distances : bool
         Use resistive (effective-resistance) distances rather than shortest-path.
     k : float
-        Force constant (0 lets the algorithm pick a default).
+        Stress-family exponent (the paper's ``S_k``): 0 = absolute stress,
+        1 = semiproportional, 2 = proportional.
     iterations_min : int
-        Minimum iterations per trial.
+        Minimum gradient-descent iterations per stage arrangement.
     iterations_multiplier : int
-        Growth factor applied across successive trials.
+        Iterations per stage scale as ``iterations_multiplier * |H|``
+        (floored at ``iterations_min``).
     distances : dict, optional
         Precomputed pairwise distances (else computed internally).
+    cleanup : bool
+        Apply the paper's cleanup (p. 225): floor the target distances up front
+        and finish with one proportional-stress (k=2) iteration so intimate
+        vertices are not drawn on top of one another.
+    cleanup_min_ratio : float
+        Target-distance floor used by ``cleanup``, as a fraction of the mean
+        pairwise target distance.
 
     Example::
 
@@ -47,7 +56,7 @@ class ConveyProximityLayout(object):
     #
     # Table V of paper (algorithm that includes multiple trials)
     #
-    def __init__(self, g_connected, use_resistive_distances=True, k=0.0, iterations_min=32, iterations_multiplier=2, distances=None) -> None:
+    def __init__(self, g_connected, use_resistive_distances=True, k=0.0, iterations_min=32, iterations_multiplier=2, distances=None, cleanup=False, cleanup_min_ratio=0.05) -> None:
         self.g_connected             = g_connected
         self.k                       = k
         self.V                       = set(self.g_connected.nodes)
@@ -56,6 +65,10 @@ class ConveyProximityLayout(object):
         self.iterations_multiplier   = iterations_multiplier
 
         self.distances = self.__getTargetDistances__(g_connected) if distances is None else distances
+        if cleanup:  # paper p.225 cleanup, part 1: floor the target distances before beginning
+            _all_ = [_d_ for _v_ in self.distances for _u_, _d_ in self.distances[_v_].items() if _u_ != _v_]
+            _floor_ = cleanup_min_ratio * sum(_all_) / len(_all_)
+            self.distances = {_v_: {_u_: (max(_d_, _floor_) if _u_ != _v_ else _d_) for _u_, _d_ in self.distances[_v_].items()} for _v_ in self.distances}
 
         pos            = {}
         Q              = self.__orderVertices__(self.g_connected, self.distances)
@@ -88,18 +101,17 @@ class ConveyProximityLayout(object):
 
         while H != self.V:
             _number_to_add_ = self.__numberToAddThisTime__(len(H), len(self.V))
-            H_fixed         = H.copy()
             _to_randomize_  = []
             vertices_added.append(set())
             for i in range(_number_to_add_):
                 v      = Q.pop()
-                h1, h2 = self.__closestMembers__(H_fixed, v)
+                h1, h2 = self.__closestMembers__(H, v)  # H grows during the stage (Table V) -- earlier same-stage vertices can serve as neighbors
                 _to_randomize_.append((v, h1, h2))
                 H.add(v)
                 vertices_added[-1].add(v)
             _best_stress_, _best_pos_, i_global_next, _best_trial_ = None, None, None, None
             for _trial_ in range(self.__numberOfTrialsThisTime__(H)):
-                for _tuple_ in _to_randomize_:
+                for _tuple_ in _to_randomize_:  # in addition order, so same-stage neighbors are placed before they are used
                     v, h1, h2 = _tuple_
                     pos[v]    = self.__neighborlyLocation__(v, h1, h2, pos)
                 _stress_lu_   = {'stress':[], 'i':[]}
@@ -112,6 +124,12 @@ class ConveyProximityLayout(object):
             arrange_round += 1
             best_trials.append(_best_trial_)
             pos, i_global = _best_pos_, i_global_next
+
+        if cleanup:  # paper p.225 cleanup, part 2: one final proportional-stress (k=2) iteration to separate vertices that are too close
+            _saved_ = (self.k, self.iterations_min, self.iterations_multiplier)
+            self.k, self.iterations_min, self.iterations_multiplier = 2.0, 1, 0
+            pos = self.__arrangeDirect__(self.V, pos, {'stress':[], 'i':[]})
+            self.k, self.iterations_min, self.iterations_multiplier = _saved_
 
         self.pos, self.stress_df, self.vertices_added, self.best_trials = pos, pl.concat(stress_dfs), vertices_added, best_trials
 
@@ -196,6 +214,7 @@ class ConveyProximityLayout(object):
                     else:               _h1_, _h1_d_ = _k_, _d_
                 elif _d_ < _h1_d_:      _h1_, _h1_d_ = _k_, _d_
                 else:                   _h2_, _h2_d_ = _k_, _d_
+        if _h2_d_ is not None and _h2_d_ < _h1_d_: _h1_, _h1_d_, _h2_, _h2_d_ = _h2_, _h2_d_, _h1_, _h1_d_  # h1 must be the closest (paper Fig. 3: j = nearest, k = next nearest)
         return _h1_, _h2_
 
     def __neighborlyLocation__(self, i, j, k, _pos_):
@@ -209,17 +228,20 @@ class ConveyProximityLayout(object):
         return x, y
 
     def __arrangeDirect__(self, _nodes_, _pos_, _stress_lu_):
-        _lu_pos_  = {'node':[], 'x':[], 'y':[]}
+        _lu_pos_  = {'node':[], 'x':[], 'y':[], 'mu':[]}
         _lu_dist_ = {'fm':[],'to':[], 't':[]}
         for _node_ in _nodes_:
             _lu_pos_['node'].append(_node_), _lu_pos_['x'].append(_pos_[_node_][0]), _lu_pos_['y'].append(_pos_[_node_][1])
+            _mu_den_ = 1.0  # the +1 keeps mu_i strictly below the paper's stability bound [2*sum(1/t^k)]^-1 and reproduces the paper's 1/(2n) example at k=0
             for _nbor_ in _nodes_:
                 if _nbor_ == _node_: continue
-                _lu_dist_['fm'].append(_node_), _lu_dist_['to'].append(_nbor_), _lu_dist_['t'].append(self.distances[_node_][_nbor_])
+                _t_ = self.distances[_node_][_nbor_]
+                _lu_dist_['fm'].append(_node_), _lu_dist_['to'].append(_nbor_), _lu_dist_['t'].append(_t_)
+                _mu_den_ += max(_t_, 0.001)**(-self.k)
+            _lu_pos_['mu'].append(1.0/(2.0*_mu_den_))
         df_pos, df_dist = pl.DataFrame(_lu_pos_), pl.DataFrame(_lu_dist_)
 
         iterations = max(self.iterations_min, self.iterations_multiplier*len(_nodes_))
-        mu         = 1.0/(2.0*len(_nodes_))
         __dx__, __dy__ = (pl.col('x') - pl.col('x_right')), (pl.col('y') - pl.col('y_right'))
         for i in range(iterations):
             df_pos = df_pos.join(df_pos, how='cross') \
@@ -232,10 +254,10 @@ class ConveyProximityLayout(object):
                            .with_columns((pl.col('t')**(2-self.k)).alias('__prod_1__'),
                                          ((2.0*__dx__*(1.0 - pl.col('t')/pl.col('d')))/pl.col('t_k')).alias('xadd'),
                                          ((2.0*__dy__*(1.0 - pl.col('t')/pl.col('d')))/pl.col('t_k')).alias('yadd'),
-                                         (((pl.col('t') - pl.col('d'))**2)/(pl.col('t_k'))**self.k).alias('__prod_2__')) \
-                           .group_by(['node','x','y']).agg(pl.col('xadd').sum(), pl.col('yadd').sum(), pl.col('__prod_1__').sum(), pl.col('__prod_2__').sum()) \
-                           .with_columns((pl.col('x') - mu * pl.col('xadd')).alias('x'),
-                                         (pl.col('y') - mu * pl.col('yadd')).alias('y')) \
+                                         (((pl.col('t') - pl.col('d'))**2)/pl.col('t_k')).alias('__prod_2__')) \
+                           .group_by(['node','x','y','mu']).agg(pl.col('xadd').sum(), pl.col('yadd').sum(), pl.col('__prod_1__').sum(), pl.col('__prod_2__').sum()) \
+                           .with_columns((pl.col('x') - pl.col('mu') * pl.col('xadd')).alias('x'),
+                                         (pl.col('y') - pl.col('mu') * pl.col('yadd')).alias('y')) \
                            .drop(['xadd','yadd'])
             stress = (1.0 / df_pos['__prod_1__'].sum()) * df_pos['__prod_2__'].sum()
             _stress_lu_['stress'].append(stress), _stress_lu_['i'].append(i)

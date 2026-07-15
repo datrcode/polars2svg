@@ -427,11 +427,26 @@ def _interactivep(_plot_, kind, **kwargs):
     _z_key_cmd_ = '\nz . | filter to color nearest to mouse (shift filters those records out)' if has_z_key else ''
     _search_cmd_ = '\n/ . | filter bins: type substring + Enter (prefix -remove); Escape to cancel' if has_search else ''
     _keyboard_commands_ = f"""
-h . | toggle help display (not implemented)
+h . | toggle help display
 q . | subtract the current from the top
 s . | {cfg['kbd_s_desc']}
 S . | cycle brush shape{_z_key_cmd_}{_search_cmd_}
         """
+
+    # Build static SVG for keyboard help overlay
+    _help_lines_  = _keyboard_commands_.strip().split('\n')
+    _help_w_      = max(len(l) for l in _help_lines_) * 7 + 20
+    _help_h_      = len(_help_lines_) * 14 + 12
+    _help_font_style_ = "font-family: 'Courier New', monospace; font-size: 11px; fill: #222;"
+    _help_text_lines_ = ''.join(
+        f'<text x="10" y="{12 + i*14}" style="{_help_font_style_}">{l}</text>'
+        for i, l in enumerate(_help_lines_)
+    )
+    _keyboard_help_svg_ = (
+        f'<rect x="0" y="0" width="{_help_w_}" height="{_help_h_}" '
+        f'fill="rgba(240,240,240,0.95)" stroke="#888" stroke-width="1" rx="3"/>'
+        f'{_help_text_lines_}'
+    )
 
     # Build JS z-key block (prepended to 's' check in myOnKeyDown when has_z_key)
     _z_block_ = (
@@ -490,7 +505,7 @@ S . | cycle brush shape{_z_key_cmd_}{_search_cmd_}
     <svg id="mod" width="{_w_}" height="{_h_}"> ${{mod_inner}} </svg>
     <g   id="brushindicator"></g>
     <g   id="brushmodelabel"></g>
-    <g   id="keyboardhelp" transform="translate(${{keyboardhelp_x}} 0)"> <text x="5" y="15" fill="black">  </text> </g>
+    <g   id="keyboardhelp" transform="translate(${{keyboardhelp_x}} 0)">{_keyboard_help_svg_}</g>
     <rect id="drag"   x="-10" y="-10" width="5"     height="5" stroke="#000000" stroke-width="2" fill="none" />
     <rect id="screen" x="0"   y="0"   width="{_w_}" height="{_h_}" opacity="0.05"
           onmouseover="${{script('myOnMouseOver')}}"  onmouseout="${{script('myOnMouseOut')}}"
@@ -539,7 +554,7 @@ S . | cycle brush shape{_z_key_cmd_}{_search_cmd_}
         #
         'mod_inner':         param.String(default=_svg_),
         'info_str':          param.String(default=''),
-        'keyboardhelp_x':    param.Integer(default=5),
+        'keyboardhelp_x':    param.Integer(default=-1000),
         'x0_middle':         param.Integer(default=0),
         'y0_middle':         param.Integer(default=0),
         'x1_middle':         param.Integer(default=0),
@@ -681,7 +696,11 @@ S . | cycle brush shape{_z_key_cmd_}{_search_cmd_}
                     data.brush_changed += 1;
                     self.updateBrushCursor();
                 }}
-                else if (event.key == 'q') {{ data.key_op_finished = "q"; }}{_search_block_bottom_}
+                else if (event.key == 'q') {{ data.key_op_finished = "q"; }}
+                else if (event.key == 'h') {{
+                    if (data.keyboardhelp_x == -1000) {{ data.keyboardhelp_x =     5; }}
+                    else                               {{ data.keyboardhelp_x = -1000; }}
+                }}{_search_block_bottom_}
             """,
             # key events don't have access to event.offsetX/Y
             'myOnKeyUp':"""

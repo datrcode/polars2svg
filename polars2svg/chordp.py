@@ -2210,6 +2210,36 @@ class ChP(ExportMixin):
         if remove_records: _mask_ = ~_mask_
         return self.df.filter(_mask_)
 
+    def filterByOval(self, oval, remove_records=False):
+        _cx_, _cy_, _rx_, _ry_ = oval
+        # A plain click arrives as a zero-radius oval: keep it covering the pixel under the cursor.
+        _rx_, _ry_ = max(float(_rx_), 0.5), max(float(_ry_), 0.5)
+        _r_mid_ = (self.r + self.r_inner) / 2.0
+        _nodes_ = set(
+            self.df_node
+            .with_columns(
+                (self.cx + _r_mid_ * pl.col('__amr__').cos()).alias('__mx__'),
+                (self.cy + _r_mid_ * pl.col('__amr__').sin()).alias('__my__'),
+            )
+            .filter(
+                (((pl.col('__mx__') - _cx_) / _rx_).pow(2) +
+                 ((pl.col('__my__') - _cy_) / _ry_).pow(2)) <= 1.0
+            )
+            ['__nm__'].cast(pl.String).to_list()
+        )
+        if not _nodes_:
+            return self.df.head(0) if not remove_records else self.df
+        _masks_ = []
+        for _fm_, _to_ in self.relationships:
+            _masks_.append(
+                pl.col(_fm_).cast(pl.String).is_in(_nodes_) &
+                pl.col(_to_).cast(pl.String).is_in(_nodes_)
+            )
+        _mask_ = _masks_[0]
+        for _m_ in _masks_[1:]: _mask_ = _mask_ | _m_
+        if remove_records: _mask_ = ~_mask_
+        return self.df.filter(_mask_)
+
     def render_with(self, df, **overrides):
         return ChP(df=df, template=self, **overrides)
 

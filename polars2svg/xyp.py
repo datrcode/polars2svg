@@ -3463,6 +3463,18 @@ class XYp(ExportMixin):
         if remove_records: return self.df.join(_df_filtered_, on='__p2s_index__', how='anti').drop('__p2s_index__')
         else:              return self.df.join(_df_filtered_, on='__p2s_index__')            .drop('__p2s_index__')
 
+    def filterByOval(self, oval, remove_records=False):
+        _cx_, _cy_, _rx_, _ry_ = oval
+        # A plain click arrives as a zero-radius oval: keep it covering the pixel under the cursor.
+        _rx_, _ry_ = max(float(_rx_), 0.5), max(float(_ry_), 0.5)
+        _df_filtered_ = self.df_flat.filter(
+            (((pl.col('__xpx__') - _cx_) / _rx_).pow(2) +
+             ((pl.col('__ypx__') - _cy_) / _ry_).pow(2)) <= 1.0
+        )
+        _df_filtered_ = _df_filtered_.drop(set(_df_filtered_.columns) - set(['__p2s_index__']))
+        if remove_records: return self.df.join(_df_filtered_, on='__p2s_index__', how='anti').drop('__p2s_index__')
+        else:              return self.df.join(_df_filtered_, on='__p2s_index__')            .drop('__p2s_index__')
+
     def filterByColorAtXY(self, xy, remove_records=False, distance_threshold=2.0):
         _x_, _y_ = xy
 

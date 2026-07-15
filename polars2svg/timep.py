@@ -1401,6 +1401,81 @@ class Timep(ExportMixin):
             return _df_result_.drop([c for c in ['__p2s_index__', '__bin_key__']
                                      if c in _df_result_.columns])
 
+    def filterByOval(self, oval, remove_records=False):
+        _cx_, _cy_, _rx_, _ry_ = oval
+        # A plain click arrives as a zero-radius oval: keep it covering the pixel under the cursor.
+        _rx_, _ry_ = max(float(_rx_), 0.5), max(float(_ry_), 0.5)
+        _span_ = max(float(self._count_max_) - float(self._count_min_), 1.0)
+        _join_ = 'anti' if remove_records else 'inner'
+
+        # Exact ellipse-vs-bar (axis-aligned AABB) overlap test: clamp the oval center to the
+        # bar's box, then check that closest point against the ellipse.
+        _qx_ = pl.min_horizontal(pl.max_horizontal(pl.lit(_cx_), pl.col('__bx0__')), pl.col('__bx1__'))
+        _qy_ = pl.min_horizontal(pl.max_horizontal(pl.lit(_cy_), pl.col('__by0__')), pl.col('__by1__'))
+        _overlap_ = (((_qx_ - _cx_) / _rx_).pow(2) + ((_qy_ - _cy_) / _ry_).pow(2)) <= 1.0
+
+        if self._is_periodic_:
+            if self._agg_type_ == 'stacked':
+                _agg_ = self.df_agg.group_by('__time_bin__').agg(pl.col('__count__').sum())
+            else:
+                _agg_ = self.df_agg
+            _top_col_ = '__box_max__' if self._agg_type_ == 'boxplot' else '__count__'
+            _selected_ = (
+                _agg_
+                .with_columns([
+                    ((pl.col('__time_bin__').cast(pl.Float64) - self._bin_min_)
+                     * self._bar_w_raw_ + self._plot_x0_).alias('__bx0__'),
+                    ((pl.col('__time_bin__').cast(pl.Float64) - self._bin_min_ + 1)
+                     * self._bar_w_raw_ + self._plot_x0_).alias('__bx1__'),
+                    (self._plot_y1_ - self._plot_h_
+                     * (pl.col(_top_col_).cast(pl.Float64) - float(self._count_min_))
+                     / _span_).alias('__by0__'),
+                    pl.lit(float(self._plot_y1_)).alias('__by1__'),
+                ])
+                .filter(_overlap_)
+                .select('__time_bin__')
+            )
+            _df_result_ = self.df.join(_selected_, on='__time_bin__', how=_join_)
+            return _df_result_.drop([c for c in ['__p2s_index__', '__time_bin__']
+                                     if c in _df_result_.columns])
+
+        else:  # linear
+            _trunc_ = self.__linearTruncMap__()[self._time_enum_]
+            _top_col_ = '__box_max__' if self._agg_type_ == 'boxplot' else '__count__'
+            if self._agg_type_ == 'stacked':
+                _sorted_bins_ = (self._all_stacked_bins_
+                                 if hasattr(self, '_all_stacked_bins_')
+                                 else sorted(self.df_agg[self._time_field_].unique().to_list()))
+                _counts_ = (self.df_agg.group_by(self._time_field_)
+                                       .agg(pl.col('__count__').sum()))
+                _idx_df_ = pl.DataFrame({self._time_field_: _sorted_bins_,
+                                         '__idx__': list(range(len(_sorted_bins_)))})
+                _agg_indexed_ = _idx_df_.join(_counts_, on=self._time_field_, how='left').fill_null(0)
+            else:
+                _agg_indexed_ = self.df_agg.with_row_index('__idx__')
+            _selected_ = (
+                _agg_indexed_
+                .with_columns([
+                    (pl.col('__idx__').cast(pl.Float64) * self._bar_w_raw_
+                     + self._plot_x0_).alias('__bx0__'),
+                    ((pl.col('__idx__').cast(pl.Float64) + 1) * self._bar_w_raw_
+                     + self._plot_x0_).alias('__bx1__'),
+                    (self._plot_y1_ - self._plot_h_
+                     * (pl.col(_top_col_).cast(pl.Float64) - float(self._count_min_))
+                     / _span_).alias('__by0__'),
+                    pl.lit(float(self._plot_y1_)).alias('__by1__'),
+                ])
+                .filter(_overlap_)
+                .select(self._time_field_)
+            )
+            _df_with_bin_ = self.df.with_columns(
+                pl.col(self._time_field_).dt.truncate(_trunc_).alias('__bin_key__')
+            )
+            _selected_renamed_ = _selected_.rename({self._time_field_: '__bin_key__'})
+            _df_result_ = _df_with_bin_.join(_selected_renamed_, on='__bin_key__', how=_join_)
+            return _df_result_.drop([c for c in ['__p2s_index__', '__bin_key__']
+                                     if c in _df_result_.columns])
+
     def recordsAt(self, xy, shape=None, threshold=2.0):
         """Return the original records whose bar column contains pixel x.
 

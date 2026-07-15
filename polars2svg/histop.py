@@ -1115,6 +1115,80 @@ class Histop(ExportMixin):
             _to_drop_.append('__bin__')
         return _df_result_.drop(_to_drop_)
 
+    def filterByOval(self, oval, remove_records=False):
+        _cx_, _cy_, _rx_, _ry_ = oval
+        # A plain click arrives as a zero-radius oval: keep it covering the pixel under the cursor.
+        _rx_, _ry_ = max(float(_rx_), 0.5), max(float(_ry_), 0.5)
+
+        # Exact ellipse-vs-box (axis-aligned) overlap: clamp the oval center to the box,
+        # then check that closest point against the ellipse.
+        def _ellipse_hits_box_(bx0, by0, bx1, by1):
+            _qx_ = min(max(_cx_, bx0), bx1)
+            _qy_ = min(max(_cy_, by0), by1)
+            return ((_qx_ - _cx_) / _rx_) ** 2 + ((_qy_ - _cy_) / _ry_) ** 2 <= 1.0
+
+        # Replicate render-time culling to identify which bins were actually drawn.
+        _, h          = self.wxh
+        _effective_h_ = h - self._dist_h_
+        _y_v_         = self.v_gap // 2 if self.v_gap > 0 else 0
+        _n_visible_   = 0
+        for _i_ in range(len(self._sorted_bins_)):
+            if self._plot_y0_ + _i_ * self._slot_h_ + _y_v_ + self.bar_h <= _effective_h_:
+                _n_visible_ = _i_ + 1
+            else:
+                break
+        _visible_bins_ = self._sorted_bins_[:_n_visible_]
+
+        _span_ = max(float(self._count_max_) - float(self._count_min_), 1e-9)
+        def __countToBarW__(v):
+            return max(0.0, self._plot_w_ * (float(v) - float(self._count_min_)) / _span_)
+
+        if self._agg_type_ == 'stacked':
+            _counts_df_ = self.df_agg.group_by(self._bin_col_).agg(pl.col('__count__').sum())
+        elif self._agg_type_ == 'boxplot':
+            _counts_df_ = self.df_agg.select([self._bin_col_, '__box_min__', '__box_max__'])
+        else:
+            _counts_df_ = self.df_agg.select([self._bin_col_, '__count__'])
+        _row_lu_ = {row[self._bin_col_]: row for row in _counts_df_.iter_rows(named=True)}
+
+        _selected_bins_ = []
+        for _i_, _bin_ in enumerate(_visible_bins_):
+            _row_ = _row_lu_.get(_bin_)
+            if _row_ is None: continue
+            _bar_y0_ = self._plot_y0_ + _i_ * self._slot_h_ + _y_v_
+            _bar_y1_ = _bar_y0_ + self.bar_h
+            if self._agg_type_ == 'boxplot':
+                _bx0_ = self._plot_x0_ + __countToBarW__(_row_['__box_min__'])
+                _bx1_ = self._plot_x0_ + __countToBarW__(_row_['__box_max__'])
+            else:
+                _bx0_ = self._plot_x0_
+                _bx1_ = self._plot_x0_ + __countToBarW__(_row_['__count__'])
+            if _ellipse_hits_box_(_bx0_, _bar_y0_, _bx1_, _bar_y1_):
+                _selected_bins_.append(_bin_)
+
+        if self._dist_h_ > 0 and self._dist_bins_lu_:
+            _strip_y0_ = self._dist_strip_y0_
+            _strip_y1_ = self._dist_strip_y0_ + self.distribution_bin_w
+            _abw_      = self._dist_actual_bin_w_
+            for _bi_, _bins_ in self._dist_bins_lu_.items():
+                _cell_x0_ = self._plot_x0_ + _bi_ * _abw_
+                _cell_x1_ = self._plot_x0_ + (_bi_ + 1) * _abw_
+                if _ellipse_hits_box_(_cell_x0_, _strip_y0_, _cell_x1_, _strip_y1_):
+                    _selected_bins_.extend(_bins_)
+
+        _selected_bins_ = list(dict.fromkeys(_selected_bins_))
+
+        _bin_dtype_   = self.df_agg[self._bin_col_].dtype
+        _selected_df_ = pl.DataFrame({self._bin_col_: _selected_bins_},
+                                      schema={self._bin_col_: _bin_dtype_})
+
+        _how_       = 'anti' if remove_records else 'inner'
+        _df_result_ = self.df.join(_selected_df_, on=self._bin_col_, how=_how_)
+        _to_drop_   = [c for c in ['__p2s_index__'] if c in _df_result_.columns]
+        if self._bin_col_ == '__bin__' and '__bin__' in _df_result_.columns:
+            _to_drop_.append('__bin__')
+        return _df_result_.drop(_to_drop_)
+
     def filterBySubstring(self, substring, remove_bins=False):
         _sub_ = substring.lower()
         # Match against the display form ('|'-joined) so a user's 'A|x' still matches a

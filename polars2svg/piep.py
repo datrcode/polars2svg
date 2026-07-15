@@ -1178,6 +1178,72 @@ class Piep(ExportMixin):
             return self.__dropInternal__(self.df if remove_records else self.df.clear())
         return self.__binsForBins__(_selected_, remove=remove_records)
 
+    def filterByOval(self, oval, remove_records=False):
+        _cx_, _cy_, _rx_, _ry_ = oval
+        # A plain click arrives as a zero-radius oval: keep it covering the pixel under the cursor.
+        _rx_, _ry_ = max(float(_rx_), 0.5), max(float(_ry_), 0.5)
+        # The oval center is the click point (mouse-press seeds the center).
+        _cxr_, _cyr_ = _cx_, _cy_
+
+        def _in_ellipse_(px, py):
+            return ((px - _cx_) / _rx_) ** 2 + ((py - _cy_) / _ry_) ** 2 <= 1.0
+
+        _selected_ = []
+        if self.style == self.p2s.WAFFLEp:
+            # click: the cell under the oval center
+            _center_bin_ = self.__binAtWaffleXY__(_cxr_, _cyr_)
+            if _center_bin_ is not None:
+                _selected_.append(_center_bin_)
+            # drag: any slice with a cell centroid inside the oval
+            _n_    = max(1, int(self.waffle_n))
+            _side_ = min(self._plot_w_, self._plot_h_)
+            _cell_ = _side_ / _n_
+            _ox_   = self.cx - _side_ / 2.0
+            _oy_   = self.cy - _side_ / 2.0
+            _bins_counts_ = [(s['bin'], s.get('count_all', s['count'])) for s in self._slices_]
+            _alloc_ = self.__waffleCounts__(_bins_counts_, _n_ * _n_)
+            _idx_ = 0
+            for _b_, _cnt_ in _alloc_:
+                _hit_ = False
+                for _k_ in range(_cnt_):
+                    _row_ = _idx_ // _n_
+                    _col_ = _idx_ % _n_
+                    _cxp_ = _ox_ + (_col_ + 0.5) * _cell_
+                    _cyp_ = _oy_ + (_n_ - 1 - _row_ + 0.5) * _cell_
+                    _idx_ += 1
+                    if _in_ellipse_(_cxp_, _cyp_): _hit_ = True
+                if _hit_: _selected_.append(_b_)
+        else:
+            # click: the wedge under the oval center
+            _dxr_, _dyr_ = _cxr_ - self.cx, _cyr_ - self.cy
+            _center_bin_ = self.__binAtAngleDist__(atan2(_dyr_, _dxr_) * 180.0 / pi,
+                                                   sqrt(_dxr_ * _dxr_ + _dyr_ * _dyr_))
+            if _center_bin_ is not None:
+                _selected_.append(_center_bin_)
+            # drag: any wedge whose area is touched by the oval.  Sample the wedge across
+            # angle x radius and test each sample against the ellipse.
+            _r_lo_ = max(self.r_inner, self.r * 0.08)
+            _radii_ = [_r_lo_, (_r_lo_ + self.r) / 2.0, self.r * 0.97]
+            for s in self._slices_:
+                if s['bin'] in _selected_: continue
+                _sweep_ = s['a1'] - s['a0']
+                _na_    = max(2, int(_sweep_ / 8.0) + 1)
+                _hit_   = False
+                for _i_ in range(_na_ + 1):
+                    _a_ = radians(s['a0'] + _sweep_ * _i_ / _na_)
+                    _ca_, _sa_ = cos(_a_), sin(_a_)
+                    for _rr_ in _radii_:
+                        if _in_ellipse_(self.cx + _rr_ * _ca_, self.cy + _rr_ * _sa_):
+                            _hit_ = True
+                            break
+                    if _hit_: break
+                if _hit_: _selected_.append(s['bin'])
+
+        _selected_ = list(dict.fromkeys(_selected_))
+        if not _selected_:
+            return self.__dropInternal__(self.df if remove_records else self.df.clear())
+        return self.__binsForBins__(_selected_, remove=remove_records)
+
     def filterBySubstring(self, substring, remove_bins=False):
         _sub_ = substring.lower()
         # Search every real bin, including those folded into "(other)", so a folded

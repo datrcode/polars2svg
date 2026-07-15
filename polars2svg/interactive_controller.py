@@ -360,8 +360,16 @@ def _interactivep(_plot_, kind, **kwargs):
             if not self.drag_op_finished: return
             _coords_ = (self.drag_x0, self.drag_y0, self.drag_x1, self.drag_y1)
             _shift_  = self.shiftkey
+            _shape_  = self.select_shape
             self.drag_op_finished = False
-        _df_ = self._plot_.filterByRectangle(_coords_, _shift_)
+        if _shape_ == 'oval':
+            # press point (drag_x0/y0) is the oval center; drag edge sets the radii
+            _cx_, _cy_ = self.drag_x0, self.drag_y0
+            _rx_ = abs(self.drag_x1 - self.drag_x0)
+            _ry_ = abs(self.drag_y1 - self.drag_y0)
+            _df_ = self._plot_.filterByOval((_cx_, _cy_, _rx_, _ry_), _shift_)
+        else:
+            _df_ = self._plot_.filterByRectangle(_coords_, _shift_)
         if len(_df_) > 0: await self.mvc.pushStack(self, _df_)
         else:             await self.mvc.popStack(self)
     # Callbacks - applyKeyOp()
@@ -429,6 +437,7 @@ def _interactivep(_plot_, kind, **kwargs):
     _keyboard_commands_ = f"""
 h . | toggle help display
 q . | subtract the current from the top
+F . | pick selection shape (rectangle | oval)
 s . | {cfg['kbd_s_desc']}
 S . | cycle brush shape{_z_key_cmd_}{_search_cmd_}
         """
@@ -507,12 +516,14 @@ S . | cycle brush shape{_z_key_cmd_}{_search_cmd_}
     <g   id="brushmodelabel"></g>
     <g   id="keyboardhelp" transform="translate(${{keyboardhelp_x}} 0)">{_keyboard_help_svg_}</g>
     <rect id="drag"   x="-10" y="-10" width="5"     height="5" stroke="#000000" stroke-width="2" fill="none" />
+    <ellipse id="dragoval" cx="-10" cy="-10" rx="0" ry="0" stroke="#000000" stroke-width="2" fill="none" display="none" />
     <rect id="screen" x="0"   y="0"   width="{_w_}" height="{_h_}" opacity="0.05"
           onmouseover="${{script('myOnMouseOver')}}"  onmouseout="${{script('myOnMouseOut')}}"
           onmousedown="${{script('downSelect')}}"     onmousemove="${{script('myOnMouseMove')}}"
           onmouseup="${{script('myOnMouseUp')}}" />
     <text id="infostr" x="5" y="{_h_-3}" fill="#000000" font-size="10px"> ${{info_str}} </text>
     {_search_text_elem_}
+    <g id="pickermenu" pointer-events="none"></g>
 </svg>
 """
     if use_webgpu:
@@ -569,6 +580,7 @@ S . | cycle brush shape{_z_key_cmd_}{_search_cmd_}
         'drag_y0':           param.Integer(default=0),
         'drag_x1':           param.Integer(default=10),
         'drag_y1':           param.Integer(default=10),
+        'select_shape':      param.String(default='rectangle'),
         'shiftkey':          param.Boolean(default=False),
         'ctrlkey':           param.Boolean(default=False),
         'last_key':          param.String(default=''),
@@ -622,6 +634,12 @@ S . | cycle brush shape{_z_key_cmd_}{_search_cmd_}
                 state.cur_mouse_y  = -999;
                 state.brush_defs   = [null,['circle',5],['circle',15],['vertical',1],['vertical',3],['horizontal',1],['horizontal',3]];
                 state.brush_names  = ['','circ r=5','circ r=15','vert r=1','vert r=3','horiz r=1','horiz r=3'];
+                state.select_shape = 'rectangle';
+                state.menu_items   = {{'select_shape': [['r','rectangle'],['o','oval']]}};
+                state.menu_open    = false;
+                state.menu_kind    = '';
+                state.menu_index   = 0;
+                state.menu_timer   = null;
 {_search_init_}
                 screen.addEventListener('wheel', function(event) {{
                     event.preventDefault();
@@ -668,7 +686,27 @@ S . | cycle brush shape{_z_key_cmd_}{_search_cmd_}
             # key events don't have access to event.offsetX/Y
             'myOnKeyDown': f"""
                 event.stopPropagation();
-{_search_block_top_}                data.shiftkey = event.shiftKey;
+{_search_block_top_}                if (state.menu_open) {{
+                    event.preventDefault();
+                    var _items_ = state.menu_items[state.menu_kind];
+                    if      (event.key === 'Escape') {{ self.menuClose();  }}
+                    else if (event.key === 'Enter')  {{ self.menuCommit(); }}
+                    else if (event.key === 'ArrowDown' || event.key === 'j' || event.key === 'F') {{
+                        state.menu_index = (state.menu_index + 1) % _items_.length;
+                        self.menuRender(); self.menuArmTimer();
+                    }}
+                    else if (event.key === 'ArrowUp' || event.key === 'k') {{
+                        state.menu_index = (state.menu_index - 1 + _items_.length) % _items_.length;
+                        self.menuRender(); self.menuArmTimer();
+                    }}
+                    else if (event.key.length === 1) {{
+                        for (var _i_ = 0; _i_ < _items_.length; _i_++) {{
+                            if (_items_[_i_][0] === event.key) {{ state.menu_index = _i_; self.menuCommit(); break; }}
+                        }}
+                    }}
+                    return;
+                }}
+                data.shiftkey = event.shiftKey;
                 data.ctrlkey  = event.ctrlKey;
                 data.x_mouse  = state.cur_mouse_x;
                 data.y_mouse  = state.cur_mouse_y;
@@ -697,6 +735,7 @@ S . | cycle brush shape{_z_key_cmd_}{_search_cmd_}
                     self.updateBrushCursor();
                 }}
                 else if (event.key == 'q') {{ data.key_op_finished = "q"; }}
+                else if (event.key == 'F') {{ state.menu_kind = 'select_shape'; self.menuOpen(); }}
                 else if (event.key == 'h') {{
                     if (data.keyboardhelp_x == -1000) {{ data.keyboardhelp_x =     5; }}
                     else                               {{ data.keyboardhelp_x = -1000; }}
@@ -769,22 +808,87 @@ S . | cycle brush shape{_z_key_cmd_}{_search_cmd_}
                 infostr.innerHTML = data.info_str;
             """,
             'myUpdateDragRect':"""
-                if (state.drag_op) {
+                var _stroke_ = (data.shiftkey && data.ctrlkey) ? '#0000ff'
+                             : (data.shiftkey)                  ? '#ff0000'
+                             : (data.ctrlkey)                   ? '#00ff00'
+                             :                                    '#000000';
+                if (state.drag_op && state.select_shape == 'oval') {
+                    var cx = state.x0_drag, cy = state.y0_drag;
+                    var rx = Math.abs(state.x1_drag - state.x0_drag);
+                    var ry = Math.abs(state.y1_drag - state.y0_drag);
+                    dragoval.setAttribute('cx',cx); dragoval.setAttribute('cy',cy);
+                    dragoval.setAttribute('rx',rx); dragoval.setAttribute('ry',ry);
+                    dragoval.setAttribute('stroke',_stroke_);
+                    dragoval.setAttribute('display','inline');
+                    drag.setAttribute('x',-10);   drag.setAttribute('y',-10);
+                    drag.setAttribute('width',5); drag.setAttribute('height',5);
+                } else if (state.drag_op) {
                     x = Math.min(state.x0_drag, state.x1_drag);
                     y = Math.min(state.y0_drag, state.y1_drag);
                     w = Math.abs(state.x1_drag - state.x0_drag)
                     h = Math.abs(state.y1_drag - state.y0_drag)
                     drag.setAttribute('x',x);     drag.setAttribute('y',y);
                     drag.setAttribute('width',w); drag.setAttribute('height',h);
-                    if      (data.shiftkey && data.ctrlkey)  drag.setAttribute('stroke','#0000ff');
-                    else if (data.shiftkey)                  drag.setAttribute('stroke','#ff0000');
-                    else if (                 data.ctrlkey)  drag.setAttribute('stroke','#00ff00');
-                    else                                     drag.setAttribute('stroke','#000000');
+                    drag.setAttribute('stroke',_stroke_);
+                    dragoval.setAttribute('display','none');
                 } else {
                     drag.setAttribute('x',-10);   drag.setAttribute('y',-10);
                     drag.setAttribute('width',5); drag.setAttribute('height',5);
+                    dragoval.setAttribute('display','none');
                 }
-        """
+        """,
+            # ── selection-shape picker menu (Shift+F) ──
+            # Modal JS state machine mirrored from the linkp layout picker; nothing reaches
+            # Python until menuCommit writes data.select_shape (which applyDragOp reads).
+            'menuOpen':"""
+                var _items_ = state.menu_items[state.menu_kind];
+                state.menu_index = 0;
+                for (var _i_ = 0; _i_ < _items_.length; _i_++) {
+                    if (_items_[_i_][1] == state.select_shape) { state.menu_index = _i_; break; }
+                }
+                state.menu_open = true;
+                self.menuRender();
+                self.menuArmTimer();
+            """,
+            'menuRender':"""
+                if (!state.menu_open) { return; }
+                var _items_  = state.menu_items[state.menu_kind];
+                var _header_ = 'selection shape:';
+                var _maxlen_ = _header_.length;
+                for (var _i_ = 0; _i_ < _items_.length; _i_++) {
+                    _maxlen_ = Math.max(_maxlen_, _items_[_i_][1].length + 4);
+                }
+                var _w_menu_ = _maxlen_ * 7 + 20,
+                    _h_menu_ = (_items_.length + 1) * 14 + 12,
+                    _style_  = 'font-family: \\'Courier New\\', monospace; font-size: 11px; fill: #222;';
+                var _html_ = '<rect x="8" y="8" width="' + _w_menu_ + '" height="' + _h_menu_ + '"'
+                           + ' fill="rgba(240,240,240,0.95)" stroke="#888" stroke-width="1" rx="3"/>'
+                           + '<rect x="10" y="' + (8 + 1 + (state.menu_index + 1) * 14) + '" width="' + (_w_menu_ - 4) + '" height="13"'
+                           + ' fill="rgba(100,150,255,0.3)"/>'
+                           + '<text x="18" y="' + (8 + 12) + '" style="' + _style_ + ' font-weight: bold;">' + _header_ + '</text>';
+                for (var _i_ = 0; _i_ < _items_.length; _i_++) {
+                    _html_ += '<text x="18" y="' + (8 + 12 + (_i_ + 1) * 14) + '" style="' + _style_ + '">'
+                            + '[' + _items_[_i_][0] + '] ' + _items_[_i_][1] + '</text>';
+                }
+                pickermenu.innerHTML = _html_;
+            """,
+            'menuCommit':"""
+                state.select_shape = state.menu_items[state.menu_kind][state.menu_index][1];
+                data.select_shape  = state.select_shape;
+                self.menuClose();
+            """,
+            'menuClose':"""
+                if (state.menu_timer != null) { clearTimeout(state.menu_timer); }
+                state.menu_timer     = null;
+                state.menu_open      = false;
+                state.menu_kind      = '';
+                pickermenu.innerHTML = '';
+            """,
+            'menuArmTimer':"""
+                if (state.menu_timer != null) { clearTimeout(state.menu_timer); }
+                var _self_ = self;
+                state.menu_timer = setTimeout(function() { if (state.menu_open) { _self_.menuCommit(); } }, 2500);
+            """
         }
     })
     _cls_ref_[0] = cls

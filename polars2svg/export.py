@@ -38,6 +38,14 @@ def _fixSVGForRasterize_(svg):
 # - raises a clear ImportError pointing at the [export] extra when either the
 #   svglib or reportlab dependency is missing
 #
+# Note on the svglib<2 cap in pyproject's [export] extra: svglib 1.x carries the
+# SVG's px width/height straight through as reportlab points (200px -> 200pt), so
+# renderPM's default 72dpi rasterizes one SVG user unit to one PNG pixel.  svglib
+# 2.x instead applies the correct CSS px->pt conversion (200px -> 150pt), which at
+# 72dpi silently shrinks every export to 0.75 scale and mis-scales nested <svg>
+# tiles (smallp/spreadlinesp) outright.  reportlab 5 itself is fine here — it is
+# svglib 2 that changes the geometry — so the cap is on svglib, not reportlab.
+#
 def svgToPNGBytes(svg):
     try:
         from svglib.svglib import svg2rlg

@@ -132,7 +132,7 @@ class Smallp(ExportMixin):
             'order':              self.p2s.ROW_COUNTp,
             'descending':         True,
             'grid_mode':          False,
-            'wxh':                (1280, None),
+            'wxh':                (1280, 1024),
             'insets':             (0, 0),
             'include_all':        False,
             'collate_remainder':  True,

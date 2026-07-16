@@ -2,17 +2,19 @@ name: Release
 
 # Publishes polars2svg to PyPI via Trusted Publishing (OIDC) on release tags.
 #
-# This is NOT continuous integration: it runs only when a tag matching v*
-# is pushed (e.g. `git tag v0.1.0 && git push origin v0.1.0`), so it does
-# not run the test suite on every commit (see PyPI must-do #11 — CI-on-every-
-# commit is intentionally disabled; local/standalone-server runs cover testing).
+# Runs only when a tag matching v* is pushed (e.g. `git tag vX.Y.Z && git push
+# origin vX.Y.Z`). The `ci` job below calls ci.yml as a reusable workflow, so
+# the full suite must pass against the tagged commit before anything is built
+# or published. This gate exists because a tag push does NOT trigger ci.yml on
+# its own (ci.yml is push-on-main + PR), and because v0.1.1 shipped while CI
+# was red on the same commit — build+publish had no test dependency at all.
 #
-# One-time setup the maintainer must do (an agent cannot): register this repo
-# as a Trusted Publisher on PyPI. Before the project exists, add it as a
-# "pending publisher" in your PyPI account:
-#   https://pypi.org/manage/account/publishing/
-# with workflow name `release.yml` and environment name `pypi`. This replaces
-# the twine + API-token flow that used to live in pypi_instructions.txt.
+# Trusted Publishing is registered and live (first used for v0.1.0, 2026-07-10);
+# there is no API token to manage. The maintainer-only, browser-only setup is
+# already done — re-registration is needed only if the repo is renamed or moved,
+# at https://pypi.org/manage/account/publishing/ with workflow name `release.yml`
+# and environment name `pypi`. Step-by-step release instructions live in the
+# polars2svg_dev repo's pypi_instructions.txt.
 
 on:
   push:
@@ -20,8 +22,17 @@ on:
   workflow_dispatch:
 
 jobs:
+  # Pre-publish gate: the same jobs that run on every push to main (mypy,
+  # bandit/pip-audit/ruff, and the Linux clean-room wheel install + test suite),
+  # executed against the tagged commit. A failure here stops the release before
+  # anything is built or uploaded.
+  ci:
+    name: CI gate
+    uses: ./.github/workflows/ci.yml
+
   build:
     name: Build sdist + wheel
+    needs: ci
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

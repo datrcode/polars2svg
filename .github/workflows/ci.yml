@@ -12,6 +12,11 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  # Lets release.yml invoke this same suite as a pre-publish gate, so the tests
+  # that guard a release are literally the tests that run on every commit — not
+  # a second copy that can drift. Tag pushes do not match `branches: [main]`
+  # above, so without this the tagged commit would otherwise never be tested.
+  workflow_call:
 
 jobs:
   # Type-check the public surface (PyPI nice-to-have #1). The package ships a

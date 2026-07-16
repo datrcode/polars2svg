@@ -1,6 +1,7 @@
 import asyncio
 import copy
 import json
+import re
 import time
 from math import sqrt
 from typing import Any
@@ -1527,6 +1528,34 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
         return nodes
 
     #
+    # _matchNodesByRegex_() - regex-match nodes/labels against one or more patterns
+    # - mirrors the substring-matching branch of selectEntities(), but with re.search()
+    # - invalid patterns (e.g. an unbalanced group typed into a live search box) are
+    #   skipped rather than raised, so they just contribute no matches
+    #
+    def _matchNodesByRegex_(_self_, patterns, all_nodes, ignore_case=True):
+        if isinstance(patterns, str): _patterns_ = set([patterns])
+        else:                         _patterns_ = set(patterns)
+        _flags_    = re.IGNORECASE if ignore_case else 0
+        _compiled_ = []
+        for _pattern_ in _patterns_:
+            try:             _compiled_.append(re.compile(_pattern_, _flags_))
+            except re.error: pass # invalid regex -- contributes no matches
+
+        _set_ = set()
+        _node_labels_ = _linkp_.node_labels or {}
+        str_to_node   = {str(n): n for n in all_nodes} if _node_labels_ else {}
+        for _regex_ in _compiled_:
+            if _node_labels_:
+                for _label_key_ in _node_labels_.keys():
+                    _actual_node_ = str_to_node.get(str(_label_key_))
+                    if _actual_node_ is not None and _regex_.search(str(_node_labels_[_label_key_])):
+                        _set_.add(_actual_node_)
+            for _node_ in all_nodes:
+                if _regex_.search(str(_node_)): _set_.add(_node_)
+        return _set_
+
+    #
     # selectEntities() - set the selected entities
     #
     def selectEntities(self, 
@@ -1558,7 +1587,7 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
                         if _substring_ in str(_node_).lower(): _set_.add(_node_)
                     elif _substring_ in str(_node_): _set_.add(_node_)
         elif method == 'regex':     # REGEX MATCHES
-            _set_ = set() # regex matching is not implemented; selects nothing
+            _set_ = self._matchNodesByRegex_(selection, all_nodes, ignore_case)
         else:                       # EXACT MATCHES
             # Fix up the selection so that it's definitely a set...
             if    selection is None:                                         selection_as_set = set()
@@ -2509,8 +2538,12 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
                 elif _s_.startswith('-'): set_op, _s_ = 'subtract',  _s_[1:]
                 elif _s_.startswith('&'): set_op, _s_ = 'intersect', _s_[1:]
                 else:                     set_op       = 'replace'
+                if len(_s_) >= 2 and _s_.startswith('/') and _s_.endswith('/'):
+                    method, _s_ = 'regex', _s_[1:-1]
+                else:
+                    method      = 'substring'
                 if _s_:
-                    self.selectEntities(_s_, set_op=set_op, method='substring', ignore_case=True)
+                    self.selectEntities(_s_, set_op=set_op, method=method, ignore_case=True)
 
     #
     # applyLayoutChoice() - a picker-menu commit in JS set layout_mode /
@@ -2688,6 +2721,7 @@ z . | select node under mouse by color (shift, ctrl, and ctrl-shift apply)
         'replaceBaseDataframe':               replaceBaseDataframe,
         'receiveSelection':                   receiveSelection,
         '_extractNodes_':                     _extractNodes_,
+        '_matchNodesByRegex_':                _matchNodesByRegex_,
         'selectEntities':                     selectEntities,
         'selectedEntities':                   selectedEntities,
         'selectedNodes':                      selectedNodes,

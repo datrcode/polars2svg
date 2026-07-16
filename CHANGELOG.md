@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] — 2026-07-16
+
 ### Added
 
 - **`TFDPLayout` now runs on NVIDIA GPUs via MLX's CUDA backend.** The layout was
@@ -42,6 +44,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   byte-identically to previous output.
 
 ### Fixed
+
+- **Labels containing dotted numbers were silently corrupted in rendered SVG.**
+  `roundSvgFloats()` trimmed float precision by regex over the finished SVG
+  string, so it matched any digit-dot-digit run *anywhere* — including inside
+  `<text>`/`<tspan>` element content, not just numeric attribute values. Any
+  label that merely looked like a float was rewritten: the node label
+  `1.172.32.1` rendered as `1.17.32.1`. The pass is now disabled pending a
+  rewrite that only touches attribute-value floats; `tests/test_svg_float_precision.py`
+  guards the behavior. Coordinates are now emitted at full precision, so SVG
+  output is byte-different from 0.1.0 (golden images updated) and somewhat
+  larger — rendering is unchanged apart from the corrected labels.
 
 - **`pip install polars2svg[mlx]` was broken.** `tfdp_layout.py` imports
   `scipy`/`networkx`/`scikit-learn`, but the `mlx` extra did not chain `[layouts]`

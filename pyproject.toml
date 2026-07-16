@@ -70,7 +70,15 @@ mlx-cuda13 = ["mlx[cuda13]; sys_platform == 'linux'", "polars2svg[layouts]"]
 # PNG export (component.save('x.png') / .savePNG()). Pillow is already a core
 # dependency; svglib+reportlab do the SVG->PNG rasterization, rlPyCairo is the
 # renderPM backend needed on Linux. Install with: pip install polars2svg[export]
-export = ["svglib>=1.5", "reportlab>=4.0", "rlPyCairo>=0.3"]
+#
+# svglib is capped below 2.0: svglib 2.x applies CSS px->pt conversion to the
+# SVG's width/height (200px -> 150pt), which at renderPM's default 72dpi shrinks
+# every export to 0.75 scale and mis-scales nested <svg> tiles (smallp /
+# spreadlinesp). svglib 1.x carries px straight through as points (1px -> 1px at
+# 72dpi), which is the rasterization the PNG goldens are validated against. See
+# svgToPNGBytes() in export.py. reportlab 5 is fine with svglib 1.x, so the
+# floor stays open to it (reportlab>=4.0 now admits 5.0) — the cap is on svglib.
+export = ["svglib>=1.5,<2", "reportlab>=4.0", "rlPyCairo>=0.3"]
 
 # Graph-layout algorithms: linkp's/chordp's pluggable layouts, the graph-layout
 # mixin (treemaps, force-directed, neighborhood clustering, ...), and shapely
@@ -104,7 +112,9 @@ dev = [
   "coverage",
   "ipykernel",
   "kagglehub",
-  "svglib",
+  "svglib<2",   # capped for the same reason as the [export] extra: svglib 2's
+                # px->pt conversion shrinks PNG output and breaks nested-<svg>
+                # goldens. Keeps local test runs on the tested rasterization path.
   "reportlab",
   "rlPyCairo",  # reportlab 5.x renderPM backend (Linux); rasterizes SVG->PNG in golden tests
   "networkx>=3.2",

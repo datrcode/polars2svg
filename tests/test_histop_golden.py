@@ -131,10 +131,13 @@ class TestHistopGolden(unittest.TestCase):
         assert_image_matches_golden(hp.svg, 'histop_order_by_field')
 
     # ------------------------------------------------------------------
-    # draw_context=False — axes and labels suppressed
+    # draw_context=False, draw_labels=False — axes and bin labels suppressed
+    # (bin labels are a separate, independently-gated flag from context; see item 4
+    # of the draw_* parameter audit -- histop's draw_labels defaults True, so it must
+    # be turned off explicitly here to keep this golden's original all-off intent)
     # ------------------------------------------------------------------
     def test_no_draw_context(self):
-        hp = self.p2s.histop(_DF, 'cat', draw_context=False, wxh=(128, 128))
+        hp = self.p2s.histop(_DF, 'cat', draw_context=False, draw_labels=False, wxh=(128, 128))
         assert_svg_matches_golden(hp.svg, 'histop_no_draw_context')
         assert_image_matches_golden(hp.svg, 'histop_no_draw_context')
 

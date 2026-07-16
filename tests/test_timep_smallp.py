@@ -88,12 +88,12 @@ class TestTimepSmalp(unittest.TestCase):
         self.assertIn('__all__', result.category_to_df)
         self.assertIn('<svg', result._repr_svg_())
 
-    # ── draw_context / wxh ────────────────────────────────────────────────────
+    # ── draw_labels / wxh ────────────────────────────────────────────────────
 
-    def test_smallp_timep_no_draw_context(self):
+    def test_smallp_timep_no_draw_labels(self):
         df       = self._makeSmallpDf()
         template = self.p2s.timep(df, color='category')
-        self.p2s.smallp(df, template, 'category', draw_context=False)
+        self.p2s.smallp(df, template, 'category', draw_labels=False)
 
     def test_smallp_timep_custom_wxh(self):
         df       = self._makeSmallpDf()

@@ -54,7 +54,7 @@ class TestSmallpGeometry(unittest.TestCase):
         '''sketch_only SVG has tile outlines, df.len text, and "Remainder" label.
 
         6 cats, wxh=(256,286): tiles_across=2, tiles_down=2 → 4 slots → 3 visible + remainder.
-        draw_context=True (default) adds a centered label below each tile.
+        draw_labels=True (default) adds a centered label below each tile.
         '''
         smp = self.p2s.smallp(self.df, 'cat', self.xyp,
                                wxh=(256, 286), sketch_only=True)
@@ -63,36 +63,36 @@ class TestSmallpGeometry(unittest.TestCase):
         self.assertIn('Remainder', smp.svg)
         self.assertIn('df.len = 2', smp.svg)
 
-    def test_sketch_only_draw_context_false(self):
-        '''sketch_only=True with draw_context=False uses tmpl_h_adj=128.
+    def test_sketch_only_draw_labels_false(self):
+        '''sketch_only=True with draw_labels=False uses tmpl_h_adj=128.
 
-        draw_context=False → tmpl_h_adj=128 → tiles_down=256//128=2 → 4 slots for 6 cats.
+        draw_labels=False → tmpl_h_adj=128 → tiles_down=256//128=2 → 4 slots for 6 cats.
         The label-below-tile branch (line 346) is skipped.
         '''
         smp = self.p2s.smallp(self.df, 'cat', self.xyp,
-                               wxh=(256, 256), sketch_only=True, draw_context=False)
+                               wxh=(256, 256), sketch_only=True, draw_labels=False)
         self.assertNotIn('__renderSVG__', smp.timing_metrics)
         self.assertEqual(smp.wxh_actual, (256, 256))
         # 4 slots → 3 visible + remainder
         self.assertEqual(len(smp.category_to_xy), 4)
         self.assertIn('<svg', smp.svg)
 
-    # ── draw_context=False ────────────────────────────────────────────────────
+    # ── draw_labels=False ────────────────────────────────────────────────────
 
-    def test_draw_context_false_changes_tile_height_in_geometry(self):
-        '''draw_context=False uses tmpl_h_adj=tmpl_h=128 vs. 143, changing grid layout.
+    def test_draw_labels_false_changes_tile_height_in_geometry(self):
+        '''draw_labels=False uses tmpl_h_adj=tmpl_h=128 vs. 143, changing grid layout.
 
         wxh=(256,256):
-          draw_context=True : tmpl_h_adj=143 → tiles_down=1 → 2 slots → 1 visible + remainder
-          draw_context=False: tmpl_h_adj=128 → tiles_down=2 → 4 slots → 3 visible + remainder
+          draw_labels=True : tmpl_h_adj=143 → tiles_down=1 → 2 slots → 1 visible + remainder
+          draw_labels=False: tmpl_h_adj=128 → tiles_down=2 → 4 slots → 3 visible + remainder
         '''
         smp_ctx  = self.p2s.smallp(self.df, 'cat', self.xyp,
-                                    wxh=(256, 256), draw_context=True)
+                                    wxh=(256, 256), draw_labels=True)
         smp_nctx = self.p2s.smallp(self.df, 'cat', self.xyp,
-                                    wxh=(256, 256), draw_context=False)
-        # draw_context=True: 256//143=1 row → 2 slots
+                                    wxh=(256, 256), draw_labels=False)
+        # draw_labels=True: 256//143=1 row → 2 slots
         self.assertEqual(len(smp_ctx.category_to_xy), 2)
-        # draw_context=False: 256//128=2 rows → 4 slots
+        # draw_labels=False: 256//128=2 rows → 4 slots
         self.assertEqual(len(smp_nctx.category_to_xy), 4)
 
     # ── insets ────────────────────────────────────────────────────────────────

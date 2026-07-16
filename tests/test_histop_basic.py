@@ -87,13 +87,19 @@ class TestHistopBasic(unittest.TestCase):
         t = self.p2s.histop(self.df, 'cat', draw_context=False)
         self.assertIn('<svg', t._repr_svg_())
 
-    def test_draw_context_false_no_bin_labels(self):
-        '''Bin labels are suppressed when draw_context=False.'''
-        t_ctx   = self.p2s.histop(self.df, 'cat', draw_context=True)
+    def test_draw_labels_false_no_bin_labels(self):
+        '''Bin labels (per-bin entity labels) are suppressed when draw_labels=False;
+        they are independent of draw_context (which covers grid lines / count axis).
+        Isolate via draw_context=False so no axis <text> is present either way.'''
+        t_lbl   = self.p2s.histop(self.df, 'cat', draw_context=False, draw_labels=True)
+        t_nolbl = self.p2s.histop(self.df, 'cat', draw_context=False, draw_labels=False)
+        self.assertIn('<text', t_lbl._repr_svg_())
+        self.assertNotIn('<text', t_nolbl._repr_svg_())
+
+    def test_draw_context_false_bin_labels_still_shown(self):
+        '''draw_labels defaults True on histop, so bin labels survive draw_context=False.'''
         t_noctx = self.p2s.histop(self.df, 'cat', draw_context=False)
-        # Bin labels appear as <text> elements; context=True must have some, context=False none.
-        self.assertIn('<text', t_ctx._repr_svg_())
-        self.assertNotIn('<text', t_noctx._repr_svg_())
+        self.assertIn('<text', t_noctx._repr_svg_())
 
     def test_custom_txt_h(self):
         for txt_h in [8, 10, 12, 16]:

@@ -41,7 +41,8 @@ class TestPiepBasic(unittest.TestCase):
         self.assertLess(t.r_inner, t.r)
 
     def test_waffle_style_renders_rects(self):
-        t = self.p2s.piep(self.df, 'cat', style=self.p2s.WAFFLEp, waffle_n=10)
+        # draw_border=False isolates the cell count from the (default-on) outer border rect.
+        t = self.p2s.piep(self.df, 'cat', style=self.p2s.WAFFLEp, waffle_n=10, draw_border=False)
         # 100 cells + background rect
         n_rects = len(re.findall(r'<rect\b', t._repr_svg_()))
         self.assertEqual(n_rects, 101)

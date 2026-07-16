@@ -1769,6 +1769,14 @@ class Polars2SVG(P2SColorsMixin,
     #     drift between the ~15 SVG-emitting components) are possible.
     #
     def roundSvgFloats(self, svg, digits=2):
+        # TODO: disabled -- the regex matches any digit-dot-digit run anywhere in the
+        # finished SVG string, including inside <text>/<tspan> element content, not just
+        # numeric attribute values. A label that merely looks like a float (an IP address,
+        # a version string, ...) gets its digits silently rounded away -- e.g. the node
+        # label "1.172.32.1" was corrupted to "1.17.32.1". Revisit this so trimming only
+        # touches attribute-value floats (e.g. by operating on parsed XML, or restricting
+        # matches to spans inside ="..."), then re-enable.
+        return svg
         if not svg: return svg
         def _round_(_m_):
             _s_    = _m_.group(0)

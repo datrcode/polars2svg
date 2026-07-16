@@ -7,6 +7,13 @@ from polars2svg import Polars2SVG
 from svg_test_utils import assert_valid_svg
 
 
+# roundSvgFloats() is disabled (see the TODO on Polars2SVG.roundSvgFloats): its regex
+# matched digit-dot-digit runs anywhere in the finished SVG, including inside
+# <text>/<tspan> label content, silently corrupting labels that merely looked like a
+# float (e.g. node label "1.172.32.1" -> "1.17.32.1"). Re-enable these once trimming is
+# restricted to attribute-value floats.
+_ROUNDING_DISABLED_REASON_ = 'roundSvgFloats() disabled pending a text-content-safe rewrite'
+
 # a decimal number embedded in an SVG string (matches the production helper's regex)
 _NUM_RE_ = re.compile(r'-?\d*\.\d+')
 
@@ -28,9 +35,11 @@ class TestRoundSvgFloatsHelper(unittest.TestCase):
         # wrap in an attribute so the helper sees a realistic context
         return self.p2s.roundSvgFloats(f'v="{s}"', **kw)
 
+    @unittest.skip(_ROUNDING_DISABLED_REASON_)
     def test_trims_long_tail(self):
         self.assertEqual(self._r('123.456789'), 'v="123.46"')
 
+    @unittest.skip(_ROUNDING_DISABLED_REASON_)
     def test_rounds_up(self):
         self.assertEqual(self._r('0.999'), 'v="1"')
         self.assertEqual(self._r('12.348'), 'v="12.35"')
@@ -44,16 +53,19 @@ class TestRoundSvgFloatsHelper(unittest.TestCase):
         for s in ('0', '5', '256', '-40', '1000000'):
             self.assertEqual(self._r(s), f'v="{s}"')
 
+    @unittest.skip(_ROUNDING_DISABLED_REASON_)
     def test_negative_numbers(self):
         self.assertEqual(self._r('-3.14159'), 'v="-3.14"')
         self.assertEqual(self._r('-0.129'), 'v="-0.13"')
 
+    @unittest.skip(_ROUNDING_DISABLED_REASON_)
     def test_collapses_to_zero(self):
         # rounds below the precision threshold -> plain "0" (no "-0" / "0.00")
         self.assertEqual(self._r('0.001'), 'v="0"')
         self.assertEqual(self._r('-0.001'), 'v="0"')
         self.assertEqual(self._r('-0.004'), 'v="0"')
 
+    @unittest.skip(_ROUNDING_DISABLED_REASON_)
     def test_strips_trailing_zeros(self):
         # 1.30something -> 1.3, not 1.30
         self.assertEqual(self._r('1.2999'), 'v="1.3"')
@@ -68,6 +80,7 @@ class TestRoundSvgFloatsHelper(unittest.TestCase):
         for s in ('xyp_12345', 'plotClip-999', 'rect-group-42'):
             self.assertEqual(self._r(s), f'v="{s}"')
 
+    @unittest.skip(_ROUNDING_DISABLED_REASON_)
     def test_digits_parameter(self):
         self.assertEqual(self._r('1.23456', digits=3), 'v="1.235"')
         self.assertEqual(self._r('1.23456', digits=0), 'v="1"')
@@ -82,11 +95,13 @@ class TestRoundSvgFloatsHelper(unittest.TestCase):
         twice = self.p2s.roundSvgFloats(once)
         self.assertEqual(once, twice)
 
+    @unittest.skip(_ROUNDING_DISABLED_REASON_)
     def test_multiple_numbers_in_one_string(self):
         s = '<line x1="0.111" y1="2.999" x2="100.0" y2="3.14" />'
         self.assertEqual(self.p2s.roundSvgFloats(s),
                          '<line x1="0.11" y1="3" x2="100.0" y2="3.14" />')
 
+    @unittest.skip(_ROUNDING_DISABLED_REASON_)
     def test_reduces_length(self):
         s = '<rect x="12.3456789" y="98.7654321" width="10.111111" height="20.222222" />'
         self.assertLess(len(self.p2s.roundSvgFloats(s)), len(s))
@@ -130,6 +145,7 @@ class TestComponentFloatPrecision(unittest.TestCase):
                                           p2s.xyp(_df_cat_, 'val', 'val'), wxh=(300, 300)),
         }
 
+    @unittest.skip(_ROUNDING_DISABLED_REASON_)
     def test_max_two_fractional_digits(self):
         for _name_, _fn_ in self._renderers().items():
             with self.subTest(component=_name_):
@@ -152,6 +168,7 @@ class TestComponentFloatPrecision(unittest.TestCase):
             with self.subTest(component=_name_):
                 self.assertNotIn('\x1f', _fn_().svg)
 
+    @unittest.skip(_ROUNDING_DISABLED_REASON_)
     def test_linkp_interactive_rerender_is_rounded(self):
         # linkp rounds inside __renderSVG__ so the invalidate/re-render path is covered
         _df_g_ = pl.DataFrame({'fm': ['a', 'b', 'c', 'a'], 'to': ['b', 'c', 'a', 'd']})

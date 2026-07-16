@@ -13,7 +13,7 @@ class Timep(ExportMixin):
         'template', 'df',
         'time', 'count', 'count_range', 'count_range_shared',
         'color', 'style',
-        'wxh', 'insets', 'draw_context', 'txt_h',
+        'wxh', 'insets', 'draw_context', 'draw_border', 'txt_h',
         'sm_shared', 'use_lazy_execution', 'min_bar_w',
         'swarm_max_pts', 'remainder_threshold', 'color_stat_range_shared',
         'date_range_shared', 'min_label_spacing', 'legend',
@@ -76,6 +76,7 @@ class Timep(ExportMixin):
             'wxh':                     (512, 256),
             'insets':                  (2, 2),
             'draw_context':            True,
+            'draw_border':             True,
             'txt_h':                   12,
             'sm_shared':               set(),
             'use_lazy_execution':      True,
@@ -1089,6 +1090,14 @@ class Timep(ExportMixin):
         if getattr(self, 'legend_info', None) is not None and self._legend_region_ is not None:
             _dl_.extend(self.p2s.legendRenderDL(self.wxh, self._legend_region_, self.legend_spec,
                                                 self.legend_info, self.txt_h), copy_svg=True)
+
+        # ── BORDER ─────────────────────────────────────────────────────────
+        if self.draw_border:
+            _border_svg_ = f'<rect x="0" y="0" width="{w-1}" height="{h-1}" fill="none" stroke="{_axis_inner_}" stroke-width="1" />'
+            _dl_.line(0, 0, w-1, 0, _axis_inner_, width=1.0, svg=_border_svg_)
+            _dl_.line(0, h-1, w-1, h-1, _axis_inner_, width=1.0)
+            _dl_.line(0, 0, 0, h-1, _axis_inner_, width=1.0)
+            _dl_.line(w-1, 0, w-1, h-1, _axis_inner_, width=1.0)
 
         self.svg = _svg_head_ + _dl_.svg() + '</svg>'
 

@@ -154,7 +154,7 @@ class SpreadLinesP(ExportMixin):
             'max_channel_w':          16,
             'channel_inter_d':        4,
             # output
-            'draw_labels':            True,
+            'draw_labels':            False,
             'node_labels':            None,
             'wxh':                    (800, 400),
             'x_ins':                  32,
@@ -238,6 +238,14 @@ class SpreadLinesP(ExportMixin):
         if 'highlight_nodes'         in kwargs:
             _hn_ = kwargs['highlight_nodes']
             self.highlight_nodes = frozenset(str(n) for n in _hn_) if _hn_ else frozenset()
+
+        # SpreadLinesP has no per-node/per-entity labeling (unlike linkp/chordp/piep) --
+        # the circle-packing layout doesn't reserve space for it. draw_context covers
+        # the one label this component does draw (the timestamp row along the bottom).
+        if self.draw_labels:
+            raise NotImplementedError(
+                'SpreadLinesP: draw_labels is not implemented (no per-node label layout). '
+                'Use draw_context to control the timestamp row instead.')
 
         # "No data" placeholder for early error visibility -- only ever seen when
         # no df is supplied (a successful render overwrites self.svg); makes a
@@ -1640,7 +1648,7 @@ class SpreadLinesP(ExportMixin):
 
         # ── Timestamp labels ───────────────────────────────────────────────────
         _channel_max_y_ = self.vy1
-        if self.draw_labels:
+        if self.draw_context:
             for _b_ in _bins_:
                 _bnd_ = self.bin_to_bounds[_b_]
                 _channel_max_y_ = max(_bnd_[3] + self.txt_h, _channel_max_y_)

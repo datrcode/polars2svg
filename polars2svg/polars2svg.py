@@ -883,7 +883,8 @@ class Polars2SVG(P2SColorsMixin,
 
         wxh            = (width, height)
         insets         = (x-inset, y-inset)   # if the plot is too small, the insets won't be drawn
-        draw_context   = True | False         # if the plot is too small, the context won't be drawn
+        draw_context   = True (default) | False  # if the plot is too small, the context won't be drawn
+        draw_border    = True (default) | False  # draw a rectangular border around the SVG
         txt_h          = label text height
         background             = {key: shapely_object, ...}
                                | {key: [(x,y), ...], ...}        # list of (x,y) coordinate pairs
@@ -1006,6 +1007,11 @@ class Polars2SVG(P2SColorsMixin,
         wxh                = (128, 256)                             # default canvas size (width, height)
         insets             = (x-inset, y-inset)                    # if the plot is too small, the insets won't be drawn
         draw_context       = True (default) | False                # if the plot is too small, the context won't be drawn
+                                                                    # (grid lines, count axis, "+N more" indicator)
+        draw_labels        = True (default) | False                # per-bin label (the bin's own value/category), drawn
+                                                                    # inside the plot at the bar's left edge -- independent
+                                                                    # of draw_context; survives draw_context=False
+        draw_border        = True (default) | False                # draw a rectangular border around the SVG
         txt_h              = 12                                    # label text height in pixels
         bar_h              = height of each bar in pixels (default matches txt_h)
         v_gap              = vertical gap between bars in pixels (default 0)
@@ -1095,6 +1101,7 @@ class Polars2SVG(P2SColorsMixin,
                                                                    # enough, otherwise outside with a leader line when there is
                                                                    # margin around the pie (large insets / oblong wxh); labels
                                                                    # are cropped and prioritized largest-slice-first
+        draw_border        = True (default) | False                # draw a rectangular border around the SVG
         txt_h              = 12                                    # label text height in pixels
         start_angle        = -90.0                                 # degrees; -90 = 12 o'clock, sweeping clockwise
         donut_ratio        = 0.55                                  # inner/outer radius for DONUTp
@@ -1354,7 +1361,6 @@ class Polars2SVG(P2SColorsMixin,
         txt_offset     = 0                                 # extra gap in pixels between arc outer edge and label
 
         draw_border    = True                              # draw a rectangular border around the SVG
-        draw_context   = True                              # show category label when used inside smallp
 
         === %< === %< === %< === %< === %< === %< === %< === %< === %< === %< === %< ===
 
@@ -1450,6 +1456,7 @@ class Polars2SVG(P2SColorsMixin,
         wxh                = (512, 256)                             # default canvas size (width, height)
         insets             = (x-inset, y-inset)                    # if the plot is too small, the insets won't be drawn
         draw_context       = True (default) | False                # if the plot is too small, the context won't be drawn
+        draw_border        = True (default) | False                # draw a rectangular border around the SVG
         txt_h              = 12                                    # label text height in pixels
         sm_shared          = {p2s.SM_X | p2s.SM_COLOR | p2s.SM_COUNT}  # shared attributes w/in small multiples
         use_lazy_execution = True (default) | False
@@ -1551,8 +1558,12 @@ class Polars2SVG(P2SColorsMixin,
                            = (width, None)                    # default w/ a width of 1280
                            = (None,  height)
         insets             = (x-inset, y-inset)               # if the plot is too small, the insets won't be drawn
-        draw_context       = True (default) | False           # if the plot is too small, the context won't be drawn
+        draw_labels        = True (default) | False           # centered label (the tile's category/entity) below each tile
+        draw_border        = True (default) | False           # rectangular outline around each tile
         txt_h              = label text height
+
+        # Note: draw_context (axes) is a per-template concern -- set it on sm_template
+        # (e.g. p2s.xyp(..., draw_context=False)) before passing it in, not on smallp() itself.
 
         '''
         return Smallp(*args, **kwargs)
@@ -1589,6 +1600,13 @@ class Polars2SVG(P2SColorsMixin,
                        = ('field', p2s.SETp)                   # force count-distinct
 
         template       = None                                  # another SpreadLinesP instance; copies all settings, then applies overrides
+
+        wxh            = (800, 400)                            # default canvas size (width, height)
+        draw_context   = True (default) | False                # timestamp row along the bottom of each bin
+        draw_border    = True (default) | False                # draw a rectangular border around the SVG
+        draw_labels    = False (default)                       # per-node labels are not supported by the packed-circle
+                                                                # layout; setting True raises NotImplementedError
+        txt_h          = 12                                    # label text height in pixels
 
         legend = False (default)                        # no legend -- output identical to pre-legend renders
                = True                                   # same as 'right'

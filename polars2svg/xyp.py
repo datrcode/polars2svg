@@ -49,7 +49,7 @@ class XYp(ExportMixin):
         'x_order', 'y_order',
         'background', 'background_label_color', 'background_opacity',
         'background_fill', 'background_stroke_w', 'background_stroke',
-        'draw_context', 'insets', 'wxh', 'txt_h', 'sm_shared',
+        'draw_context', 'draw_border', 'insets', 'wxh', 'txt_h', 'sm_shared',
         'use_lazy_execution', 'legend',
     })
 
@@ -127,6 +127,12 @@ class XYp(ExportMixin):
         _dl_.extend(self.__dotsToInstances__(), scissor=_dot_scissor_)
         _dl_.extend(self._dl_distributions_)
         if getattr(self, '_dl_legend_', None) is not None: _dl_.extend(self._dl_legend_)
+        if self.draw_border:
+            _border_co_ = self.p2s.colorTyped('axis', 'inner')
+            _dl_.line(0, 0, w-1, 0, _border_co_, width=1.0)
+            _dl_.line(0, h-1, w-1, h-1, _border_co_, width=1.0)
+            _dl_.line(0, 0, 0, h-1, _border_co_, width=1.0)
+            _dl_.line(w-1, 0, w-1, h-1, _border_co_, width=1.0)
         self._gpu_dl_ = _dl_
         return _dl_
 
@@ -201,6 +207,7 @@ class XYp(ExportMixin):
             'background_stroke_w':           1.0,       # None / number / dict
             'background_stroke':             'default', # None / 'default' / dict / '#rrggbb'
             'draw_context':          True,
+            'draw_border':           True,
             'insets':                (2, 2),
             'wxh':                   (256, 256),
             'txt_h':                 12,
@@ -3343,11 +3350,16 @@ class XYp(ExportMixin):
         else:
             _svg_style_, _svg_plot_ = '', ''
 
+        _svg_border_ = ''
+        if self.draw_border:
+            _border_co_  = self.p2s.colorTyped('axis', 'inner')
+            _svg_border_ = f'<rect x="0" y="0" width="{w-1}" height="{h-1}" fill="none" stroke="{_border_co_}" stroke-width="1" />'
+
         self.svg = f'''<svg id="xyp_{_randid_}" x="0" y="0" width="{w}" height="{h}" xmlns="http://www.w3.org/2000/svg">
                         {self.svg_defs}
                         {_svg_style_}
                         <rect x="0" y="0" width="{w}" height="{h}" fill="{_background_default_}" stroke="{_background_default_}" />
-                        {self.svg_background}{self.svg_context} {self.svg_lines} {_svg_plot_} {self.svg_distributions} {self.svg_legend}</svg>'''
+                        {self.svg_background}{self.svg_context} {self.svg_lines} {_svg_plot_} {self.svg_distributions} {self.svg_legend}{_svg_border_}</svg>'''
 
     #
     # renderSmallMultiples() - render small multiples and return a lookup table to the rendering

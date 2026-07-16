@@ -906,7 +906,7 @@ def piepi(_piep_, **kwargs):       return _interactivep(_piep_,    'piepi',    *
 
 def _tile_at_(plot, cx, cy):
     tw = plot.sm_template.wxh[0]
-    th = plot.sm_template.wxh[1] + (plot.txt_h + 3 if plot.draw_context else 0)
+    th = plot.sm_template.wxh[1] + (plot.txt_h + 3 if plot.draw_labels else 0)
     for key, (tx, ty) in plot.category_to_xy.items():
         if tx <= cx < tx + tw and ty <= cy < ty + th:
             return key
@@ -914,7 +914,7 @@ def _tile_at_(plot, cx, cy):
 
 def _tiles_overlapping_(plot, rx0, ry0, rx1, ry1):
     tw = plot.sm_template.wxh[0]
-    th = plot.sm_template.wxh[1] + (plot.txt_h + 3 if plot.draw_context else 0)
+    th = plot.sm_template.wxh[1] + (plot.txt_h + 3 if plot.draw_labels else 0)
     return [key for key, (tx, ty) in plot.category_to_xy.items()
             if tx < rx1 and tx + tw > rx0 and ty < ry1 and ty + th > ry0]
 

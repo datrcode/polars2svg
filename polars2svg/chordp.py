@@ -265,7 +265,7 @@ class ChP(ExportMixin):
         'template', 'df',
         'relationships', 'order', 'pos',
         'color', 'node_color', 'count',
-        'node_size', 'node_shape', 'node_opacity', 'node_size_range',
+        'node_size', 'node_opacity', 'node_size_range',
         'node_gap', 'draw_labels', 'label_style', 'txt_offset',
         'node_labels', 'label_only', 'node_selection',
         'link_size', 'link_shape', 'link_opacity', 'link_size_range',
@@ -273,7 +273,7 @@ class ChP(ExportMixin):
         'wxh', 'insets', 'bounds_percent',
         'sm_shared', '_shared_view_x_', '_shared_view_y_',
         'count_range_shared', 'color_stat_range_shared',
-        'draw_border', 'draw_context', 'txt_h', 'legend',
+        'draw_border', 'txt_h', 'legend',
     })
 
     #
@@ -488,7 +488,6 @@ class ChP(ExportMixin):
             'count':                  self.p2s.ROW_COUNTp,
             # Node styling
             'node_size':              'medium',
-            'node_shape':             None,
             'node_opacity':           1.0,
             'node_size_range':        (0.3, 4),
             'node_gap':               2,
@@ -519,7 +518,6 @@ class ChP(ExportMixin):
             'color_stat_range_shared': None,
             # Context
             'draw_border':            True,
-            'draw_context':           True,
             'txt_h':                  12,
             'legend':                 False,
         }

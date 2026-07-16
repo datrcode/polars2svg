@@ -14,7 +14,7 @@ class Smallp(ExportMixin):
         'df', 'category_by', 'sm_template',
         'order', 'descending', 'grid_mode', 'wxh', 'insets',
         'include_all', 'collate_remainder', 'use_lazy_execution',
-        'sketch_only', 'draw_context', 'draw_border', 'txt_h', 'cycle_by',
+        'sketch_only', 'draw_labels', 'draw_border', 'txt_h', 'cycle_by',
     })
 
     def __init__(self, *args, **kwargs):
@@ -68,7 +68,7 @@ class Smallp(ExportMixin):
                 _dl_.line(_x0_, _y1_, _x1_, _y1_, _axis_color_, width=0.5)
                 _dl_.line(_x0_, _y0_, _x0_, _y1_, _axis_color_, width=0.5)
                 _dl_.line(_x1_, _y0_, _x1_, _y1_, _axis_color_, width=0.5)
-            if self.draw_context:
+            if self.draw_labels:
                 _dl_.text(self.p2s, self._label_for_tuple_(_tuple_), _xy_[0] + tmpl_w/2,
                           _xy_[1] + tmpl_h + self.txt_h,
                           color=_label_color_, txt_h=self.txt_h, anchor='middle', svg='')
@@ -95,7 +95,7 @@ class Smallp(ExportMixin):
                       collate_remainder  = self.collate_remainder,
                       use_lazy_execution = self.use_lazy_execution,
                       sketch_only        = False,
-                      draw_context       = self.draw_context,
+                      draw_labels        = self.draw_labels,
                       draw_border        = self.draw_border,
                       txt_h              = self.txt_h)
 
@@ -138,7 +138,7 @@ class Smallp(ExportMixin):
             'collate_remainder':  True,
             'use_lazy_execution': False,
             'sketch_only':        False,
-            'draw_context':       True,
+            'draw_labels':       True,
             'draw_border':        True,
             'txt_h':              12,
             'cycle_by':           None,
@@ -334,7 +334,7 @@ class Smallp(ExportMixin):
         _tiles_needed_ = self._num_categories_
         if self.include_all: _tiles_needed_ += 1
         tmpl_w, tmpl_h = self.sm_template.wxh
-        tmpl_h_adj = tmpl_h + self.txt_h + 3 if self.draw_context else tmpl_h
+        tmpl_h_adj = tmpl_h + self.txt_h + 3 if self.draw_labels else tmpl_h
         x_ins,  y_ins  = self.insets
         _w_,    _h_    = self.wxh
         _tiles_down_, _tiles_across_ = None, None
@@ -441,7 +441,7 @@ class Smallp(ExportMixin):
                 _svg_.append(self.p2s.svgText(_label_, _xy_[0]+4, _xy_[1]+10, color=_label_color_, txt_h=8))
                 _df_ = self.category_to_df[_tuple_]
                 _svg_.append(self.p2s.svgText(f'df.len = {len(_df_)}', _xy_[0]+4, _xy_[1]+20, color=_label_color_, txt_h=8))
-                if self.draw_context:
+                if self.draw_labels:
                     _x_ = _xy_[0] + tmpl_w/2
                     _y_ = _xy_[1] + tmpl_h + self.txt_h
                     _svg_.append(self.p2s.svgText(_label_, _x_, _y_, color=_label_color_, txt_h=self.txt_h, anchor='middle'))
@@ -462,7 +462,7 @@ class Smallp(ExportMixin):
         _remainder_str_    = f'Remainder DFs:   {_num_remainder_categories_}'
 
         tmpl_w, tmpl_h = self.sm_template.wxh
-        tmpl_h_adj = tmpl_h + self.txt_h + 3 if self.draw_context else tmpl_h
+        tmpl_h_adj = tmpl_h + self.txt_h + 3 if self.draw_labels else tmpl_h
 
         _width_fit_  = _tiles_across_ * tmpl_w     + (_tiles_across_ + 1) * self.insets[0]
         _height_fit_ = _tiles_down_   * tmpl_h_adj + (_tiles_down_   + 1) * self.insets[1]
@@ -509,7 +509,7 @@ class Smallp(ExportMixin):
             _svg_.append(f'<g transform="translate({_xy_[0]},{_xy_[1]})">{_rendering_._repr_svg_()}</g>')
             if self.draw_border:
                 _svg_.append(f'<rect width="{tmpl_w}" height="{tmpl_h}" x="{_xy_[0]}" y="{_xy_[1]}" fill="none" stroke="{_axis_color_}" stroke-width="0.5"/>')
-            if self.draw_context:
+            if self.draw_labels:
                 _x_ = _xy_[0] + tmpl_w/2
                 _y_ = _xy_[1] + tmpl_h + self.txt_h
                 _svg_.append(self.p2s.svgText(_label_, _x_, _y_, color=_label_color_, txt_h=self.txt_h, anchor='middle'))

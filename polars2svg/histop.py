@@ -15,7 +15,7 @@ class Histop(ExportMixin):
         'template', 'df',
         'bin_by', 'count', 'count_range', 'count_range_shared',
         'color', 'order', 'descending', 'style',
-        'wxh', 'insets', 'draw_context', 'txt_h', 'bar_h', 'v_gap',
+        'wxh', 'insets', 'draw_context', 'draw_border', 'draw_labels', 'txt_h', 'bar_h', 'v_gap',
         'draw_distribution', 'distribution', 'distribution_bin_w',
         'sm_shared', 'use_lazy_execution', 'min_bar_w',
         'swarm_max_pts', 'remainder_threshold', 'color_stat_range_shared',
@@ -82,6 +82,8 @@ class Histop(ExportMixin):
             'wxh':                     (128, 256),
             'insets':                  (2, 2),
             'draw_context':            True,
+            'draw_border':             True,
+            'draw_labels':             True,
             'txt_h':                   12,
             'bar_h':                   None,
             'v_gap':                   0,
@@ -866,8 +868,9 @@ class Histop(ExportMixin):
                                             f'fill="{_data_color_}" fill-opacity="0.5" />')
 
         # ── BIN LABELS (inside plot, left edge, baseline at bar bottom) ──
+        # Per-bin (per-entity) labels -- gated on draw_labels, not draw_context.
         _lbl_max_w_ = self._plot_w_ * 0.5
-        for _i_, _bin_ in enumerate(_visible_bins_) if self.draw_context else []:
+        for _i_, _bin_ in enumerate(_visible_bins_) if self.draw_labels else []:
             _lbl_ = self.p2s.cropText(self.p2s.formatMultiFieldValue(_bin_), self.txt_h, _lbl_max_w_)
             _ly_  = self._plot_y0_ + _i_ * self._slot_h_ + self.bar_h + _y_v_ - 2
             _dl_.text(self.p2s, _lbl_, self._plot_x0_ + 2, _ly_,
@@ -951,6 +954,14 @@ class Histop(ExportMixin):
         if getattr(self, 'legend_info', None) is not None and self._legend_region_ is not None:
             _dl_.extend(self.p2s.legendRenderDL(self.wxh, self._legend_region_, self.legend_spec,
                                                 self.legend_info, self.txt_h), copy_svg=True)
+
+        # ── BORDER (outer SVG border; distinct from draw_context's plot-region axis border) ──
+        if self.draw_border:
+            _border_svg_ = f'<rect x="0" y="0" width="{w-1}" height="{h-1}" fill="none" stroke="{_axis_inner_}" stroke-width="1" />'
+            _dl_.line(0, 0, w-1, 0, _axis_inner_, width=1.0, svg=_border_svg_)
+            _dl_.line(0, h-1, w-1, h-1, _axis_inner_, width=1.0)
+            _dl_.line(0, 0, 0, h-1, _axis_inner_, width=1.0)
+            _dl_.line(w-1, 0, w-1, h-1, _axis_inner_, width=1.0)
 
         self.svg = _svg_head_ + _dl_.svg() + '</svg>'
 

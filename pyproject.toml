@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name            = "polars2svg"
-version         = "0.1.0"
+version         = "0.1.1"
 authors         = [{ name = "D. Trimm", email = "dave.trimm+polars2svg@gmail.com" }]
 description     = "Visualization Package Leveraging Polars and SVG in Jupyter Notebooks"
 readme          = { file = "README.md", content-type = "text/markdown" }

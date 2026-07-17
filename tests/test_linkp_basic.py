@@ -71,6 +71,56 @@ class TestLinkPBasic(unittest.TestCase):
         self.assertIn('<path', lp.svg)
         self.assertNotIn('<line', lp.svg)
 
+    def test_link_shape_flowmap(self):
+        lp = self.p2s.linkp(_make_df(), relationships=_rels(), pos=_make_pos(),
+                            link_shape='flowmap')
+        self.assertIn('<path', lp.svg)
+        self.assertNotIn('<line', lp.svg)
+
+    def test_link_shape_flowmap_deterministic(self):
+        # compare the link path geometry only (the full SVG embeds a random id)
+        import re
+        _mk_ = lambda: sorted(re.findall(r'<path d="[^"]*"',
+                                         self.p2s.linkp(_make_df(), relationships=_rels(),
+                                                        pos=_make_pos(),
+                                                        link_shape='flowmap').svg))
+        self.assertEqual(_mk_(), _mk_())
+
+    def test_link_shape_flowmap_multiple_relationships(self):
+        df = pl.DataFrame({'fm': ['a', 'b'], 'to': ['b', 'c'], 'p': ['c', 'a'], 'q': ['d', 'e']})
+        pos = {'a': [0, 0], 'b': [1, 0], 'c': [0.5, 0.866], 'd': [0.2, 0.5], 'e': [0.8, 0.5]}
+        lp = self.p2s.linkp(df, relationships=[('fm', 'to'), ('p', 'q')], pos=pos,
+                            link_shape='flowmap')
+        self.assertIn('<path', lp.svg)
+
+    def test_link_shape_flowmap_link_size_vary(self):
+        lp = self.p2s.linkp(_make_df(), relationships=_rels(), pos=_make_pos(),
+                            link_shape='flowmap', link_size='vary')
+        self.assertIn('stroke-width=', lp.svg)
+        self.assertIn('<path', lp.svg)
+
+    def test_link_arrows_off_by_default(self):
+        lp = self.p2s.linkp(_make_df(), relationships=_rels(), pos=_make_pos())
+        self.assertNotIn('<polygon', lp.svg)
+
+    def test_link_arrows_all_shapes(self):
+        for shape in ('line', 'curve', 'flowmap'):
+            lp = self.p2s.linkp(_make_df(), relationships=_rels(), pos=_make_pos(),
+                                link_shape=shape, link_arrows=True)
+            self.assertIn('<polygon', lp.svg, msg=f'link_shape={shape!r}')
+
+    def test_link_arrows_with_vary_size(self):
+        lp = self.p2s.linkp(_make_df(), relationships=_rels(), pos=_make_pos(),
+                            link_arrows=True, link_size='vary')
+        self.assertIn('<polygon', lp.svg)
+
+    def test_link_arrows_zero_length_link_safe(self):
+        # b->b collapses to a point: no arrow for it, but the render survives
+        df  = pl.DataFrame({'fm': ['a', 'a', 'b'], 'to': ['b', 'c', 'b']})
+        pos = {'a': [0, 0], 'b': [1, 0], 'c': [0.5, 0.9]}
+        lp  = self.p2s.linkp(df, relationships=[('fm', 'to')], pos=pos, link_arrows=True)
+        self.assertEqual(lp.svg.count('<polygon'), 2)
+
     def test_draw_labels(self):
         lp = self.p2s.linkp(_make_df(), relationships=_rels(), pos=_make_pos(),
                             draw_labels=True)

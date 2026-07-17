@@ -177,6 +177,26 @@ class TestLinkPWebGPU(unittest.TestCase):
         payload = lp.webgpu()
         self.assertEqual(manifest_count(payload, 'line'), len(lp.df_link) * 24 + 4)
 
+    def test_flowmap_links_flatten_24_segments_each(self):
+        lp = _P2S_.linkp(df=_DF_, relationships=[('fm', 'to')], pos=_POS_, link_shape='flowmap')
+        payload = lp.webgpu()
+        self.assertEqual(manifest_count(payload, 'line'), len(lp.df_link) * 24 + 4)
+
+    def test_link_arrows_emit_one_tri_per_link(self):
+        import polars as pl
+        lp = _P2S_.linkp(df=_DF_, relationships=[('fm', 'to')], pos=_POS_, link_arrows=True)
+        # 3 vertices per arrowhead triangle; links collapsed to a single screen
+        # pixel have no direction and draw no arrow
+        _sub_ = lp.df_link.drop_nulls(subset=['__rel0_fm_sx__', '__rel0_to_sx__'])
+        _n_   = len(_sub_.filter((pl.col('__rel0_fm_sx__') != pl.col('__rel0_to_sx__')) |
+                                 (pl.col('__rel0_fm_sy__') != pl.col('__rel0_to_sy__'))))
+        self.assertGreater(_n_, 0)
+        self.assertEqual(manifest_count(lp.webgpu(), 'tri'), _n_ * 3)
+
+    def test_no_tris_without_link_arrows(self):
+        lp = _P2S_.linkp(df=_DF_, relationships=[('fm', 'to')], pos=_POS_)
+        self.assertEqual(manifest_count(lp.webgpu(), 'tri'), 0)
+
     def test_node_colors_match(self):
         lp = _P2S_.linkp(df=_DF_, relationships=[('fm', 'to')], pos=_POS_)
         circles = decode_buffer(lp.webgpu(), 'circle')

@@ -170,6 +170,12 @@ implementation file carries the full citation in its module header.
   D. Holten, "Hierarchical Edge Bundles: Visualization of Adjacency Relations in
   Hierarchical Data," *IEEE Transactions on Visualization and Computer Graphics*,
   vol. 12, no. 5, pp. 741–748, 2006. doi:[10.1109/TVCG.2006.147](https://doi.org/10.1109/TVCG.2006.147)
+- **Force-directed origin-destination flow maps** (`linkp` flowmap link shape,
+  `ODFlowLayout` — [od_flow_layout.py](polars2svg/od_flow_layout.py)):
+  B. Jenny, D. M. Stephen, I. Muehlenhaus, B. E. Marston, R. Sharma, E. Zhang,
+  and H. Jenny, "Force-directed layout of origin-destination flow maps,"
+  *International Journal of Geographical Information Science*, 2017.
+  doi:[10.1080/13658816.2017.1307378](https://doi.org/10.1080/13658816.2017.1307378)
 - **ColorBrewer "Spectral" scheme** (the framework-wide color spectrum —
   [p2s_colors_mixin.py](polars2svg/p2s_colors_mixin.py)):
   M. Harrower and C. A. Brewer, "ColorBrewer.org: An Online Tool for Selecting

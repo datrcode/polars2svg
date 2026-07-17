@@ -1083,7 +1083,7 @@ class TestLINKPIPickerMenu(unittest.TestCase):
 @unittest.skipUnless(PANEL_AVAILABLE, 'panel not installed')
 class TestLINKPISizeCycleMenus(unittest.TestCase):
     """Verify the shift-L / shift-O / shift-P size & opacity cycle pickers and
-    the 'l' link-shape toggle: default selections, the JS commit path onto the
+    the 'l' link-shape picker: default selections, the JS commit path onto the
     LinkP, the hardcoded-number rule for size menus, and template wiring."""
 
     def _make_ctrl(self, **link_kwargs):
@@ -1179,23 +1179,56 @@ class TestLINKPISizeCycleMenus(unittest.TestCase):
         labels = [lbl for _, lbl in items['link_opacity']]
         self.assertEqual(labels, [str(p) for p in range(10, 101, 10)])
 
-    # ── 'l' toggles link shape between line and curve ─────────────────────────
-    def test_l_key_toggles_link_shape(self):
+    # ── 'l' opens the link-shape picker (line | curve | flowmap) ──────────────
+    def test_link_shape_choice_commit(self):
+        ctrl = self._make_ctrl(link_shape='line')
+        for shape in ('curve', 'flowmap', 'line'):
+            ctrl.link_shape_choice = shape
+            for ln in ctrl.dfs_layout:
+                self.assertEqual(ln.link_shape, shape)
+
+    def test_link_shape_default_choice_matches_linkp(self):
+        ctrl = self._make_ctrl(link_shape='curve')
+        self.assertEqual(ctrl.link_shape_choice, 'curve')
+
+    def test_link_shape_menu_lists_all_shapes(self):
+        import json, re
+        ctrl   = self._make_ctrl()
+        render = type(ctrl)._scripts['render']
+        items  = json.loads(re.search(r'state\.menu_items = (\{.*?\});', render, re.S).group(1))
+        labels = [lbl for _, lbl in items['link_shape']]
+        self.assertEqual(labels, ['line', 'curve', 'flowmap'])
+
+    # ── 'a' toggles link arrows on and off ────────────────────────────────────
+    def test_a_key_toggles_link_arrows(self):
+        ctrl = self._make_ctrl()
+        self._press_key(ctrl, 'a')
+        for ln in ctrl.dfs_layout:
+            self.assertTrue(ln.link_arrows)
+        self._press_key(ctrl, 'a')
+        for ln in ctrl.dfs_layout:
+            self.assertFalse(ln.link_arrows)
+
+    def test_keyboard_help_mentions_link_arrows(self):
+        self.assertIn('link arrows', type(self._make_ctrl())._keyboard_commands_)
+
+    def test_old_l_key_op_is_noop(self):
+        # 'l' now opens the picker menu in JS; the Python key op no longer
+        # blind-toggles the shape
         ctrl   = self._make_ctrl(link_shape='line')
+        before = ctrl.dfs_layout[ctrl.df_level].link_shape
         self._press_key(ctrl, 'l')
-        self.assertEqual(ctrl.dfs_layout[ctrl.df_level].link_shape, 'curve')
-        self._press_key(ctrl, 'l')
-        self.assertEqual(ctrl.dfs_layout[ctrl.df_level].link_shape, 'line')
+        self.assertEqual(ctrl.dfs_layout[ctrl.df_level].link_shape, before)
 
     # ── template / script wiring ──────────────────────────────────────────────
     def test_render_script_seeds_new_menu_kinds(self):
         render = type(self._make_ctrl())._scripts['render']
-        for kind in ('"link_size"', '"link_opacity"', '"node_size"'):
+        for kind in ('"link_size"', '"link_opacity"', '"node_size"', '"link_shape"'):
             self.assertIn(kind, render)
 
     def test_commit_script_handles_new_kinds(self):
         commit = type(self._make_ctrl())._scripts['menuCommit']
-        for field in ('link_size_choice', 'link_opacity_choice', 'node_size_choice'):
+        for field in ('link_size_choice', 'link_opacity_choice', 'node_size_choice', 'link_shape_choice'):
             self.assertIn(field, commit)
 
     def test_keyboard_help_mentions_size_cycles(self):

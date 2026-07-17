@@ -1218,7 +1218,8 @@ class Polars2SVG(P2SColorsMixin,
         label_only     = set()                             # restrict labels to these nodes (list or str also accepted); if empty, all nodes are labeled
 
         link_size      = 'small'                           # 'nil' | 'small' | 'medium' | 'large' | 'vary' | None | float
-        link_shape     = 'line'                            # 'line' | 'curve'
+        link_shape     = 'line'                            # 'line' | 'curve' | 'flowmap' (force-directed OD flow layout, Jenny et al. 2017)
+        link_arrows    = False                             # draw arrowheads at link destinations
         link_opacity   = 1.0
         link_size_range = (0.25, 4)                        # (min, max) stroke width for link_size='vary'
 

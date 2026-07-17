@@ -7,6 +7,7 @@ import polars2svg
 from polars2svg.p2s_displaylist import DisplayList, hexToRGBA, cubicBezierSegmentsTable
 from polars2svg.export import ExportMixin
 from polars2svg.exceptions import DataError, Polars2SVGError
+from polars2svg.od_flow_layout import ODFlowLayout
 
 __name__ = 'linkp'
 
@@ -19,7 +20,7 @@ class LinkP(ExportMixin):
         'node_size', 'node_opacity', 'node_size_range',
         'draw_labels', 'node_labels', 'label_only',
         'label_line_width', 'label_max_lines', 'label_ellipsis',
-        'link_size', 'link_shape', 'link_opacity', 'link_size_range',
+        'link_size', 'link_shape', 'link_opacity', 'link_size_range', 'link_arrows',
         'wxh', 'insets', 'bounds_percent', 'use_pos_for_bounds',
         'convex_hull_lu', 'convex_hull_opacity', 'convex_hull_labels', 'convex_hull_stroke_width',
         'background', 'background_label_color', 'background_opacity',
@@ -28,6 +29,13 @@ class LinkP(ExportMixin):
         'count_range_shared', 'color_stat_range_shared',
         'draw_border', 'txt_h', 'legend',
     })
+
+    # Arrowhead size: length = width = max(_ARROW_LEN_FACTOR_ * stroke_w, _ARROW_LEN_MIN_).
+    # Loosely follows Jenny et al. 2017 section 3.3 (arrowheads scaled to flow
+    # width); the factor/floor are enlarged well past the paper's literal 1.6x
+    # for on-screen legibility at typical linkp stroke widths.
+    _ARROW_LEN_FACTOR_ = 3.2
+    _ARROW_LEN_MIN_     = 6.0
 
     #
     # __init__()
@@ -101,7 +109,7 @@ class LinkP(ExportMixin):
                     _w_arg_ = '__w_f__'
                 else:
                     _w_arg_ = _lk_w_
-                if self.link_shape == 'curve':
+                if self.link_shape in ('curve', 'flowmap'):
                     _seg_ = cubicBezierSegmentsTable(_sub_, _fm_sx_, _fm_sy_,
                                                      f'__xo0{i}__', f'__yo0{i}__', f'__xo1{i}__', f'__yo1{i}__',
                                                      _to_sx_, _to_sy_)
@@ -112,6 +120,19 @@ class LinkP(ExportMixin):
                     _dl_.lines_table(_sub_, _fm_sx_, _fm_sy_, _to_sx_, _to_sy_,
                                      ('__r_f__', '__g_f__', '__b_f__'), width=_w_arg_,
                                      opacity=self.link_opacity, svg_col=None)
+                # Arrowheads: one triangle per link, per-vertex color from the link hex
+                if self.link_arrows and f'__arr{i}_tx__' in _sub_.columns:
+                    import numpy as np
+                    _arr_cols_ = [f'__arr{i}_tx__', f'__arr{i}_ty__', f'__arr{i}_lx__', f'__arr{i}_ly__',
+                                  f'__arr{i}_rx__', f'__arr{i}_ry__']
+                    _arr_ = (_sub_.filter(pl.col(f'__arr{i}_mag__') > 1e-9)
+                                  .drop_nulls(subset=_arr_cols_)
+                                  .select(_arr_cols_ + ['__r_f__', '__g_f__', '__b_f__']).to_numpy())
+                    if len(_arr_) > 0:
+                        _xy_   = _arr_[:, 0:6].reshape(-1, 2)
+                        _rgb_  = np.repeat(_arr_[:, 6:9], 3, axis=0)
+                        _rgba_ = np.hstack([_rgb_, np.full((len(_rgb_), 1), self.link_opacity)])
+                        _dl_.tris(_xy_.flatten().tolist(), list(range(len(_xy_))), _rgba_)
         # Nodes
         _nsz_lu_ = {'small': 3, 'medium': 5, 'large': 7, 'nil': 0.5}
         if self.df_node is not None and self.node_size is not None and len(self.df_node) > 0:
@@ -197,6 +218,7 @@ class LinkP(ExportMixin):
             'link_shape':             'line',
             'link_opacity':           1.0,
             'link_size_range':        (0.25, 4),
+            'link_arrows':            False,
             # Geometry (p2s style)
             'wxh':                    (256, 256),
             'insets':                 (3, 3),
@@ -863,6 +885,125 @@ class LinkP(ExportMixin):
         )
 
     #
+    # __nodeRadiusEstimate__() - representative node-symbol radius in pixels;
+    # 'vary' is approximated with the 'medium' radius (per-node radii differ)
+    #
+    def __nodeRadiusEstimate__(self):
+        _nsz_lu_ = {'small': 3, 'medium': 5, 'large': 7, 'nil': 0.5}
+        if   isinstance(self.node_size, (int, float)): return float(self.node_size)
+        elif self.node_size is None:                   return 0.0
+        else:                                          return float(_nsz_lu_.get(self.node_size, 5))
+
+    #
+    # __arrowColumns__() - arrowhead geometry columns for relationship i
+    # - direction is the link's arrival tangent (cubic end tangent for curve /
+    #   flowmap, the baseline for line); the tip is pulled back to the node's
+    #   edge; sized from the stroke width via _ARROW_LEN_FACTOR_/_ARROW_LEN_MIN_
+    #
+    def __arrowColumns__(self, df_link, i, stroke_w_expr):
+        _fm_sx_, _fm_sy_ = f'__rel{i}_fm_sx__', f'__rel{i}_fm_sy__'
+        _to_sx_, _to_sy_ = f'__rel{i}_to_sx__', f'__rel{i}_to_sy__'
+        if self.link_shape in ('curve', 'flowmap'):
+            _sx_ex_, _sy_ex_ = pl.col(f'__xo1{i}__'), pl.col(f'__yo1{i}__')
+        else:
+            _sx_ex_, _sy_ex_ = pl.col(_fm_sx_), pl.col(_fm_sy_)
+        _adx_  = pl.col(_to_sx_) - _sx_ex_
+        _ady_  = pl.col(_to_sy_) - _sy_ex_
+        _mag_  = f'__arr{i}_mag__'
+        _nx_, _ny_   = f'__arr{i}_nx__', f'__arr{i}_ny__'
+        _len_        = f'__arr{i}_len__'
+        _tx_, _ty_   = f'__arr{i}_tx__', f'__arr{i}_ty__'
+        _bx_, _by_   = f'__arr{i}_bx__', f'__arr{i}_by__'
+        _lx_, _ly_   = f'__arr{i}_lx__', f'__arr{i}_ly__'
+        _rx_, _ry_   = f'__arr{i}_rx__', f'__arr{i}_ry__'
+        _node_r_ = self.__nodeRadiusEstimate__()
+        return (
+            df_link
+            .with_columns(((_adx_ ** 2 + _ady_ ** 2).sqrt()).alias(_mag_))
+            .with_columns(
+                (pl.when(pl.col(_mag_) < 1e-9).then(pl.lit(0.0)).otherwise(_adx_ / pl.col(_mag_))).alias(_nx_),
+                (pl.when(pl.col(_mag_) < 1e-9).then(pl.lit(0.0)).otherwise(_ady_ / pl.col(_mag_))).alias(_ny_),
+                pl.max_horizontal(stroke_w_expr * self._ARROW_LEN_FACTOR_, pl.lit(self._ARROW_LEN_MIN_)).alias(_len_),
+            )
+            .with_columns(
+                (pl.col(_to_sx_) - pl.col(_nx_) * _node_r_).alias(_tx_),
+                (pl.col(_to_sy_) - pl.col(_ny_) * _node_r_).alias(_ty_),
+            )
+            .with_columns(
+                (pl.col(_tx_) - pl.col(_nx_) * pl.col(_len_)).alias(_bx_),
+                (pl.col(_ty_) - pl.col(_ny_) * pl.col(_len_)).alias(_by_),
+            )
+            .with_columns(   # base corners perpendicular to the arrival direction
+                (pl.col(_bx_) - pl.col(_ny_) * pl.col(_len_) / 2.0).alias(_lx_),
+                (pl.col(_by_) + pl.col(_nx_) * pl.col(_len_) / 2.0).alias(_ly_),
+                (pl.col(_bx_) + pl.col(_ny_) * pl.col(_len_) / 2.0).alias(_rx_),
+                (pl.col(_by_) - pl.col(_nx_) * pl.col(_len_) / 2.0).alias(_ry_),
+            )
+        )
+
+    #
+    # __arrowSVGExpr__() - the <polygon> string for relationship i; empty for
+    # zero-length links so the row's link string survives
+    #
+    def __arrowSVGExpr__(self, i):
+        _r2_ = lambda c: pl.col(c).round(2)
+        return (
+            pl.when(pl.col(f'__arr{i}_mag__') > 1e-9)
+              .then(pl.concat_str([
+                  pl.lit('<polygon points="'),
+                  _r2_(f'__arr{i}_tx__'), pl.lit(','), _r2_(f'__arr{i}_ty__'), pl.lit(' '),
+                  _r2_(f'__arr{i}_lx__'), pl.lit(','), _r2_(f'__arr{i}_ly__'), pl.lit(' '),
+                  _r2_(f'__arr{i}_rx__'), pl.lit(','), _r2_(f'__arr{i}_ry__'),
+                  pl.lit('" fill="'), pl.col('__lc_hex__'), pl.lit('" />'),
+              ]))
+              .otherwise(pl.lit(''))
+        )
+
+    #
+    # __flowmapControlPoints__() - run the force-directed origin-destination
+    # flow layout (Jenny et al., IJGIS 2017; see od_flow_layout.py) once over
+    # the combined aggregated flow set of every relationship; returns a join
+    # table (__fmx__,__fmy__,__tox__,__toy__ -> __cpx__,__cpy__) of quadratic
+    # Bezier control points in screen coordinates
+    #
+    def __flowmapControlPoints__(self, rel_tables):
+        _parts_ = []
+        for i in range(len(self.relationships)):
+            _fm_sx_, _fm_sy_ = f'__rel{i}_fm_sx__', f'__rel{i}_fm_sy__'
+            _to_sx_, _to_sy_ = f'__rel{i}_to_sx__', f'__rel{i}_to_sy__'
+            _parts_.append(rel_tables[i].select(
+                pl.col(_fm_sx_).alias('__fmx__'), pl.col(_fm_sy_).alias('__fmy__'),
+                pl.col(_to_sx_).alias('__tox__'), pl.col(_to_sy_).alias('__toy__'),
+            ).drop_nulls())
+        # sorted so the layout sees a deterministic flow order (group_by row
+        # order varies run to run and the force iteration is order-sensitive)
+        _flows_df_ = pl.concat(_parts_).unique().sort(['__fmx__', '__fmy__', '__tox__', '__toy__'])
+        if len(_flows_df_) > 200:
+            self.p2s.logger.warning(
+                f"LinkP: link_shape='flowmap' runs a force layout that is quadratic in the "
+                f"number of aggregated flows ({len(_flows_df_)}); expect long render times "
+                f"(the method targets flow maps with up to ~100 flows)"
+            )
+        _flows_ = list(zip(_flows_df_['__fmx__'], _flows_df_['__fmy__'],
+                           _flows_df_['__tox__'], _flows_df_['__toy__']))
+        _node_r_ = self.__nodeRadiusEstimate__()
+        _lg_l_, _lg_r_, _lg_t_, _lg_b_ = self._legend_reserve_
+        _canvas_ = (_lg_l_, _lg_t_, self.wxh[0] - _lg_r_, self.wxh[1] - _lg_b_)
+        # Arrowheads become obstacles for the layout (paper section 3.2.3);
+        # clearance radius from the widest possible stroke ('vary' -> range max)
+        _lk_lu_ = {'small': 1, 'nil': 0.2, 'medium': 3, 'large': 5}
+        if   isinstance(self.link_size, (int, float)): _lk_w_ = float(self.link_size)
+        elif self.link_size == 'vary':                 _lk_w_ = float(self.link_size_range[1])
+        else:                                          _lk_w_ = float(_lk_lu_.get(self.link_size, 1.0))
+        _arrow_r_ = max(self._ARROW_LEN_FACTOR_ * _lk_w_, self._ARROW_LEN_MIN_) if self.link_arrows else 0.0
+        _cps_ = ODFlowLayout(_flows_, node_radius=_node_r_, canvas=_canvas_,
+                             arrows=bool(self.link_arrows), arrow_radius=_arrow_r_).results()
+        return _flows_df_.with_columns(
+            pl.Series('__cpx__', [c[0] for c in _cps_], dtype=pl.Float64),
+            pl.Series('__cpy__', [c[1] for c in _cps_], dtype=pl.Float64),
+        )
+
+    #
     # __renderLinks__()
     # - uses Polars group_by + concat_str to build SVG strings without Python row loops
     #
@@ -880,25 +1021,35 @@ class LinkP(ExportMixin):
         _all_svg_ = set()
         self.df_link = None
 
+        # Pass 1: per-relationship aggregation + link color resolution
+        _rel_tables_ = []
+        for i in range(len(self.relationships)):
+            _fm_sx_, _fm_sy_ = f'__rel{i}_fm_sx__', f'__rel{i}_fm_sy__'
+            _to_sx_, _to_sy_ = f'__rel{i}_to_sx__', f'__rel{i}_to_sy__'
+            _gb_       = [_fm_sx_, _fm_sy_, _to_sx_, _to_sy_]
+            _df_link_  = self.df.group_by(_gb_).agg(self.__countAggExpr__(), *_lc_agg_)
+            _rel_tables_.append(self.__applyColorToDF__(_df_link_, self._link_color_mode_, 'lc', _data_co_))
+
+        # flowmap: the force layout couples every flow, so it runs once over the
+        # combined flow set of all relationships (Jenny et al. 2017)
+        _flowmap_cp_ = self.__flowmapControlPoints__(_rel_tables_) if self.link_shape == 'flowmap' else None
+
+        # Pass 2: shape-specific geometry + SVG string assembly
         for i, _rel_ in enumerate(self.relationships):
             _fm_sx_, _fm_sy_ = f'__rel{i}_fm_sx__', f'__rel{i}_fm_sy__'
             _to_sx_, _to_sy_ = f'__rel{i}_to_sx__', f'__rel{i}_to_sy__'
-            _gb_              = [_fm_sx_, _fm_sy_, _to_sx_, _to_sy_]
-            _count_agg_       = self.__countAggExpr__()
+            _df_link_        = _rel_tables_[i]
+
+            if self.link_shape in ('curve', 'flowmap'):
+                _xo0_, _yo0_ = f'__xo0{i}__', f'__yo0{i}__'
+                _xo1_, _yo1_ = f'__xo1{i}__', f'__yo1{i}__'
 
             if self.link_shape == 'curve':
                 _dx_, _dy_   = f'__dx{i}__', f'__dy{i}__'
                 _mag_        = f'__mag{i}__'
                 _u_,  _v_    = f'__u{i}__',  f'__v{i}__'
                 _pu_, _pv_   = f'__pu{i}__', f'__pv{i}__'
-                _xo0_, _yo0_ = f'__xo0{i}__', f'__yo0{i}__'
-                _xo1_, _yo1_ = f'__xo1{i}__', f'__yo1{i}__'
 
-                _df_link_ = (
-                    self.df.group_by(_gb_)
-                           .agg(_count_agg_, *_lc_agg_)
-                )
-                _df_link_ = self.__applyColorToDF__(_df_link_, self._link_color_mode_, 'lc', _data_co_)
                 _df_link_ = (
                     _df_link_
                     .with_columns(
@@ -924,55 +1075,57 @@ class LinkP(ExportMixin):
                     )
                 )
 
-                if self.link_size == 'vary':
-                    _lc_min_, _lc_max_ = self.__countMinMax__(_df_link_['__count__'])
-                    _stroke_w_ = self.__interpolatedSizeExpr__(self.link_size_range, _lc_min_, _lc_max_)
-                    _str_ops_ = [
-                        pl.lit('<path d="M '), pl.col(_fm_sx_), pl.lit(' '), pl.col(_fm_sy_),
-                        pl.lit(' C '), pl.col(_xo0_), pl.lit(' '), pl.col(_yo0_),
-                        pl.lit(' '), pl.col(_xo1_), pl.lit(' '), pl.col(_yo1_), pl.lit(' '),
-                        pl.col(_to_sx_), pl.lit(' '), pl.col(_to_sy_),
-                        pl.lit('" stroke="'), pl.col('__lc_hex__'),
-                        pl.lit('" stroke-width="'), _stroke_w_,
-                        pl.lit('" />'),
-                    ]
-                else:
-                    _str_ops_ = [
-                        pl.lit('<path d="M '), pl.col(_fm_sx_), pl.lit(' '), pl.col(_fm_sy_),
-                        pl.lit(' C '), pl.col(_xo0_), pl.lit(' '), pl.col(_yo0_),
-                        pl.lit(' '), pl.col(_xo1_), pl.lit(' '), pl.col(_yo1_), pl.lit(' '),
-                        pl.col(_to_sx_), pl.lit(' '), pl.col(_to_sy_),
-                        pl.lit('" stroke="'), pl.col('__lc_hex__'),
-                        pl.lit('" />'),
-                    ]
-
-            else:  # 'line'
+            elif self.link_shape == 'flowmap':
+                # quadratic control point -> exact cubic (c = p + 2/3*(cp - p))
                 _df_link_ = (
-                    self.df.group_by(_gb_)
-                           .agg(_count_agg_, *_lc_agg_)
+                    _df_link_
+                    .join(_flowmap_cp_,
+                          left_on=[_fm_sx_, _fm_sy_, _to_sx_, _to_sy_],
+                          right_on=['__fmx__', '__fmy__', '__tox__', '__toy__'],
+                          how='left')
+                    .with_columns(
+                        (pl.col(_fm_sx_) + (pl.col('__cpx__') - pl.col(_fm_sx_)) * (2.0 / 3.0)).alias(_xo0_),
+                        (pl.col(_fm_sy_) + (pl.col('__cpy__') - pl.col(_fm_sy_)) * (2.0 / 3.0)).alias(_yo0_),
+                        (pl.col(_to_sx_) + (pl.col('__cpx__') - pl.col(_to_sx_)) * (2.0 / 3.0)).alias(_xo1_),
+                        (pl.col(_to_sy_) + (pl.col('__cpy__') - pl.col(_to_sy_)) * (2.0 / 3.0)).alias(_yo1_),
+                    )
+                    .drop(['__cpx__', '__cpy__'])
                 )
-                _df_link_ = self.__applyColorToDF__(_df_link_, self._link_color_mode_, 'lc', _data_co_)
 
-                if self.link_size == 'vary':
-                    _lc_min_, _lc_max_ = self.__countMinMax__(_df_link_['__count__'])
-                    _stroke_w_ = self.__interpolatedSizeExpr__(self.link_size_range, _lc_min_, _lc_max_)
-                    _str_ops_ = [
-                        pl.lit('<line x1="'), pl.col(_fm_sx_), pl.lit('" y1="'), pl.col(_fm_sy_),
-                        pl.lit('" x2="'),    pl.col(_to_sx_), pl.lit('" y2="'), pl.col(_to_sy_),
-                        pl.lit('" stroke="'), pl.col('__lc_hex__'),
-                        pl.lit('" stroke-width="'), _stroke_w_,
-                        pl.lit('" />'),
-                    ]
-                else:
-                    _str_ops_ = [
-                        pl.lit('<line x1="'), pl.col(_fm_sx_), pl.lit('" y1="'), pl.col(_fm_sy_),
-                        pl.lit('" x2="'),    pl.col(_to_sx_), pl.lit('" y2="'), pl.col(_to_sy_),
-                        pl.lit('" stroke="'), pl.col('__lc_hex__'),
-                        pl.lit('" />'),
-                    ]
+            if self.link_size == 'vary':
+                _lc_min_, _lc_max_ = self.__countMinMax__(_df_link_['__count__'])
+                _stroke_w_    = self.__interpolatedSizeExpr__(self.link_size_range, _lc_min_, _lc_max_)
+                _sw_attr_ops_ = [pl.lit('" stroke-width="'), _stroke_w_]
+            else:
+                _stroke_w_    = pl.lit(float(_sz_))
+                _sw_attr_ops_ = []   # fixed width comes from the group attribute
+
+            if self.link_shape in ('curve', 'flowmap'):
+                _str_ops_ = [
+                    pl.lit('<path d="M '), pl.col(_fm_sx_), pl.lit(' '), pl.col(_fm_sy_),
+                    pl.lit(' C '), pl.col(_xo0_), pl.lit(' '), pl.col(_yo0_),
+                    pl.lit(' '), pl.col(_xo1_), pl.lit(' '), pl.col(_yo1_), pl.lit(' '),
+                    pl.col(_to_sx_), pl.lit(' '), pl.col(_to_sy_),
+                    pl.lit('" stroke="'), pl.col('__lc_hex__'),
+                    *_sw_attr_ops_,
+                    pl.lit('" />'),
+                ]
+            else:  # 'line'
+                _str_ops_ = [
+                    pl.lit('<line x1="'), pl.col(_fm_sx_), pl.lit('" y1="'), pl.col(_fm_sy_),
+                    pl.lit('" x2="'),    pl.col(_to_sx_), pl.lit('" y2="'), pl.col(_to_sy_),
+                    pl.lit('" stroke="'), pl.col('__lc_hex__'),
+                    *_sw_attr_ops_,
+                    pl.lit('" />'),
+                ]
+
+            _link_expr_ = pl.concat_str(_str_ops_)
+            if self.link_arrows and self.link_size is not None:
+                _df_link_   = self.__arrowColumns__(_df_link_, i, _stroke_w_)
+                _link_expr_ = _link_expr_ + self.__arrowSVGExpr__(i)
 
             _link_col_ = '__link_svg__'
-            _df_link_  = _df_link_.with_columns(pl.concat_str(_str_ops_).alias(_link_col_))
+            _df_link_  = _df_link_.with_columns(_link_expr_.alias(_link_col_))
             self.df_link = _df_link_ if self.df_link is None else pl.concat([self.df_link, _df_link_], how='diagonal')
 
             if self.link_size is not None:

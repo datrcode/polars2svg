@@ -1347,6 +1347,12 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
     _link_opacity_cur_   = (str(int(round(float(_linkp_.link_opacity) * 100)))
                             if _linkp_.link_opacity is not None else '100')
 
+    _LINK_SHAPES_      = ['line', 'curve', 'flowmap']
+    _link_shape_items_ = [[str(_i_ + 1), _nm_] for _i_, _nm_ in enumerate(_LINK_SHAPES_)]
+    _link_shape_cur_   = str(getattr(_linkp_, 'link_shape', 'line') or 'line')
+    if _link_shape_cur_ not in _LINK_SHAPES_:
+        _link_shape_items_.append(['#', _link_shape_cur_])
+
     #
     # Constructor
     #
@@ -1406,6 +1412,7 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
         self.link_size_choice     = _link_size_cur_
         self.node_size_choice     = _node_size_cur_
         self.link_opacity_choice  = _link_opacity_cur_
+        self.link_shape_choice    = _link_shape_cur_
 
         self.previous_layouts = []
         self.max_undo_levels  = 20
@@ -1448,7 +1455,7 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
         self.param.watch(self.unselectedMoveOp,       'unselected_move_op_finished')
         self.param.watch(self.applySearchOp,          'search_op_finished')
         self.param.watch(self.applyLayoutChoice,      ['layout_mode', 'layout_operation'])
-        self.param.watch(self.applySizeChoice,        ['link_size_choice', 'node_size_choice', 'link_opacity_choice'])
+        self.param.watch(self.applySizeChoice,        ['link_size_choice', 'node_size_choice', 'link_opacity_choice', 'link_shape_choice'])
         if use_webgpu:
             self.param.watch(self.applyGpuError,      'gpu_error')
 
@@ -2133,13 +2140,13 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
                 self.__applyBackgroundState__()
 
             #
-            # "l" - toggle link shape between line and curve
+            # "A" - Toggle link arrows
             #
-            elif self.key_op_finished == 'l':
-                _new_shape_ = 'curve' if getattr(_ln_, 'link_shape', 'line') == 'line' else 'line'
-                self.updateLinkNodeParam('link_shape', _new_shape_)
-                self.setAnimation(f'<text x="5" y="15" fill="black"> link shape: {_new_shape_} </text>')
-            
+            elif self.key_op_finished == 'a':
+                _new_arrows_ = not getattr(_ln_, 'link_arrows', False)
+                self.updateLinkNodeParam('link_arrows', _new_arrows_)
+                self.setAnimation(f'<text x="5" y="15" fill="black"> link arrows: {"on" if _new_arrows_ else "off"} </text>')
+
             #
             # "Z" - Select nodes with the same color as the one that the mouse is over
             #
@@ -2564,8 +2571,8 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
         except (TypeError, ValueError): return label
 
     #
-    # applySizeChoice() - a size/opacity picker-menu commit in JS set one of the
-    # *_choice params; push the new value onto the LinkP(s) and re-render.
+    # applySizeChoice() - a size/opacity/shape picker-menu commit in JS set one
+    # of the *_choice params; push the new value onto the LinkP(s) and re-render.
     #
     def applySizeChoice(self, event):
         if   event.name == 'link_opacity_choice':
@@ -2576,9 +2583,12 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
             self.updateLinkNodeParam('link_size', self.__sizeLabelToValue__(event.new))
         elif event.name == 'node_size_choice':
             self.updateLinkNodeParam('node_size', self.__sizeLabelToValue__(event.new))
+        elif event.name == 'link_shape_choice':
+            self.updateLinkNodeParam('link_shape', event.new)
 
     _keyboard_commands_ = """
 / . | search: type substring + Enter (prefix +add -remove &intersect); Escape to cancel
+a . | toggle link arrows (on | off)
 b . | cycle background (none | background | background + labels)
 c . | reset view or focus view on selected
  .. | shift-c ........ | focus view on selected + neighbors
@@ -2588,7 +2598,7 @@ e . | expand selection | shift-e uses directed graph
 g . | layout upon next mouse drag
  .. | shift-g ........ | open layout-mode picker: mnemonic key selects; ctrl-g reverses
 h . | toggle help display
-l . | toggle link shape (line | curve)
+l . | open link shape picker (line | curve | flowmap); l cycles
  .. | shift-l ........ | open link size picker (ctrl-l reverses)
 n . | select node under mouse by shape (shift, ctrl, and ctrl-shift apply)
  .. | shift-o ........ | open link opacity picker (ctrl-o reverses)
@@ -2698,6 +2708,7 @@ z . | select node under mouse by color (shift, ctrl, and ctrl-shift apply)
             'link_size':    _link_size_items_,
             'link_opacity': _link_opacity_items_,
             'node_size':    _node_size_items_,
+            'link_shape':   _link_shape_items_,
         }) + ";\n"
         "            state.menu_open  = false; state.menu_kind = ''; state.menu_index = 0; state.menu_timer = null;\n"
     )
@@ -2774,6 +2785,7 @@ z . | select node under mouse by color (shift, ctrl, and ctrl-shift apply)
     'link_size_choice'            : param.String(default=_link_size_cur_),
     'node_size_choice'            : param.String(default=_node_size_cur_),
     'link_opacity_choice'         : param.String(default=_link_opacity_cur_),
+    'link_shape_choice'           : param.String(default=_link_shape_cur_),
     'keyboardhelp_x'              : param.Integer(default=-1000),
     'x0_middle'                   : param.Integer(default=0),
     'y0_middle'                   : param.Integer(default=0),
@@ -2878,6 +2890,7 @@ z . | select node under mouse by color (shift, ctrl, and ctrl-shift apply)
                           : (state.menu_kind == 'mode')         ? data.layout_mode
                           : (state.menu_kind == 'link_size')    ? data.link_size_choice
                           : (state.menu_kind == 'link_opacity') ? data.link_opacity_choice
+                          : (state.menu_kind == 'link_shape')   ? data.link_shape_choice
                           :                                       data.node_size_choice;
             state.menu_index = 0;
             for (var _i_ = 0; _i_ < _items_.length; _i_++) {
@@ -2894,6 +2907,7 @@ z . | select node under mouse by color (shift, ctrl, and ctrl-shift apply)
                          : (state.menu_kind == 'mode')         ? 'layout mode:'
                          : (state.menu_kind == 'link_size')    ? 'link size:'
                          : (state.menu_kind == 'link_opacity') ? 'link opacity:'
+                         : (state.menu_kind == 'link_shape')   ? 'link shape:'
                          :                                       'node size:';
             var _maxlen_ = _header_.length;
             for (var _i_ = 0; _i_ < _items_.length; _i_++) {
@@ -2919,6 +2933,7 @@ z . | select node under mouse by color (shift, ctrl, and ctrl-shift apply)
             else if (state.menu_kind == 'mode')         { data.layout_mode        = _lbl_; }
             else if (state.menu_kind == 'link_size')    { data.link_size_choice    = _lbl_; }
             else if (state.menu_kind == 'link_opacity') { data.link_opacity_choice = _lbl_; }
+            else if (state.menu_kind == 'link_shape')   { data.link_shape_choice   = _lbl_; }
             else                                        { data.node_size_choice    = _lbl_; }
             self.menuClose();
         """,
@@ -2969,6 +2984,7 @@ z . | select node under mouse by color (shift, ctrl, and ctrl-shift apply)
                          (event.key === 'G' && state.menu_kind === 'mode'         && !event.ctrlKey) ||
                          (event.key === 'L' && state.menu_kind === 'link_size')    ||
                          (event.key === 'O' && state.menu_kind === 'link_opacity') ||
+                         (event.key === 'l' && state.menu_kind === 'link_shape'   && !event.ctrlKey) ||
                          (event.key === 'P' && state.menu_kind === 'node_size')) {
                     state.menu_index = (state.menu_index + 1) % _items_.length;
                     self.menuRender(); self.menuArmTimer();
@@ -2994,7 +3010,8 @@ z . | select node under mouse by color (shift, ctrl, and ctrl-shift apply)
             data.x_mouse  = state.cur_mouse_x;
             data.y_mouse  = state.cur_mouse_y;
 
-            if      (event.key == "b" ||                                // Cycle background (none | background | background + labels)
+            if      (event.key == "a" && !event.ctrlKey) { data.key_op_finished = 'a'; } // Toggle link arrows (on | off)
+            else if (event.key == "b" ||                                // Cycle background (none | background | background + labels)
                      event.key == "B") { data.key_op_finished = 'b';  }
             else if (event.key == "c") { data.key_op_finished = 'c';  } // (if selected) zoom to selected, else zoom to entire view
             else if (event.key == "C") { data.key_op_finished = 'C';  } // Zoom to selected + neighbors
@@ -3007,7 +3024,7 @@ z . | select node under mouse by color (shift, ctrl, and ctrl-shift apply)
                 if (data.keyboardhelp_x == -1000) { data.keyboardhelp_x =     5; }
                 else                              { data.keyboardhelp_x = -1000; }
             }
-            else if (event.key == "l" && !event.ctrlKey) { data.key_op_finished = 'l'; } // Toggle link shape (line | curve)
+            else if (event.key == "l" && !event.ctrlKey) { state.menu_kind = 'link_shape'; self.menuOpen(); } // Open the link-shape picker menu; 'l' cycles
             else if (event.key == "L" || (event.key == "l" && event.ctrlKey)) { if (event.ctrlKey) event.preventDefault(); state.menu_kind = 'link_size';    self.menuOpen(); } // Cycle link size
             else if (event.key == "O" || (event.key == "o" && event.ctrlKey)) { if (event.ctrlKey) event.preventDefault(); state.menu_kind = 'link_opacity'; self.menuOpen(); } // Cycle link opacity
             else if (event.key == "P" || (event.key == "p" && event.ctrlKey)) { if (event.ctrlKey) event.preventDefault(); state.menu_kind = 'node_size';    self.menuOpen(); } // Cycle node size

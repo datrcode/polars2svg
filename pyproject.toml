@@ -52,6 +52,8 @@ classifiers=[
 # TFDPLayout (tfdp_layout.py) — t-FDP force-directed graph layout on the MLX GPU.
 # It also imports scipy/networkx/scikit-learn, so it chains `layouts`; without that
 # chain `pip install polars2svg[mlx]` resolves but the module cannot import.
+# ODFlowLayout (od_flow_layout.py) also uses this extra: it runs on NumPy by
+# default and auto-uses the MLX GPU for its O(N^2) force kernels when present.
 #
 # `mlx` picks whatever backend suits the platform: Metal on Apple silicon, CPU-only
 # elsewhere. MLX also has a CUDA backend, exposed here as the explicit `mlx-cuda`

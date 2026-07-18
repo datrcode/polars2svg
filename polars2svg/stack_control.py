@@ -215,10 +215,18 @@ def stack_controli(component, stack_name='default', insets=(2, 2), hgap=4,
 
     # Pre-compute the initial SVG so it becomes the class-level param default.
     # Panel seeds the JS data object from class defaults, not __init__ instance
-    # assignments, so the render script sees the real content on first paint.
+    # assignments, so the render script sees the real content on first paint —
+    # if mvc already carries a populated stack, the default must reflect it too,
+    # or the browser paints just the base frame no matter what __init__ assigns.
     # Also pre-populate the tile cache for the base df so __init__ starts warm.
+    _initial_mvc_ = kwargs.get('mvc')
+    if _initial_mvc_ is not None and stack_name in _initial_mvc_.stacks:
+        _initial_stack_ = _initial_mvc_.stacks[stack_name]
+        _initial_dfs_, _initial_index_ = _initial_stack_['dfs'], _initial_stack_['index']
+    else:
+        _initial_dfs_, _initial_index_ = [component.df_orig], 0
     _initial_cache_ = {}
-    _initial_svg_, _initial_frame_map_ = _render_svg_content([component.df_orig], 0, _initial_cache_)
+    _initial_svg_, _initial_frame_map_ = _render_svg_content(_initial_dfs_, _initial_index_, _initial_cache_)
 
     def __init__(self, **kwargs):
         mvc = kwargs.pop('mvc', None)

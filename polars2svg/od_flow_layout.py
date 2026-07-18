@@ -278,10 +278,7 @@ class ODFlowLayout(object):
         _j_ = 0
         for _i_ in range(self.iterations):
             _w_ = 1.0 - _i_ / self.iterations
-            with self._stream_():
-                _xs_, _ys_                   = self._points_()
-                _ffx_a_, _ffy_a_, _periph_a_ = self._flowForces_(_xs_, _ys_)
-                _fnx_a_, _fny_a_             = self._nodeForces_(_xs_, _ys_)
+            _ffx_a_, _ffy_a_, _periph_a_, _fnx_a_, _fny_a_ = self._forces_()
             _new_cps_ = {}
             for _pos_, _f_ in enumerate(self.active):
                 if _f_ in self._pinned_: continue
@@ -304,7 +301,7 @@ class ODFlowLayout(object):
 
             # Moving flows off unconnected nodes (3.2.3), paced per the paper
             if _i_ > 0.1 * self.iterations and _j_ <= 0:
-                _N_ = [f for f in self.active if f not in self._pinned_ and self._overlapsObstacle_(f)]
+                _N_ = self._overlappingFlows_()
                 if len(_N_) > 0:
                     _j_      = (self.iterations - _i_) / (len(_N_) + 1) / 2.0
                     _denom_  = max(1, self.iterations - _i_ - 1)
@@ -341,16 +338,37 @@ class ODFlowLayout(object):
         return _xs_, _ys_
 
     #
+    # _forces_() - one force-kernel pass: sample points, then the flow and node
+    # forces as five NumPy float64 arrays indexed by active position.  On the MLX
+    # path the kernels stay lazy and materialize through a single eval + host
+    # copy: with five separate syncs the per-sync wait dominates the GPU cost.
+    #
+    def _forces_(self):
+        with self._stream_():
+            _xs_, _ys_             = self._points_()
+            _ffx_, _ffy_, _periph_ = self._flowForces_(_xs_, _ys_)
+            _fnx_, _fny_           = self._nodeForces_(_xs_, _ys_)
+            if self._use_mlx_:
+                _out_ = mx.concatenate([_ffx_, _ffy_, _periph_, _fnx_, _fny_])
+                mx.eval(_out_)
+                _arr_ = np.array(_out_, dtype=np.float64)
+                _A_ = self._A_
+                return tuple(_arr_[_k_ * _A_:(_k_ + 1) * _A_] for _k_ in range(5))
+        return (np.asarray(_ffx_, dtype=np.float64), np.asarray(_ffy_, dtype=np.float64),
+                np.asarray(_periph_, dtype=np.float64),
+                np.asarray(_fnx_, dtype=np.float64), np.asarray(_fny_, dtype=np.float64))
+
+    #
     # _flowForces_() - flows-against-flow (3.1.1) + peripherality ratio (3.1.4)
     # - Shepard inverse-distance weighting of point-to-point displacement vectors
-    # - returns (fx, fy, periph) NumPy arrays indexed by active position
+    # - returns (fx, fy, periph) backend arrays indexed by active position
     #
     def _flowForces_(self, _xs_, _ys_):
         _A_, _P_ = self._A_, self.samples_per_flow
-        if _A_ < 2:
-            _z_ = np.zeros(_A_)
-            return _z_, _z_.copy(), _z_.copy()
         xp = self._xp_
+        if _A_ < 2:
+            _z_ = xp.zeros(_A_)
+            return _z_, _z_, _z_
         _N_ = _A_ * _P_
         _px_ = _xs_.reshape(_N_)
         _py_ = _ys_.reshape(_N_)
@@ -358,8 +376,9 @@ class ODFlowLayout(object):
 
         # Per-point Shepard force, computed in row-chunks so the N x N distance
         # matrix never has to be materialized whole (chunking the row axis leaves
-        # each per-row reduction untouched -> identical result)
-        _CH_ = 2048
+        # each per-row reduction untouched -> identical result).  The GPU is
+        # fastest with as few dispatches as the same memory budget allows.
+        _CH_ = 2048 if not self._use_mlx_ else max(2048, (1 << 25) // max(1, _N_))
         _fpx_parts_, _fpy_parts_ = [], []
         for _s_ in range(0, _N_, _CH_):
             _e_ = min(_s_ + _CH_, _N_)
@@ -386,25 +405,27 @@ class ODFlowLayout(object):
         _num_ = xp.sqrt(_sfx_ * _sfx_ + _sfy_ * _sfy_)
         _periph_ = xp.where(_sfm_ > 0, _num_ / xp.where(_sfm_ > 0, _sfm_, xp.ones_like(_sfm_)),
                             xp.zeros_like(_sfm_))
-        return self._toNP_(_mfx_), self._toNP_(_mfy_), self._toNP_(_periph_)
+        return _mfx_, _mfy_, _periph_
 
     #
     # _nodeForces_() - nodes-against-flow (3.1.2): each unconnected node repels
     # via the vector to the closest sampled point on the flow
-    # - returns (fx, fy) NumPy arrays indexed by active position
+    # - returns (fx, fy) backend arrays indexed by active position
     #
     def _nodeForces_(self, _xs_, _ys_):
         _A_ = self._A_
         _nn_ = len(self.node_xy)
-        if _A_ == 0 or _nn_ == 0:
-            _z_ = np.zeros(_A_)
-            return _z_, _z_.copy()
         xp = self._xp_
+        if _A_ == 0 or _nn_ == 0:
+            _z_ = xp.zeros(_A_)
+            return _z_, _z_
         _nx_ = self._node_xy_arr_[:, 0]                         # (nodes,)
         _ny_ = self._node_xy_arr_[:, 1]
 
-        # Chunk over active flows to bound the (a, P, nodes) tensor
-        _ACH_ = max(1, 2048 // max(1, _nn_))
+        # Chunk over active flows to bound the (a, P, nodes) tensor; one GPU
+        # dispatch within the same memory budget when on MLX
+        _ACH_ = max(1, 2048 // max(1, _nn_)) if not self._use_mlx_ else \
+                max(1, (1 << 25) // max(1, self.samples_per_flow * _nn_))
         _fx_parts_, _fy_parts_ = [], []
         for _s_ in range(0, _A_, _ACH_):
             _e_ = min(_s_ + _ACH_, _A_)
@@ -433,14 +454,7 @@ class ODFlowLayout(object):
             _fy_parts_.append(_fy_)
         _fx_all_ = xp.concatenate(_fx_parts_)
         _fy_all_ = xp.concatenate(_fy_parts_)
-        return self._toNP_(_fx_all_), self._toNP_(_fy_all_)
-
-    def _toNP_(self, _arr_):
-        '''Materialize a backend array as a NumPy float64 array.'''
-        if self._use_mlx_:
-            mx.eval(_arr_)
-            return np.array(_arr_, dtype=np.float64)
-        return np.asarray(_arr_, dtype=np.float64)
+        return _fx_all_, _fy_all_
 
     #
     # _antiTorsionForce_() - pull toward the perpendicular bisector (3.1.3);
@@ -548,8 +562,14 @@ class ODFlowLayout(object):
     # _reduceIntersections_() - flows sharing a node whose curves intersect are
     # amended by the line-intersection construction of Figure 11 (3.2.2)
     # - the intersection tests are batched on the control points at entry; the
-    #   sequential amend-as-you-go semantics are preserved by re-testing (only)
-    #   the rare pair whose flows were amended earlier in this same pass
+    #   sequential amend-as-you-go semantics are preserved exactly by tracking,
+    #   per pair, whether either flow was amended after the pair was last tested
+    #   and batch re-testing every such stale remaining pair before use.  A
+    #   pair's test depends only on its two flows' control points, so a result
+    #   computed "early" stays valid until one of those flows is amended - and
+    #   then the pair is stale again and re-tested.  On dense graphs where
+    #   amendments cascade, this replaces the per-pair re-test loop (the former
+    #   hotspot) with a handful of batch calls per pass.
     #
     def _reduceIntersections_(self):
         _pairs_ = []
@@ -563,15 +583,25 @@ class ODFlowLayout(object):
                     _pairs_.append((_node_, _f_, _g_))
         if not _pairs_: return
 
-        _batch_ = self._curvesIntersectBatch_(_pairs_)          # bool (Q,), snapshot cps
-        _amended_ = set()
+        _Q_ = len(_pairs_)
+        _res_ = self._curvesIntersectBatch_(_pairs_)            # bool (Q,), snapshot cps
+        _pf_ = np.fromiter((p[1] for p in _pairs_), dtype=np.int64, count=_Q_)
+        _pg_ = np.fromiter((p[2] for p in _pairs_), dtype=np.int64, count=_Q_)
+        _amend_ev_  = np.zeros(len(self.flows), dtype=np.int64) # amendment clock per flow
+        _tested_ev_ = np.zeros(_Q_, dtype=np.int64)             # clock when pair was tested
+        _ev_ = 0
         for _idx_, (_node_, _f_, _g_) in enumerate(_pairs_):
-            _S_ = self.node_xy[_node_]
-            if _f_ in _amended_ or _g_ in _amended_:
-                _hit_ = self._curvesIntersectOne_(_f_, _g_, _S_)   # re-test on current cps
-            else:
-                _hit_ = bool(_batch_[_idx_])
-            if not _hit_: continue
+            if _amend_ev_[_f_] > _tested_ev_[_idx_] or _amend_ev_[_g_] > _tested_ev_[_idx_]:
+                _stale_ = _idx_ + np.nonzero(
+                    (_amend_ev_[_pf_[_idx_:]] > _tested_ev_[_idx_:]) |
+                    (_amend_ev_[_pg_[_idx_:]] > _tested_ev_[_idx_:]))[0]
+                if len(_stale_) == 1:
+                    _res_[_idx_] = self._curvesIntersectOne_(_f_, _g_, self.node_xy[_node_])
+                else:
+                    _res_[_stale_] = self._curvesIntersectBatch_([_pairs_[_j_] for _j_ in _stale_])
+                _tested_ev_[_stale_] = _ev_
+            if not _res_[_idx_]: continue
+            _S_  = self.node_xy[_node_]
             _A_  = self._otherEnd_(_f_, _node_)
             _Bp_ = self._otherEnd_(_g_, _node_)
             _M_, _N_ = self.cps[_f_], self.cps[_g_]
@@ -580,7 +610,8 @@ class ODFlowLayout(object):
             if _Mbar_ is None or _Nbar_ is None: continue
             self.cps[_f_] = self._constrain_(_f_, _Mbar_)
             self.cps[_g_] = self._constrain_(_g_, _Nbar_)
-            _amended_.add(_f_); _amended_.add(_g_)
+            _ev_ += 1
+            _amend_ev_[_f_] = _ev_; _amend_ev_[_g_] = _ev_
 
     def _otherEnd_(self, f, node):
         _s_, _e_ = self.flow_nodes[f]
@@ -741,6 +772,86 @@ class ODFlowLayout(object):
 
     def _overlapsObstacle_(self, f):
         return not self._clearOfObstacles_(f, self.cps[f])
+
+    #
+    # _overlappingFlows_() - the active, unpinned flows whose curve currently
+    # overlaps an obstacle, in active order (batched _overlapsObstacle_ over all
+    # candidates at once).  Node obstacles are every node with the flow's own
+    # endpoints masked to +inf distance - exactly the _obstacles_ exclusion;
+    # likewise the arrow-obstacle exclusions of _arrowObstacles_ become a mask.
+    #
+    def _overlappingFlows_(self):
+        _cand_ = [f for f in self.active if f not in self._pinned_]
+        _K_, _nn_ = len(_cand_), len(self.node_xy)
+        if _K_ == 0: return []
+        _n_ = 24
+        _t_ = np.arange(_n_ + 1) / _n_
+        _a_, _b_, _c_ = (1 - _t_) * (1 - _t_), 2 * (1 - _t_) * _t_, _t_ * _t_
+        _cx_ = np.fromiter((self.cps[f][0] for f in _cand_), dtype=np.float64, count=_K_)
+        _cy_ = np.fromiter((self.cps[f][1] for f in _cand_), dtype=np.float64, count=_K_)
+        _X_ = (_a_[None, :] * self._fl_fx_[_cand_][:, None] +
+               _b_[None, :] * _cx_[:, None] +
+               _c_[None, :] * self._fl_tx_[_cand_][:, None])         # (K, n+1)
+        _Y_ = (_a_[None, :] * self._fl_fy_[_cand_][:, None] +
+               _b_[None, :] * _cy_[:, None] +
+               _c_[None, :] * self._fl_ty_[_cand_][:, None])
+
+        _own_ = np.zeros((_K_, _nn_), dtype=bool)
+        for _k_, _f_ in enumerate(_cand_):
+            _s_, _e_ = self.flow_nodes[_f_]
+            _own_[_k_, _s_] = True
+            _own_[_k_, _e_] = True
+        _nodes_ = np.asarray(self.node_xy, dtype=np.float64)
+        _over_ = self._batchObstacleClash_(_X_, _Y_, _nodes_, _own_,
+                                           self.node_radius + self.min_obstacle_dist)
+
+        if self.arrows:
+            # arrival points of all arrowheads, computed once (same math and
+            # tangent fallback as _arrowObstacles_); per-candidate exclusions
+            # (own flow, flows arriving at an own endpoint) become the mask
+            _apts_, _anode_, _asrc_ = [], [], []
+            for _g_ in self.active:
+                _gfx_, _gfy_, _gtx_, _gty_ = self.flows[_g_]
+                _gcx_, _gcy_ = self.cps[_g_]
+                _dx_, _dy_ = _gtx_ - _gcx_, _gty_ - _gcy_     # quadratic end tangent
+                _m_ = math.hypot(_dx_, _dy_)
+                if _m_ < 1e-9:
+                    _dx_, _dy_, _m_ = _gtx_ - _gfx_, _gty_ - _gfy_, self.B[_g_]
+                    if _m_ < 1e-9: continue
+                _apts_.append((_gtx_ - _dx_ / _m_ * self.node_radius,
+                               _gty_ - _dy_ / _m_ * self.node_radius))
+                _anode_.append(self.flow_nodes[_g_][1])
+                _asrc_.append(_g_)
+            if _apts_:
+                _an_ = np.asarray(_anode_)
+                _as_ = np.asarray(_asrc_)
+                _sf_ = np.fromiter((self.flow_nodes[f][0] for f in _cand_), dtype=np.int64, count=_K_)
+                _ef_ = np.fromiter((self.flow_nodes[f][1] for f in _cand_), dtype=np.int64, count=_K_)
+                _skip_ = (_as_[None, :] == np.asarray(_cand_)[:, None]) | \
+                         (_an_[None, :] == _sf_[:, None]) | (_an_[None, :] == _ef_[:, None])
+                _over_ |= self._batchObstacleClash_(_X_, _Y_, np.asarray(_apts_), _skip_,
+                                                    self.arrow_radius + self.min_obstacle_dist)
+        return [f for _k_, f in enumerate(_cand_) if _over_[_k_]]
+
+    #
+    # _batchObstacleClash_() - True per candidate iff any of its curve samples
+    # (X, Y are (K, S)) is closer than ``min_dist`` to any non-masked obstacle
+    # (obs is (O, 2); mask is (K, O), True = excluded).  Chunked over candidates
+    # to bound the (k, S, O) tensor.
+    #
+    def _batchObstacleClash_(self, _X_, _Y_, _obs_, _mask_, _min_dist_):
+        _K_, _S_ = _X_.shape
+        _O_ = len(_obs_)
+        _out_ = np.zeros(_K_, dtype=bool)
+        if _O_ == 0: return _out_
+        _KCH_ = max(1, (1 << 22) // max(1, _S_ * _O_))
+        for _s_ in range(0, _K_, _KCH_):
+            _e_ = min(_s_ + _KCH_, _K_)
+            _dd_ = np.hypot(_X_[_s_:_e_, :, None] - _obs_[None, None, :, 0],
+                            _Y_[_s_:_e_, :, None] - _obs_[None, None, :, 1])
+            _dd_ = np.where(_mask_[_s_:_e_, None, :], np.inf, _dd_)
+            _out_[_s_:_e_] = _dd_.min(axis=(1, 2)) < _min_dist_
+        return _out_
 
     def _moveOffObstacles_(self, f):
         _fx_, _fy_, _tx_, _ty_ = self.flows[f]

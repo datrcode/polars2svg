@@ -1,6 +1,23 @@
 import param
 from panel.reactive import ReactiveHTML
 
+from . import od_flow_layout as _ofl_
+
+
+# _mlxCudaStatus_() - (mlx_available, cuda_available) for the header indicators below.
+# Reuses od_flow_layout's cached GPU probe (mx is None when mlx isn't installed at all;
+# _default_device() falls back to mx.cpu when the GPU backend probe fails) so this never
+# runs a second, redundant device-resolution kernel.
+def _mlxCudaStatus_():
+    mx = _ofl_.mx
+    if mx is None:
+        return False, False
+    if _ofl_._default_device() == mx.cpu:
+        return True, False
+    _metal_ = getattr(mx, 'metal', None)
+    _is_metal_ = _metal_ is not None and _metal_.is_available()
+    return True, not _is_metal_
+
 
 def stack_controli(component, stack_name='default', insets=(2, 2), hgap=4,
                    wxh=(160, 256), txt_h=10, **kwargs):
@@ -9,6 +26,7 @@ def stack_controli(component, stack_name='default', insets=(2, 2), hgap=4,
     x0_val     = insets[0]
     inset_y_val = insets[1]
     _cls_ref_ = [None]
+    _mlx_avail_, _cuda_avail_ = _mlxCudaStatus_()
 
     def _render_svg_content(dfs, index, cache):
         p2s_ref = component.p2s
@@ -24,9 +42,22 @@ def stack_controli(component, stack_name='default', insets=(2, 2), hgap=4,
         _svg_ = [f'<svg width="{w}" height="{h}">',
                  f'<rect x="0" y="0" width="{w}" height="{h}" fill="{_bg_}"/>']
 
+        # MLX / CUDA availability header — one small row each, faded green when the
+        # feature is usable, else a gray close to the background (visible but muted).
+        _status_txt_h_ = max(6, txt_h - 2)
+        _status_row_h_ = _status_txt_h_ + 4
+        _header_h_     = 2 * _status_row_h_
+        _avail_co_     = p2s_ref.colorTyped('indicator', 'available')
+        _unavail_co_   = p2s_ref.colorTyped('indicator', 'unavailable')
+        for _i_, (_label_, _ok_) in enumerate((('MLX', _mlx_avail_), ('CUDA', _cuda_avail_))):
+            _svg_.append(p2s_ref.svgText(f'{_label_}: {"available" if _ok_ else "unavailable"}',
+                                         x0, inset_y + _i_ * _status_row_h_ + _status_txt_h_,
+                                         txt_h=_status_txt_h_,
+                                         color=_avail_co_ if _ok_ else _unavail_co_))
+
         ELL_H  = 2 * gap + txt_h
         y_base = h - inset_y - hc
-        y_top  = inset_y
+        y_top  = inset_y + _header_h_
         avail  = y_base - y_top
 
         def _add_frame(df, y, is_selected, stack_idx):

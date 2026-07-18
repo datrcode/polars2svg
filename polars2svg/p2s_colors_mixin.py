@@ -70,6 +70,8 @@ class P2SColorsMixin:
             ('distributions', 'default'):   '#000000',
             ('distributions', 'fill'):      '#f0f0f0',
             ('indicator',     'more_rows'): '#cc3333',
+            ('indicator',     'available'):   '#5f9e5f', # faded green
+            ('indicator',     'unavailable'): '#cccccc', # gray, barely perceptible on the default white background
             ('selection',     'default'):   '#ff0000',
             ('multiset',      'str'):       '#7f8367', # derived from polarsOperation behavior / not used 
             ('multiset',      'int'):       '#19d084', # derived from polarsOperation behavior / not used

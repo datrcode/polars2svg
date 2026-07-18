@@ -19,6 +19,21 @@ def _mlxCudaStatus_():
     return True, not _is_metal_
 
 
+# Indicator rows in the widget header, rendered top to bottom.  Adding a row here is
+# the only edit needed:  the frame stack below reserves its space via headerHeight(),
+# and the layout tests derive their component geometry from that same helper.
+_INDICATOR_LABELS_ = ('MLX', 'CUDA')
+
+
+def _statusTxtH_(txt_h):
+    return max(6, txt_h - 2)
+
+
+def headerHeight(txt_h=10):
+    """Vertical space the indicator header claims from the frame stack's budget."""
+    return len(_INDICATOR_LABELS_) * (_statusTxtH_(txt_h) + 4)
+
+
 def stack_controli(component, stack_name='default', insets=(2, 2), hgap=4,
                    wxh=(160, 256), txt_h=10, **kwargs):
     w, h   = wxh
@@ -44,12 +59,12 @@ def stack_controli(component, stack_name='default', insets=(2, 2), hgap=4,
 
         # MLX / CUDA availability header — one small row each, faded green when the
         # feature is usable, else a gray close to the background (visible but muted).
-        _status_txt_h_ = max(6, txt_h - 2)
+        _status_txt_h_ = _statusTxtH_(txt_h)
         _status_row_h_ = _status_txt_h_ + 4
-        _header_h_     = 2 * _status_row_h_
+        _header_h_     = headerHeight(txt_h)
         _avail_co_     = p2s_ref.colorTyped('indicator', 'available')
         _unavail_co_   = p2s_ref.colorTyped('indicator', 'unavailable')
-        for _i_, (_label_, _ok_) in enumerate((('MLX', _mlx_avail_), ('CUDA', _cuda_avail_))):
+        for _i_, (_label_, _ok_) in enumerate(zip(_INDICATOR_LABELS_, (_mlx_avail_, _cuda_avail_))):
             _svg_.append(p2s_ref.svgText(f'{_label_}: {"available" if _ok_ else "unavailable"}',
                                          x0, inset_y + _i_ * _status_row_h_ + _status_txt_h_,
                                          txt_h=_status_txt_h_,
@@ -174,21 +189,26 @@ def stack_controli(component, stack_name='default', insets=(2, 2), hgap=4,
             else:
                 # Cluster centered in middle space; skip labels above and below
                 inner = [i for i in range(1, n - 1) if to_render[i]]
-                mid = (y_top + hc + gap + y_base) // 2
-                cluster_h = len(inner) * slot - gap
-                start_y = mid + cluster_h // 2 - hc
-                y = start_y
-                for i in inner:
-                    _add_frame(dfs[i], y, i == index, i)
-                    y -= slot
-                missing_top = (n - 2) - inner[-1]
-                if missing_top > 0:
-                    top_lbl_y = (y_top + hc + y + slot) // 2
-                    _add_skip_label(top_lbl_y - ELL_H // 2, missing_top)
-                missing_bot = inner[0] - 1
-                if missing_bot > 0:
-                    bot_lbl_y = (start_y + hc + y_base) // 2
-                    _add_skip_label(bot_lbl_y - ELL_H // 2, missing_bot)
+                if not inner:
+                    # Budget too tight for even one middle frame: base and top with a
+                    # single skip label standing in for everything between them.
+                    _add_skip_label((y_top + hc + y_base) // 2 - ELL_H // 2, n - 2)
+                else:
+                    mid = (y_top + hc + gap + y_base) // 2
+                    cluster_h = len(inner) * slot - gap
+                    start_y = mid + cluster_h // 2 - hc
+                    y = start_y
+                    for i in inner:
+                        _add_frame(dfs[i], y, i == index, i)
+                        y -= slot
+                    missing_top = (n - 2) - inner[-1]
+                    if missing_top > 0:
+                        top_lbl_y = (y_top + hc + y + slot) // 2
+                        _add_skip_label(top_lbl_y - ELL_H // 2, missing_top)
+                    missing_bot = inner[0] - 1
+                    if missing_bot > 0:
+                        bot_lbl_y = (start_y + hc + y_base) // 2
+                        _add_skip_label(bot_lbl_y - ELL_H // 2, missing_bot)
 
         _svg_.append('</svg>')
         return ''.join(_svg_), frame_map

@@ -4,17 +4,28 @@ management, and sketchHtml().
 
 Overflow geometry notes (wxh=(160, 256), insets=(2, 2), hgap=4, txt_h=10):
   slot   = component_h + 4
-  avail  = 256 - 2*2 - component_h
+  avail  = 256 - 2*2 - component_h - headerHeight()
   A stack of n frames fits iff (n-1)*slot <= avail; larger stacks trigger the
   spiral-fill placement with skip labels ("... N stack frames ...").
+
+The indicator header (MLX/CUDA availability) eats into the same vertical budget,
+so the boundary tests below size their component from headerHeight() instead of a
+literal -- adding a third indicator row shifts them automatically.
 """
 import asyncio
+import re
 import unittest
 
 import polars as pl
 
 from polars2svg import Polars2SVG
 from polars2svg.interactive_controller import InteractionController
+from polars2svg.stack_control import headerHeight
+
+_HGAP_  = 4
+_TXT_H_ = 10
+_ELL_H_ = 2 * _HGAP_ + _TXT_H_     # height of one "... N stack frames ..." label
+_STACK_H_ = 256                    # wxh[1] default
 
 
 def _make_df(n=12):
@@ -38,6 +49,42 @@ class _StackControlBase(unittest.TestCase):
 
     def _component(self, h=60):
         return self.p2s.xyp(_make_df(), 'x', 'y', wxh=(120, h))
+
+    # Frame budget, with slot = component_h + hgap:  avail = 256 - slot - headerHeight()
+    def _budget(self):
+        return _STACK_H_ - headerHeight(_TXT_H_)
+
+    def _component_h_fitting(self, n):
+        """Tallest component where a stack of n frames still fits without overflow:
+        (n-1)*slot <= avail  <=>  n*slot <= 256 - header."""
+        slot = self._budget() // n
+        return slot - _HGAP_
+
+    def _component_h_overflow(self):
+        """A component small enough that a 10-frame stack overflows while still
+        leaving room for a multi-frame cluster around the selection."""
+        return self._budget() // 7 - _HGAP_
+
+    def _skips(self, sc):
+        """[(count, noun)] for each '... N stack frame(s) ...' label, in render order."""
+        return [(int(m.group(1)), m.group(2))
+                for m in re.finditer(r'\.\.\. (\d+) stack (frames?) \.\.\.', sc.mod_inner)]
+
+    def _assertSkipsAccountForAll(self, sc, n):
+        """Every unrendered frame is covered by exactly one skip label, correctly pluralized."""
+        _rendered_ = {fm[2] for fm in sc._frame_map_}
+        _skips_    = self._skips(sc)
+        self.assertEqual(sum(c for c, _ in _skips_), n - len(_rendered_))
+        for _count_, _noun_ in _skips_:
+            self.assertEqual(_noun_, 'frame' if _count_ == 1 else 'frames')
+
+    def _component_h_one_skip(self, n):
+        """Tallest component where a stack of n overflows with exactly one frame
+        skipped: (n-2)*slot + ELL_H <= avail < (n-1)*slot."""
+        slot = (self._budget() - _ELL_H_) // (n - 1)
+        self.assertGreater(n * slot, self._budget(),
+                           'geometry no longer admits a single-skip case for n=%d' % n)
+        return slot - _HGAP_
 
     def _stack_of(self, n):
         """A stack of n distinct dataframes (base is largest)."""
@@ -87,7 +134,8 @@ class TestStackControlOverflowLayouts(_StackControlBase):
     around the selected index with skip labels for the rest."""
 
     def _overflow_sc(self, index):
-        return self._make_sc(dfs=self._stack_of(10), index=index)
+        return self._make_sc(dfs=self._stack_of(10), index=index,
+                             component=self._component(h=self._component_h_overflow()))
 
     def test_selected_near_base_packs_from_base(self):
         sc, _ = self._overflow_sc(index=1)
@@ -96,7 +144,8 @@ class TestStackControlOverflowLayouts(_StackControlBase):
         self.assertIn(9, rendered)
         self.assertIn(1, rendered)
         self.assertLess(len(rendered), 10)
-        self.assertIn('... 7 stack frames ...', sc.mod_inner)
+        self.assertEqual(len(self._skips(sc)), 1)   # single label, near the top
+        self._assertSkipsAccountForAll(sc, 10)
 
     def test_selected_near_top_packs_from_top(self):
         sc, _ = self._overflow_sc(index=8)
@@ -104,19 +153,20 @@ class TestStackControlOverflowLayouts(_StackControlBase):
         self.assertIn(0, rendered)
         self.assertIn(9, rendered)
         self.assertIn(8, rendered)
-        self.assertIn('... 7 stack frames ...', sc.mod_inner)
+        self.assertEqual(len(self._skips(sc)), 1)   # single label, near the base
+        self._assertSkipsAccountForAll(sc, 10)
 
     def test_selected_in_middle_gets_two_skip_labels(self):
         sc, _ = self._overflow_sc(index=5)
         rendered = sorted(fm[2] for fm in sc._frame_map_)
         self.assertIn(5, rendered)
-        self.assertIn('... 3 stack frames ...', sc.mod_inner)
-        self.assertIn('... 4 stack frames ...', sc.mod_inner)
+        self.assertEqual(len(self._skips(sc)), 2)   # labels above and below the cluster
+        self._assertSkipsAccountForAll(sc, 10)
 
     def test_singular_skip_label_uses_frame_not_frames(self):
-        # component h=40 → slot=44: six frames overflow with exactly one skipped
+        # size the component so six frames overflow with exactly one skipped
         sc, _ = self._make_sc(dfs=self._stack_of(6), index=1,
-                              component=self._component(h=40))
+                              component=self._component(h=self._component_h_one_skip(6)))
         self.assertIn('... 1 stack frame ...', sc.mod_inner)
         self.assertNotIn('1 stack frames', sc.mod_inner)
 
@@ -185,7 +235,9 @@ class TestStackControlDisplay(_StackControlBase):
 
     def test_display_prunes_cache_of_dropped_frames(self):
         dfs = self._stack_of(4)
-        sc, _ = self._make_sc(dfs=dfs, index=0)
+        # all four frames must render (and so be cached) -- size the component to fit
+        sc, _ = self._make_sc(dfs=dfs, index=0,
+                              component=self._component(h=self._component_h_fitting(4)))
         # cache holds every stack frame (plus the component's df_orig from construction)
         self.assertTrue({id(d) for d in dfs} <= set(sc._svg_cache_.keys()))
         shrunk = dfs[:2]

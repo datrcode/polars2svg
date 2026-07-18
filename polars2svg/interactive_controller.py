@@ -3013,9 +3013,9 @@ z . | select node under mouse by color (shift, ctrl, and ctrl-shift apply)
             if      (event.key == "a" && !event.ctrlKey) { data.key_op_finished = 'a'; } // Toggle link arrows (on | off)
             else if (event.key == "b" ||                                // Cycle background (none | background | background + labels)
                      event.key == "B") { data.key_op_finished = 'b';  }
-            else if (event.key == "c") { data.key_op_finished = 'c';  } // (if selected) zoom to selected, else zoom to entire view
-            else if (event.key == "C") { data.key_op_finished = 'C';  } // Zoom to selected + neighbors
-            else if (event.key == "e") { data.key_op_finished = 'e';  } // Expand
+            else if (event.key == "c") { if (event.ctrlKey) event.preventDefault(); data.key_op_finished = 'c';  } // (if selected) zoom to selected, else zoom to entire view; ctrl-c copies (suppress native copy so it can't clobber our clipboard write)
+            else if (event.key == "C") { if (event.ctrlKey) event.preventDefault(); data.key_op_finished = 'C';  } // Zoom to selected + neighbors; ctrl-shift-c copies labels
+            else if (event.key == "e") { if (event.ctrlKey) event.preventDefault(); data.key_op_finished = 'e';  } // Expand; ctrl-e evens out distribution (ctrl-e is browser search-bar focus)
             else if (event.key == "E") { data.key_op_finished = 'E';  } // Expand (w/ digraph)
             else if (event.key == "g") { state.layout_op        = true; // Mouse press is layout shape
                                          state.layout_line_flag = false; } 
@@ -3032,8 +3032,8 @@ z . | select node under mouse by color (shift, ctrl, and ctrl-shift apply)
                      event.key == "N") { data.key_op_finished = 'n';  }
             else if (event.key == "q") { data.key_op_finished = 'q';  } // Invert selection
             else if (event.key == "Q") { data.key_op_finished = 'Q';  } // Select common neighbors to selected nodes
-            else if (event.key == "s") { data.key_op_finished = 's';  } // Set sticky labels
-            else if (event.key == "S") { data.key_op_finished = 'S';  } // Subtract selected from sticky labels
+            else if (event.key == "s") { if (event.ctrlKey) event.preventDefault(); data.key_op_finished = 's';  } // Set sticky labels; ctrl-s cycles label mode (ctrl-s is browser Save Page As)
+            else if (event.key == "S") { if (event.ctrlKey) event.preventDefault(); data.key_op_finished = 'S';  } // Subtract selected from sticky labels; ctrl-shift-s cycles label mode
             else if (event.key == "t") { data.key_op_finished = 't';  } // Collapse selected to a single point
             else if (event.key == "T") { data.key_op_finished = 'T';  } // Horizontally collapse selected
             else if (event.key == "u") { data.key_op_finished = 'u';  } // Undo last layout

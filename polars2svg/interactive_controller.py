@@ -2075,7 +2075,7 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
                             nbor_set.add(_nbor_)
                         if inter_set is None: inter_set = nbor_set             # first time, it gets the nbors
                         else:                 inter_set = inter_set & nbor_set # all other times it's and'ed
-                    if inter_set is not None: self.selected_entities = inter_set
+                    self.setSelectedEntitiesAndNotifyOthers(inter_set if inter_set is not None else set())
                 else:                   # invert selection
                     _new_set_ = set()
                     for _node_ in self.graphs[self.df_level]:

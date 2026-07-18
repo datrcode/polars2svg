@@ -394,7 +394,7 @@ class ODFlowLayout(object):
     # - returns (fx, fy) NumPy arrays indexed by active position
     #
     def _nodeForces_(self, _xs_, _ys_):
-        _A_, _P_ = self._A_, self.samples_per_flow
+        _A_ = self._A_
         _nn_ = len(self.node_xy)
         if _A_ == 0 or _nn_ == 0:
             _z_ = np.zeros(_A_)

@@ -568,7 +568,7 @@ class ODFlowLayout(object):
         for _idx_, (_node_, _f_, _g_) in enumerate(_pairs_):
             _S_ = self.node_xy[_node_]
             if _f_ in _amended_ or _g_ in _amended_:
-                _hit_ = self._curvesIntersect_(_f_, _g_, _S_)   # re-test on current cps
+                _hit_ = self._curvesIntersectOne_(_f_, _g_, _S_)   # re-test on current cps
             else:
                 _hit_ = bool(_batch_[_idx_])
             if not _hit_: continue
@@ -585,6 +585,23 @@ class ODFlowLayout(object):
     def _otherEnd_(self, f, node):
         _s_, _e_ = self.flow_nodes[f]
         return self.node_xy[_e_] if _s_ == node else self.node_xy[_s_]
+
+    #
+    # _curvesIntersectOne_() - vectorized single-pair intersection test on the
+    # current control points (the amend-loop re-test path).  Exact boolean parity
+    # with the scalar _curvesIntersect_, but the 20x20 segment test runs as one
+    # NumPy op instead of 400 Python _segIntersect_ calls - a large win on dense
+    # graphs where amendments cascade and most pairs take this path.
+    #
+    def _curvesIntersectOne_(self, f, g, shared_pt):
+        _a_, _b_, _c_ = self._is_a_, self._is_b_, self._is_c_       # (21,) each
+        _cf_, _cg_ = self.cps[f], self.cps[g]
+        _AX_ = _a_ * self._fl_fx_[f] + _b_ * _cf_[0] + _c_ * self._fl_tx_[f]
+        _AY_ = _a_ * self._fl_fy_[f] + _b_ * _cf_[1] + _c_ * self._fl_ty_[f]
+        _BX_ = _a_ * self._fl_fx_[g] + _b_ * _cg_[0] + _c_ * self._fl_tx_[g]
+        _BY_ = _a_ * self._fl_fy_[g] + _b_ * _cg_[1] + _c_ * self._fl_ty_[g]
+        return bool(_segAnyBatch_(_AX_[None, :], _AY_[None, :], _BX_[None, :], _BY_[None, :],
+                                  np.array([shared_pt[0]]), np.array([shared_pt[1]]))[0])
 
     #
     # _curvesIntersectBatch_() - vectorized _curvesIntersect_ for many (node,f,g)

@@ -2,8 +2,6 @@ import polars as pl
 
 from .exceptions import InvalidSpecError
 
-__name__ = 'p2s_render_mixin'
-
 class P2SRenderMixin:
     def __init__(self):
         pass

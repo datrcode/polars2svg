@@ -37,8 +37,6 @@ def _requireGraphLayoutDeps_():
     if not _HAS_GRAPH_LAYOUT_DEPS_:
         raise ImportError(_GRAPH_LAYOUT_DEPS_MSG_)
 
-__name__ = 'p2s_graph_mixin'
-
 class P2SGraphMixin:
     def __init__(self):
         pass

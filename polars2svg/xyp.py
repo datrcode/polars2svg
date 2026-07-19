@@ -13,8 +13,6 @@ from polars2svg.export import ExportMixin
 from polars2svg.p2s_background_mixin import P2SBackgroundMixin
 from polars2svg.exceptions import DataError
 
-__name__ = 'xyp'
-
 #
 # _CalendarStep - calendar-aware month/year step for temporal grid lines.
 #

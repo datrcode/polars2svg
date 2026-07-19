@@ -34,8 +34,6 @@ from .spreadlinesp       import SpreadLinesP
 if TYPE_CHECKING:
     from .chordp import ChP
 
-__name__ = 'polars2svg'
-
 #
 # _copy_mutable_containers_() - structural copy for template cloning: dict / set / list
 # containers are copied (recursively for dict values and list items; set elements are

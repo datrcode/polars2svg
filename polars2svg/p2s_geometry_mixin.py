@@ -7,8 +7,6 @@ from .circle_packer import CirclePacker
 from .udist_scatterplots_via_sectors_tile_opt import UDistScatterPlotsViaSectorsTileOpt
 from .exceptions import DataError
 
-__name__ = 'p2s_geometry_mixin'
-
 class P2SGeometryMixin:
     def __init__(self):
         pass

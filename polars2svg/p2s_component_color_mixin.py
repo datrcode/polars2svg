@@ -1,7 +1,5 @@
 import polars as pl
 
-__name__ = 'p2s_component_color_mixin'
-
 
 class P2SComponentColorMixin:
     #

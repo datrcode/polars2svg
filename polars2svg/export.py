@@ -17,8 +17,6 @@ import io
 import os
 import re
 
-__name__ = 'p2s_export'
-
 
 #
 # _fixSVGForRasterize_() - work around a svglib/tinycss2 crash

@@ -19,8 +19,6 @@ from   importlib.resources import files as _pkg_files
 
 from .exceptions import DataError, Polars2SVGError
 
-__name__ = 'udist_scatterplots_via_sectors_tile_opt'
-
 class UDistScatterPlotsViaSectorsTileOpt(object):
     #
     # __init__()

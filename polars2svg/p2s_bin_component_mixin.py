@@ -1,7 +1,5 @@
 import polars as pl
 
-__name__ = 'p2s_bin_component_mixin'
-
 
 class P2SBinComponentMixin:
     #

@@ -5,8 +5,6 @@ import polars as pl
 from .exceptions      import InvalidSpecError
 from .p2s_displaylist import DisplayList
 
-__name__ = 'p2s_legend_mixin'
-
 # Accepted legend= positions (layer 2 of the spec); True aliases to 'right'.
 LEGEND_POSITIONS = ('right', 'left', 'top', 'bottom')
 # Accepted keys for the dict form (layer 3 of the spec).

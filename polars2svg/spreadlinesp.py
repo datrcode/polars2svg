@@ -6,8 +6,6 @@ import time
 import polars2svg
 from polars2svg.export import ExportMixin
 
-__name__ = 'spreadlinesp'
-
 #
 # Implementation of the following:
 #

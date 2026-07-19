@@ -14,8 +14,6 @@ import os
 
 from polars2svg.p2s_font_metrics import textAdvance
 
-__name__ = 'p2s_glyph_atlas'
-
 ATLAS_PX  = 48
 _PAD_     = 2
 _INITIAL_CHARSET_ = ''.join(chr(c) for c in range(32, 127))

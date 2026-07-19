@@ -3,8 +3,6 @@ import re
 import operator
 from functools import reduce
 
-__name__ = 'p2s_polars_mixin'
-
 class P2SPolarsMixin:
     def __init__(self):
         pass

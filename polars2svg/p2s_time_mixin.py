@@ -4,8 +4,6 @@ from datetime import timedelta
 
 from .exceptions import InvalidSpecError, Polars2SVGError
 
-__name__ = 'p2s_time_mixin'
-
 class P2STimeMixin:
     def __init__(self):
         pass

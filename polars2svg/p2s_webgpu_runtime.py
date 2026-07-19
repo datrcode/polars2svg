@@ -11,8 +11,6 @@
 #
 import json
 
-__name__ = 'p2s_webgpu_runtime'
-
 P2S_GPU_JS = r"""
 if (!window.__P2S_GPU__) {
 window.__P2S_GPU__ = {

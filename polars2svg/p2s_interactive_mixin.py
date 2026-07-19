@@ -1,5 +1,3 @@
-__name__ = 'p2s_interactive_mixin'
-
 from typing import Any
 
 _INTERACTIVE_DEPS_MSG_ = (

@@ -10,8 +10,6 @@ from polars2svg.p2s_background_mixin import P2SBackgroundMixin
 from polars2svg.exceptions import DataError
 from polars2svg.od_flow_layout import ODFlowLayout
 
-__name__ = 'linkp'
-
 class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
 
     _COMPONENT_NAME_ = 'LinkP'   # dtype-keyed log + validation/error message prefix

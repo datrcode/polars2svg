@@ -23,8 +23,6 @@
 # it is only text *measurement* that no longer depends on it.
 #
 
-__name__ = 'p2s_font_metrics'
-
 UNITS_PER_EM    = 1000
 NOTDEF_ADVANCE  = 600
 

@@ -1,7 +1,5 @@
 import polars as pl
 
-__name__ = 'p2s_colors_mixin'
-
 _HEX_DIGITS_ = frozenset('0123456789abcdefABCDEF')
 
 #

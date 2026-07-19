@@ -2,8 +2,6 @@ import xml.etree.ElementTree as ET  # nosec B405 - background= shape descriptors
 
 from polars2svg.exceptions import DataError, Polars2SVGError
 
-__name__ = 'p2s_background_mixin'
-
 
 class P2SBackgroundMixin:
     #

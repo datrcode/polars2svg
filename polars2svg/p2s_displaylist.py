@@ -16,8 +16,6 @@ import math
 import numpy as np
 import polars as pl
 
-__name__ = 'p2s_displaylist'
-
 # floats per instance for each primitive kind
 FLOATS_PER_INSTANCE = {
     'rect':   9,    # x, y, w, h, rx, r, g, b, a

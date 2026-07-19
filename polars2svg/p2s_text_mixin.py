@@ -1,7 +1,5 @@
 import html
 
-__name__ = 'p2s_text_mixin'
-
 class P2STextMixin:
     def __init__(self):
         pass

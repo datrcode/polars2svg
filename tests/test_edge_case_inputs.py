@@ -16,6 +16,7 @@ Regression anchors for previously-fixed bugs:
 """
 import unittest
 import datetime
+import re
 import xml.etree.ElementTree as ET
 
 import polars as pl
@@ -224,6 +225,25 @@ class TestSpecialCharacterLabels(_EdgeCaseBase):
     def test_histop_tuple_bin_special_chars(self):
         df = pl.DataFrame({'a': ['x&', 'y<'], 'b': ['1', '2'], 'v': [1, 2]})
         self._wellformed(self.p2s.histop(df, ('a', 'b')))
+
+    def test_xyp_gradient_line_id_special_chars(self):
+        '''Regression: the per-segment linearGradient id was derived from the
+        (untrusted) line-by column via a blocklist that missed < > & ", so a
+        line group name with those chars broke out of id="..."/url(#...) and
+        produced malformed SVG. The id sanitizer is now an allowlist.'''
+        _a_ = pl.DataFrame({'t': list(range(6)), 'v': [2, 3, 4, 3, 5, 1],
+                            'grp': ['a<b&"#(']*6})
+        _b_ = pl.DataFrame({'t': list(range(6)), 'v': [8, 7, 5, 6, 5, 2],
+                            'grp': ['c>d']*6})
+        df  = pl.concat([_a_, _b_])
+        # LINEOPACITY_FIELD_VARIABLE forces the per-endpoint gradient path.
+        svg = self._wellformed(self.p2s.xyp(
+            df, 't', 'v', color='v', dot_size='v', opacity='v',
+            line=('grp', self.p2s.LINEOPACITY_FIELD_VARIABLE), draw_context=False))
+        _ids_ = re.findall(r'id="(lines_[^"]*)"', svg)
+        self.assertTrue(_ids_)                       # gradient path actually ran
+        for _id_ in _ids_:
+            self.assertNotRegex(_id_, r'[^A-Za-z0-9_-]')   # only safe id chars
 
     def test_xyp_categorical_axis_special_chars(self):
         df = pl.DataFrame({'x': ['a&b', 'c<d', 'e'], 'y': [1.0, 2.0, 3.0]})

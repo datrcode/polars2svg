@@ -5,11 +5,12 @@ import random
 import polars2svg
 from polars2svg.p2s_displaylist import DisplayList
 from polars2svg.export import ExportMixin
+from polars2svg.p2s_bin_component_mixin import P2SBinComponentMixin
 
 #
 # Histogram
 #
-class Histop(ExportMixin):
+class Histop(P2SBinComponentMixin, ExportMixin):
 
     _VALID_KWARGS = frozenset({
         'template', 'df',
@@ -286,19 +287,6 @@ class Histop(ExportMixin):
                     return _f_
         return None
 
-    def __colorStatAggExpr__(self):
-        """Aggregation expression for numeric spectrum coloring (default: sum)."""
-        _field_ = self._color_field_
-        _op_    = pl.col(_field_).sum()
-        if isinstance(self.color, tuple):
-            for item in self.color:
-                if   item in {self.p2s.CMAGNITUDE_MINp,    self.p2s.CSTRETCHED_MINp,    self.p2s.MINp}:    _op_ = pl.col(_field_).min();    break
-                elif item in {self.p2s.CMAGNITUDE_MEDIANp, self.p2s.CSTRETCHED_MEDIANp, self.p2s.MEDIANp}: _op_ = pl.col(_field_).median(); break
-                elif item in {self.p2s.CMAGNITUDE_MEANp,   self.p2s.CSTRETCHED_MEANp,   self.p2s.MEANp}:   _op_ = pl.col(_field_).mean();   break
-                elif item in {self.p2s.CMAGNITUDE_MAXp,    self.p2s.CSTRETCHED_MAXp,    self.p2s.MAXp}:    _op_ = pl.col(_field_).max();    break
-                elif item == self.p2s.STDp:                                                                   _op_ = pl.col(_field_).std();    break
-        return _op_.alias('__color_stat__')
-
     def __orderAggExpr__(self):
         if self.order == self.p2s.ROW_COUNTp:
             return pl.len().alias('__order_metric__')
@@ -566,11 +554,6 @@ class Histop(ExportMixin):
         elif _pos_ == 'left':   self._legend_region_ = (0, 0, _l_, self.wxh[1])
         elif _pos_ == 'top':    self._legend_region_ = (0, 0, self.wxh[0], _t_)
         else:                   self._legend_region_ = (0, self.wxh[1] - _b_, self.wxh[0], _b_)
-
-    def __legendColorFieldName__(self):
-        if isinstance(self.color, str):   return self.color
-        if isinstance(self.color, tuple): return '|'.join(_f_ for _f_ in self.color if isinstance(_f_, str))
-        return ''
 
     def __constructGeometry__(self):
         w, h         = self.wxh
@@ -964,14 +947,6 @@ class Histop(ExportMixin):
             _dl_.line(w-1, 0, w-1, h-1, _axis_inner_, width=1.0)
 
         self.svg = _svg_head_ + _dl_.svg() + '</svg>'
-
-    def __formatCount__(self, count):
-        if count is None: return '0'
-        _v_ = float(count)
-        if   _v_ >= 1_000_000: return f'{_v_/1_000_000:.1f}M'
-        elif _v_ >= 1_000:     return f'{_v_/1_000:.1f}K'
-        elif _v_ == int(_v_):  return str(int(_v_))
-        else:                  return f'{_v_:.2g}'
 
     def __renderDistributionStrip__(self, _dl_):
         _abw_   = self._dist_actual_bin_w_   # float cell width

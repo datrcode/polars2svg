@@ -1,17 +1,20 @@
 import polars as pl
 import random
 import time
-import xml.etree.ElementTree as ET  # nosec B405 - background= shape descriptors are trusted caller config, not untrusted data; see SECURITY.md
 
 import polars2svg
 from polars2svg.p2s_displaylist import DisplayList, hexToRGBA, cubicBezierSegmentsTable
 from polars2svg.export import ExportMixin
-from polars2svg.exceptions import DataError, Polars2SVGError
+from polars2svg.p2s_component_color_mixin import P2SComponentColorMixin
+from polars2svg.p2s_background_mixin import P2SBackgroundMixin
+from polars2svg.exceptions import DataError
 from polars2svg.od_flow_layout import ODFlowLayout
 
 __name__ = 'linkp'
 
-class LinkP(ExportMixin):
+class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
+
+    _COMPONENT_NAME_ = 'LinkP'   # dtype-keyed log + validation/error message prefix
 
     _VALID_KWARGS = frozenset({
         'template', 'df',
@@ -451,194 +454,6 @@ class LinkP(ExportMixin):
         return set()
 
     #
-    # __effectiveColorSpec__() - resolve the color spec for links or nodes
-    #
-    def __effectiveColorSpec__(self, target):
-        if target == 'links': return self.color
-        return self.node_color
-
-    #
-    # __colorModeInfo__() - classify a color spec into a mode dict
-    # Returns: {'kind': str, 'field': str|None, 'stat': str, 'hex': str|None}
-    # Kinds: 'default' | 'fixed_hex' | 'categorical' | 'crow_magnitude' | 'crow_stretched' |
-    #        'cset_magnitude' | 'cset_stretched' | 'stat_magnitude' | 'stat_stretched'
-    #
-    def __colorModeInfo__(self, spec):
-        _p2s_ = self.p2s
-        _cmag_  = {_p2s_.CMAGNITUDE_SUMp, _p2s_.CMAGNITUDE_MINp, _p2s_.CMAGNITUDE_MEDIANp,
-                   _p2s_.CMAGNITUDE_MEANp, _p2s_.CMAGNITUDE_MAXp}
-        _cstr_  = {_p2s_.CSTRETCHED_SUMp, _p2s_.CSTRETCHED_MINp, _p2s_.CSTRETCHED_MEDIANp,
-                   _p2s_.CSTRETCHED_MEANp, _p2s_.CSTRETCHED_MAXp}
-        _smap_  = {
-            _p2s_.CMAGNITUDE_SUMp: 'sum',    _p2s_.CSTRETCHED_SUMp: 'sum',
-            _p2s_.CMAGNITUDE_MINp: 'min',    _p2s_.CSTRETCHED_MINp: 'min',
-            _p2s_.CMAGNITUDE_MEDIANp:'median',_p2s_.CSTRETCHED_MEDIANp:'median',
-            _p2s_.CMAGNITUDE_MEANp: 'mean',  _p2s_.CSTRETCHED_MEANp: 'mean',
-            _p2s_.CMAGNITUDE_MAXp: 'max',    _p2s_.CSTRETCHED_MAXp: 'max',
-            _p2s_.SUMp: 'sum',   _p2s_.MINp: 'min',
-            _p2s_.MEDIANp: 'median', _p2s_.MEANp: 'mean',
-            _p2s_.MAXp: 'max',   _p2s_.STDp: 'std',
-        }
-        _info_ = {'kind': 'default', 'field': None, 'stat': 'sum', 'hex': None}
-        if spec is None:
-            pass
-        elif isinstance(spec, self.p2s.HexColorString):
-            _info_['kind'] = 'fixed_hex';  _info_['hex'] = spec
-        elif spec == _p2s_.CROW_MAGNITUDEp:
-            _info_['kind'] = 'crow_magnitude'
-        elif spec == _p2s_.CROW_STRETCHEDp:
-            _info_['kind'] = 'crow_stretched'
-        elif spec == _p2s_.COLOR_BY_NODE_NAME:
-            _info_['kind'] = 'categorical'   # field=None → colorize by node name
-        elif isinstance(spec, str) and self.df is not None and spec in self.df.columns:
-            _is_num_ = self.p2s.numericColumn(self.df, spec)
-            self.p2s.logDtypeKeyedColor('LinkP', spec, _is_num_)
-            if _is_num_:
-                _info_['kind'] = 'stat_magnitude'; _info_['field'] = spec; _info_['stat'] = 'sum'
-            else:
-                _info_['kind'] = 'cset'; _info_['field'] = spec
-        elif isinstance(spec, tuple):
-            _strs_  = [f for f in spec if isinstance(f, str)]
-            _enums_ = [e for e in spec if not isinstance(e, str)]
-            _field_ = _strs_[0] if _strs_ else None
-            _enum_  = _enums_[0] if _enums_ else None
-            if   _enum_ == _p2s_.CSETp:
-                _info_['kind'] = 'cset';           _info_['field'] = _field_
-            elif _enum_ == _p2s_.CSET_MAGNITUDEp:
-                _info_['kind'] = 'cset_magnitude'; _info_['field'] = _field_
-            elif _enum_ == _p2s_.CSET_STRETCHEDp:
-                _info_['kind'] = 'cset_stretched'; _info_['field'] = _field_
-            elif _enum_ in _cmag_:
-                _info_['kind'] = 'stat_magnitude'; _info_['field'] = _field_; _info_['stat'] = _smap_.get(_enum_, 'sum')
-            elif _enum_ in _cstr_:
-                _info_['kind'] = 'stat_stretched'; _info_['field'] = _field_; _info_['stat'] = _smap_.get(_enum_, 'sum')
-            elif _enum_ in _smap_:
-                _info_['kind'] = 'stat_magnitude'; _info_['field'] = _field_; _info_['stat'] = _smap_[_enum_]
-            elif _field_:
-                _info_['kind'] = 'categorical';    _info_['field'] = _field_
-        return _info_
-
-    #
-    # __colorAggExprs__() - return agg expressions needed by a color mode (added into group_by().agg())
-    #
-    def __colorAggExprs__(self, mode_info, prefix):
-        kind = mode_info['kind']
-        if kind in ('categorical', 'cset'):
-            return [
-                pl.col(f'__{prefix}_cat__').n_unique().alias(f'__{prefix}_nuniq__'),
-                pl.col(f'__{prefix}_cat__').first().alias(f'__{prefix}_first__'),
-            ]
-        elif kind in ('cset_magnitude', 'cset_stretched') and mode_info['field']:
-            return [pl.col(mode_info['field']).n_unique().alias(f'__{prefix}_stat__')]
-        elif kind in ('stat_magnitude', 'stat_stretched') and mode_info['field']:
-            _field_ = mode_info['field']
-            _op_ = {
-                'sum':    pl.col(_field_).sum(),
-                'min':    pl.col(_field_).min(),
-                'median': pl.col(_field_).median(),
-                'mean':   pl.col(_field_).mean(),
-                'max':    pl.col(_field_).max(),
-                'std':    pl.col(_field_).std(),
-            }.get(mode_info['stat'], pl.col(_field_).sum())
-            return [_op_.alias(f'__{prefix}_stat__')]
-        elif kind in ('crow_magnitude', 'crow_stretched'):
-            return [pl.len().alias(f'__{prefix}_row_count__')]
-        return []
-
-    #
-    # __applyColorToDF__() - add f'__{prefix}_hex__' column to an aggregated DataFrame
-    #
-    def __applyColorToDF__(self, df, mode_info, prefix, default_hex):
-        kind    = mode_info['kind']
-        col_hex = f'__{prefix}_hex__'
-        if kind == 'fixed_hex':
-            return df.with_columns(pl.lit(mode_info['hex']).alias(col_hex))
-        elif kind == 'categorical':
-            return df.with_columns(
-                pl.when(pl.col(f'__{prefix}_nuniq__') == 1)
-                  .then(pl.col(f'__{prefix}_first__'))
-                  .otherwise(pl.lit(default_hex))
-                  .alias(col_hex)
-            )
-        elif kind == 'cset':
-            df = df.with_columns(
-                pl.when(pl.col(f'__{prefix}_nuniq__') == 1)
-                  .then(pl.col(f'__{prefix}_first__'))
-                  .otherwise(pl.lit(-1))
-                  .alias(f'__{prefix}_set_elem__')
-            )
-            return df.with_columns(
-                self.p2s.colorizeColumnPolarsOperations(f'__{prefix}_set_elem__').alias(col_hex)
-            )
-        elif kind in ('crow_magnitude', 'crow_stretched', 'cset_magnitude', 'cset_stretched',
-                      'stat_magnitude', 'stat_stretched'):
-            _sc_     = f'__{prefix}_row_count__' if kind in ('crow_magnitude', 'crow_stretched') else f'__{prefix}_stat__'
-            _norm_   = f'__{prefix}_norm__'
-            _r_, _g_, _b_ = f'__{prefix}_r__', f'__{prefix}_g__', f'__{prefix}_b__'
-            # legend-only stat accumulator (kept separate from _color_stat_min_/_max_,
-            # which smallp SM_COLOR sharing reads and which stretched modes never touch)
-            _lg_min_ = df[_sc_].cast(pl.Float64).min()
-            _lg_max_ = df[_sc_].cast(pl.Float64).max()
-            if _lg_min_ is not None and (getattr(self, '_legend_stat_min_', None) is None or _lg_min_ < self._legend_stat_min_):
-                self._legend_stat_min_ = float(_lg_min_)
-            if _lg_max_ is not None and (getattr(self, '_legend_stat_max_', None) is None or _lg_max_ > self._legend_stat_max_):
-                self._legend_stat_max_ = float(_lg_max_)
-            if kind in ('crow_stretched', 'cset_stretched', 'stat_stretched'):
-                _n_unique_ = df[_sc_].n_unique()
-                df = df.with_columns(
-                    ((pl.col(_sc_).rank('dense') - 1).cast(pl.Float64) / max(_n_unique_ - 1, 1)).alias(_norm_)
-                )
-            else:
-                if self.color_stat_range_shared is not None:
-                    _cs_min_ = float(self.color_stat_range_shared[0])
-                    _cs_max_ = float(self.color_stat_range_shared[1])
-                else:
-                    _min_v_ = df[_sc_].cast(pl.Float64).min()
-                    _max_v_ = df[_sc_].cast(pl.Float64).max()
-                    _cs_min_ = float(_min_v_) if _min_v_ is not None else 0.0
-                    _cs_max_ = float(_max_v_) if _max_v_ is not None else 1.0
-                if self._color_stat_min_ is None or _cs_min_ < self._color_stat_min_:
-                    self._color_stat_min_ = _cs_min_
-                if self._color_stat_max_ is None or _cs_max_ > self._color_stat_max_:
-                    self._color_stat_max_ = _cs_max_
-                df = df.with_columns(
-                    ((pl.col(_sc_).cast(pl.Float64) - _cs_min_) /
-                     (0.001 + _cs_max_ - _cs_min_))
-                    .clip(0.0, 1.0).alias(_norm_)
-                )
-            df = df.with_columns(
-                self.p2s.colorSpectrumPolarsOperations(_norm_, _r_, _g_, _b_)
-            ).with_columns(
-                self.p2s.hexColorFromRGBTriplesPolarsOperations(_r_, _g_, _b_).alias(col_hex)
-            )
-            return df
-        else:
-            return df.with_columns(pl.lit(default_hex).alias(col_hex))
-
-    #
-    # __validateColorSpec__() - raise ValueError if a node_color value is not a recognized form
-    #
-    def __validateColorSpec__(self, spec, param_name, allow_dict=False):
-        if spec is None: return
-        if isinstance(spec, dict):
-            if not allow_dict:
-                raise ValueError(f'LinkP.__validateInput__(): {param_name} does not support dict values')
-            return
-        if isinstance(spec, tuple): return
-        _p2s_ = self.p2s
-        if spec in (_p2s_.CROW_MAGNITUDEp, _p2s_.CROW_STRETCHEDp, _p2s_.COLOR_BY_NODE_NAME): return
-        if isinstance(spec, self.p2s.HexColorString): return
-        if isinstance(spec, str):
-            if self.df is not None and spec in self.df.columns: return
-            raise ValueError(
-                f'LinkP.__validateInput__(): {param_name}={spec!r} is not a hex color, '
-                f'a recognized constant, or a DataFrame column name'
-            )
-        raise ValueError(
-            f'LinkP.__validateInput__(): {param_name}={spec!r} has unsupported type {type(spec).__name__}'
-        )
-
-    #
     # __validateInput__()
     #
     def __validateInput__(self):
@@ -849,6 +664,11 @@ class LinkP(ExportMixin):
         self.yT     = lambda wy: _lg_t_ + h - yi - (h - 2*yi) * (wy - self.wy0) / (self.wy1 - self.wy0)
         self.xT_inv = lambda sx: self.wx0 + (sx - _lg_l_ - xi) * (self.wx1 - self.wx0) / (w - 2*xi)
         self.yT_inv = lambda sy: self.wy0 + (_lg_t_ + h - yi - sy) * (self.wy1 - self.wy0) / (h - 2*yi)
+
+    # P2SBackgroundMixin world->screen hooks (xT/yT are set above, before any
+    # background shape is transformed)
+    def __bgX__(self, _v_): return self.xT(_v_)
+    def __bgY__(self, _v_): return self.yT(_v_)
 
     #
     # __calculateScreenCoordinates__()
@@ -1462,191 +1282,6 @@ class LinkP(ExportMixin):
             return None
         else:
             raise DataError(f'LinkP.__shapelyToSVGPath__() - unsupported type: {type(shape)}')
-
-    #
-    # __bgMinsAndMaxes__() - update a bounding box with a new point
-    #
-    def __bgMinsAndMaxes__(self, x, y, x0, y0, x1, y1):
-        if x0 is None:
-            return x, y, x, y
-        return min(x, x0), min(y, y0), max(x, x1), max(y, y1)
-
-    #
-    # __backgroundShapeRenderDetails__() - build SVG fill/stroke attribute string for a background shape
-    #
-    def __backgroundShapeRenderDetails__(self, name, bg_shape_opacity, bg_shape_fill, bg_shape_stroke_w, bg_shape_stroke):
-        svg = ''
-        # Fill
-        if bg_shape_fill is not None and bg_shape_opacity is not None:
-            if isinstance(bg_shape_opacity, dict):
-                _opacity = bg_shape_opacity.get(name, 1.0)
-            else:
-                _opacity = bg_shape_opacity
-            svg += f' fill-opacity="{_opacity}"'
-
-            if   isinstance(bg_shape_fill, dict) and name in bg_shape_fill:
-                _co = bg_shape_fill[name]
-            elif bg_shape_fill == 'vary':
-                _co = self.p2s.color(name)
-            elif isinstance(bg_shape_fill, self.p2s.HexColorString):
-                _co = bg_shape_fill
-            else:
-                _co = self.p2s.colorTyped('axis', 'inner')
-            svg += f' fill="{_co}"'
-        else:
-            svg += ' fill-opacity="0.0"'
-
-        # Stroke
-        if bg_shape_stroke_w is not None and bg_shape_stroke is not None:
-            if   bg_shape_stroke == 'vary':
-                _co = self.p2s.color(name)
-            elif isinstance(bg_shape_stroke, self.p2s.HexColorString):
-                _co = bg_shape_stroke
-            elif isinstance(bg_shape_stroke, dict) and name in bg_shape_stroke:
-                _co = bg_shape_stroke[name]
-            else:
-                _co = self.p2s.colorTyped('axis', 'inner')
-
-            if isinstance(bg_shape_stroke_w, dict) and name in bg_shape_stroke_w:
-                _wi = bg_shape_stroke_w[name]
-            else:
-                _wi = bg_shape_stroke_w
-            svg += f' stroke="{_co}" stroke-width="{_wi}"'
-        return svg
-
-    #
-    # __backgroundShapeLabel__() - render a centred text label over the shape bounding box
-    #
-    def __backgroundShapeLabel__(self, name, x0, y0, x1, y1, bg_shape_label_color):
-        if bg_shape_label_color is None or x0 is None:
-            return ''
-        if   isinstance(bg_shape_label_color, dict) and name in bg_shape_label_color:
-            _co = bg_shape_label_color[name]
-        elif bg_shape_label_color == 'vary':
-            _co = self.p2s.color(name)
-        elif isinstance(bg_shape_label_color, self.p2s.HexColorString):
-            _co = bg_shape_label_color
-        else:
-            _co = self.p2s.colorTyped('axis', 'inner')
-        _cx_ = (x0 + x1) / 2
-        _cy_ = self.txt_h / 2 + (y0 + y1) / 2
-        return (f'<text x="{_cx_}" y="{_cy_}" text-anchor="middle" '
-                f'font-family="{self.p2s.default_font}" fill="{_co}" font-size="{self.txt_h}px">'
-                f'{name}</text>')
-
-    #
-    # __transformCircleSVG__() - transform a <circle> SVG element into an <ellipse> in screen coordinates
-    #
-    def __transformCircleSVG__(self, name, shape_desc, bg_shape_label_color, bg_shape_opacity,
-                                bg_shape_fill, bg_shape_stroke_w, bg_shape_stroke):
-        _root_ = ET.fromstring(shape_desc)  # nosec B314 - trusted caller config (background= shape descriptor), not untrusted data; see SECURITY.md
-        cx  = float(_root_.attrib['cx'])
-        cy  = float(_root_.attrib['cy'])
-        r   = float(_root_.attrib['r'])
-        cx_s = self.xT(cx)
-        cy_s = self.yT(cy)
-        rx_s = abs(self.xT(r + cx) - cx_s)
-        ry_s = abs(self.yT(r + cy) - cy_s)
-        svg  = f'<ellipse cx="{cx_s}" cy="{cy_s}" rx="{rx_s}" ry="{ry_s}"'
-        svg += self.__backgroundShapeRenderDetails__(name, bg_shape_opacity, bg_shape_fill,
-                                                     bg_shape_stroke_w, bg_shape_stroke)
-        return svg + '/>', self.__backgroundShapeLabel__(name, cx_s - rx_s, cy_s - ry_s,
-                                                         cx_s + rx_s, cy_s + ry_s, bg_shape_label_color)
-
-    #
-    # __transformPathDescription__() - transform an SVG path description string into screen coordinates
-    #
-    def __transformPathDescription__(self, name, shape_desc, bg_shape_label_color, bg_shape_opacity,
-                                      bg_shape_fill, bg_shape_stroke_w, bg_shape_stroke):
-        svg = '<path d="'
-        x0, y0, x1, y1 = None, None, None, None
-        tokens = ' '.join(shape_desc.split()).split(' ')
-        i = 0
-        while i < len(tokens):
-            if tokens[i] == 'M':
-                _x, _y = self.xT(float(tokens[i+1])), self.yT(float(tokens[i+2]))
-                svg += f' M {_x} {_y}'
-                x0, y0, x1, y1 = self.__bgMinsAndMaxes__(_x, _y, x0, y0, x1, y1)
-                i += 3
-            elif tokens[i] == 'L':
-                _x, _y = self.xT(float(tokens[i+1])), self.yT(float(tokens[i+2]))
-                svg += f' L {_x} {_y}'
-                x0, y0, x1, y1 = self.__bgMinsAndMaxes__(_x, _y, x0, y0, x1, y1)
-                i += 3
-            elif tokens[i] == 'C':
-                _xcp1, _ycp1 = self.xT(float(tokens[i+1])), self.yT(float(tokens[i+2]))
-                _xcp2, _ycp2 = self.xT(float(tokens[i+3])), self.yT(float(tokens[i+4]))
-                _x,    _y    = self.xT(float(tokens[i+5])), self.yT(float(tokens[i+6]))
-                svg += f' C {_xcp1} {_ycp1} {_xcp2} {_ycp2} {_x} {_y}'
-                x0, y0, x1, y1 = self.__bgMinsAndMaxes__(_x,    _y,    x0, y0, x1, y1)
-                x0, y0, x1, y1 = self.__bgMinsAndMaxes__(_xcp1, _ycp1, x0, y0, x1, y1)
-                x0, y0, x1, y1 = self.__bgMinsAndMaxes__(_xcp2, _ycp2, x0, y0, x1, y1)
-                i += 7
-            elif tokens[i] == 'Z':
-                svg += ' Z'
-                i += 1
-            else:
-                raise Polars2SVGError(f'LinkP.__transformPathDescription__() - unhandled path token "{tokens[i]}"')
-        svg += '"'
-        svg += self.__backgroundShapeRenderDetails__(name, bg_shape_opacity, bg_shape_fill,
-                                                     bg_shape_stroke_w, bg_shape_stroke)
-        return svg + '/>', self.__backgroundShapeLabel__(name, x0, y0, x1, y1, bg_shape_label_color)
-
-    #
-    # __transformPointsList__() - transform a list of (x, y) tuples into a screen-coordinate SVG path
-    #
-    def __transformPointsList__(self, name, points_list, bg_shape_label_color, bg_shape_opacity,
-                                 bg_shape_fill, bg_shape_stroke_w, bg_shape_stroke):
-        _x, _y = self.xT(points_list[0][0]), self.yT(points_list[0][1])
-        svg = f'<path d="M {_x} {_y}'
-        x0, y0, x1, y1 = _x, _y, _x, _y
-        for i in range(1, len(points_list)):
-            _x, _y = self.xT(points_list[i][0]), self.yT(points_list[i][1])
-            svg += f' L {_x} {_y}'
-            x0, y0, x1, y1 = self.__bgMinsAndMaxes__(_x, _y, x0, y0, x1, y1)
-        svg += ' Z"'
-        svg += self.__backgroundShapeRenderDetails__(name, bg_shape_opacity, bg_shape_fill,
-                                                     bg_shape_stroke_w, bg_shape_stroke)
-        return svg + '/>', self.__backgroundShapeLabel__(name, x0, y0, x1, y1, bg_shape_label_color)
-
-    #
-    # __transformBackgroundShapes__() - dispatch a background shape to the appropriate transform method
-    #
-    def __transformBackgroundShapes__(self, name, shape_desc, bg_shape_label_color, bg_shape_opacity,
-                                       bg_shape_fill, bg_shape_stroke_w, bg_shape_stroke):
-        # Convert Shapely geometries to SVG path strings. shapely is an optional
-        # 'layouts' dependency: if it isn't installed, shape_desc can't actually
-        # be a shapely geometry (the caller couldn't have constructed one), so
-        # skip these isinstance checks rather than importing/erroring for a
-        # plain string/svg background.
-        try:
-            from shapely.geometry import Polygon, MultiPolygon, LineString, MultiLineString, GeometryCollection
-            _has_shapely_ = True
-        except ImportError:
-            _has_shapely_ = False
-
-        if _has_shapely_ and isinstance(shape_desc, (Polygon, MultiPolygon)):
-            shape_desc = self.__shapelyToSVGPath__(shape_desc)
-        if _has_shapely_ and isinstance(shape_desc, (LineString, MultiLineString)):
-            shape_desc = self.__shapelyToSVGPath__(shape_desc)
-            bg_shape_fill = 'none'
-        if _has_shapely_ and isinstance(shape_desc, GeometryCollection):
-            if len(shape_desc.geoms) > 0:
-                raise DataError('LinkP.__transformBackgroundShapes__() - non-empty GeometryCollection not supported')
-            return '', ''
-
-        if isinstance(shape_desc, str):
-            if shape_desc.lower().startswith('<circle'):
-                return self.__transformCircleSVG__(name, shape_desc, bg_shape_label_color, bg_shape_opacity,
-                                                   bg_shape_fill, bg_shape_stroke_w, bg_shape_stroke)
-            else:
-                return self.__transformPathDescription__(name, shape_desc, bg_shape_label_color, bg_shape_opacity,
-                                                         bg_shape_fill, bg_shape_stroke_w, bg_shape_stroke)
-        elif isinstance(shape_desc, list):
-            return self.__transformPointsList__(name, shape_desc, bg_shape_label_color, bg_shape_opacity,
-                                                bg_shape_fill, bg_shape_stroke_w, bg_shape_stroke)
-        else:
-            raise DataError(f'LinkP.__transformBackgroundShapes__() - unsupported type "{type(shape_desc)}"')
 
     #
     # __renderBackground__() - render background shapes into self.svg_background and self._dl_background_

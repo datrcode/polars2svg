@@ -543,20 +543,25 @@ class TestP2SInteractiveMethods(unittest.TestCase):
         result = self.p2s.panelizeSketch([[self.xyp_obj], [self.histop_obj]])
         self.assertEqual(type(result).__name__, 'HTML')
 
+    # xyp_obj is 256x256; stack_controli's default wxh (160, 256) is too short
+    # to hold that icon plus the MLX/CUDA header and two skip labels, so these
+    # give it a taller widget explicitly.
+    _STACK_WXH_ = (160, 340)
+
     def test_sketch_includes_interactive_only_stack_control(self):
         # stack_controli is interactive-only (no static twin / _repr_svg_); the
         # sketch path must still represent it rather than raising.
-        sc   = self.p2s.stack_controli(self.xyp_obj)
+        sc   = self.p2s.stack_controli(self.xyp_obj, wxh=self._STACK_WXH_)
         html = _build_sketch_html([[self.xyp_obj, sc]])
         self.assertIn('<svg', html)
         self.assertNotIn('interactive</text>', html)   # used live snapshot, not placeholder
 
     def test_stack_control_sketchHtml_returns_current_frame(self):
-        sc = self.p2s.stack_controli(self.xyp_obj)
+        sc = self.p2s.stack_controli(self.xyp_obj, wxh=self._STACK_WXH_)
         self.assertEqual(sc.sketchHtml(), sc.mod_inner)
 
     def test_panelizeSketch_with_interactive_only_leaf_returns_pane(self):
-        sc     = self.p2s.stack_controli(self.xyp_obj)
+        sc     = self.p2s.stack_controli(self.xyp_obj, wxh=self._STACK_WXH_)
         result = self.p2s.panelizeSketch([[self.xyp_obj, sc]])
         self.assertEqual(type(result).__name__, 'HTML')
 

@@ -2,11 +2,19 @@
 click-to-select routing through the InteractionController, display() cache
 management, and sketchHtml().
 
+Placement follows the "Stack Control Requirements" worked out in
+polars2svg_prototyping/stack_control_shrinkage.ipynb: the current index always
+renders; base (index 0) and top (index n-1) are tried next, with top only
+attempted once base has succeeded; then the cluster grows outward from the
+current index one frame at a time. At most two "... N stack frame(s) ..."
+skip labels are ever needed. See TestStackControlPlacement for the exact
+worked traces (see polars2svg.stack_control._placement).
+
 Overflow geometry notes (wxh=(160, 256), insets=(2, 2), hgap=4, txt_h=10):
   slot   = component_h + 4
   avail  = 256 - 2*2 - component_h - headerHeight()
   A stack of n frames fits iff (n-1)*slot <= avail; larger stacks trigger the
-  spiral-fill placement with skip labels ("... N stack frames ...").
+  outward-fill placement with skip labels ("... N stack frames ...").
 
 The indicator header (MLX/CUDA availability) eats into the same vertical budget,
 so the boundary tests below size their component from headerHeight() instead of a
@@ -20,7 +28,7 @@ import polars as pl
 
 from polars2svg import Polars2SVG
 from polars2svg.interactive_controller import InteractionController
-from polars2svg.stack_control import headerHeight
+from polars2svg.stack_control import headerHeight, _placement
 
 _HGAP_  = 4
 _TXT_H_ = 10
@@ -125,8 +133,12 @@ class TestStackControlConstruction(_StackControlBase):
 
     def test_base_and_top_sublabels_present(self):
         sc, _ = self._make_sc(dfs=self._stack_of(3), index=0)
-        self.assertIn('(Base)', sc.mod_inner)
-        self.assertIn('Top',    sc.mod_inner)
+        self.assertIn('base', sc.mod_inner)
+        self.assertIn('top',  sc.mod_inner)
+
+    def test_middle_frame_gets_position_of_n_label(self):
+        sc, _ = self._make_sc(dfs=self._stack_of(3), index=1)
+        self.assertIn('2 of 3', sc.mod_inner)
 
 
 class TestStackControlOverflowLayouts(_StackControlBase):
@@ -250,6 +262,110 @@ class TestStackControlDisplay(_StackControlBase):
         _tile_ = sc._svg_cache_[id(dfs[1])]
         asyncio.run(sc.display(dfs[0], dfs, 0))
         self.assertIs(sc._svg_cache_[id(dfs[1])], _tile_)
+
+
+class TestStackControlPlacement(unittest.TestCase):
+    """_placement() traced against the exact geometry of
+    polars2svg_prototyping/stack_control_shrinkage.ipynb (wxh=(128,128),
+    component wxh=(32,32)) -- the notebook that found the drift this rewrite
+    fixes. n=2 fits fully; n=3/n=4 are tight enough to exercise the base/top
+    chain and the outward fill.
+    """
+    HC, GAP, TXT_H = 32, 4, 10
+    H, INSET_Y = 128, 2
+
+    @classmethod
+    def setUpClass(cls):
+        header_h  = headerHeight(cls.TXT_H)
+        cls.avail = (cls.H - 2 * cls.INSET_Y - header_h) - cls.HC
+        cls.slot  = cls.HC + cls.GAP
+        cls.ell_h = 2 * cls.GAP + cls.TXT_H
+
+    def _place(self, n, index):
+        return _placement(n, index, self.avail, self.slot, self.ell_h)
+
+    def test_two_frames_always_fully_contiguous(self):
+        for index in (0, 1):
+            lo, hi, base_on, top_on, gap_below, gap_above = self._place(2, index)
+            self.assertEqual((lo, hi), (0, 1))
+            self.assertTrue(base_on and top_on)
+            self.assertEqual((gap_below, gap_above), (0, 0))
+
+    def test_rendered_and_skipped_frames_account_for_all_of_n(self):
+        for n in range(1, 12):
+            for index in range(n):
+                lo, hi, base_on, top_on, gap_below, gap_above = self._place(n, index)
+                self.assertTrue(lo <= index <= hi)   # the cluster always seeds from index
+                rendered = (hi - lo + 1) + (1 if base_on and lo > 0 else 0) \
+                                         + (1 if top_on and hi < n - 1 else 0)
+                self.assertEqual(rendered + gap_below + gap_above, n)
+
+    def test_at_most_two_skip_labels(self):
+        for n in range(1, 15):
+            for index in range(n):
+                *_, gap_below, gap_above = self._place(n, index)
+                self.assertLessEqual((gap_below > 0) + (gap_above > 0), 2)
+
+    def test_middle_index_with_room_only_for_base_and_current(self):
+        # n=3, index=1: base fits (merges, no gap), top doesn't -- "Base Index <missing>"
+        lo, hi, base_on, top_on, gap_below, gap_above = self._place(3, 1)
+        self.assertEqual((lo, hi, base_on, top_on), (0, 1, True, False))
+        self.assertEqual((gap_below, gap_above), (0, 1))
+
+    def test_top_never_rendered_without_base(self):
+        # Rule 5 ("after rendering the current index and the base dataframe")
+        # never fires once rule 4 has failed.
+        for n in range(2, 15):
+            for index in range(1, n - 1):
+                lo, hi, base_on, top_on, _, _ = self._place(n, index)
+                if top_on and hi == n - 1 and lo > 0:
+                    self.assertTrue(base_on)
+
+    def test_severely_starved_budget_still_renders_current(self):
+        # Only just enough room for the mandatory icon + two skip labels.
+        lo, hi, base_on, top_on, gap_below, gap_above = _placement(
+            20, 10, avail=2 * self.ell_h, slot=self.slot, ell_h=self.ell_h)
+        self.assertEqual((lo, hi), (10, 10))
+        self.assertFalse(base_on or top_on)
+        self.assertEqual(gap_below, 10)
+        self.assertEqual(gap_above, 9)
+
+
+class TestStackControlMinimumSize(_StackControlBase):
+
+    def test_raises_when_too_short_for_header_icon_and_two_labels(self):
+        component = self.p2s.xyp(_make_df(), 'x', 'y', wxh=(120, 32))
+        with self.assertRaises(ValueError):
+            self.p2s.stack_controli(component, wxh=(160, 40))
+
+    def test_does_not_raise_at_the_minimum(self):
+        component = self.p2s.xyp(_make_df(), 'x', 'y', wxh=(120, 32))
+        ell_h    = _ELL_H_
+        min_h    = 2 * 2 + headerHeight(_TXT_H_) + 32 + 2 * ell_h
+        self.p2s.stack_controli(component, wxh=(160, min_h))   # must not raise
+
+
+class TestStackControlAlwaysRendersCurrent(_StackControlBase):
+    """The shrinkage notebook's exact reproduction: wxh=(128,128), component
+    wxh=(32,32). The old algorithm could drop the selected frame entirely
+    when squeezed; the new one guarantees it always shows.
+    """
+    def _sc(self, n, index):
+        component = self.p2s.xyp(_make_df(), 'x', 'y', wxh=(32, 32))
+        return self._make_sc(dfs=self._stack_of(n), index=index,
+                             component=component, wxh=(128, 128))
+
+    def test_selected_frame_always_in_frame_map(self):
+        for n in (2, 3, 4):
+            for index in range(n):
+                sc, _ = self._sc(n, index)
+                rendered = {fm[2] for fm in sc._frame_map_}
+                self.assertIn(index, rendered, f'n={n} index={index}')
+
+    def test_skip_label_text_is_not_clipped_off_canvas(self):
+        sc, _ = self._sc(4, 2)
+        for m in re.finditer(r'<text x="([-\d.]+)"[^>]*font-style="italic"', sc.mod_inner):
+            self.assertGreaterEqual(float(m.group(1)), 0)
 
 
 if __name__ == '__main__':

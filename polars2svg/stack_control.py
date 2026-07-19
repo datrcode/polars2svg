@@ -34,6 +34,119 @@ def headerHeight(txt_h=10):
     return len(_INDICATOR_LABELS_) * (_statusTxtH_(txt_h) + 4)
 
 
+# _placement() - decide which stack indices get an icon and how many frames are
+# hidden on each side, per the "Stack Control Requirements" worked out in
+# polars2svg_prototyping/stack_control_shrinkage.ipynb:
+#
+#   1) the current index always renders (it is the mandatory baseline -- the
+#      caller reserves one `hc` for it before computing `avail`)
+#   2) base (index 0), then top (index n-1), are tried next -- but rule 5 only
+#      fires "after rendering the current index and the base dataframe", so a
+#      failed base attempt also skips top (and, transitively, outward growth):
+#      the acceptable-rendering examples in the notebook never show top without
+#      base, or an outward frame without both
+#   3) with base and top settled, fill outward from the current index
+#      (index-1, index+1, index-2, index+2, ...), each direction stopping
+#      independently once it no longer fits
+#   4) at most two "... N stack frame(s) ..." labels are ever needed -- one
+#      below the contiguous current-index cluster, one above it -- because the
+#      cluster only ever grows outward from a single seed
+#
+# `avail` is the vertical budget left after the mandatory current-index icon;
+# `slot` is the marginal cost of one more icon (hc + hgap) and `ell_h` the
+# fixed height of one skip label. Costs are tracked as budget deltas (icon
+# cost minus any skip-label saved by newly closing a gap) so a merge that
+# collapses a gap can be cheaper than its raw icon cost.
+def _placement(n, index, avail, slot, ell_h):
+    if n <= 1:
+        return 0, 0, True, True, 0, 0
+
+    def _gap_below_(lo, base_on):
+        if lo == 0:
+            return 0
+        return (lo - 1) if base_on else lo
+
+    def _gap_above_(hi, top_on):
+        if hi == n - 1:
+            return 0
+        return (n - 2 - hi) if top_on else (n - 1 - hi)
+
+    def _label_cost_(count):
+        return ell_h if count > 0 else 0
+
+    lo = hi = index
+    base_on  = (index == 0)
+    top_on   = (index == n - 1)
+    budget   = avail - _label_cost_(_gap_below_(lo, base_on)) - _label_cost_(_gap_above_(hi, top_on))
+    chain_ok = True
+
+    if not base_on:
+        before = _label_cost_(_gap_below_(lo, base_on))
+        merges = (lo == 1)
+        new_lo = 0 if merges else lo
+        after  = _label_cost_(_gap_below_(new_lo, True))
+        cost   = slot + after - before
+        if cost <= budget:
+            budget -= cost
+            base_on, lo = True, new_lo
+        else:
+            chain_ok = False
+
+    if chain_ok and not top_on:
+        before = _label_cost_(_gap_above_(hi, top_on))
+        merges = (hi == n - 2)
+        new_hi = n - 1 if merges else hi
+        after  = _label_cost_(_gap_above_(new_hi, True))
+        cost   = slot + after - before
+        if cost <= budget:
+            budget -= cost
+            top_on, hi = True, new_hi
+        else:
+            chain_ok = False
+
+    if chain_ok:
+        active_lo, active_hi = lo > 0, hi < n - 1
+        go_low = True
+        while active_lo or active_hi:
+            if go_low and not active_lo:
+                go_low = False
+            elif not go_low and not active_hi:
+                go_low = True
+            if go_low:
+                before  = _label_cost_(_gap_below_(lo, base_on))
+                new_lo  = lo - 1
+                merges  = (new_lo == 0)
+                icon_co = 0 if (merges and base_on) else slot
+                new_bon = base_on or merges
+                after   = _label_cost_(_gap_below_(new_lo, new_bon))
+                cost    = icon_co + after - before
+                if cost <= budget:
+                    budget -= cost
+                    lo, base_on = new_lo, new_bon
+                    active_lo = lo > 0
+                else:
+                    active_lo = False
+            else:
+                before  = _label_cost_(_gap_above_(hi, top_on))
+                new_hi  = hi + 1
+                merges  = (new_hi == n - 1)
+                icon_co = 0 if (merges and top_on) else slot
+                new_ton = top_on or merges
+                after   = _label_cost_(_gap_above_(new_hi, new_ton))
+                cost    = icon_co + after - before
+                if cost <= budget:
+                    budget -= cost
+                    hi, top_on = new_hi, new_ton
+                    active_hi = hi < n - 1
+                else:
+                    active_hi = False
+            if not active_lo and not active_hi:
+                break
+            go_low = not go_low
+
+    return lo, hi, base_on, top_on, _gap_below_(lo, base_on), _gap_above_(hi, top_on)
+
+
 def stack_controli(component, stack_name='default', insets=(2, 2), hgap=4,
                    wxh=(160, 256), txt_h=10, **kwargs):
     w, h   = wxh
@@ -42,6 +155,18 @@ def stack_controli(component, stack_name='default', insets=(2, 2), hgap=4,
     inset_y_val = insets[1]
     _cls_ref_ = [None]
     _mlx_avail_, _cuda_avail_ = _mlxCudaStatus_()
+    _row_txt_h_ = int(min(10, max(1, (hc - 4) / 2)))
+
+    # Requirement (1): the widget needs room for the MLX/CUDA header, one icon
+    # (the current index always renders), and two skip labels -- anything less
+    # can never satisfy "always render the current index" alongside rule (7)'s
+    # up-to-two labels, so refuse to build it rather than silently clipping.
+    _ell_h_min_ = 2 * hgap + txt_h
+    _min_h_ = 2 * inset_y_val + headerHeight(txt_h) + hc + 2 * _ell_h_min_
+    if h < _min_h_:
+        raise ValueError(
+            f'stack_controli: wxh height {h} is too small (need >= {_min_h_}) for the '
+            f'MLX/CUDA header, one icon, and two "... N stack frame(s) ..." labels')
 
     def _render_svg_content(dfs, index, cache):
         p2s_ref = component.p2s
@@ -75,29 +200,26 @@ def stack_controli(component, stack_name='default', insets=(2, 2), hgap=4,
         y_top  = inset_y + _header_h_
         avail  = y_base - y_top
 
-        def _add_frame(df, y, is_selected, stack_idx):
+        def _add_frame(df, y, stack_idx):
             df_id = id(df)
             if df_id not in cache:
                 cache[df_id] = component.render_with(df)._repr_svg_()
             tile_svg    = cache[df_id]
+            is_selected = (stack_idx == index)
             label_color = p2s_ref.colorTyped('label', 'defaultfg') if is_selected else p2s_ref.colorTyped('label', 'inner')
             x_lbl = x0 + wc + 4
-            mid   = y + hc // 2 + txt_h // 3
-            if stack_idx == 0:
-                sub = '(Base)'
+            mid   = y + hc // 2
+            half  = (_row_txt_h_ + 2) // 2
+            if n == 1 or stack_idx == 0:
+                pos_str = 'base'
             elif stack_idx == n - 1:
-                sub = 'Top'
+                pos_str = 'top'
             else:
-                sub = None
-            if sub is not None:
-                half = (txt_h + 2) // 2
-                _svg_.append(p2s_ref.svgText(f'{p2s_ref.unitizeInt(len(df))} Rows',
-                                             x_lbl, mid - half, txt_h=txt_h, color=label_color))
-                _svg_.append(p2s_ref.svgText(sub,
-                                             x_lbl, mid + half, txt_h=txt_h, color=label_color))
-            else:
-                _svg_.append(p2s_ref.svgText(f'{p2s_ref.unitizeInt(len(df))} Rows',
-                                             x_lbl, mid, txt_h=txt_h, color=label_color))
+                pos_str = f'{stack_idx + 1} of {n}'
+            _svg_.append(p2s_ref.svgText(f'{p2s_ref.unitizeInt(len(df))} Rows',
+                                         x_lbl, mid - half, txt_h=_row_txt_h_, color=label_color))
+            _svg_.append(p2s_ref.svgText(pos_str,
+                                         x_lbl, mid + half, txt_h=_row_txt_h_, color=label_color))
             _svg_.append(f'<g transform="translate({x0}, {y})">')
             _svg_.append(tile_svg)
             _svg_.append('</g>')
@@ -108,107 +230,77 @@ def stack_controli(component, stack_name='default', insets=(2, 2), hgap=4,
         def _add_skip_label(y, count):
             noun     = 'frame' if count == 1 else 'frames'
             label    = f'... {count} stack {noun} ...'
-            cx       = x0 + wc // 2
+            cx       = w / 2   # centered on the full widget width so it can't clip off the left edge
             _skip_co_ = p2s_ref.colorTyped('label', 'inner')
-            text_y   = y + ELL_H // 2 + txt_h // 3
+            text_y   = y + ELL_H / 2 + txt_h / 3
             _svg_.append(
                 f'<text x="{cx}" y="{text_y}" text-anchor="middle"'
                 f' font-family="Helvetica,Arial,sans-serif" font-size="{txt_h}px"'
                 f' font-style="italic" fill="{_skip_co_}">{label}</text>')
 
-        _add_frame(dfs[0], y_base, index == 0, 0)
+        lo, hi, base_on, top_on, gap_below, gap_above = _placement(n, index, avail, slot, ELL_H)
 
-        if n == 1:
-            pass
+        if lo == 0 and hi == n - 1:
+            # Fully contiguous: no skip labels needed.
+            for i in range(lo, hi + 1):
+                _add_frame(dfs[i], y_base - (i - lo) * slot, i)
 
-        elif (n - 1) * slot <= avail:
-            for i in range(1, n):
-                _add_frame(dfs[i], y_base - i * slot, i == index, i)
+        elif lo == 0:
+            # Cluster anchored at the base, growing upward; top is either an
+            # isolated icon above a gap, or simply out of reach.
+            for i in range(lo, hi + 1):
+                _add_frame(dfs[i], y_base - (i - lo) * slot, i)
+            cluster_top = y_base - (hi - lo) * slot
+            region_top  = y_top
+            if top_on:
+                _add_frame(dfs[n - 1], y_top, n - 1)
+                region_top = y_top + hc
+            if gap_above > 0:
+                _add_skip_label((region_top + cluster_top) / 2 - ELL_H / 2, gap_above)
+
+        elif hi == n - 1:
+            # Cluster anchored at the top, growing downward; base is either an
+            # isolated icon below a gap, or simply out of reach.
+            for i in range(hi, lo - 1, -1):
+                _add_frame(dfs[i], y_top + (hi - i) * slot, i)
+            cluster_bot   = y_top + (hi - lo) * slot + hc
+            region_bottom = y_base + hc
+            if base_on:
+                _add_frame(dfs[0], y_base, 0)
+                region_bottom = y_base
+            if gap_below > 0:
+                _add_skip_label((cluster_bot + region_bottom) / 2 - ELL_H / 2, gap_below)
 
         else:
-            _add_frame(dfs[n - 1], y_top, index == n - 1, n - 1)
+            # Cluster floats free of both ends: draw any isolated base/top,
+            # then center the [skip?][cluster][skip?] block in the space
+            # between them (or between the header and the floor, if neither
+            # base nor top made it in).
+            if base_on:
+                _add_frame(dfs[0], y_base, 0)
+            if top_on:
+                _add_frame(dfs[n - 1], y_top, n - 1)
 
-            inner_space = y_base - (y_top + slot)
+            inner_top = (y_top + hc + gap) if top_on else y_top
+            inner_bot = (y_base - gap) if base_on else (y_base + hc)
+            cluster_n = hi - lo + 1
+            block_items = cluster_n + (1 if gap_below > 0 else 0) + (1 if gap_above > 0 else 0)
+            block_h = (cluster_n * hc + (ELL_H if gap_below > 0 else 0) + (ELL_H if gap_above > 0 else 0)
+                      + gap * max(0, block_items - 1))
+            block_bottom = (inner_top + inner_bot) / 2 + block_h / 2
 
-            def spiral_fill(start_sign, space_budget):
-                tr = [False] * n
-                tr[0] = tr[n - 1] = True
-                sign, offset = start_sign, 0
-                while space_budget >= slot:
-                    idx = index + sign * offset
-                    if sign == -start_sign:
-                        sign = start_sign
-                    else:
-                        sign, offset = -start_sign, offset + 1
-                    if 0 <= idx < n and not tr[idx]:
-                        tr[idx] = True
-                        space_budget -= slot
-                return tr
-
-            one_label_budget = inner_space - ELL_H
-            two_label_budget = inner_space - 2 * ELL_H
-
-            for render_case in range(3):
-                if render_case == 0:
-                    tr = spiral_fill(1, one_label_budget)
-                    fits = tr[1]
-                elif render_case == 1:
-                    tr = spiral_fill(-1, one_label_budget)
-                    fits = tr[n - 2]
-                else:
-                    tr = spiral_fill(-1, two_label_budget)
-                    fits = True
-                if fits:
-                    to_render = tr
-                    break
-
-            if render_case == 0:
-                # Cluster packed from base upward; single skip label near top
-                y, i = y_base - slot, 1
-                while to_render[i]:
-                    _add_frame(dfs[i], y, i == index, i)
-                    y -= slot
-                    i += 1
-                missing = sum(1 for j in range(i, n - 1) if not to_render[j])
-                if missing > 0:
-                    top_lbl_y = (y_top + hc + y + slot) // 2
-                    _add_skip_label(top_lbl_y - ELL_H // 2, missing)
-
-            elif render_case == 1:
-                # Cluster packed from top downward; single skip label near base
-                y, i = y_top + slot, n - 2
-                while to_render[i]:
-                    _add_frame(dfs[i], y, i == index, i)
-                    y += slot
-                    i -= 1
-                missing = sum(1 for j in range(1, i + 1) if not to_render[j])
-                if missing > 0:
-                    bot_lbl_y = (y - gap + y_base) // 2
-                    _add_skip_label(bot_lbl_y - ELL_H // 2, missing)
-
-            else:
-                # Cluster centered in middle space; skip labels above and below
-                inner = [i for i in range(1, n - 1) if to_render[i]]
-                if not inner:
-                    # Budget too tight for even one middle frame: base and top with a
-                    # single skip label standing in for everything between them.
-                    _add_skip_label((y_top + hc + y_base) // 2 - ELL_H // 2, n - 2)
-                else:
-                    mid = (y_top + hc + gap + y_base) // 2
-                    cluster_h = len(inner) * slot - gap
-                    start_y = mid + cluster_h // 2 - hc
-                    y = start_y
-                    for i in inner:
-                        _add_frame(dfs[i], y, i == index, i)
-                        y -= slot
-                    missing_top = (n - 2) - inner[-1]
-                    if missing_top > 0:
-                        top_lbl_y = (y_top + hc + y + slot) // 2
-                        _add_skip_label(top_lbl_y - ELL_H // 2, missing_top)
-                    missing_bot = inner[0] - 1
-                    if missing_bot > 0:
-                        bot_lbl_y = (start_y + hc + y_base) // 2
-                        _add_skip_label(bot_lbl_y - ELL_H // 2, missing_bot)
+            y = block_bottom
+            if gap_below > 0:
+                y -= ELL_H
+                _add_skip_label(y, gap_below)
+                y -= gap
+            for i in range(lo, hi + 1):
+                y -= hc
+                _add_frame(dfs[i], y, i)
+                y -= gap
+            if gap_above > 0:
+                y -= ELL_H
+                _add_skip_label(y, gap_above)
 
         _svg_.append('</svg>')
         return ''.join(_svg_), frame_map

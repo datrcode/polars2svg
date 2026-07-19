@@ -1,3 +1,4 @@
+import html
 import polars as pl
 import random
 import time
@@ -899,7 +900,7 @@ class SpreadLinesP(ExportMixin):
             _txt_co_ = self.p2s.colorTyped('label', 'defaultfg')
             svg.append(
                 f'<text x="{x:.1f}" y="{y_cloud + self.txt_h * 0.38:.1f}"'
-                f' font-size="{self.txt_h}px" text-anchor="middle" fill="{_txt_co_}">{n}</text>'
+                f' font-size="{self.txt_h}px" text-anchor="middle" fill="{_txt_co_}">{html.escape(str(n))}</text>'
             )
             xmin = min(xmin, x - 22)
             ymin = min(ymin, y_cloud - 8)
@@ -1060,7 +1061,7 @@ class SpreadLinesP(ExportMixin):
         _txt_co_ = self.p2s.colorTyped('label', 'defaultfg')
         return (f'<path d="{" ".join(p)}" stroke="{color}" stroke-width="{width}" fill="{color}"/>'
                 f'<text x="{xm:.1f}" y="{y + _txt_h_ * 0.38:.1f}"'
-                f' font-size="{_txt_h_}px" text-anchor="middle" fill="{_txt_co_}">{txt}</text>')
+                f' font-size="{_txt_h_}px" text-anchor="middle" fill="{_txt_co_}">{html.escape(str(txt))}</text>')
 
     # -------------------------------------------------------------------------
     # _smoothedPath_() — closed polygon with rounded corners
@@ -1273,7 +1274,7 @@ class SpreadLinesP(ExportMixin):
             _txt_co_ = self.p2s.colorTyped('label', 'defaultfg')
             svg.append(
                 f'<text x="{x:.1f}" y="{y + self.txt_h * 0.38:.1f}"'
-                f' font-size="{self.txt_h}px" text-anchor="middle" fill="{_txt_co_}">{_n_focal_}</text>'
+                f' font-size="{self.txt_h}px" text-anchor="middle" fill="{_txt_co_}">{html.escape(str(_n_focal_))}</text>'
             )
         _xyrepstat_ = (x, y, 'cloud' if self.ego_is_set else ('single' if _n_focal_ == 1 else 'cloud'),
                        'continuous', b, None, None, r_pref)
@@ -1643,7 +1644,7 @@ class SpreadLinesP(ExportMixin):
             )
             svg.append(
                 f'<text x="{_ax_ + 3:.1f}" y="{self.vy0 + self.txt_h:.1f}"'
-                f' font-size="{self.txt_h}px" fill="{_txt_co_}">{_label_}</text>'
+                f' font-size="{self.txt_h}px" fill="{_txt_co_}">{html.escape(str(_label_))}</text>'
             )
 
         # ── Timestamp labels ───────────────────────────────────────────────────
@@ -1657,7 +1658,7 @@ class SpreadLinesP(ExportMixin):
                 _bnd_ = self.bin_to_bounds[_b_]
                 _lx_  = (_bnd_[0] + _bnd_[2]) / 2.0
                 _ts_  = str(self.bin_to_timestamps[_b_])
-                _lbl_ = _ts_[:self._ts_label_len_]
+                _lbl_ = html.escape(_ts_[:self._ts_label_len_])   # untrusted timestamp data
                 svg.append(
                     f'<text x="{_lx_:.1f}" y="{_channel_max_y_:.1f}"'
                     f' font-size="{self.txt_h}px" text-anchor="middle" fill="{_txt_co_}">'

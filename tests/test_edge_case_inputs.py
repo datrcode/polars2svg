@@ -278,6 +278,30 @@ class TestSpecialCharacterLabels(_EdgeCaseBase):
         self._assert_no_raw_script(self.p2s.linkp(df, relationships=[('fm', 'to')],
                                                    pos=pos, node_labels=True))
 
+    # spreadlinesp built <text> for timestamp/annotation labels by raw f-string
+    # interpolation, bypassing svgText()/html.escape -- so an XML-special
+    # character in a timestamp column value or an anno= label survived unescaped
+    # and produced malformed SVG (SECURITY.md lists timestamp labels as
+    # untrusted). These lock the escaping on both paths.
+
+    def test_spreadlinesp_special_char_timestamp(self):
+        # draw_context=True renders per-bin timestamp labels; feed XML-special
+        # chars short enough to survive the _ts_label_len_ truncation.
+        df = pl.DataFrame({'fm': ['a', 'a', 'b', 'b'], 'to': ['b', 'c', 'c', 'a'],
+                           'time': ['<a>&"1', '<a>&"1', 'z>y<', 'z>y<']})
+        svg = self._wellformed(self.p2s.spreadlinesp(df, [('fm', 'to')], ego='a',
+                                                     time='time', draw_context=True))
+        # No unescaped structural markup from the timestamp data survives.
+        self.assertNotIn('<a>', svg)
+
+    def test_spreadlinesp_special_char_anno(self):
+        df = pl.DataFrame({'fm': ['a', 'a', 'b', 'b'], 'to': ['b', 'c', 'c', 'a'],
+                           'time': ['2020', '2020', '2021', '2021']})
+        svg = self._wellformed(self.p2s.spreadlinesp(df, [('fm', 'to')], ego='a',
+                                                     time='time',
+                                                     anno={'2021': self._SCRIPT_PAYLOAD_}))
+        self.assertNotIn('<script>alert', svg)
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Graph-shape oddities: self-loops, parallel edges, nodes missing from pos/ego

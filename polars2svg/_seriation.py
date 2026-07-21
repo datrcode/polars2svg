@@ -117,7 +117,7 @@ def _fiedlerVector(S, normalize=True):
             _v0_      = np.random.default_rng(0).standard_normal(n)
             _, _vecs_ = _eigsh(_csr_matrix(L), k=2, sigma=1e-6, which='LM', tol=1e-5, v0=_v0_)
             return _anchorSign(_vecs_[:, 1])
-        except Exception:  # noqa: BLE001 - any solver failure -> dense fallback
+        except Exception:  # nosec B110 - any ARPACK/solver failure is expected on degenerate or disconnected graphs; the dense eigh path below is the intended fallback
             pass
     # Dense path: eigh returns eigenvalues ascending; column 1 is the Fiedler vector
     # (column 0 is the trivial constant / D^1/2 mode with eigenvalue ~0).

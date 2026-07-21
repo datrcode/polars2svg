@@ -146,6 +146,26 @@ Following the repo's own `CLAUDE.md` rules when adding a new render component:
   wheel (excluding the machine-local perf baseline and network-dependent
   Kaggle t-field tests)
 
+### Running CI's checks locally
+
+The first two jobs are plain CLI invocations with no GitHub-specific context, so
+they reproduce natively (~12s):
+
+```bash
+./tools/preflight.sh
+```
+
+That runs mypy, bandit, pip-audit and ruff exactly as `ci.yml` does, and reports
+all four rather than stopping at the first failure. Run it before pushing —
+`pytest` passing locally does **not** mean CI is green, since none of these four
+checks are part of the test suite.
+
+The Linux clean-room job is deliberately not covered: it exists to exercise
+linux/amd64 inside a stock `python:3.13-slim` container, which is precisely what
+a local macOS run cannot reproduce. Reproducing it needs Docker plus
+[`act`](https://github.com/nektos/act), and each run recompiles pycairo from the
+sdist inside the container — leave that one to CI.
+
 `.github/workflows/release.yml` is separate — it only fires on a `v*` tag push
 and publishes to PyPI via Trusted Publishing. Contributors don't need to touch
 it; version bumps and tagging are a maintainer action.
@@ -157,3 +177,5 @@ it; version bumps and tagging are a maintainer action.
 - Make sure `.venv/bin/python -m pytest tests/` passes locally before opening
   the PR (CI will also run it, but the golden-image and color-mode notebook
   updates are not enforced by CI and are easy to forget).
+- Run `./tools/preflight.sh` too — the test suite does not cover mypy, bandit,
+  pip-audit or ruff, so a green `pytest` can still land a red CI.

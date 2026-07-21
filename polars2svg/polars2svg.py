@@ -737,6 +737,29 @@ class Polars2SVG(P2SColorsMixin,
 
         Any field value not included in the order will be assigned a value of maximum plus one.
 
+        x_order|y_order = 'spectral'                     # spectral (Fiedler) seriation of a categorical axis
+
+        With 'spectral', the axis categories are ordered by the Fiedler vector (the
+        second-smallest eigenvector of the graph Laplacian) of a category x category
+        affinity matrix, so similar categories land adjacent and block structure lines
+        up along the axis.  The axis must be categorical (string / struct field, or a
+        SETp-tagged field) or a ValueError is raised.  The ordering is defined up to
+        reflection.  It is tuned by:
+
+            spectral_by         = None                   # signal column(s) defining category similarity;
+                                                         #   None = the opposite axis's column(s).  Two
+                                                         #   categories are similar when they co-occur with
+                                                         #   the same partners.  e.g. spectral_by='color'
+            spectral_weight     = None                   # numeric column summed into each contingency cell
+                                                         #   (None = raw co-occurrence row counts)
+            spectral_similarity = 'cosine'               # 'cosine' | 'linear' | 'correlation'
+            spectral_normalize  = True                   # symmetric-normalized Laplacian
+
+        Under small multiples, a 'spectral' order on a SHARED axis (SM_X / SM_Y in
+        sm_shared) is computed ONCE over the full dataset and applied identically to
+        every tile, so panels stay comparable; an unshared 'spectral' axis is seriated
+        independently per tile.
+
         === %< === %< === %< === %< === %< === %< === %< === %< === %< === %< === %< === %< === %< === %<
 
         color = None                                    # default — data colour for all dots

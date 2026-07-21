@@ -1,5 +1,6 @@
 import polars as pl
 import polars.selectors as cs
+import numpy as np
 from   decimal import Decimal
 import datetime as dt
 from   datetime import timedelta, datetime, date
@@ -12,6 +13,7 @@ from polars2svg.p2s_displaylist import DisplayList, hexToRGBA
 from polars2svg.export import ExportMixin
 from polars2svg.p2s_background_mixin import P2SBackgroundMixin
 from polars2svg.exceptions import DataError
+from polars2svg import _seriation
 
 #
 # _CalendarStep - calendar-aware month/year step for temporal grid lines.
@@ -47,6 +49,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
         'dot_size_global_min', 'dot_size_global_max',
         'x_distributions', 'y_distributions',
         'x_order', 'y_order',
+        'spectral_by', 'spectral_weight', 'spectral_similarity', 'spectral_normalize',
         'background', 'background_label_color', 'background_opacity',
         'background_fill', 'background_stroke_w', 'background_stroke',
         'draw_context', 'draw_border', 'insets', 'wxh', 'txt_h', 'sm_shared',
@@ -198,8 +201,12 @@ class XYp(P2SBackgroundMixin, ExportMixin):
             'dot_size_supersample':  1,          # int >= 1; only affects integer dot_size (raster) plots
             'x_distributions':       None,
             'y_distributions':       None,
-            'x_order':               None,
-            'y_order':               None,
+            'x_order':               None,             # None / list / dict / 'spectral' (Fiedler seriation)
+            'y_order':               None,             # None / list / dict / 'spectral' (Fiedler seriation)
+            'spectral_by':           None,             # signal column(s) for spectral order; None = the opposite axis
+            'spectral_weight':       None,             # numeric column summed into the contingency (None = row counts)
+            'spectral_similarity':   'cosine',         # 'cosine' / 'linear' / 'correlation'
+            'spectral_normalize':    True,             # symmetric-normalized Laplacian
             'background':                    None,      # {key: shapely_object, ...}
             'background_label_color':        None,      # None / 'vary' / dict / '#rrggbb'
             'background_opacity':            1.0,       # None / number / dict
@@ -898,6 +905,40 @@ class XYp(P2SBackgroundMixin, ExportMixin):
         if len(self.sm_shared - _allowed_smallp_enums_) > 0: raise ValueError(f'XYp.__validateInput__() - smallp_options contains an invalid enum: {self.sm_shared - _allowed_smallp_enums_}')
 
         #
+        # Spectral (Fiedler) axis ordering: only valid as the string 'spectral',
+        # and only on a categorical axis (SETp / string / struct).  A 'spectral'
+        # order on a numeric/temporal axis would be silently ignored downstream,
+        # so fail loudly here instead.
+        #
+        def _axis_is_categorical_(clean, enums):
+            if self.p2s.SETp in enums: return True
+            if clean is None:          return False
+            for _field_ in clean:
+                if isinstance(_field_, tuple): return True   # multi-field -> struct
+                if self.df is not None:
+                    _dt_ = self.df.schema.get(_field_)
+                    if isinstance(_dt_, pl.String) or isinstance(_dt_, pl.Struct): return True
+            return False
+        for _which_, _order_, _clean_, _enums_ in [('x', self.x_order, self.x_clean, self.x_enums),
+                                                   ('y', self.y_order, self.y_clean, self.y_enums)]:
+            if isinstance(_order_, str):
+                if _order_ != 'spectral':
+                    raise ValueError(f"XYp.__validateInput__(): {_which_}_order string must be 'spectral', got {_order_!r}")
+                if self.df is not None and not _axis_is_categorical_(_clean_, _enums_):
+                    raise ValueError(f"XYp.__validateInput__(): {_which_}_order='spectral' requires a categorical "
+                                     f"{_which_} axis (string / struct column, or a SETp-tagged field)")
+        if self.df is not None and (isinstance(self.x_order, str) or isinstance(self.y_order, str)):
+            _by_cols_ = [] if self.spectral_by is None else \
+                        (list(self.spectral_by) if isinstance(self.spectral_by, (list, tuple)) else [self.spectral_by])
+            if self.spectral_weight is not None: _by_cols_ = _by_cols_ + [self.spectral_weight]
+            _missing_ = [_c_ for _c_ in _by_cols_ if _c_ not in self.df.columns]
+            if _missing_:
+                raise ValueError(f"XYp.__validateInput__(): spectral_by/spectral_weight column(s) not in dataframe: {_missing_}")
+            if self.spectral_similarity not in ('cosine', 'linear', 'correlation'):
+                raise ValueError(f"XYp.__validateInput__(): spectral_similarity must be 'cosine', 'linear', or "
+                                 f"'correlation', got {self.spectral_similarity!r}")
+
+        #
         # background shapes require scalar (numeric / date / datetime) axes on both x and y
         #
         if self.background is not None and self.df is not None:
@@ -1036,6 +1077,75 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     #
     # __indexXandY_join__() - uses a sort (then a join) to index categorical values
     #
+    #
+    # __specKey__() - stable hashable/sortable key for a category value.
+    # Struct axis values arrive as dicts (unhashable, unsortable); collapse them
+    # to a tuple of stringified field values so they can key the matrix index and
+    # sort deterministically.  Plain values stringify directly.
+    #
+    @staticmethod
+    def __specKey__(v):
+        if isinstance(v, dict): return tuple(str(_x_) for _x_ in v.values())
+        return str(v)
+
+    #
+    # __spectralOrder__() - Fiedler (spectral) seriation for a categorical axis.
+    # Returns an ordered list of category values (tuples for multi-field struct
+    # axes) that the list-order join in __indexXandY_join__ then applies.  The
+    # similarity signal defaults to the OPPOSITE axis (two categories are similar
+    # when they co-occur with the same partners); override with spectral_by and
+    # weight cells with spectral_weight (else raw co-occurrence counts).
+    #
+    def __spectralOrder__(self, src_col):
+        _opp_col_ = '__y__' if src_col == '__x__' else '__x__'
+        _base_    = self.df_flat   # eager, flattened, pre-index (the join loop never mutates it)
+
+        # Resolve the signal column(s).  Default = the opposite axis (already in
+        # df_flat).  spectral_by names raw user column(s), recovered by joining the
+        # carried __p2s_index__ back to self.df (flatten drops non-axis columns).
+        if self.spectral_by is not None:
+            _by_   = list(self.spectral_by) if isinstance(self.spectral_by, (list, tuple)) else [self.spectral_by]
+            _work_ = _base_.select(['__p2s_index__', src_col]).join(
+                         self.df.select(['__p2s_index__', *_by_]), on='__p2s_index__', how='left')
+            if len(_by_) == 1:
+                _sig_col_ = _by_[0]
+            else:
+                _work_    = _work_.with_columns(pl.struct(_by_).alias('__spec_sig__'))
+                _sig_col_ = '__spec_sig__'
+        else:
+            _work_    = _base_.select(['__p2s_index__', src_col, _opp_col_])
+            _sig_col_ = _opp_col_
+
+        # Weight each contingency cell: sum a numeric column, else count rows.
+        if self.spectral_weight is not None:
+            _work_ = _work_.join(self.df.select(['__p2s_index__', self.spectral_weight]),
+                                 on='__p2s_index__', how='left')
+            _agg_  = pl.col(self.spectral_weight).sum().alias('__spec_w__')
+        else:
+            _agg_  = pl.len().alias('__spec_w__')
+
+        # Contingency: one row per (category, signal) pair -- bounded by category
+        # counts, independent of the dataset row count.
+        _cont_ = _work_.group_by([src_col, _sig_col_]).agg(_agg_)
+
+        # Densify into a (n_categories x n_signals) feature matrix F.
+        _cats_ = sorted(_cont_.select(src_col).unique().to_series().to_list(), key=self.__specKey__)
+        _sigs_ = sorted(_cont_.select(_sig_col_).unique().to_series().to_list(), key=self.__specKey__)
+        _cat_ix_ = {self.__specKey__(_c_): i for i, _c_ in enumerate(_cats_)}
+        _sig_ix_ = {self.__specKey__(_s_): j for j, _s_ in enumerate(_sigs_)}
+        _F_ = np.zeros((len(_cats_), len(_sigs_)), dtype=np.float64)
+        for _row_ in _cont_.iter_rows(named=True):
+            _F_[_cat_ix_[self.__specKey__(_row_[src_col])],
+                _sig_ix_[self.__specKey__(_row_[_sig_col_])]] = _row_['__spec_w__'] or 0.0
+
+        _ordered_ = _seriation.spectralOrder(_cats_, _F_,
+                                             similarity=self.spectral_similarity,
+                                             normalize=self.spectral_normalize)
+        # Struct axis values come back as dicts -> tuples for the list-order path.
+        if _ordered_ and isinstance(_ordered_[0], dict):
+            _ordered_ = [tuple(_d_.values()) for _d_ in _ordered_]
+        return _ordered_
+
     def __indexXandY_join__(self):
         if self.df_flat is not None:
 
@@ -1054,7 +1164,14 @@ class XYp(P2SBackgroundMixin, ExportMixin):
                 if   self.p2s.SETp in _enums_       or \
                      isinstance(_dtype_, pl.String) or \
                      isinstance(_dtype_, pl.Struct):
-                    
+
+                    #
+                    # 'spectral' -- compute the Fiedler seriation now; it becomes a
+                    # concrete list order handled by the list branch below.
+                    #
+                    if isinstance(_order_, str) and _order_ == 'spectral':
+                        _order_ = self.__spectralOrder__(_src_)
+
                     #
                     # No user specified order -- make one by sorting the values
                     #
@@ -3228,6 +3345,23 @@ class XYp(P2SBackgroundMixin, ExportMixin):
                 if isinstance(_ymin_lbl_, dict): _ymin_lbl_ = '|'.join([str(_) for _ in list(_ymin_lbl_.values())])
                 if isinstance(_ymax_lbl_, dict): _ymax_lbl_ = '|'.join([str(_) for _ in list(_ymax_lbl_.values())])
                 _kwargs_shared_['y_shared_label_range'] = (_ymin_lbl_, _ymax_lbl_)
+
+            # Spectral order on a SHARED axis must be computed once globally, not
+            # per tile -- otherwise each tile seriates its own category subset into
+            # a different order and the "shared axis" comparability is lost.  _ref_
+            # already ran the global Fiedler seriation over df_all, so lift its
+            # category order (values sorted by the resolved __xi__/__yi__ index) and
+            # inject it as a concrete list.  That list overrides the cloned
+            # 'spectral' string in every tile (kwarg overrides beat template state),
+            # so each tile applies the identical order without re-solving.
+            def _global_order_(_val_col_, _idx_col_):
+                _ord_ = _ref_.df_flat.select([_val_col_, _idx_col_]).unique().sort(_idx_col_)[_val_col_].to_list()
+                if _ord_ and isinstance(_ord_[0], dict): _ord_ = [tuple(_d_.values()) for _d_ in _ord_]
+                return _ord_
+            if self.p2s.SM_X in self.sm_shared and isinstance(self.x_order, str) and len(_ref_.df_flat) > 0:
+                _kwargs_shared_['x_order'] = _global_order_('__x__', '__xi__')
+            if self.p2s.SM_Y in self.sm_shared and isinstance(self.y_order, str) and len(_ref_.df_flat) > 0:
+                _kwargs_shared_['y_order'] = _global_order_('__y__', '__yi__')
 
         # SM_COUNT / SM_COLOR: two-pass approach.
         # Pass 1 renders all non-all instances so we can collect the per-pixel aggregated values;

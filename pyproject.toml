@@ -80,7 +80,7 @@ mlx-cuda13 = ["mlx[cuda13]; sys_platform == 'linux'", "polars2svg[layouts]"]
 # 72dpi), which is the rasterization the PNG goldens are validated against. See
 # svgToPNGBytes() in export.py. reportlab 5 is fine with svglib 1.x, so the
 # floor stays open to it (reportlab>=4.0 now admits 5.0) — the cap is on svglib.
-export = ["svglib>=1.5,<2", "reportlab>=4.0", "rlPyCairo>=0.3"]
+export = ["svglib>=1.5,<3", "reportlab>=4.0", "rlPyCairo>=0.3"]
 
 # Graph-layout algorithms: linkp's/chordp's pluggable layouts, the graph-layout
 # mixin (treemaps, force-directed, neighborhood clustering, ...), and shapely
@@ -114,7 +114,7 @@ dev = [
   "coverage",
   "ipykernel",
   "kagglehub",
-  "svglib<2",   # capped for the same reason as the [export] extra: svglib 2's
+  "svglib<3",   # capped for the same reason as the [export] extra: svglib 2's
                 # px->pt conversion shrinks PNG output and breaks nested-<svg>
                 # goldens. Keeps local test runs on the tested rasterization path.
   "reportlab",

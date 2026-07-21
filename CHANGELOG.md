@@ -7,6 +7,81 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Force-directed origin-destination flow maps — `link_shape='flowmap'` on
+  `linkp`.** An implementation of Jenny et al. (IJGIS 2017): each flow is drawn
+  as a quadratic Bezier whose single control point is placed by an iterative
+  equilibrium of five forces (flows-against-flow, nodes-against-flow,
+  anti-torsion, spring, angular resolution), plus per-flow/canvas constraint
+  rectangles, intersection reduction for flows sharing a node, and clearance
+  around unconnected nodes. The layout runs **once** over all aggregated flows
+  (`ODFlowLayout` in `polars2svg/od_flow_layout.py`; the paper's tuning
+  constants are exposed as keyword arguments at their paper defaults) and is
+  deterministic. Runtime is quadratic in the flow count — the method targets
+  flow maps of roughly 100–200 aggregated flows, and `linkp` logs a warning
+  above 200.
+- **`link_arrows=` on `linkp`** — draw arrowheads at link destinations. Under
+  `link_shape='flowmap'` the arrowheads are fed to the layout as obstacles
+  (paper section 3.2.3), so curves route around them.
+- **MLX acceleration for the flow layout.** `ODFlowLayout`'s O(N²) force
+  kernels run on NumPy by default and automatically move to the GPU in float32
+  when the optional `[mlx]` extra is installed and a device is available.
+  Output stays deterministic for a given machine/backend; the float32 path
+  differs from the float64 NumPy path by far less than one pixel. Intersection
+  reduction, obstacle clearance, and the per-flow scalar forces always run on
+  NumPy/Python.
+- **Spectral (Fiedler) seriation for categorical axes on `xyp`** —
+  `x_order`/`y_order='spectral'` orders an axis by the Fiedler vector of a
+  category × category affinity matrix, so similar categories land adjacent and
+  block structure lines up along the axis. Tunable with `spectral_by` (the
+  signal column(s) defining similarity; defaults to the opposite axis),
+  `spectral_weight`, `spectral_similarity` (`'cosine' | 'linear' |
+  'correlation'`), and `spectral_normalize`. Under small multiples, a
+  `'spectral'` order on a **shared** axis (`SM_X`/`SM_Y` in `sm_shared`) is
+  computed once over the full dataset and applied identically to every tile so
+  panels stay comparable; an unshared axis is seriated per tile. The ordering is
+  defined up to reflection, and a non-categorical axis raises `ValueError`.
+- **MLX / CUDA availability indicator in the interactive stack control** — two
+  header rows showing whether MLX and a CUDA device are usable, reusing the
+  flow layout's cached GPU probe rather than resolving the device a second time.
+
+### Fixed
+
+- **`shift-Q` (select common neighbors) did not reach the other components.**
+  `linkpi` assigned `selected_entities` directly instead of going through
+  `setSelectedEntitiesAndNotifyOthers()`, so the new selection never
+  cross-filtered the rest of the dashboard. An empty intersection now clears the
+  selection instead of leaving the previous one in place.
+- **Browser shortcuts stole `linkpi` keys.** `ctrl-c`, `ctrl-shift-C`,
+  `ctrl-e`, `ctrl-s`, and `ctrl-shift-S` now call `preventDefault()`, so the
+  native copy/search-bar/Save-Page-As actions can no longer clobber the
+  component's own clipboard write and label-mode operations. Verified on macOS;
+  conflicts on Windows and Linux browsers are not yet fully resolved.
+- **Untrusted label text could break out of an SVG `id` in `xyp` line
+  rendering.** The `line_by` value was interpolated into `id="..."` and its
+  matching `url(#...)` reference unescaped. It is now passed through an
+  allowlist (every character outside `[A-Za-z0-9]` becomes `-`), so XML-special
+  characters cannot escape the attribute; per-row uniqueness is unaffected
+  because it comes from a separate row-index suffix.
+- **`spreadlinesp` node and label text was not HTML-escaped** on the way into
+  `<text>` elements, unlike the other components. Focal-node, cloud, and bin
+  labels are now escaped, matching the threat model in `SECURITY.md`.
+- **The stack control mis-measured its available height** once the MLX/CUDA
+  status rows were added, and label centering was off.
+
+### Changed
+
+- **Stack control rendering reworked** — new layout pass for the rows/index
+  readout with corrected label centering, and the indicator font is capped at
+  12px so it no longer scales past its row.
+- **Internal refactors, no behavior change.** Background rendering shared by
+  `xyp`/`linkp`/`chordp` moved into `p2s_background_mixin`; node/edge color
+  resolution shared by `linkp`/`chordp` into `p2s_component_color_mixin`; and
+  the color logic shared by `histop`/`timep` into `p2s_bin_component_mixin`
+  (~1,100 lines of duplication removed).
+- The `[mlx]` extra now serves `ODFlowLayout` in addition to `TFDPLayout`.
+
 ## [0.1.1] — 2026-07-16
 
 ### Added
@@ -139,5 +214,6 @@ large frames.
 - **SECURITY.md** documenting the SVG-injection threat model (row-data label text
   is HTML-escaped; component configuration is trusted).
 
-[Unreleased]: https://github.com/datrcode/polars2svg/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/datrcode/polars2svg/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/datrcode/polars2svg/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/datrcode/polars2svg/releases/tag/v0.1.0

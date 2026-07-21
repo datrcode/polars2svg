@@ -1423,7 +1423,7 @@ wheels = [
 
 [[package]]
 name = "polars2svg"
-version = "0.1.0"
+version = "0.1.1"
 source = { editable = "." }
 dependencies = [
     { name = "numpy" },
@@ -1545,7 +1545,7 @@ requires-dist = [
     { name = "scipy", marker = "extra == 'layouts'", specifier = ">=1.13" },
     { name = "shapely", marker = "extra == 'layouts'", specifier = ">=2.0" },
     { name = "squarify", marker = "extra == 'layouts'", specifier = ">=0.4.4" },
-    { name = "svglib", marker = "extra == 'export'", specifier = ">=1.5" },
+    { name = "svglib", marker = "extra == 'export'", specifier = ">=1.5,<2" },
 ]
 provides-extras = ["mlx", "mlx-cuda", "mlx-cuda13", "export", "layouts", "interactive", "all"]
 
@@ -1566,7 +1566,7 @@ dev = [
     { name = "scipy", specifier = ">=1.13" },
     { name = "shapely", specifier = ">=2.0" },
     { name = "squarify", specifier = ">=0.4.4" },
-    { name = "svglib" },
+    { name = "svglib", specifier = "<2" },
 ]
 
 [[package]]

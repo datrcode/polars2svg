@@ -1427,6 +1427,13 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
         self.layout_background = None
         self._bg_label_color_  = '#000000'
 
+        # Community detection (the 'd' key): the LinkP's node_color spec as authored,
+        # so that shift-d can restore it after community colors have been pushed over
+        # every level of the stack. community_colors holds the {node: '#rrggbb'} map
+        # while communities are being shown (None otherwise).
+        self._orig_node_color_ = _linkp_.node_color
+        self.community_colors  = None
+
         if _mvc_ is None:
             self.mvc = InteractionController()
             self.mvc.addStack('default', _linkp_.df_orig)
@@ -2140,6 +2147,25 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
                 self.__applyBackgroundState__()
 
             #
+            # "D" - Detect graph communities (louvain) & color the nodes by community;
+            #       shift-d restores the node coloring that the LinkP was created with.
+            #
+            elif self.key_op_finished == 'd' or self.key_op_finished == 'D':
+                if self.key_op_finished == 'D':
+                    self.community_colors = None
+                    self.updateLinkNodeParam('node_color', self._orig_node_color_)
+                    self.setAnimation('<text x="5" y="15" fill="black"> communities: cleared </text>')
+                else:
+                    # Mirrors the 'w' layout branch: an algorithm failure leaves the
+                    # view untouched rather than killing the callback.
+                    try:              _node_color_ = self.apply_community_detection()
+                    except Exception: _node_color_ = None
+                    if _node_color_ is not None:
+                        self.updateLinkNodeParam('node_color', _node_color_)
+                        _communities_found_ = len(set(_node_color_.values()))
+                        self.setAnimation(f'<text x="5" y="15" fill="black"> {_communities_found_} communities </text>')
+
+            #
             # "A" - Toggle link arrows
             #
             elif self.key_op_finished == 'a':
@@ -2374,6 +2400,38 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
             return True
         return False
 
+    def apply_community_detection(self):
+        """Simulate the 'd' key: louvain communities over the graph at this stack level,
+        one color per community. Nodes that share an exact position are merged first (the
+        same treatment the layout algorithms give them) so a stacked group counts as a
+        single community member. Node positions are not touched. Returns the
+        {node: '#rrggbb'} map, or None when there is nothing to color."""
+        _ln_, _g_ = self.dfs_layout[self.df_level], self.graphs[self.df_level]
+        if _g_ is None or _g_.number_of_nodes() == 0: return None
+
+        _contracted_ = self.__contractCollapsedGraph__(_ln_, _g_, set())
+        if _contracted_ is None: _g_c_, _members_ = _g_, {_n_: [_n_] for _n_ in _g_.nodes()}
+        else:                    _g_c_, _, _, _members_ = _contracted_
+
+        _communities_ = nx.community.louvain_communities(nx.to_undirected(_g_c_),
+                                                         weight='weight', resolution=1.0, seed=42)
+        if not _communities_: return None
+
+        # One color per community, hashed off the community's canonical (lexicographically
+        # smallest) member so that re-running 'd' keeps colors stable rather than
+        # reshuffling them with louvain's community ordering.
+        _keys_    = [min(str(_m_) for _m_ in _comm_) for _comm_ in _communities_]
+        _key_hex_ = self.rt_self.colors(_keys_)
+
+        # Expand each representative's color back onto every node it stands for
+        _node_color_ = {}
+        for _comm_, _key_ in zip(_communities_, _keys_):
+            for _rep_ in _comm_:
+                for _node_ in _members_.get(_rep_, (_rep_,)):
+                    _node_color_[_node_] = _key_hex_[_key_]
+        self.community_colors = _node_color_
+        return _node_color_
+
     def apply_collapse_to(self, sx, sy, shiftkey=False, ctrlkey=False):
         """Simulate the 't' key: collapse selected nodes to screen position (sx, sy).
         Propagates new world positions to all stack levels."""
@@ -2593,6 +2651,8 @@ b . | cycle background (none | background | background + labels)
 c . | reset view or focus view on selected
  .. | shift-c ........ | focus view on selected + neighbors
  .. | ctrl-c ......... | copy selected nodes to clipboard (ctrl-shift-c uses node labels)
+d . | detect communities (louvain) & color nodes by community
+ .. | shift-d ........ | clear community colors
 e . | expand selection | shift-e uses directed graph
  .. | ctrl-e ......... | even out distribution of selected nodes
 g . | layout upon next mouse drag
@@ -2760,6 +2820,7 @@ z . | select node under mouse by color (shift, ctrl, and ctrl-shift apply)
         'apply_push_selected':                apply_push_selected,
         'apply_pop':                          apply_pop,
         'apply_collapse_edges':               apply_collapse_edges,
+        'apply_community_detection':          apply_community_detection,
         'apply_collapse_to':                  apply_collapse_to,
         'apply_layout_interaction':           apply_layout_interaction,
         'apply_undo':                         apply_undo,
@@ -3015,6 +3076,8 @@ z . | select node under mouse by color (shift, ctrl, and ctrl-shift apply)
                      event.key == "B") { data.key_op_finished = 'b';  }
             else if (event.key == "c") { if (event.ctrlKey) event.preventDefault(); data.key_op_finished = 'c';  } // (if selected) zoom to selected, else zoom to entire view; ctrl-c copies (suppress native copy so it can't clobber our clipboard write)
             else if (event.key == "C") { if (event.ctrlKey) event.preventDefault(); data.key_op_finished = 'C';  } // Zoom to selected + neighbors; ctrl-shift-c copies labels
+            else if (event.key == "d") { data.key_op_finished = 'd';  } // Detect communities (louvain) & color nodes by community
+            else if (event.key == "D") { data.key_op_finished = 'D';  } // Clear the community colors
             else if (event.key == "e") { if (event.ctrlKey) event.preventDefault(); data.key_op_finished = 'e';  } // Expand; ctrl-e evens out distribution (ctrl-e is browser search-bar focus)
             else if (event.key == "E") { data.key_op_finished = 'E';  } // Expand (w/ digraph)
             else if (event.key == "g") { state.layout_op        = true; // Mouse press is layout shape

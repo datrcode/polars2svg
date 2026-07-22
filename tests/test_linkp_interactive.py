@@ -811,5 +811,100 @@ class TestReplaceBaseDataframe(unittest.TestCase):
         self.assertAlmostEqual(pos_a[1], 0.88, places=6)
 
 
+@unittest.skipUnless(_PANEL_AVAILABLE_, 'panel not installed')
+class TestCommunityDetection(unittest.TestCase):
+    """Tests for the 'd' key — louvain community detection colored via node_color."""
+
+    def setUp(self):
+        self.p2s = Polars2SVG()
+        # Two triangles joined by a single bridge edge (a1-b1): louvain separates them.
+        self.df = pl.DataFrame({
+            'fm': ['a1', 'a2', 'a3', 'b1', 'b2', 'b3', 'a1'],
+            'to': ['a2', 'a3', 'a1', 'b2', 'b3', 'b1', 'b1'],
+        })
+        self.lp   = self.p2s.linkp(self.df, relationships=[('fm', 'to')])
+        self.ctrl = self.p2s.linkpi(self.lp)
+
+    def _press(self, key):
+        self.ctrl.key_op_finished = key
+        asyncio.run(self.ctrl.applyKeyOp(None))
+
+    # ── apply_community_detection() ──────────────────────────────────────────
+
+    def test_every_node_gets_a_color(self):
+        _nc_ = self.ctrl.apply_community_detection()
+        self.assertEqual(set(_nc_.keys()), set(self.ctrl.graphs[self.ctrl.df_level].nodes()))
+
+    def test_two_cliques_yield_two_colors(self):
+        _nc_ = self.ctrl.apply_community_detection()
+        self.assertEqual(len(set(_nc_.values())), 2)
+
+    def test_clique_members_share_one_color(self):
+        _nc_ = self.ctrl.apply_community_detection()
+        self.assertEqual(_nc_['a1'], _nc_['a2'])
+        self.assertEqual(_nc_['a2'], _nc_['a3'])
+        self.assertNotEqual(_nc_['a1'], _nc_['b2'])
+
+    def test_colors_are_hex_strings(self):
+        for _hex_ in self.ctrl.apply_community_detection().values():
+            self.assertRegex(_hex_, r'^#[0-9a-fA-F]{6}$')
+
+    def test_repeat_run_is_stable(self):
+        # Colors hash off each community's canonical member, so a re-run must not reshuffle.
+        self.assertEqual(self.ctrl.apply_community_detection(),
+                         self.ctrl.apply_community_detection())
+
+    def test_coincident_nodes_land_in_same_community(self):
+        # Exactly-coincident nodes are merged before detection (as the layout ops do),
+        # so a node stacked on top of another always takes that node's color.
+        _ln_ = self.ctrl.dfs_layout[self.ctrl.df_level]
+        _ln_.pos['a1'] = _ln_.pos['b1']
+        _nc_ = self.ctrl.apply_community_detection()
+        self.assertEqual(_nc_['a1'], _nc_['b1'])
+
+    def test_sets_community_colors_attribute(self):
+        _nc_ = self.ctrl.apply_community_detection()
+        self.assertEqual(self.ctrl.community_colors, _nc_)
+
+    # ── the 'd' / shift-d key ops ────────────────────────────────────────────
+
+    def test_d_pushes_node_color_to_every_stack_level(self):
+        self.ctrl.selected_entities = {'b3'}
+        self.ctrl.apply_push_selected()
+        self._press('d')
+        for _layout_ in self.ctrl.dfs_layout:
+            self.assertEqual(_layout_.node_color, self.ctrl.community_colors)
+
+    def test_shift_d_restores_original_node_color(self):
+        self._press('d')
+        self.assertIsInstance(self.ctrl.dfs_layout[0].node_color, dict)
+        self._press('D')
+        self.assertEqual(self.ctrl.dfs_layout[0].node_color, self.ctrl._orig_node_color_)
+        self.assertIsNone(self.ctrl.community_colors)
+
+    def test_popped_stack_nodes_are_absent_from_the_color_dict(self):
+        # Detect at a deeper level, then pop: the nodes only present at the shallower
+        # level have no entry, so LinkP paints them the background color ("colorless").
+        self.ctrl.selected_entities = {'b3'}
+        self.assertTrue(self.ctrl.apply_push_selected())
+        self._press('d')
+        self.ctrl.apply_pop()
+        self.assertEqual(self.ctrl.df_level, 0)
+        self.assertNotIn('b3', self.ctrl.dfs_layout[0].node_color)
+
+    def test_popped_stack_still_renders(self):
+        self.ctrl.selected_entities = {'b3'}
+        self.ctrl.apply_push_selected()
+        self._press('d')
+        self.ctrl.apply_pop()
+        self.assertGreater(len(self.ctrl.dfs_layout[0].renderSVG()), 0)
+
+    def test_d_does_not_move_nodes(self):
+        _before_ = {k: tuple(v) for k, v in self.ctrl.dfs_layout[0].pos.items()}
+        self._press('d')
+        _after_ = {k: tuple(v) for k, v in self.ctrl.dfs_layout[0].pos.items()}
+        self.assertEqual(_before_, _after_)
+
+
 if __name__ == '__main__':
     unittest.main()

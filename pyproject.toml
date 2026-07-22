@@ -93,9 +93,9 @@ layouts = ["networkx>=3.2", "scikit-learn>=1.5", "scipy>=1.13", "shapely>=2.0", 
 # built on Panel. Includes `layouts`: interactive_controller.py's graph views
 # (linkpi's layout switcher, MDS/force-directed re-layout on selection) need
 # networkx/scipy/scikit-learn the same as the static components do. pyperclip
-# backs linkpi's ctrl-C copy-selection-to-clipboard; the import stays lazy with
-# a clear ImportError, so environments assembled without this extra degrade
-# gracefully. Install with: pip install polars2svg[interactive]
+# backs linkpi's ctrl-C copy-selection-to-clipboard; it's a top-level import
+# in interactive_controller.py, same as panel/param, since that module is only
+# ever loaded via this extra. Install with: pip install polars2svg[interactive]
 interactive = ["panel>=1.5", "jupyter_bokeh>=4.0", "param>=2.0", "pyperclip>=1.9", "polars2svg[layouts]"]
 
 # Union of every extra — restores the pre-extras "batteries included" install.

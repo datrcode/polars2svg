@@ -1,8 +1,6 @@
 import asyncio
-import sys
 import unittest
 from datetime import datetime
-from unittest.mock import patch
 
 import polars as pl
 
@@ -1246,13 +1244,9 @@ class TestLINKPISizeCycleMenus(unittest.TestCase):
 
 @unittest.skipUnless(PANEL_AVAILABLE, 'panel not installed')
 class TestLINKPICopyToClipboard(unittest.TestCase):
-    """ctrl-C copies the current selection to the clipboard via 'pyperclip'
-    (part of the `interactive` extra, but imported lazily so environments
-    assembled without the extra degrade gracefully). The missing-package
-    case is simulated by nulling the sys.modules entry, since dev/CI envs
-    now install pyperclip. Regression guard for a prior bug where the
-    missing import raised a bare NameError instead of a clear, actionable
-    ImportError naming the package to install."""
+    """ctrl-C copies the current selection to the clipboard via 'pyperclip',
+    a required top-level import in interactive_controller.py (part of the
+    `interactive` extra, same as panel/param)."""
 
     def _make_ctrl(self):
         from polars2svg.interactive_controller import linkpi
@@ -1266,17 +1260,6 @@ class TestLINKPICopyToClipboard(unittest.TestCase):
             ctrl.key_op_finished  = 'c'
             await ctrl.applyKeyOp(None)
         asyncio.run(_go())
-
-    def test_missing_pyperclip_raises_clear_import_error(self):
-        ctrl = self._make_ctrl()
-        ctrl.selected_entities = {'a', 'b'}
-        # A None sys.modules entry makes `import pyperclip` raise ImportError
-        # even when the package is installed.
-        with patch.dict(sys.modules, {'pyperclip': None}):
-            with self.assertRaises(ImportError) as _ctx_:
-                self._press_ctrl_c(ctrl)
-        self.assertIn('pyperclip', str(_ctx_.exception))
-        self.assertIn('polars2svg[interactive]', str(_ctx_.exception))
 
     def test_no_error_when_nothing_selected(self):
         # The clipboard path is only entered when there's a selection; with

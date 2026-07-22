@@ -9,6 +9,7 @@ import networkx as nx
 import polars as pl
 import panel as pn
 import param
+import pyperclip
 from panel.reactive import ReactiveHTML
 from shapely.geometry import Polygon
 
@@ -2201,15 +2202,6 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
                     return (_x0_ - _px_, _y0_ - _py_, _x1_ + _px_, _y1_ + _py_)
                 if   self.ctrlkey: # copy to the clipboard
                     if len(self.selected_entities) > 0:
-                        try:
-                            import pyperclip
-                        except ImportError as _e_:
-                            raise ImportError(
-                                "copying the selection to the clipboard requires the "
-                                "optional 'pyperclip' package. Install it with:\n"
-                                "    pip install pyperclip\n"
-                                "(included in: pip install polars2svg[interactive])"
-                            ) from _e_
                         if self.shiftkey: # copy the label lookups (if they exist)
                             _list_ = []
                             for x in self.selected_entities:

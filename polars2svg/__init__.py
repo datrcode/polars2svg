@@ -34,3 +34,8 @@ try:
     from .tfdp_layout import TFDPLayout, gpu_backend
 except ImportError:
     pass
+
+try:
+    from .ncp_layout import NCPLayout, NeighborhoodPreservingPacking
+except ImportError:
+    pass

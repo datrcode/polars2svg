@@ -161,3 +161,24 @@ references:
     year: 2024
     url: "https://arxiv.org/abs/2408.08992"
     notes: "Implemented in polars2svg/spreadlinesp.py"
+  - type: article
+    title: "NCP: Neighborhood-Preserving Non-Uniform Circle Packing for Visualization"
+    authors:
+      - family-names: "Li"
+        given-names: "Duan"
+      - family-names: "Yuan"
+        given-names: "Jun"
+      - family-names: "Guo"
+        given-names: "Xinyuan"
+      - family-names: "Wang"
+        given-names: "Xiting"
+      - family-names: "Liu"
+        given-names: "Yang"
+      - family-names: "Yang"
+        given-names: "Weikai"
+      - family-names: "Liu"
+        given-names: "Shixia"
+    journal: "Computational Visual Media"
+    year: 2026
+    url: "https://arxiv.org/abs/2602.00668"
+    notes: "Implemented in polars2svg/ncp_layout.py (NCPLayout — the 'ncp pack' linkp layout op)"

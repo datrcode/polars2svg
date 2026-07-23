@@ -852,6 +852,28 @@ class TestLINKPILayoutRegistry(unittest.TestCase):
         else:
             self.assertNotIn(tfdp_key, self.linkpi_instance.layout_operations)
 
+    def test_ncp_in_registry_iff_available(self):
+        from polars2svg.interactive_controller import _NCP_AVAILABLE
+        ncp_key = self.linkpi_instance.NCP_PACK
+        if _NCP_AVAILABLE:
+            self.assertIn(ncp_key, self.linkpi_instance._layout_registry)
+            self.assertIn(ncp_key, self.linkpi_instance.layout_operations)
+        else:
+            self.assertNotIn(ncp_key, self.linkpi_instance._layout_registry)
+
+    def test_ncp_handler_packs_visible_graph(self):
+        from polars2svg.interactive_controller import _NCP_AVAILABLE
+        if not _NCP_AVAILABLE:
+            self.skipTest('ncp_layout not importable')
+        ln      = self.linkpi_instance.dfs_layout[0]
+        g       = self.linkpi_instance.graphs[0]
+        handler = self.linkpi_instance._layout_registry[self.linkpi_instance.NCP_PACK]
+        result  = handler(ln, g, set())
+        self.assertIsInstance(result, dict)
+        # every positioned node in the visible graph is packed
+        self.assertEqual(set(result.keys()),
+                         {n for n in g.nodes() if n in ln.pos})
+
     def test_spring_nx_handler_returns_dict_for_empty_selection(self):
         import networkx as nx
         ln      = self.linkpi_instance.dfs_layout[0]

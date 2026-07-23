@@ -45,6 +45,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **MLX / CUDA availability indicator in the interactive stack control** — two
   header rows showing whether MLX and a CUDA device are usable, reusing the
   flow layout's cached GPU probe rather than resolving the device a second time.
+- **Neighborhood-preserving circle packing — the `ncp pack` layout operation
+  (`NCPLayout`, `[P]` in the shift-W layout picker).** An implementation of Li
+  et al. (Computational Visual Media 2026): a compaction pass that takes the
+  current layout, gives each node a circle sized by its flow volume, and packs
+  the nodes into a tight, non-overlapping arrangement that preserves the
+  layout's spatial neighbourhoods — reclaiming the empty space a spring layout
+  leaves between nodes. Runs the paper's three-stage continuation pipeline
+  (Delaunay planar-graph init → power-diagram compaction → force-directed
+  refinement) on the currently visible graph; with a selection only the
+  selected nodes are packed, and exactly-coincident nodes are collapsed to one
+  circle beforehand like every other layout op. Node radius is `log` of the
+  node's count (its total incident edge weight), falling back to the number of
+  neighbours when the graph is unweighted. Deterministic; pure NumPy/SciPy
+  (`ncp_layout.py`).
 
 ### Fixed
 

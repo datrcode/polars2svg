@@ -165,6 +165,11 @@ implementation file carries the full citation in its module header.
   W. Wang, H. Wang, G. Dai, and H. Wang, "Visualization of large hierarchical data
   by circle packing," *Proc. SIGCHI Conference on Human Factors in Computing
   Systems (CHI '06)*, 2006, pp. 517–520. doi:[10.1145/1124772.1124851](https://doi.org/10.1145/1124772.1124851)
+- **Neighborhood-preserving non-uniform circle packing** (`linkp` `ncp pack`
+  layout op, `NCPLayout` — [ncp_layout.py](polars2svg/ncp_layout.py)):
+  D. Li, J. Yuan, X. Guo, X. Wang, Y. Liu, W. Yang, and S. Liu, "NCP:
+  Neighborhood-Preserving Non-Uniform Circle Packing for Visualization,"
+  *Computational Visual Media*, 2026. arXiv:[2602.00668](https://arxiv.org/abs/2602.00668)
 - **Hierarchical edge bundling** (`chordp` bundled link shapes —
   [chordp.py](polars2svg/chordp.py)):
   D. Holten, "Hierarchical Edge Bundles: Visualization of Adjacency Relations in

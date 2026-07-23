@@ -12,6 +12,12 @@ try:
 except ImportError:
     _TFDP_AVAILABLE = False
 
+try:
+    from polars2svg.ncp_layout import NCPLayout
+    _NCP_AVAILABLE = True
+except ImportError:
+    _NCP_AVAILABLE = False
+
 
 def _g():
     return nx.cycle_graph(5)
@@ -38,6 +44,13 @@ class TestLayoutAlgorithmProtocol(unittest.TestCase):
     @unittest.skipUnless(_TFDP_AVAILABLE, 'mlx not installed')
     def test_tfdp_satisfies_protocol(self):
         layout = TFDPLayout(_g(), max_iter=3, seed=0)
+        self.assertIsInstance(layout, LayoutAlgorithm)
+
+    @unittest.skipUnless(_NCP_AVAILABLE, 'numpy/scipy/networkx not installed')
+    def test_ncp_satisfies_protocol(self):
+        g = _g()
+        pos = {n: (float(i), float((i * 3) % 5)) for i, n in enumerate(g.nodes())}
+        layout = NCPLayout(g, pos=pos, force_iterations=50)
         self.assertIsInstance(layout, LayoutAlgorithm)
 
     def test_object_without_results_does_not_satisfy_protocol(self):

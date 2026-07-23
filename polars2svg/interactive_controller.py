@@ -47,6 +47,13 @@ except ImportError:
     _TFDPLayout = None
     _TFDP_AVAILABLE = False
 
+try:
+    from .ncp_layout import NCPLayout as _NCPLayout
+    _NCP_AVAILABLE = True
+except ImportError:
+    _NCPLayout = None
+    _NCP_AVAILABLE = False
+
 # (mnemonic, label) — single source of truth for the shift-G / shift-W picker
 # menus, the Python layout_modes/layout_operations lists, and the JS menu
 # arrays. Mnemonics are case-sensitive, must be unique within a menu, and must
@@ -75,6 +82,8 @@ _LAYOUT_OP_MENU_ = [
 ]
 if _TFDP_AVAILABLE:
     _LAYOUT_OP_MENU_.append(('t', 't-fdp'))
+if _NCP_AVAILABLE:
+    _LAYOUT_OP_MENU_.append(('P', 'ncp pack'))
 
 
 class _ContractedLayoutView_:
@@ -1404,6 +1413,7 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
         self.NEIGHBORHOOD_SPATIAL = 'neighborhood (spatial)'
         self.NEIGHBORHOOD_GRAPH   = 'neighborhood (graph)'
         self.TFDP_LAYOUT          = 't-fdp'
+        self.NCP_PACK             = 'ncp pack'
         self.layout_operations    = [label for _, label in _LAYOUT_OP_MENU_]
         self.layout_mode          = self.GRID
         self.layout_operation     = self.SPRING_NX
@@ -1777,6 +1787,17 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
             registry[self.TFDP_LAYOUT] = lambda ln, g, sel: (
                 _TFDPLayout(g).results() if len(sel) == 0
                 else _TFDPLayout(g, pos=ln.pos, selection=set(sel), pin_background=True).results()
+            )
+        if _NCP_AVAILABLE:
+            # Neighbourhood-preserving circle packing (Li et al. 2026): compacts
+            # the *current* layout, so it always reads ln.pos. Radii come from
+            # each node's flow volume (log of its count, or neighbour count when
+            # unweighted). With a selection, only those nodes are packed; the
+            # exact-coincident-node contraction is applied upstream by
+            # __layoutOperation__, so this handler always sees distinct sites.
+            registry[self.NCP_PACK] = lambda ln, g, sel: (
+                _NCPLayout(g, pos=ln.pos).results() if len(sel) == 0
+                else _NCPLayout(g, pos=ln.pos, selection=set(sel)).results()
             )
         return registry
 

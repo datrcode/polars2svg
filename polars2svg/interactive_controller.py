@@ -1392,6 +1392,19 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
         if _linkp_.node_labels is not None:
             self.ln_params['node_labels'] = _linkp_.node_labels
 
+        # Timing marks (the 'a' key): when a time field is available, 'a' cycles the four
+        # (arrows x timing-marks) combinations; otherwise it just toggles arrows. The field
+        # is the one the LinkP was created with (time=), or -- if none was set -- a lone
+        # date/datetime column auto-detected from the data. Zero or several date columns is
+        # ambiguous, so timing marks stay unavailable (self._timing_time_ = None).
+        if _linkp_.time is not None:
+            self._timing_time_ = _linkp_.time
+        else:
+            _df0_       = _linkp_.df_orig
+            _date_cols_ = [c for c in _df0_.columns
+                           if self.rt_self.dateColumn(_df0_, c) or self.rt_self.dateTimeColumn(_df0_, c)]
+            self._timing_time_ = _date_cols_[0] if len(_date_cols_) == 1 else None
+
         self.GRID                 = 'grid'
         self.CIRCLE               = 'circle'
         self.SUNFLOWER            = 'sunflower'
@@ -1698,6 +1711,12 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
     def updateLinkNodeParam(self, name, value):
         for i in range(len(self.dfs_layout)):
             setattr(self.dfs_layout[i], name, value)
+            # time= is only the raw spec; the render path reads the resolved
+            # _time_field_/_time_enum_, so re-resolve after assigning it (this is the
+            # work __validateInput__ does at construction, and it is skipped on the
+            # renderSVG() re-render path).
+            if name == 'time':
+                self.dfs_layout[i].__resolveTimeField__()
             self.dfs_layout[i].invalidateRender()
         self.__refreshView__(comp=True)
 
@@ -2188,12 +2207,25 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
                         self.setAnimation(f'<text x="5" y="15" fill="black"> {_communities_found_} communities </text>')
 
             #
-            # "A" - Toggle link arrows
+            # "A" - Cycle link arrows x timing marks. With a time field available the four
+            #       states cycle: (no arrows / no marks) -> (arrows) -> (arrows / marks) ->
+            #       (marks) -> ... ; each step flips exactly one of the two. Without a time
+            #       field, 'a' just toggles arrows (timing marks are unavailable).
             #
             elif self.key_op_finished == 'a':
-                _new_arrows_ = not getattr(_ln_, 'link_arrows', False)
-                self.updateLinkNodeParam('link_arrows', _new_arrows_)
-                self.setAnimation(f'<text x="5" y="15" fill="black"> link arrows: {"on" if _new_arrows_ else "off"} </text>')
+                _arrows_on_ = bool(getattr(_ln_, 'link_arrows', False))
+                if self._timing_time_ is None:
+                    _new_arrows_ = not _arrows_on_
+                    self.updateLinkNodeParam('link_arrows', _new_arrows_)
+                    self.setAnimation(f'<text x="5" y="15" fill="black"> link arrows: {"on" if _new_arrows_ else "off"} </text>')
+                else:
+                    _marks_on_ = getattr(_ln_, '_time_field_', None) is not None
+                    _encode_   = {(False, False): 0, (True, False): 1, (True, True): 2, (False, True): 3}
+                    _decode_   = {0: (False, False), 1: (True, False), 2: (True, True), 3: (False, True)}
+                    _na_, _nm_ = _decode_[(_encode_[(_arrows_on_, _marks_on_)] + 1) % 4]
+                    if   _na_ != _arrows_on_: self.updateLinkNodeParam('link_arrows', _na_)
+                    elif _nm_ != _marks_on_:  self.updateLinkNodeParam('time', self._timing_time_ if _nm_ else None)
+                    self.setAnimation(f'<text x="5" y="15" fill="black"> arrows: {"on" if _na_ else "off"} | timing marks: {"on" if _nm_ else "off"} </text>')
 
             #
             # "Z" - Select nodes with the same color as the one that the mouse is over
@@ -2659,7 +2691,7 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
 
     _keyboard_commands_ = """
 / . | search: type substring + Enter (prefix +add -remove &intersect); Escape to cancel
-a . | toggle link arrows (on | off)
+a . | cycle link arrows / timing marks (arrows-only when no time field)
 b . | cycle background (none | background | background + labels)
 c . | reset view or focus view on selected
  .. | shift-c ........ | focus view on selected + neighbors

@@ -1291,5 +1291,78 @@ class TestLINKPICopyToClipboard(unittest.TestCase):
         self._press_ctrl_c(ctrl)  # should not raise
 
 
+@unittest.skipUnless(PANEL_AVAILABLE, 'panel not installed')
+class TestLINKPITimingMarksCycle(unittest.TestCase):
+    """The 'a' key cycles arrows x timing marks when a time field is available, and
+    toggles arrows only otherwise."""
+
+    def _ctrl(self, df, **kw):
+        from polars2svg.interactive_controller import linkpi
+        p2s   = Polars2SVG()
+        linkp = p2s.linkp(df, relationships=[('fm', 'to')], pos=_make_pos(), **kw)
+        return linkpi(linkp)
+
+    def _df_one_ts(self):
+        return pl.DataFrame({'fm': ['a', 'b', 'c'], 'to': ['b', 'c', 'a'],
+                             'ts': [datetime(2024, 1, d) for d in (1, 2, 3)]})
+
+    def _df_two_ts(self):
+        return pl.DataFrame({'fm': ['a', 'b', 'c'], 'to': ['b', 'c', 'a'],
+                             'ts':  [datetime(2024, 1, d) for d in (1, 2, 3)],
+                             'ts2': [datetime(2024, 2, d) for d in (1, 2, 3)]})
+
+    def _press_a(self, ctrl):
+        async def _go():
+            ctrl.key_op_finished = 'a'
+            await ctrl.applyKeyOp(None)
+        asyncio.run(_go())
+
+    def _state(self, ctrl):
+        ln = ctrl.dfs_layout[0]
+        return (bool(ln.link_arrows), getattr(ln, '_time_field_', None) is not None)
+
+    # ── availability detection ──────────────────────────────────────────────
+    def test_auto_detect_single_date_column(self):
+        self.assertEqual(self._ctrl(self._df_one_ts())._timing_time_, 'ts')
+
+    def test_ambiguous_two_date_columns_unavailable(self):
+        self.assertIsNone(self._ctrl(self._df_two_ts())._timing_time_)
+
+    def test_no_date_columns_unavailable(self):
+        self.assertIsNone(self._ctrl(_make_link_df())._timing_time_)
+
+    def test_explicit_time_used_over_autodetect(self):
+        # an explicit time= wins even when the data has several date columns
+        self.assertEqual(self._ctrl(self._df_two_ts(), time='ts2')._timing_time_, 'ts2')
+
+    # ── the four-state cycle ────────────────────────────────────────────────
+    def test_full_cycle(self):
+        ctrl = self._ctrl(self._df_one_ts())
+        self.assertEqual(self._state(ctrl), (False, False))                       # initial
+        self._press_a(ctrl); self.assertEqual(self._state(ctrl), (True, False))   # arrows
+        self._press_a(ctrl); self.assertEqual(self._state(ctrl), (True, True))    # arrows + marks
+        self._press_a(ctrl); self.assertEqual(self._state(ctrl), (False, True))   # marks
+        self._press_a(ctrl); self.assertEqual(self._state(ctrl), (False, False))  # wrap
+
+    def test_marks_appear_in_svg_when_on(self):
+        ctrl = self._ctrl(self._df_one_ts())
+        self._press_a(ctrl)                                     # arrows, no marks
+        self.assertNotIn('stroke-width="1.5"', ctrl.mod_inner)
+        self._press_a(ctrl)                                     # arrows + marks
+        self.assertIn('stroke-width="1.5"', ctrl.mod_inner)
+
+    def test_marks_start_on_when_time_configured(self):
+        ctrl = self._ctrl(self._df_one_ts(), time='ts')
+        self.assertEqual(self._state(ctrl), (False, True))     # constructed with marks on
+
+    # ── arrows-only fallback ────────────────────────────────────────────────
+    def test_arrows_only_toggle_without_time(self):
+        ctrl = self._ctrl(_make_link_df())
+        self.assertEqual(self._state(ctrl), (False, False))
+        self._press_a(ctrl); self.assertEqual(self._state(ctrl), (True, False))
+        self._press_a(ctrl); self.assertEqual(self._state(ctrl), (False, False))  # never enables marks
+        self.assertNotIn('stroke-width="1.5"', ctrl.mod_inner)
+
+
 if __name__ == '__main__':
     unittest.main()

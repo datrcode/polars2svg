@@ -22,6 +22,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
         'draw_labels', 'node_labels', 'label_only',
         'label_line_width', 'label_max_lines', 'label_ellipsis',
         'link_size', 'link_shape', 'link_opacity', 'link_size_range', 'link_arrows',
+        'time', 'timing_marks_length',
         'wxh', 'insets', 'bounds_percent', 'use_pos_for_bounds',
         'convex_hull_lu', 'convex_hull_opacity', 'convex_hull_labels', 'convex_hull_stroke_width',
         'background', 'background_label_color', 'background_opacity',
@@ -52,6 +53,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
             self.gatherMetrics(self.__calculateGeometry__)
             self.gatherMetrics(self.__calculateScreenCoordinates__)
             self.gatherMetrics(self.__renderLinks__)
+            self.gatherMetrics(self.__renderTimingMarks__)
             self.gatherMetrics(self.__renderNodes__)
             self.gatherMetrics(self.__renderSVG__, rand_id)
         self.t_end     = time.time()
@@ -220,6 +222,14 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
             'link_opacity':           1.0,
             'link_size_range':        (0.25, 4),
             'link_arrows':            False,
+            # Timing marks (rtsvg linknode parity): short colored ticks along each edge
+            # encoding when each event occurred (position + spectrum color) and the
+            # direction of activity (side of the edge + slight slant).  Rendered iff
+            # time is not None (None -> feature off, unlike timep where None auto-detects).
+            # time= otherwise mirrors timep's time field: a column-name str, a TField, or
+            # a (field, TimeLinearTypeP|TimePeriodicTypeP) tuple.
+            'time':                   None,
+            'timing_marks_length':    3.0,   # tick length in pixels (frame-size independent)
             # Geometry (p2s style)
             'wxh':                    (256, 256),
             'insets':                 (3, 3),
@@ -477,6 +487,9 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
             )
         self.__validateColorSpec__(self.node_color, 'node_color', allow_dict=True)
 
+        # Timing marks: resolve/validate the time field (no-op when time is None)
+        self.__resolveTimeField__()
+
         # count= is only consumed by 'vary' sizing: fixed node/link sizes ignore it,
         # CROW_* color modes use raw row count (__row_count__), and the fallback
         # layout assigns random positions without regard to edge weights.
@@ -487,6 +500,42 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
                 "use node_size='vary' and/or link_size='vary' to size nodes/links by count "
                 "(CROW_* color modes use raw row count, not count=)"
             )
+
+    #
+    # __resolveTimeField__() - resolve/validate the timing-marks time field.
+    # Mirrors Timep.__validateInput__ (the four accepted forms) but treats time=None as
+    # "feature off" rather than "auto-detect".  Sets self._time_field_ (None when off),
+    # self._time_enum_ (a TimeLinearTypeP / TimePeriodicTypeP / None), and
+    # self._is_periodic_.
+    #
+    def __resolveTimeField__(self):
+        self._time_field_  = None
+        self._time_enum_   = None
+        self._is_periodic_ = False
+        if self.time is None:
+            return
+        # TField is a str subclass, so it must be checked before the bare-str case.
+        if   isinstance(self.time, self.p2s.TField):
+            self._time_field_ = self.time.column
+            self._time_enum_  = self.time.transform
+        elif isinstance(self.time, str):
+            self._time_field_ = self.time
+        elif isinstance(self.time, tuple) and len(self.time) == 2 and \
+             isinstance(self.time[0], str) and \
+             (isinstance(self.time[1], self.p2s.TimePeriodicTypeP) or
+              isinstance(self.time[1], self.p2s.TimeLinearTypeP)):
+            self._time_field_ = self.time[0]
+            self._time_enum_  = self.time[1]
+        else:
+            raise ValueError(
+                'LinkP.__validateInput__(): time must be a column-name str, a TField, or a '
+                f'(field, TimeLinearTypeP|TimePeriodicTypeP) tuple, got {self.time!r}'
+            )
+        if self._time_field_ not in self.df.columns:
+            raise ValueError(f'LinkP.__validateInput__(): time field "{self._time_field_}" not found in DataFrame')
+        if not (self.p2s.dateColumn(self.df, self._time_field_) or self.p2s.dateTimeColumn(self.df, self._time_field_)):
+            raise ValueError(f'LinkP.__validateInput__(): time field "{self._time_field_}" is not a date/datetime column')
+        self._is_periodic_ = isinstance(self._time_enum_, self.p2s.TimePeriodicTypeP)
 
     # Color-mode kinds that carry data-driven color semantics a legend can describe
     # ('default' / 'fixed_hex' / node-dict overrides do not).
@@ -822,6 +871,72 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
         )
 
     #
+    # __curveControlPointColumns__() - add the cubic Bezier control points __xo0{i}__..
+    # __yo1{i}__ for the 'curve' shape to df (a fm->to oriented curve bowed by the
+    # perpendicular offset).  Shared by link rendering and timing-mark rendering so the
+    # two never drift.
+    #
+    def __curveControlPointColumns__(self, df, i):
+        _fm_sx_, _fm_sy_ = f'__rel{i}_fm_sx__', f'__rel{i}_fm_sy__'
+        _to_sx_, _to_sy_ = f'__rel{i}_to_sx__', f'__rel{i}_to_sy__'
+        _xo0_, _yo0_ = f'__xo0{i}__', f'__yo0{i}__'
+        _xo1_, _yo1_ = f'__xo1{i}__', f'__yo1{i}__'
+        _dx_, _dy_   = f'__dx{i}__', f'__dy{i}__'
+        _mag_        = f'__mag{i}__'
+        _u_,  _v_    = f'__u{i}__',  f'__v{i}__'
+        _pu_, _pv_   = f'__pu{i}__', f'__pv{i}__'
+        return (
+            df
+            .with_columns(
+                (pl.col(_to_sx_) - pl.col(_fm_sx_)).alias(_dx_),
+                (pl.col(_to_sy_) - pl.col(_fm_sy_)).alias(_dy_),
+            )
+            .with_columns(
+                ((pl.col(_dx_)**2 + pl.col(_dy_)**2).sqrt()).alias(_mag_)
+            )
+            .with_columns(
+                (pl.when(pl.col(_mag_) == 0).then(pl.lit(0.0)).otherwise(pl.col(_dx_) / pl.col(_mag_))).alias(_u_),
+                (pl.when(pl.col(_mag_) == 0).then(pl.lit(0.0)).otherwise(pl.col(_dy_) / pl.col(_mag_))).alias(_v_),
+            )
+            .with_columns(
+                (-pl.col(_v_)).alias(_pu_),
+                ( pl.col(_u_)).alias(_pv_),
+            )
+            .with_columns(
+                (pl.col(_fm_sx_) + pl.col(_mag_) * pl.col(_u_) / 3.0 + pl.col(_mag_) * pl.col(_pu_) / 10.0).alias(_xo0_),
+                (pl.col(_fm_sy_) + pl.col(_mag_) * pl.col(_v_) / 3.0 + pl.col(_mag_) * pl.col(_pv_) / 10.0).alias(_yo0_),
+                (pl.col(_to_sx_) - pl.col(_mag_) * pl.col(_u_) / 3.0 + pl.col(_mag_) * pl.col(_pu_) / 10.0).alias(_xo1_),
+                (pl.col(_to_sy_) - pl.col(_mag_) * pl.col(_v_) / 3.0 + pl.col(_mag_) * pl.col(_pv_) / 10.0).alias(_yo1_),
+            )
+        )
+
+    #
+    # __flowmapControlPointColumns__() - add the cubic control points __xo0{i}__..
+    # __yo1{i}__ for the 'flowmap' shape to df by joining the force-layout quadratic
+    # control point (self._flowmap_cp_) and converting quadratic -> exact cubic
+    # (c = p + 2/3*(cp - p)).  Shared by link and timing-mark rendering.
+    #
+    def __flowmapControlPointColumns__(self, df, i):
+        _fm_sx_, _fm_sy_ = f'__rel{i}_fm_sx__', f'__rel{i}_fm_sy__'
+        _to_sx_, _to_sy_ = f'__rel{i}_to_sx__', f'__rel{i}_to_sy__'
+        _xo0_, _yo0_ = f'__xo0{i}__', f'__yo0{i}__'
+        _xo1_, _yo1_ = f'__xo1{i}__', f'__yo1{i}__'
+        return (
+            df
+            .join(self._flowmap_cp_,
+                  left_on=[_fm_sx_, _fm_sy_, _to_sx_, _to_sy_],
+                  right_on=['__fmx__', '__fmy__', '__tox__', '__toy__'],
+                  how='left')
+            .with_columns(
+                (pl.col(_fm_sx_) + (pl.col('__cpx__') - pl.col(_fm_sx_)) * (2.0 / 3.0)).alias(_xo0_),
+                (pl.col(_fm_sy_) + (pl.col('__cpy__') - pl.col(_fm_sy_)) * (2.0 / 3.0)).alias(_yo0_),
+                (pl.col(_to_sx_) + (pl.col('__cpx__') - pl.col(_to_sx_)) * (2.0 / 3.0)).alias(_xo1_),
+                (pl.col(_to_sy_) + (pl.col('__cpy__') - pl.col(_to_sy_)) * (2.0 / 3.0)).alias(_yo1_),
+            )
+            .drop(['__cpx__', '__cpy__'])
+        )
+
+    #
     # __renderLinks__()
     # - uses Polars group_by + concat_str to build SVG strings without Python row loops
     #
@@ -849,8 +964,9 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
             _rel_tables_.append(self.__applyColorToDF__(_df_link_, self._link_color_mode_, 'lc', _data_co_))
 
         # flowmap: the force layout couples every flow, so it runs once over the
-        # combined flow set of all relationships (Jenny et al. 2017)
-        _flowmap_cp_ = self.__flowmapControlPoints__(_rel_tables_) if self.link_shape == 'flowmap' else None
+        # combined flow set of all relationships (Jenny et al. 2017).  Stored on self
+        # so __renderTimingMarks__ can reuse the same control points.
+        self._flowmap_cp_ = self.__flowmapControlPoints__(_rel_tables_) if self.link_shape == 'flowmap' else None
 
         # Pass 2: shape-specific geometry + SVG string assembly
         for i, _rel_ in enumerate(self.relationships):
@@ -862,53 +978,8 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
                 _xo0_, _yo0_ = f'__xo0{i}__', f'__yo0{i}__'
                 _xo1_, _yo1_ = f'__xo1{i}__', f'__yo1{i}__'
 
-            if self.link_shape == 'curve':
-                _dx_, _dy_   = f'__dx{i}__', f'__dy{i}__'
-                _mag_        = f'__mag{i}__'
-                _u_,  _v_    = f'__u{i}__',  f'__v{i}__'
-                _pu_, _pv_   = f'__pu{i}__', f'__pv{i}__'
-
-                _df_link_ = (
-                    _df_link_
-                    .with_columns(
-                        (pl.col(_to_sx_) - pl.col(_fm_sx_)).alias(_dx_),
-                        (pl.col(_to_sy_) - pl.col(_fm_sy_)).alias(_dy_),
-                    )
-                    .with_columns(
-                        ((pl.col(_dx_)**2 + pl.col(_dy_)**2).sqrt()).alias(_mag_)
-                    )
-                    .with_columns(
-                        (pl.when(pl.col(_mag_) == 0).then(pl.lit(0.0)).otherwise(pl.col(_dx_) / pl.col(_mag_))).alias(_u_),
-                        (pl.when(pl.col(_mag_) == 0).then(pl.lit(0.0)).otherwise(pl.col(_dy_) / pl.col(_mag_))).alias(_v_),
-                    )
-                    .with_columns(
-                        (-pl.col(_v_)).alias(_pu_),
-                        ( pl.col(_u_)).alias(_pv_),
-                    )
-                    .with_columns(
-                        (pl.col(_fm_sx_) + pl.col(_mag_) * pl.col(_u_) / 3.0 + pl.col(_mag_) * pl.col(_pu_) / 10.0).alias(_xo0_),
-                        (pl.col(_fm_sy_) + pl.col(_mag_) * pl.col(_v_) / 3.0 + pl.col(_mag_) * pl.col(_pv_) / 10.0).alias(_yo0_),
-                        (pl.col(_to_sx_) - pl.col(_mag_) * pl.col(_u_) / 3.0 + pl.col(_mag_) * pl.col(_pu_) / 10.0).alias(_xo1_),
-                        (pl.col(_to_sy_) - pl.col(_mag_) * pl.col(_v_) / 3.0 + pl.col(_mag_) * pl.col(_pv_) / 10.0).alias(_yo1_),
-                    )
-                )
-
-            elif self.link_shape == 'flowmap':
-                # quadratic control point -> exact cubic (c = p + 2/3*(cp - p))
-                _df_link_ = (
-                    _df_link_
-                    .join(_flowmap_cp_,
-                          left_on=[_fm_sx_, _fm_sy_, _to_sx_, _to_sy_],
-                          right_on=['__fmx__', '__fmy__', '__tox__', '__toy__'],
-                          how='left')
-                    .with_columns(
-                        (pl.col(_fm_sx_) + (pl.col('__cpx__') - pl.col(_fm_sx_)) * (2.0 / 3.0)).alias(_xo0_),
-                        (pl.col(_fm_sy_) + (pl.col('__cpy__') - pl.col(_fm_sy_)) * (2.0 / 3.0)).alias(_yo0_),
-                        (pl.col(_to_sx_) + (pl.col('__cpx__') - pl.col(_to_sx_)) * (2.0 / 3.0)).alias(_xo1_),
-                        (pl.col(_to_sy_) + (pl.col('__cpy__') - pl.col(_to_sy_)) * (2.0 / 3.0)).alias(_yo1_),
-                    )
-                    .drop(['__cpx__', '__cpy__'])
-                )
+            if   self.link_shape == 'curve':   _df_link_ = self.__curveControlPointColumns__(_df_link_, i)
+            elif self.link_shape == 'flowmap': _df_link_ = self.__flowmapControlPointColumns__(_df_link_, i)
 
             if self.link_size == 'vary':
                 _lc_min_, _lc_max_ = self.__countMinMax__(_df_link_['__count__'])
@@ -952,6 +1023,152 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
         _sorted_links_        = sorted(_all_svg_)
         self._link_svg_list_  = ([_link_group_open_] + _sorted_links_ + ['</g>']
                                   if _sorted_links_ else [])
+
+    #
+    # __timeNumericExpr__() - a monotonic Int64 expression for the resolved time field,
+    # used to normalize timestamps to [0,1].  Raw datetimes/dates cast to their physical
+    # integer; a linear granularity truncates first then casts; a periodic granularity is
+    # already an integer bin.
+    #
+    def __timeNumericExpr__(self):
+        if self._time_enum_ is None:
+            return pl.col(self._time_field_).cast(pl.Int64)
+        return self.p2s.polarsOperationForEnum(self._time_field_, self._time_enum_).cast(pl.Int64)
+
+    #
+    # __renderTimingMarks__()
+    # - short colored ticks along each edge (rtsvg rt_linknode_mixin.py:1537-1569 parity).
+    #   Position along the edge and spectrum color both encode the record's timestamp
+    #   normalized over the whole DataFrame; the side of the edge and a slight slant encode
+    #   the direction of activity.  Built entirely with Polars expressions (the only Python
+    #   loop is over relationships, not rows); identical overlapping marks collapse via the
+    #   final unique().  No-op unless time= is set.
+    #
+    def __renderTimingMarks__(self):
+        self._timing_mark_svg_list_ = []
+        if self._time_field_ is None or self.df is None or len(self.df) == 0:
+            return
+        _tml_ = float(self.timing_marks_length)
+
+        # Normalized time over the whole df (the "min/max timestamp position for the
+        # rendered dataframe") + spectrum color, computed once for every record.
+        _dfn_  = self.df.with_columns(self.__timeNumericExpr__().alias('__tm_num__'))
+        _tmin_ = _dfn_['__tm_num__'].min()
+        _tmax_ = _dfn_['__tm_num__'].max()
+        if _tmin_ is None or _tmax_ is None:
+            return
+        _tmin_, _tmax_ = float(_tmin_), float(_tmax_)
+        # __tm_num__ is Int64, so distinct times differ by >= 1 and tmax == tmin is the only
+        # degenerate case (a single timestamp).  A relative 0.001 guard is useless here
+        # because the epoch magnitude (~1e15) swamps it (0.001 falls below the f64 ULP), so
+        # branch explicitly and place a lone timestamp mid-edge.
+        if _tmax_ <= _tmin_:
+            _r_expr_ = pl.lit(0.5)
+        else:
+            _r_expr_ = ((pl.col('__tm_num__').cast(pl.Float64) - _tmin_) / (_tmax_ - _tmin_)).clip(0.0, 1.0)
+        _dfn_  = _dfn_.with_columns(
+            _r_expr_.alias('__tm_r__')
+        ).with_columns(
+            self.p2s.colorSpectrumPolarsOperations('__tm_r__', '__tm_cr__', '__tm_cg__', '__tm_cb__')
+        ).with_columns(
+            self.p2s.hexColorFromRGBTriplesPolarsOperations('__tm_cr__', '__tm_cg__', '__tm_cb__').alias('__tm_hex__')
+        )
+
+        _r2_        = lambda c: pl.col(c).round(2)
+        _all_marks_ = set()
+        for i, _rel_ in enumerate(self.relationships):
+            _fm_name_, _to_name_ = _rel_[0], _rel_[1]
+            _fm_sx_, _fm_sy_ = f'__rel{i}_fm_sx__', f'__rel{i}_fm_sy__'
+            _to_sx_, _to_sy_ = f'__rel{i}_to_sx__', f'__rel{i}_to_sy__'
+
+            # Keep the real screen-coord column names/dtype (Int32) so the shared
+            # control-point helpers and the flowmap join (Int32 keys) work unchanged.
+            _d_ = _dfn_.select(
+                pl.col(_fm_name_).cast(pl.String).alias('__tm_fm__'),
+                pl.col(_to_name_).cast(pl.String).alias('__tm_to__'),
+                pl.col(_fm_sx_), pl.col(_fm_sy_), pl.col(_to_sx_), pl.col(_to_sy_),
+                pl.col('__tm_r__'), pl.col('__tm_hex__'),
+            ).drop_nulls(subset=[_fm_sx_, _fm_sy_, _to_sx_, _to_sy_, '__tm_r__'])
+            if len(_d_) == 0:
+                continue
+
+            # side (+1 when the from-node sorts before the to-node) and the canonical
+            # orientation flag (t=0 at the smaller node), so opposite directions land on
+            # opposite sides of a shared line with opposite slant.
+            _d_ = _d_.with_columns(
+                (pl.col('__tm_fm__') < pl.col('__tm_to__')).alias('__tm_fmlt__'),
+            ).with_columns(
+                pl.when(pl.col('__tm_fmlt__')).then(pl.lit(1.0)).otherwise(pl.lit(-1.0)).alias('__tm_side__'),
+                # canonical endpoints A (smaller node) -> B (larger node)
+                pl.when(pl.col('__tm_fmlt__')).then(pl.col(_fm_sx_)).otherwise(pl.col(_to_sx_)).alias('__tm_ax__'),
+                pl.when(pl.col('__tm_fmlt__')).then(pl.col(_fm_sy_)).otherwise(pl.col(_to_sy_)).alias('__tm_ay__'),
+                pl.when(pl.col('__tm_fmlt__')).then(pl.col(_to_sx_)).otherwise(pl.col(_fm_sx_)).alias('__tm_bx__'),
+                pl.when(pl.col('__tm_fmlt__')).then(pl.col(_to_sy_)).otherwise(pl.col(_fm_sy_)).alias('__tm_by__'),
+                # position along the edge: reserve 10% at each end (avoids the node glyphs)
+                (0.1 + 0.8 * pl.col('__tm_r__')).alias('__tm_t__'),
+            )
+
+            # Canonical cubic control points P1,P2.  Line: collinear points reduce the
+            # cubic to the straight segment.  Curve/flowmap: the edge's own drawn control
+            # points, swapped when fm>to so the same curve is traversed smaller->larger.
+            if self.link_shape == 'line':
+                _d_ = _d_.with_columns(
+                    (pl.col('__tm_ax__') + (pl.col('__tm_bx__') - pl.col('__tm_ax__')) / 3.0).alias('__tm_p1x__'),
+                    (pl.col('__tm_ay__') + (pl.col('__tm_by__') - pl.col('__tm_ay__')) / 3.0).alias('__tm_p1y__'),
+                    (pl.col('__tm_ax__') + (pl.col('__tm_bx__') - pl.col('__tm_ax__')) * 2.0 / 3.0).alias('__tm_p2x__'),
+                    (pl.col('__tm_ay__') + (pl.col('__tm_by__') - pl.col('__tm_ay__')) * 2.0 / 3.0).alias('__tm_p2y__'),
+                )
+            else:
+                _d_ = (self.__curveControlPointColumns__(_d_, i) if self.link_shape == 'curve'
+                       else self.__flowmapControlPointColumns__(_d_, i))
+                _xo0_, _yo0_ = f'__xo0{i}__', f'__yo0{i}__'
+                _xo1_, _yo1_ = f'__xo1{i}__', f'__yo1{i}__'
+                _d_ = _d_.with_columns(
+                    pl.when(pl.col('__tm_fmlt__')).then(pl.col(_xo0_)).otherwise(pl.col(_xo1_)).alias('__tm_p1x__'),
+                    pl.when(pl.col('__tm_fmlt__')).then(pl.col(_yo0_)).otherwise(pl.col(_yo1_)).alias('__tm_p1y__'),
+                    pl.when(pl.col('__tm_fmlt__')).then(pl.col(_xo1_)).otherwise(pl.col(_xo0_)).alias('__tm_p2x__'),
+                    pl.when(pl.col('__tm_fmlt__')).then(pl.col(_yo1_)).otherwise(pl.col(_yo0_)).alias('__tm_p2y__'),
+                )
+
+            # Evaluate the cubic B(t) at t (mark base) and t+0.01 (tangent sample).
+            def _bez_(_a_, _c1_, _c2_, _b_, _t_):
+                _mt_ = (1.0 - _t_)
+                return (_mt_**3 * pl.col(_a_) + 3.0 * _mt_**2 * _t_ * pl.col(_c1_)
+                        + 3.0 * _mt_ * _t_**2 * pl.col(_c2_) + _t_**3 * pl.col(_b_))
+            _t_  = pl.col('__tm_t__')
+            _t2_ = pl.col('__tm_t__') + 0.01
+            _d_  = _d_.with_columns(
+                _bez_('__tm_ax__', '__tm_p1x__', '__tm_p2x__', '__tm_bx__', _t_ ).alias('__tm_px__'),
+                _bez_('__tm_ay__', '__tm_p1y__', '__tm_p2y__', '__tm_by__', _t_ ).alias('__tm_py__'),
+                _bez_('__tm_ax__', '__tm_p1x__', '__tm_p2x__', '__tm_bx__', _t2_).alias('__tm_qx__'),
+                _bez_('__tm_ay__', '__tm_p1y__', '__tm_p2y__', '__tm_by__', _t2_).alias('__tm_qy__'),
+            ).with_columns(
+                (pl.col('__tm_qx__') - pl.col('__tm_px__')).alias('__tm_dx__'),
+                (pl.col('__tm_qy__') - pl.col('__tm_py__')).alias('__tm_dy__'),
+            ).with_columns(
+                ((pl.col('__tm_dx__')**2 + pl.col('__tm_dy__')**2).sqrt()).alias('__tm_len__'),
+            ).with_columns(
+                pl.when(pl.col('__tm_len__') < 0.001).then(pl.lit(1.0)).otherwise(pl.col('__tm_len__')).alias('__tm_len__'),
+            ).with_columns(
+                (pl.col('__tm_dx__') / pl.col('__tm_len__')).alias('__tm_udx__'),
+                (pl.col('__tm_dy__') / pl.col('__tm_len__')).alias('__tm_udy__'),
+            ).with_columns(
+                # tick end: side*( tml*perp - (tml/2)*tangent ); perp = (udy, -udx)
+                (pl.col('__tm_px__') - pl.col('__tm_side__') * pl.col('__tm_udx__') * _tml_ / 2.0
+                                     + pl.col('__tm_side__') * pl.col('__tm_udy__') * _tml_).alias('__tm_xe__'),
+                (pl.col('__tm_py__') - pl.col('__tm_side__') * pl.col('__tm_udy__') * _tml_ / 2.0
+                                     - pl.col('__tm_side__') * pl.col('__tm_udx__') * _tml_).alias('__tm_ye__'),
+            ).with_columns(
+                pl.concat_str([
+                    pl.lit('<line x1="'), _r2_('__tm_px__'), pl.lit('" y1="'), _r2_('__tm_py__'),
+                    pl.lit('" x2="'),     _r2_('__tm_xe__'), pl.lit('" y2="'), _r2_('__tm_ye__'),
+                    pl.lit('" stroke="'), pl.col('__tm_hex__'), pl.lit('" stroke-width="1.5" />'),
+                ]).alias('__tm_svg__')
+            )
+            _all_marks_ |= set(_d_.drop_nulls(subset=['__tm_svg__'])['__tm_svg__'].unique())
+
+        _sorted_ = sorted(_all_marks_)
+        self._timing_mark_svg_list_ = (['<g fill="none">'] + _sorted_ + ['</g>']) if _sorted_ else []
 
     #
     # __renderNodes__()
@@ -1429,6 +1646,9 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
         # Links
         svg.extend(self._link_svg_list_)
 
+        # Timing marks (above the edges, below the nodes)
+        svg.extend(getattr(self, '_timing_mark_svg_list_', []))
+
         # Nodes
         svg.extend(self._node_svg_list_)
 
@@ -1509,6 +1729,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
             self.gatherMetrics(self.__calculateGeometry__)
             self.gatherMetrics(self.__calculateScreenCoordinates__)
             self.gatherMetrics(self.__renderLinks__)
+            self.gatherMetrics(self.__renderTimingMarks__)
             self.gatherMetrics(self.__renderNodes__)
             self.gatherMetrics(self.__renderSVG__, rand_id)
         return self.svg

@@ -1244,6 +1244,16 @@ class Polars2SVG(P2SColorsMixin,
         link_opacity   = 1.0
         link_size_range = (0.25, 4)                        # (min, max) stroke width for link_size='vary'
 
+        time           = None                              # timing marks OFF (default). When set, draws short colored ticks
+                                                            # along each edge: position + spectrum color encode each record's
+                                                            # timestamp (normalized over the whole df's min/max), and the side
+                                                            # of the edge + a slight slant encode the direction of activity.
+                       = 'field'                           # a timestamp/date column (mirrors timep's time field)
+                       = ('field', p2s.LT_Y_m_d_Hp | ...)  # a linear granularity (TimeLinearTypeP)
+                       = ('field', p2s.PT_Hp | ...)        # a periodicity (TimePeriodicTypeP)
+                       = p2s.tField('field', enum)         # the typed equivalent
+        timing_marks_length = 3.0                          # tick length in PIXELS (frame-size independent)
+
         === %< === %< === %< === %< === %< === %< === %< === %< === %< === %< === %< ===
 
         wxh            = (width, height)

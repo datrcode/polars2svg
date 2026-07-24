@@ -27,7 +27,7 @@ jobs:
     name: mypy (public surface)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install uv
         run: pip install --no-cache-dir uv
       - name: Run mypy
@@ -38,7 +38,7 @@ jobs:
     name: bandit + pip-audit + ruff
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
 
       - name: bandit (static security scan)
@@ -102,7 +102,7 @@ jobs:
           apt-get update && apt-get install -y --no-install-recommends \
             git build-essential libcairo2-dev pkg-config
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Build the wheel
         run: |

@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import unittest
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import polars as pl
 
@@ -1331,6 +1331,76 @@ class TestLINKPISizeCycleMenus(unittest.TestCase):
         self.assertIn('shift-o', cmds)
         self.assertIn('shift-p', cmds)
         self.assertIn('link shape', cmds)
+
+
+@unittest.skipUnless(PANEL_AVAILABLE, 'panel not installed')
+class TestLINKPITimingSpacingPicker(unittest.TestCase):
+    """The shift-a / ctrl-a timing-mark spacing picker: default selection, the pixel
+    grid, the JS commit path onto the LinkP's timing_marks_spacing (in pixels), a
+    user spacing outside the grid, and that a coarser choice re-renders fewer marks."""
+
+    def _make_ctrl(self, **link_kwargs):
+        from polars2svg.interactive_controller import linkpi
+        p2s   = Polars2SVG()
+        linkp = p2s.linkp(_make_link_df(), relationships=[('fm', 'to')],
+                          pos=_make_pos(), **link_kwargs)
+        return linkpi(linkp)
+
+    def _make_time_ctrl(self, n=2000, **link_kwargs):
+        from polars2svg.interactive_controller import linkpi
+        base  = datetime(2024, 1, 1)
+        df    = pl.DataFrame({'fm': ['a'] * n, 'to': ['b'] * n,
+                              'ts': [base + timedelta(seconds=17 * k) for k in range(n)]})
+        p2s   = Polars2SVG()
+        linkp = p2s.linkp(df, relationships=[('fm', 'to')], pos={'a': (0.0, 0.0), 'b': (1.0, 0.0)},
+                          time='ts', wxh=(512, 512), **link_kwargs)
+        return linkpi(linkp)
+
+    def _menu_items(self, ctrl, kind):
+        import json, re
+        render = type(ctrl)._scripts['render']
+        items  = json.loads(re.search(r'state\.menu_items = (\{.*?\});', render, re.S).group(1))
+        return items[kind]
+
+    # ── default selection + pixel grid ────────────────────────────────────────
+    def test_default_choice_is_one_pixel(self):
+        self.assertEqual(self._make_ctrl().timing_spacing_choice, '1')
+
+    def test_menu_is_pixel_grid(self):
+        labels = [lbl for _, lbl in self._menu_items(self._make_ctrl(), 'timing_spacing')]
+        self.assertEqual(labels, ['1', '2', '4', '8', '16', '32'])
+
+    def test_custom_spacing_becomes_current_and_in_menu(self):
+        ctrl = self._make_ctrl(timing_marks_spacing=10)
+        self.assertEqual(ctrl.timing_spacing_choice, '10')
+        self.assertIn('10', [lbl for _, lbl in self._menu_items(ctrl, 'timing_spacing')])
+
+    # ── the JS commit path: setting the choice pushes pixels onto the LinkP ────
+    def test_choice_commit_pushes_pixels_onto_linkp(self):
+        ctrl = self._make_ctrl()
+        ctrl.timing_spacing_choice = '8'
+        for ln in ctrl.dfs_layout:
+            self.assertEqual(ln.timing_marks_spacing, 8.0)
+
+    def test_coarser_choice_rerenders_fewer_marks(self):
+        ctrl = self._make_time_ctrl()
+        fine = ctrl.mod_inner.count('stroke-width="1.5"')   # timing-mark signature
+        ctrl.timing_spacing_choice = '16'
+        coarse = ctrl.mod_inner.count('stroke-width="1.5"')
+        self.assertGreater(fine, 0)
+        self.assertLess(coarse, fine)
+
+    # ── template / script wiring ──────────────────────────────────────────────
+    def test_render_script_seeds_timing_spacing_kind(self):
+        self.assertIn('"timing_spacing"', type(self._make_ctrl())._scripts['render'])
+
+    def test_commit_script_handles_timing_spacing(self):
+        self.assertIn('timing_spacing_choice', type(self._make_ctrl())._scripts['menuCommit'])
+
+    def test_keyboard_help_mentions_spacing_picker(self):
+        cmds = type(self._make_ctrl())._keyboard_commands_
+        self.assertIn('shift-a', cmds)
+        self.assertIn('spacing', cmds)
 
 
 @unittest.skipUnless(PANEL_AVAILABLE, 'panel not installed')

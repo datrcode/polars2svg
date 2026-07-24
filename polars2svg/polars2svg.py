@@ -1253,6 +1253,10 @@ class Polars2SVG(P2SColorsMixin,
                        = ('field', p2s.PT_Hp | ...)        # a periodicity (TimePeriodicTypeP)
                        = p2s.tField('field', enum)         # the typed equivalent
         timing_marks_length = 3.0                          # tick length in PIXELS (frame-size independent)
+        timing_marks_spacing = 1.0                         # min spacing between marks in PIXELS (decimation
+                                                            # resolution): marks closer than this along an edge
+                                                            # merge into one; larger = sparser. 1.0 = per-pixel
+                                                            # default, clamped to >= 1 (sub-pixel is meaningless)
 
         === %< === %< === %< === %< === %< === %< === %< === %< === %< === %< === %< ===
 

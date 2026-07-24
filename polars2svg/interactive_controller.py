@@ -1430,6 +1430,18 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
     if _link_shape_cur_ not in _LINK_SHAPES_:
         _link_shape_items_.append(['#', _link_shape_cur_])
 
+    # ── timing-mark spacing picker (shift-A forward / ctrl-A backward) ──
+    # A pixel grid for linkp's timing_marks_spacing decimation (see linkp.py), so the
+    # marks can be thinned out live on netflow-scale renders. Positional-digit
+    # mnemonics like the link-shape picker; a linkp created with a spacing outside the
+    # grid is appended as the current selection, like the size menus. Clamped to >=1px
+    # to match the render (sub-pixel is meaningless).
+    _TIMING_SPACINGS_      = [1, 2, 4, 8, 16, 32]   # pixels, fine -> very coarse
+    _timing_spacing_cur_   = _num_size_label(max(float(getattr(_linkp_, 'timing_marks_spacing', 1.0) or 1.0), 1.0))
+    _timing_spacing_items_ = [[str(_i_ + 1), _num_size_label(_v_)] for _i_, _v_ in enumerate(_TIMING_SPACINGS_)]
+    if _timing_spacing_cur_ not in [_lbl_ for _, _lbl_ in _timing_spacing_items_]:
+        _timing_spacing_items_.append(['#', _timing_spacing_cur_])
+
     #
     # Constructor
     #
@@ -1504,6 +1516,7 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
         self.node_size_choice     = _node_size_cur_
         self.link_opacity_choice  = _link_opacity_cur_
         self.link_shape_choice    = _link_shape_cur_
+        self.timing_spacing_choice = _timing_spacing_cur_
 
         self.previous_layouts = []
         self.max_undo_levels  = 20
@@ -1553,7 +1566,7 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
         self.param.watch(self.unselectedMoveOp,       'unselected_move_op_finished')
         self.param.watch(self.applySearchOp,          'search_op_finished')
         self.param.watch(self.applyLayoutChoice,      ['layout_mode', 'layout_operation'])
-        self.param.watch(self.applySizeChoice,        ['link_size_choice', 'node_size_choice', 'link_opacity_choice', 'link_shape_choice'])
+        self.param.watch(self.applySizeChoice,        ['link_size_choice', 'node_size_choice', 'link_opacity_choice', 'link_shape_choice', 'timing_spacing_choice'])
         if use_webgpu:
             self.param.watch(self.applyGpuError,      'gpu_error')
 
@@ -2777,10 +2790,15 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
             self.updateLinkNodeParam('node_size', self.__sizeLabelToValue__(event.new))
         elif event.name == 'link_shape_choice':
             self.updateLinkNodeParam('link_shape', event.new)
+        elif event.name == 'timing_spacing_choice':
+            try:                            _sp_ = float(event.new)
+            except (TypeError, ValueError): return
+            self.updateLinkNodeParam('timing_marks_spacing', _sp_)
 
     _keyboard_commands_ = """
 / . | search: type substring + Enter (prefix +add -remove &intersect); Escape to cancel
 a . | cycle link arrows / timing marks (arrows-only when no time field)
+ .. | shift-a ........ | open timing-mark spacing picker (px); ctrl-a reverses
 b . | cycle background (none | background | background + labels)
 c . | reset view or focus view on selected
  .. | shift-c ........ | focus view on selected + neighbors
@@ -2903,6 +2921,7 @@ z . | select node under mouse by color (shift, ctrl, and ctrl-shift apply)
             'link_opacity': _link_opacity_items_,
             'node_size':    _node_size_items_,
             'link_shape':   _link_shape_items_,
+            'timing_spacing': _timing_spacing_items_,
         }) + ";\n"
         "            state.menu_open  = false; state.menu_kind = ''; state.menu_index = 0; state.menu_timer = null;\n"
     )
@@ -2982,6 +3001,7 @@ z . | select node under mouse by color (shift, ctrl, and ctrl-shift apply)
     'node_size_choice'            : param.String(default=_node_size_cur_),
     'link_opacity_choice'         : param.String(default=_link_opacity_cur_),
     'link_shape_choice'           : param.String(default=_link_shape_cur_),
+    'timing_spacing_choice'       : param.String(default=_timing_spacing_cur_),
     'keyboardhelp_x'              : param.Integer(default=-1000),
     'x0_middle'                   : param.Integer(default=0),
     'y0_middle'                   : param.Integer(default=0),
@@ -3087,6 +3107,7 @@ z . | select node under mouse by color (shift, ctrl, and ctrl-shift apply)
                           : (state.menu_kind == 'link_size')    ? data.link_size_choice
                           : (state.menu_kind == 'link_opacity') ? data.link_opacity_choice
                           : (state.menu_kind == 'link_shape')   ? data.link_shape_choice
+                          : (state.menu_kind == 'timing_spacing') ? data.timing_spacing_choice
                           :                                       data.node_size_choice;
             state.menu_index = 0;
             for (var _i_ = 0; _i_ < _items_.length; _i_++) {
@@ -3104,6 +3125,7 @@ z . | select node under mouse by color (shift, ctrl, and ctrl-shift apply)
                          : (state.menu_kind == 'link_size')    ? 'link size:'
                          : (state.menu_kind == 'link_opacity') ? 'link opacity:'
                          : (state.menu_kind == 'link_shape')   ? 'link shape:'
+                         : (state.menu_kind == 'timing_spacing') ? 'timing mark spacing (px):'
                          :                                       'node size:';
             var _maxlen_ = _header_.length;
             for (var _i_ = 0; _i_ < _items_.length; _i_++) {
@@ -3130,6 +3152,7 @@ z . | select node under mouse by color (shift, ctrl, and ctrl-shift apply)
             else if (state.menu_kind == 'link_size')    { data.link_size_choice    = _lbl_; }
             else if (state.menu_kind == 'link_opacity') { data.link_opacity_choice = _lbl_; }
             else if (state.menu_kind == 'link_shape')   { data.link_shape_choice   = _lbl_; }
+            else if (state.menu_kind == 'timing_spacing') { data.timing_spacing_choice = _lbl_; }
             else                                        { data.node_size_choice    = _lbl_; }
             self.menuClose();
         """,
@@ -3181,6 +3204,7 @@ z . | select node under mouse by color (shift, ctrl, and ctrl-shift apply)
                          (event.key === 'L' && state.menu_kind === 'link_size')    ||
                          (event.key === 'O' && state.menu_kind === 'link_opacity') ||
                          (event.key === 'l' && state.menu_kind === 'link_shape'   && !event.ctrlKey) ||
+                         (event.key === 'A' && state.menu_kind === 'timing_spacing') ||
                          (event.key === 'P' && state.menu_kind === 'node_size')) {
                     state.menu_index = (state.menu_index + 1) % _items_.length;
                     self.menuRender(); self.menuArmTimer();
@@ -3190,6 +3214,7 @@ z . | select node under mouse by color (shift, ctrl, and ctrl-shift apply)
                          (event.key === 'G' && state.menu_kind === 'mode'         && event.ctrlKey) ||
                          (event.key === 'l' && state.menu_kind === 'link_size'    && event.ctrlKey) ||
                          (event.key === 'o' && state.menu_kind === 'link_opacity' && event.ctrlKey) ||
+                         (event.key === 'a' && state.menu_kind === 'timing_spacing' && event.ctrlKey) ||
                          (event.key === 'p' && state.menu_kind === 'node_size'    && event.ctrlKey)) {
                     state.menu_index = (state.menu_index - 1 + _items_.length) % _items_.length;
                     self.menuRender(); self.menuArmTimer();
@@ -3207,6 +3232,7 @@ z . | select node under mouse by color (shift, ctrl, and ctrl-shift apply)
             data.y_mouse  = state.cur_mouse_y;
 
             if      (event.key == "a" && !event.ctrlKey) { data.key_op_finished = 'a'; } // Toggle link arrows (on | off)
+            else if (event.key == "A" || (event.key == "a" && event.ctrlKey)) { if (event.ctrlKey) event.preventDefault(); state.menu_kind = 'timing_spacing'; self.menuOpen(); } // Open timing-mark spacing picker (shift-a forward, ctrl-a reverses)
             else if (event.key == "b" ||                                // Cycle background (none | background | background + labels)
                      event.key == "B") { data.key_op_finished = 'b';  }
             else if (event.key == "c") { if (event.ctrlKey) event.preventDefault(); data.key_op_finished = 'c';  } // (if selected) zoom to selected, else zoom to entire view; ctrl-c copies (suppress native copy so it can't clobber our clipboard write)

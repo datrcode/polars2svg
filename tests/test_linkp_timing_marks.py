@@ -138,6 +138,37 @@ class TestLinkPTimingMarks(unittest.TestCase):
         self.assertLess(_ns_, 128)       # at most ~1 per pixel of usable span (< canvas width)
         self.assertGreater(_nl_, _ns_)   # resolution scales with edge pixel length
 
+    # ── timing_marks_spacing coarsens the decimation (in pixels) ───────────────
+    def test_spacing_decimates_more_coarsely(self):
+        base = datetime.datetime(2024, 1, 1)
+        n = 5000
+        df = pl.DataFrame({'fm': ['a'] * n, 'to': ['b'] * n,
+                           'ts': [base + datetime.timedelta(seconds=17 * k) for k in range(n)]})
+        pos = {'a': (0.0, 0.0), 'b': (1.0, 0.0)}
+
+        def n_marks(spacing):
+            lp = self.p2s.linkp(df, relationships=_REL_, pos=pos, time='ts',
+                                wxh=(512, 512), timing_marks_spacing=spacing)
+            return len(_marks(lp.svg))
+
+        fine, coarse = n_marks(1.0), n_marks(10.0)   # per-pixel vs ~1 mark / 10 px
+        self.assertGreater(coarse, 0)                # still draws marks
+        self.assertLessEqual(coarse, fine / 5)       # ~10x sparser -> comfortably fewer
+
+    def test_spacing_default_matches_omitted(self):
+        # 1.0 (the default) reproduces the pre-parameter output byte-for-byte
+        df = _bidir_df()
+        a = self.p2s.linkp(df, relationships=_REL_, pos=_POS_, time='ts').svg
+        b = self.p2s.linkp(df, relationships=_REL_, pos=_POS_, time='ts', timing_marks_spacing=1.0).svg
+        self.assertEqual(a, b)
+
+    def test_spacing_subpixel_clamped_to_one(self):
+        # sub-pixel spacing is meaningless -> clamped to 1px, identical to the default
+        df = _bidir_df()
+        a = self.p2s.linkp(df, relationships=_REL_, pos=_POS_, time='ts', timing_marks_spacing=1.0).svg
+        b = self.p2s.linkp(df, relationships=_REL_, pos=_POS_, time='ts', timing_marks_spacing=0.25).svg
+        self.assertEqual(a, b)
+
     # ── time= mirrors timep's field forms ──────────────────────────────────────
     def test_linear_enum(self):
         lp = self.p2s.linkp(_bidir_df(), relationships=_REL_, pos=_POS_,

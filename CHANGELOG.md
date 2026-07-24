@@ -39,6 +39,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   was set explicitly); with zero or several date columns it falls back to
   toggling arrows only, as before. SVG output only for now — the WebGPU
   display list does not yet emit timing marks.
+- **`timing_marks_spacing=` on `linkp`** — the minimum on-screen spacing
+  between timing marks, in pixels. It sets the decimation resolution: marks
+  landing within `timing_marks_spacing` pixels of each other along an edge
+  collapse into one (carrying the bin's mean time/color), so larger values
+  render marks proportionally sparser — roughly one mark per that many pixels
+  of edge. Defaults to `1.0` (the previous per-pixel behavior) and is clamped
+  to `>= 1`, since sub-pixel marks are visually indistinguishable and would
+  re-inflate the mark count the decimation exists to bound. Useful for keeping
+  netflow-scale renders legible (and their SVG small) without dropping `time=`.
+  Interactively, `shift-a` opens a pixel-grid spacing picker (1–32 px) that
+  cycles forward and `ctrl-a` backward, mirroring the `shift-l`/`o`/`p` size
+  pickers; the committed value re-renders the marks live.
 - **MLX acceleration for the flow layout.** `ODFlowLayout`'s O(N²) force
   kernels run on NumPy by default and automatically move to the GPU in float32
   when the optional `[mlx]` extra is installed and a device is available.

@@ -22,7 +22,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
         'draw_labels', 'node_labels', 'label_only',
         'label_line_width', 'label_max_lines', 'label_ellipsis',
         'link_size', 'link_shape', 'link_opacity', 'link_size_range', 'link_arrows',
-        'time', 'timing_marks_length',
+        'time', 'timing_marks_length', 'timing_marks_spacing',
         'wxh', 'insets', 'bounds_percent', 'use_pos_for_bounds',
         'convex_hull_lu', 'convex_hull_opacity', 'convex_hull_labels', 'convex_hull_stroke_width',
         'background', 'background_label_color', 'background_opacity',
@@ -230,6 +230,9 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
             # a (field, TimeLinearTypeP|TimePeriodicTypeP) tuple.
             'time':                   None,
             'timing_marks_length':    3.0,   # tick length in pixels (frame-size independent)
+            'timing_marks_spacing':   1.0,   # min on-screen spacing between marks, in pixels (decimation
+                                             # resolution): marks closer than this along an edge collapse to
+                                             # one; larger = sparser. 1.0 = the per-pixel default; clamped to >=1.
             # Geometry (p2s style)
             'wxh':                    (256, 256),
             'insets':                 (3, 3),
@@ -1051,6 +1054,10 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
         if self._time_field_ is None or self.df is None or len(self.df) == 0:
             return
         _tml_ = float(self.timing_marks_length)
+        # Decimation bin width in pixels: marks closer than this along an edge merge.
+        # Clamped to >= 1px -- sub-pixel bins are visually indistinguishable and would
+        # re-inflate the very mark count this decimation exists to bound.
+        _tms_ = max(float(self.timing_marks_spacing), 1.0)
 
         # Normalized time over the whole df (the "min/max timestamp position for the
         # rendered dataframe") + spectrum color, computed once for every record.
@@ -1093,15 +1100,15 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
             # Decimation phase (Polars group_by, so it scales to the full netflow-sized
             # frame): a tick is only distinguishable to ~1px along the edge, so binning by
             # pixel offset caps the mark count at the edge's on-screen length no matter how
-            # many events share the link.  The bin is the rounded pixel offset along the
-            # usable 0.8 span of the edge's screen chord; events landing in the same bin on
-            # the same directed edge collapse to a single mark carrying the bin's mean
-            # normalized time.  This is what makes a days-scale render drop sub-pixel /
-            # sub-second detail (e.g. two events ms apart) instead of overplotting millions
-            # of ticks, and it is driven by the edge length in pixels exactly as intended.
+            # many events share the link.  The bin is the pixel offset along the usable 0.8
+            # span of the edge's screen chord divided by timing_marks_spacing (_tms_, >=1px)
+            # then rounded; events landing in the same bin on the same directed edge collapse
+            # to a single mark carrying the bin's mean normalized time.  So _tms_=1 keeps the
+            # per-pixel cap (drops sub-pixel / sub-second detail, e.g. two events ms apart),
+            # and a larger _tms_ renders marks proportionally sparser -- one per _tms_ pixels.
             _chord_px_ = ((pl.col(_to_sx_).cast(pl.Float64) - pl.col(_fm_sx_).cast(pl.Float64)) ** 2 +
                           (pl.col(_to_sy_).cast(pl.Float64) - pl.col(_fm_sy_).cast(pl.Float64)) ** 2).sqrt()
-            _d_ = _d_.with_columns((pl.col('__tm_r__') * 0.8 * _chord_px_).round().cast(pl.Int32).alias('__tm_bin__'))
+            _d_ = _d_.with_columns((pl.col('__tm_r__') * 0.8 * _chord_px_ / _tms_).round().cast(pl.Int32).alias('__tm_bin__'))
             _d_ = _d_.group_by([_fm_sx_, _fm_sy_, _to_sx_, _to_sy_, '__tm_bin__']).agg(
                 pl.col('__tm_r__').mean().alias('__tm_r__'),
                 pl.col('__tm_fm__').first().alias('__tm_fm__'),

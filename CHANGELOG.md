@@ -24,6 +24,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`link_arrows=` on `linkp`** — draw arrowheads at link destinations. Under
   `link_shape='flowmap'` the arrowheads are fed to the layout as obstacles
   (paper section 3.2.3), so curves route around them.
+- **`time=` / `timing_marks_length=` on `linkp` — timing marks along each
+  edge.** When a date/datetime column is supplied, every event is drawn as a
+  short colored tick on its edge: position along the edge encodes when the
+  event occurred (spectrum color), and side of the edge plus a slight slant
+  encode the direction of activity. `time` accepts the same three forms as
+  `timep`'s time field (a column-name str, a `TField`, or a `(field,
+  TimeLinearTypeP|TimePeriodicTypeP)` tuple); unlike `timep`, `time=None`
+  means the feature is off rather than auto-detect. Works under all three
+  `link_shape`s (`line`, `curve`, `flowmap`), reusing the same curve/flowmap
+  control-point math as link rendering so the two never drift. Interactively,
+  the `a` key now cycles all four `link_arrows` × timing-marks combinations
+  when exactly one date/datetime column is present on the data (or `time=`
+  was set explicitly); with zero or several date columns it falls back to
+  toggling arrows only, as before. SVG output only for now — the WebGPU
+  display list does not yet emit timing marks.
 - **MLX acceleration for the flow layout.** `ODFlowLayout`'s O(N²) force
   kernels run on NumPy by default and automatically move to the GPU in float32
   when the optional `[mlx]` extra is installed and a device is available.

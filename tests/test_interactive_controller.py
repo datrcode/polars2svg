@@ -1014,6 +1014,74 @@ class TestLINKPIBackgroundCycling(unittest.TestCase):
 
 
 @unittest.skipUnless(PANEL_AVAILABLE, 'panel not installed')
+class TestLINKPILayoutStackPropagation(unittest.TestCase):
+    """A layout run on one stack level has to reach every other level: each level
+    keeps its own copy of pos (__renderView__ copies it at push time), so without
+    an explicit push, navigating the stack drops back to the pre-layout
+    arrangement."""
+
+    def _make_ctrl_with_stack(self):
+        from polars2svg.interactive_controller import linkpi
+        p2s   = Polars2SVG()
+        linkp = p2s.linkp(_make_link_df(), relationships=[('fm', 'to')], pos=_make_pos())
+        ctrl  = linkpi(linkp)
+        # Filter down to the a-b edge & push it: level 0 = full graph, level 1 = subset.
+        ctrl.pushStack(_make_link_df().filter(pl.col('fm') == 'a'))
+        return ctrl
+
+    def test_stack_is_two_levels_deep(self):
+        ctrl = self._make_ctrl_with_stack()
+        self.assertEqual(ctrl.df_level, 1)
+        self.assertEqual(len(ctrl.dfs_layout), 2)
+
+    def test_layout_on_pushed_level_reaches_the_base_level(self):
+        ctrl   = self._make_ctrl_with_stack()
+        before = dict(ctrl.dfs_layout[0].pos)
+        moved  = ctrl.apply_layout_operation(ctrl.SPRING_NX)
+        self.assertTrue(moved)
+        _ln_top_, _ln_base_ = ctrl.dfs_layout[1], ctrl.dfs_layout[0]
+        self.assertNotEqual(before, dict(_ln_base_.pos))     # the base level moved
+        for _node_ in ctrl.graphs[1].nodes():
+            self.assertEqual(_ln_base_.pos[_node_], _ln_top_.pos[_node_])
+
+    def test_layout_propagates_the_recomputed_view_window(self):
+        # The layout rescales the world; a level left on the old window would be
+        # looking at empty space after the positions arrive.
+        ctrl = self._make_ctrl_with_stack()
+        self.assertTrue(ctrl.apply_layout_operation(ctrl.SPRING_NX))
+        self.assertEqual(ctrl.dfs_layout[0].getViewWindow(),
+                         ctrl.dfs_layout[1].getViewWindow())
+
+    def test_layout_does_not_add_nodes_to_a_level_that_lacks_them(self):
+        # 'c' is outside the pushed subset's graph, but it is in every level's pos
+        # (copied at push time) -- propagation updates in place, never introduces
+        # a node the level didn't already carry.
+        ctrl  = self._make_ctrl_with_stack()
+        del ctrl.dfs_layout[0].pos['c']
+        ctrl.apply_layout_operation(ctrl.SPRING_NX)
+        self.assertNotIn('c', ctrl.dfs_layout[0].pos)
+
+    def test_declined_layout_leaves_every_level_untouched(self):
+        # spring_layout is a global re-layout -> a no-op with a selection in place.
+        ctrl   = self._make_ctrl_with_stack()
+        ctrl.selected_entities = {'a'}
+        before = [dict(ln.pos) for ln in ctrl.dfs_layout]
+        self.assertEqual(ctrl.apply_layout_operation(ctrl.SPRING_NX), {})
+        self.assertEqual([dict(ln.pos) for ln in ctrl.dfs_layout], before)
+
+    def test_w_key_propagates_across_the_stack(self):
+        # Same path through the real key handler rather than the sync helper.
+        ctrl = self._make_ctrl_with_stack()
+        ctrl.layout_operation  = ctrl.SPRING_NX
+        before = dict(ctrl.dfs_layout[0].pos)
+        ctrl.key_op_finished = 'w'
+        asyncio.run(ctrl.applyKeyOp(None))
+        self.assertNotEqual(before, dict(ctrl.dfs_layout[0].pos))
+        for _node_ in ctrl.graphs[1].nodes():
+            self.assertEqual(ctrl.dfs_layout[0].pos[_node_], ctrl.dfs_layout[1].pos[_node_])
+
+
+@unittest.skipUnless(PANEL_AVAILABLE, 'panel not installed')
 class TestLINKPIPickerMenu(unittest.TestCase):
     """Verify the shift-W / shift-G picker-menu wiring: the module-level menu
     constants, the Python lists derived from them, the layout_mode /

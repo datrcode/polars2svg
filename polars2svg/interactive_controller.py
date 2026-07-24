@@ -1513,7 +1513,11 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
         if filename.lower().endswith('.csv'): _df_ = pl.read_csv(filename)
         else:                                 _df_ = pl.read_parquet(filename)
         _pos_ = self.dfs_layout[self.df_level].pos
-        for row in _df_.iter_rows(named=True): _pos_[row['node']] = (float(row['x']), float(row['y']))
+        _updated_pos_ = {}
+        for row in _df_.iter_rows(named=True):
+            _pos_[row['node']] = (float(row['x']), float(row['y']))
+            _updated_pos_[row['node']] = _pos_[row['node']]
+        self._propagate_positions(_updated_pos_)   # a loaded layout applies to the whole stack
         self.__refreshView__(info=False)
 
     #
@@ -2090,10 +2094,12 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
                         _entities_.append(_entity_), _xs_.append(_xy_[0]), _ys_.append(_xy_[1]), _weights_.append(self.graphs[self.df_level].degree(_entity_))
                     _df_      = pl.DataFrame({'e':_entities_, 'x':_xs_, 'y':_ys_, 'w':_weights_})
                     _results_ = self.rt_self.uniformSampleDistributionInScatterplotsViaSectorBasedTransformation(_df_, 'x', 'y', 'w')
+                    _updated_pos_ = {}
                     for i in range(len(_results_)):
                         _entity_, _x_, _y_ = _results_['e'][i], _results_['x'][i], _results_['y'][i]
                         _ln_.pos[_entity_] = (_x_, _y_)
-                    _ln_.invalidateRender()
+                        _updated_pos_[_entity_] = _ln_.pos[_entity_]
+                    self._propagate_positions(_updated_pos_)
                     self.__refreshView__()
                 elif self.key_op_finished == 'E':
                     _digraph_ = self.rt_self.createNetworkXGraph(self.dfs[self.df_level], self.ln_params['relationships'], use_digraph=True)
@@ -2335,23 +2341,12 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
             # Apply a layout operation to the selected nodes (or all nodes if no selection in place)
             #
             elif self.key_op_finished == 'w':
-                self.__cacheNodePositions__()
-
-                # Write new positions to _ln_.pos[_node_] = (x, y)
-                try:
-                    _pos_modified_ = self.__layoutOperation__(self.layout_operation, _ln_, self.graphs[self.df_level], self.selected_entities)
-                except Exception:
-                    _pos_modified_ = False
-                if _pos_modified_: # If positions were modified, recenter and re-render
-                    _ln_.view_window = None  # clear so __calculateGeometry__ recomputes from new positions
-                    _ln_.__calculateGeometry__()
-
+                # apply_layout_operation() recenters and pushes the new positions &
+                # view window across every stack level (it invalidates them all too).
+                if self.apply_layout_operation():
                     # Sync the (possibly new) layout background onto the active view
-                    # without an extra refresh; the invalidate+refresh below repaints it.
+                    # without an extra refresh; the refresh below repaints it.
                     self.__applyBackgroundState__(refresh=False)
-
-                    # Invalidate the stack of views & re-render
-                    for i in range(len(self.dfs_layout)): self.dfs_layout[i].invalidateRender()
                     self.__refreshView__(info=True)
 
             self.key_op_finished = ''
@@ -2568,6 +2563,33 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
             _updated_pos_[as_list[0]] = _ln_.pos[as_list[0]]
         if _updated_pos_:
             self._propagate_positions(_updated_pos_)
+        return _updated_pos_
+
+    def apply_layout_operation(self, layout_operation=None):
+        """Simulate the 'w' key: run a layout operation against the active stack level
+        and propagate the result to every other level.  Returns the updated positions
+        (empty when the operation declined to run or raised)."""
+        _op_ = self.layout_operation if layout_operation is None else layout_operation
+        _ln_ = self.dfs_layout[self.df_level]
+        self.__cacheNodePositions__()
+        # Writes new positions to _ln_.pos[_node_] = (x, y)
+        try:
+            _pos_modified_ = self.__layoutOperation__(_op_, _ln_, self.graphs[self.df_level], self.selected_entities)
+        except Exception:
+            _pos_modified_ = False
+        if not _pos_modified_: return {}
+        _ln_.view_window = None  # clear so __calculateGeometry__ recomputes from new positions
+        _ln_.__calculateGeometry__()
+        # A layout re-arranges the shared world, so the other stack levels need both
+        # halves of it:  the positions (otherwise navigating the stack drops back to
+        # the pre-layout arrangement) and the recomputed view window (otherwise a
+        # layout that changed the coordinate scale leaves them looking at empty space).
+        # Only keys the other level already knows are written, so a filtered level
+        # never gains nodes that its dataframe doesn't contain.
+        _updated_pos_ = dict(_ln_.pos)
+        self._propagate_positions(_updated_pos_)
+        for i in range(len(self.dfs_layout)):
+            if i != self.df_level: self.dfs_layout[i].applyViewConfiguration(_ln_)
         return _updated_pos_
 
     def apply_undo(self):
@@ -2868,6 +2890,7 @@ z . | select node under mouse by color (shift, ctrl, and ctrl-shift apply)
         'apply_community_detection':          apply_community_detection,
         'apply_collapse_to':                  apply_collapse_to,
         'apply_layout_interaction':           apply_layout_interaction,
+        'apply_layout_operation':             apply_layout_operation,
         'apply_undo':                         apply_undo,
         'applyKeyOp':                         applyKeyOp,
         'applyDragOp':                        applyDragOp,

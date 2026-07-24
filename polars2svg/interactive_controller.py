@@ -1,6 +1,7 @@
 import asyncio
 import copy
 import json
+import logging
 import re
 import time
 from math import sqrt
@@ -1264,7 +1265,71 @@ def panelizeSketch(layout, use_webgpu=False):
     pn.extension()
     return pn.pane.HTML(_build_sketch_html(layout, use_webgpu=use_webgpu))
 
-def panelize(layout: Any, stack: str = 'default', use_webgpu: bool = False) -> Any:
+# ---------------------------------------------------------------------------
+# panelize() payload-size guard
+#
+# Bokeh serialises the whole Panel document -- every view's SVG, embedded in its
+# ReactiveHTML ``_template`` -- into a single WebSocket protocol message. When that
+# message exceeds Tornado's ``websocket_max_message_size`` the server closes the
+# socket mid-frame and BokehJS reports "SyntaxError: Unexpected end of JSON input"
+# in the browser console (a truncated protocol message -- NOT a malformed SVG). A
+# large linkp render (e.g. timing marks over a netflow-sized frame) is the usual way
+# to cross it. The guard measures the payload up front and warns -- with the measured
+# size and how to raise the limit -- instead of leaving a cryptic console error.
+# ---------------------------------------------------------------------------
+
+# Bokeh's own default; read it from Bokeh so the guard tracks the real value and
+# falls back to the documented 20 MB only if that symbol ever moves.
+try:
+    from bokeh.server.tornado import DEFAULT_WEBSOCKET_MAX_MESSAGE_SIZE_BYTES as _BOKEH_WS_MAX_DEFAULT_
+except Exception:
+    _BOKEH_WS_MAX_DEFAULT_ = 20 * 1024 * 1024
+
+# The SVG rides inside the JSON message as a quoted string, so escaping (" -> \")
+# inflates the shipped bytes a little past the raw length; compare an inflated
+# estimate so the warning fires just before the real message crosses the limit.
+_WS_PAYLOAD_INFLATION_ = 1.1
+_MIB_ = 1024 * 1024
+
+
+def _estimate_panel_payload_bytes_(views):
+    '''Best-effort estimate of the bytes Bokeh will serialise for ``views``, dominated
+    by the SVG embedded in each ReactiveHTML ``_template``. Views without a string
+    ``_template`` (unknown / webgpu wrappers) contribute 0 -- the guard is a warning,
+    not a hard gate, so an under-estimate simply stays quiet.'''
+    _total_ = 0
+    for _v_ in views:
+        _tmpl_ = getattr(_v_, '_template', None)
+        if isinstance(_tmpl_, str):
+            _total_ += len(_tmpl_.encode('utf-8'))
+    return _total_
+
+
+def _warnOversizePanelPayload_(views, websocket_max_message_size=None):
+    '''Warn (via the polars2svg logger) when the estimated document is at/over the
+    Bokeh WebSocket message limit, naming the measured MB and how to raise it.
+    ``None`` uses Bokeh's default limit; pass the value you intend to serve under so
+    the guard matches your actual limit.'''
+    _limit_ = websocket_max_message_size or _BOKEH_WS_MAX_DEFAULT_
+    _raw_   = _estimate_panel_payload_bytes_(views)
+    if _raw_ * _WS_PAYLOAD_INFLATION_ < _limit_:
+        return
+    # Suggest a limit with ~2x headroom over the estimate, rounded up to whole MB.
+    _suggested_ = ((int(_raw_ * _WS_PAYLOAD_INFLATION_ * 2) // _MIB_) + 1) * _MIB_
+    logging.getLogger('polars2svg_logger').warning(
+        "panelize(): the composed document is ~%.1f MB, at/over the Bokeh WebSocket "
+        "message limit of %.1f MB. The browser will likely fail to display it with "
+        "'SyntaxError: Unexpected end of JSON input' (a truncated protocol message). "
+        "Serve with a larger limit, e.g. panel.show(websocket_max_message_size=%d) or "
+        "pn.serve(panel, websocket_max_message_size=%d) -- pass the same value to "
+        "panelize(websocket_max_message_size=...) to silence this once raised -- or "
+        "shrink the SVG (fewer timing marks, a smaller frame, or pre-aggregated data)."
+        % (_raw_ / _MIB_, _limit_ / _MIB_, _suggested_, _suggested_)
+    )
+
+
+def panelize(layout: Any, stack: str = 'default', use_webgpu: bool = False,
+             websocket_max_message_size: int = None) -> Any:
     pn.extension()
     plots = _collect_leaves(layout)
     mvc   = InteractionController()
@@ -1312,6 +1377,8 @@ def panelize(layout: Any, stack: str = 'default', use_webgpu: bool = False) -> A
                 mvc.link(view, pos_targets, on='positions', stack=stack)
     _container_ = _build_interactive(layout, {id(p): v for p, v in zip(plots, views)})
     _container_.mvc = mvc
+    _container_._websocket_max_message_size_ = websocket_max_message_size
+    _warnOversizePanelPayload_(views, websocket_max_message_size)
     return _container_
 
 def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):

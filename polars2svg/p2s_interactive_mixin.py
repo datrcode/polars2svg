@@ -41,7 +41,8 @@ class P2SInteractiveMixin:
         interactive components by hand.'''
         return _importInteractiveController_().InteractionController()
 
-    def panelize(self, layout: Any, stack: str = 'default', use_webgpu: bool = False) -> Any:
+    def panelize(self, layout: Any, stack: str = 'default', use_webgpu: bool = False,
+                 websocket_max_message_size: int = None) -> Any:
         '''
         Compose interactive components into a single cross-linked dashboard.
 
@@ -53,12 +54,25 @@ class P2SInteractiveMixin:
         use_webgpu=True renders supported components (xyp, histop) on a WebGPU
         canvas; unsupported components keep their SVG wrappers.
 
+        ``websocket_max_message_size`` is the Bokeh WebSocket message limit (in bytes)
+        you intend to serve this dashboard under. It is used only to decide whether to
+        warn: if the composed SVG document would exceed it, panelize() logs a warning
+        naming the measured size. A large linkp — e.g. timing marks over a
+        netflow-sized frame — can push the document past Bokeh's 20 MB default and make
+        the browser fail with "Unexpected end of JSON input". Pass the same value to
+        your serve call to actually raise the limit (and to silence the warning)::
+
+            panel = p2s.panelize(layout, websocket_max_message_size=200*1024*1024)
+            panel.show(websocket_max_message_size=200*1024*1024)
+
         Example::
 
             panel = p2s.panelize([[p2s.xypi(chart_a), p2s.histopi(chart_b)]])
             # await panel.mvc.replaceStack('default', df_new)   # swap the backing data
         '''
-        return _importInteractiveController_().panelize(layout, stack, use_webgpu=use_webgpu)
+        return _importInteractiveController_().panelize(
+            layout, stack, use_webgpu=use_webgpu,
+            websocket_max_message_size=websocket_max_message_size)
 
     def panelizeSketch(self, layout):
         return _importInteractiveController_().panelizeSketch(layout)

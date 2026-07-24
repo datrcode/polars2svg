@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import unittest
 from datetime import datetime
 
@@ -1430,6 +1431,70 @@ class TestLINKPITimingMarksCycle(unittest.TestCase):
         self._press_a(ctrl); self.assertEqual(self._state(ctrl), (True, False))
         self._press_a(ctrl); self.assertEqual(self._state(ctrl), (False, False))  # never enables marks
         self.assertNotIn('stroke-width="1.5"', ctrl.mod_inner)
+
+
+class TestPanelizePayloadGuard(unittest.TestCase):
+    '''panelize() warns (with the measured MB) when the composed SVG document would
+    exceed the Bokeh WebSocket message limit -- the size condition behind the browser's
+    "SyntaxError: Unexpected end of JSON input". The guard operates on the embedded
+    ReactiveHTML _template, so it is exercised here with lightweight fakes rather than a
+    netflow-sized render.'''
+
+    class _FakeView:
+        def __init__(self, template):
+            self._template = template
+
+    def _view(self, nbytes):
+        return self._FakeView('x' * nbytes)
+
+    def setUp(self):
+        # Polars2SVG installs a per-message OnceFilter on the process-global logger,
+        # which would dedup identical warnings across tests; strip it so assertLogs /
+        # assertNoLogs see each emission, and restore it afterwards.
+        self._logger = logging.getLogger('polars2svg_logger')
+        self._saved_filters = list(self._logger.filters)
+        for _f_ in self._saved_filters:
+            self._logger.removeFilter(_f_)
+
+    def tearDown(self):
+        for _f_ in list(self._logger.filters):
+            self._logger.removeFilter(_f_)
+        for _f_ in self._saved_filters:
+            self._logger.addFilter(_f_)
+
+    def test_estimate_sums_template_bytes(self):
+        from polars2svg import interactive_controller as ic
+        self.assertEqual(ic._estimate_panel_payload_bytes_([self._view(1000), self._view(2000)]), 3000)
+
+    def test_estimate_ignores_views_without_template(self):
+        from polars2svg import interactive_controller as ic
+        self.assertEqual(ic._estimate_panel_payload_bytes_([object()]), 0)
+
+    def test_warns_over_default_limit(self):
+        from polars2svg import interactive_controller as ic
+        with self.assertLogs('polars2svg_logger', level='WARNING') as cm:
+            ic._warnOversizePanelPayload_([self._view(25 * 1024 * 1024)])   # 25 MB > 20 MB default
+        _msg_ = '\n'.join(cm.output)
+        self.assertIn('Unexpected end of JSON input', _msg_)
+        self.assertIn('websocket_max_message_size', _msg_)
+        self.assertIn('25.0 MB', _msg_)                                     # measured size surfaced
+
+    def test_quiet_under_default_limit(self):
+        from polars2svg import interactive_controller as ic
+        with self.assertNoLogs('polars2svg_logger', level='WARNING'):
+            ic._warnOversizePanelPayload_([self._view(1 * 1024 * 1024)])    # 1 MB
+
+    def test_custom_limit_suppresses_warning(self):
+        from polars2svg import interactive_controller as ic
+        with self.assertNoLogs('polars2svg_logger', level='WARNING'):
+            ic._warnOversizePanelPayload_([self._view(25 * 1024 * 1024)],
+                                          websocket_max_message_size=200 * 1024 * 1024)
+
+    def test_lower_custom_limit_triggers_warning(self):
+        from polars2svg import interactive_controller as ic
+        with self.assertLogs('polars2svg_logger', level='WARNING'):
+            ic._warnOversizePanelPayload_([self._view(5 * 1024 * 1024)],    # 5 MB
+                                          websocket_max_message_size=4 * 1024 * 1024)
 
 
 if __name__ == '__main__':

@@ -55,9 +55,31 @@ jobs:
         # mlx-cuda/mlx-cuda13, whose Linux-only NVIDIA wheels are kept out of
         # `all` on purpose (see [project.optional-dependencies]). They resolve to
         # a no-op on macOS but pull the whole CUDA stack onto this runner.
+        #
+        # Retried because this is the one check in this job whose result is not
+        # a property of the repo: pip-audit queries pypi.org's JSON API once per
+        # dependency, so a stalled TLS handshake fails the build even though
+        # nothing changed. Two specific upstream gaps make that fatal rather
+        # than merely slow -- pip-audit's PyPIService.query() catches
+        # ConnectTimeout but *not* ReadTimeout (so a connect stall that urllib3
+        # retries into the read path escapes as an unhandled traceback), and its
+        # caching_session() mounts no urllib3 Retry. Run 30093136029 died that
+        # way on the first of only six packages, while the clean-room job pulled
+        # from PyPI successfully in the same 21-second window.
+        #
+        # A real finding still fails the build: pip-audit exits non-zero for
+        # those on attempt 1, and the retries reproduce it deterministically.
         run: |
           uv export --no-hashes --no-dev --no-emit-project -o /tmp/requirements-audit.txt
-          uvx pip-audit -r /tmp/requirements-audit.txt
+          for _attempt_ in 1 2 3; do
+              uvx pip-audit --timeout 30 -r /tmp/requirements-audit.txt && exit 0
+              if [ "$_attempt_" -lt 3 ]; then
+                  echo "::warning::pip-audit attempt $_attempt_ failed; retrying in $((_attempt_ * 10))s"
+                  sleep $((_attempt_ * 10))
+              fi
+          done
+          echo "::error::pip-audit failed 3 consecutive attempts"
+          exit 1
 
       - name: ruff (E9, F)
         # Minimal rule set on purpose — see the [tool.ruff] comment in

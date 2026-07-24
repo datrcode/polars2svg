@@ -10,6 +10,14 @@
 # reproduce natively on macOS in ~12s.  Keep this file in sync with ci.yml --
 # it is a convenience copy, not the source of truth.
 #
+# Caveat worth knowing before you trust a green run: three of the four checks
+# (mypy, bandit, ruff) are pure functions of the repo contents and genuinely
+# predict CI.  pip-audit is not.  Its result depends on pypi.org being reachable
+# and on the vulnerability database's contents at the moment CI runs, both of
+# which can differ minutes later -- so a green pip-audit here is weak evidence,
+# not a guarantee.  `uvx` also resolves the tools unpinned, so CI can run a
+# newer pip-audit than you just did.
+#
 # The third CI job (`Linux clean-room wheel install + tests`) is deliberately
 # NOT here: it builds the wheel and runs the suite inside a stock
 # python:3.13-slim container on linux/amd64, and the whole point of it is being
@@ -71,8 +79,20 @@ _step_ 'bandit (security scan)'  uvx bandit -r polars2svg/
 _step_ 'ruff (E9, F)'            uvx ruff check polars2svg/
 
 # Two commands, so it needs a subshell rather than a bare _step_ invocation.
+#
+# Retried for the same reason ci.yml retries it (see the comment on that step):
+# pip-audit hits pypi.org's JSON API once per dependency and turns a stalled
+# connection into a hard failure, because upstream catches ConnectTimeout but
+# not ReadTimeout and mounts no urllib3 Retry.  The backoff here is shorter than
+# CI's 10s/20s -- this script is meant to be interactive and fast, and a dev who
+# hits three failures in a row can just run it again.
 _step_ 'pip-audit (dependencies)' bash -c \
-    "uv export --no-hashes --no-dev --no-emit-project -o '$_REQS_' >/dev/null && uvx pip-audit -r '$_REQS_'"
+    "uv export --no-hashes --no-dev --no-emit-project -o '$_REQS_' >/dev/null || exit 1
+     for _attempt_ in 1 2 3; do
+         uvx pip-audit --timeout 30 -r '$_REQS_' && exit 0
+         [ \"\$_attempt_\" -lt 3 ] && sleep \$((_attempt_ * 3))
+     done
+     exit 1"
 
 printf '\n'
 if [ ${#_FAILED_[@]} -eq 0 ]; then

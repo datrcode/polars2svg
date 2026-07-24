@@ -1041,8 +1041,10 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
     #   Position along the edge and spectrum color both encode the record's timestamp
     #   normalized over the whole DataFrame; the side of the edge and a slight slant encode
     #   the direction of activity.  Built entirely with Polars expressions (the only Python
-    #   loop is over relationships, not rows); identical overlapping marks collapse via the
-    #   final unique().  No-op unless time= is set.
+    #   loop is over relationships, not rows).  A per-edge decimation aggregation bins marks
+    #   to ~1px of on-screen edge length so dense links (e.g. the full 2013 netflow set) draw
+    #   at most one mark per pixel instead of one per event; the final unique() then collapses
+    #   any exact-coordinate collisions across relationships.  No-op unless time= is set.
     #
     def __renderTimingMarks__(self):
         self._timing_mark_svg_list_ = []
@@ -1066,13 +1068,9 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
             _r_expr_ = pl.lit(0.5)
         else:
             _r_expr_ = ((pl.col('__tm_num__').cast(pl.Float64) - _tmin_) / (_tmax_ - _tmin_)).clip(0.0, 1.0)
-        _dfn_  = _dfn_.with_columns(
-            _r_expr_.alias('__tm_r__')
-        ).with_columns(
-            self.p2s.colorSpectrumPolarsOperations('__tm_r__', '__tm_cr__', '__tm_cg__', '__tm_cb__')
-        ).with_columns(
-            self.p2s.hexColorFromRGBTriplesPolarsOperations('__tm_cr__', '__tm_cg__', '__tm_cb__').alias('__tm_hex__')
-        )
+        # Color is resolved per surviving mark, after the decimation aggregation below (so a
+        # collapsed mark is colored by its bin's representative time, not a raw record).
+        _dfn_ = _dfn_.with_columns(_r_expr_.alias('__tm_r__'))
 
         _r2_        = lambda c: pl.col(c).round(2)
         _all_marks_ = set()
@@ -1087,10 +1085,33 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
                 pl.col(_fm_name_).cast(pl.String).alias('__tm_fm__'),
                 pl.col(_to_name_).cast(pl.String).alias('__tm_to__'),
                 pl.col(_fm_sx_), pl.col(_fm_sy_), pl.col(_to_sx_), pl.col(_to_sy_),
-                pl.col('__tm_r__'), pl.col('__tm_hex__'),
+                pl.col('__tm_r__'),
             ).drop_nulls(subset=[_fm_sx_, _fm_sy_, _to_sx_, _to_sy_, '__tm_r__'])
             if len(_d_) == 0:
                 continue
+
+            # Decimation phase (Polars group_by, so it scales to the full netflow-sized
+            # frame): a tick is only distinguishable to ~1px along the edge, so binning by
+            # pixel offset caps the mark count at the edge's on-screen length no matter how
+            # many events share the link.  The bin is the rounded pixel offset along the
+            # usable 0.8 span of the edge's screen chord; events landing in the same bin on
+            # the same directed edge collapse to a single mark carrying the bin's mean
+            # normalized time.  This is what makes a days-scale render drop sub-pixel /
+            # sub-second detail (e.g. two events ms apart) instead of overplotting millions
+            # of ticks, and it is driven by the edge length in pixels exactly as intended.
+            _chord_px_ = ((pl.col(_to_sx_).cast(pl.Float64) - pl.col(_fm_sx_).cast(pl.Float64)) ** 2 +
+                          (pl.col(_to_sy_).cast(pl.Float64) - pl.col(_fm_sy_).cast(pl.Float64)) ** 2).sqrt()
+            _d_ = _d_.with_columns((pl.col('__tm_r__') * 0.8 * _chord_px_).round().cast(pl.Int32).alias('__tm_bin__'))
+            _d_ = _d_.group_by([_fm_sx_, _fm_sy_, _to_sx_, _to_sy_, '__tm_bin__']).agg(
+                pl.col('__tm_r__').mean().alias('__tm_r__'),
+                pl.col('__tm_fm__').first().alias('__tm_fm__'),
+                pl.col('__tm_to__').first().alias('__tm_to__'),
+            ).with_columns(
+                # spectrum color per surviving (decimated) mark, from its representative time
+                self.p2s.colorSpectrumPolarsOperations('__tm_r__', '__tm_cr__', '__tm_cg__', '__tm_cb__')
+            ).with_columns(
+                self.p2s.hexColorFromRGBTriplesPolarsOperations('__tm_cr__', '__tm_cg__', '__tm_cb__').alias('__tm_hex__')
+            )
 
             # side (+1 when the from-node sorts before the to-node) and the canonical
             # orientation flag (t=0 at the smaller node), so opposite directions land on

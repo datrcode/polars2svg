@@ -113,6 +113,31 @@ class TestLinkPTimingMarks(unittest.TestCase):
         self.assertTrue(all(xs[i] < xs[i + 1] for i in range(4)))   # position advances with time
         self.assertEqual(len(set(cs)), 5)                            # distinct spectrum colors
 
+    # ── decimation: never draw more marks than the edge has pixels ─────────────
+    def test_millisecond_events_collapse_on_days_scale(self):
+        # three events on one edge: two 1ms apart, one a full day later. Normalized over
+        # the day-long span, the 1ms pair shares a pixel bin and collapses to one mark.
+        base = datetime.datetime(2024, 1, 1)
+        df = pl.DataFrame({'fm': ['a', 'a', 'a'], 'to': ['b', 'b', 'b'],
+                           'ts': [base, base + datetime.timedelta(milliseconds=1),
+                                  base + datetime.timedelta(days=1)]})
+        lp = self.p2s.linkp(df, relationships=_REL_, pos={'a': (0.0, 0.0), 'b': (1.0, 0.0)},
+                            time='ts', wxh=(200, 200))
+        self.assertEqual(len(_marks(lp.svg)), 2)
+
+    def test_decimation_caps_and_scales_with_pixels(self):
+        base = datetime.datetime(2024, 1, 1)
+        n = 5000
+        df = pl.DataFrame({'fm': ['a'] * n, 'to': ['b'] * n,
+                           'ts': [base + datetime.timedelta(seconds=17 * k) for k in range(n)]})
+        pos = {'a': (0.0, 0.0), 'b': (1.0, 0.0)}
+        small = self.p2s.linkp(df, relationships=_REL_, pos=pos, time='ts', wxh=(128, 128))
+        large = self.p2s.linkp(df, relationships=_REL_, pos=pos, time='ts', wxh=(512, 512))
+        _ns_, _nl_ = len(_marks(small.svg)), len(_marks(large.svg))
+        self.assertLess(_ns_, n)         # far fewer marks than events
+        self.assertLess(_ns_, 128)       # at most ~1 per pixel of usable span (< canvas width)
+        self.assertGreater(_nl_, _ns_)   # resolution scales with edge pixel length
+
     # ── time= mirrors timep's field forms ──────────────────────────────────────
     def test_linear_enum(self):
         lp = self.p2s.linkp(_bidir_df(), relationships=_REL_, pos=_POS_,

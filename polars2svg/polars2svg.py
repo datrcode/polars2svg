@@ -1264,7 +1264,9 @@ class Polars2SVG(P2SColorsMixin,
         insets         = (x-inset, y-inset)
         bounds_percent = 0.05                              # padding around graph extent
         view_window    = None                              # (wx0, wy0, wx1, wy1) world-coord viewport
-        use_pos_for_bounds = True                          # include all pos keys in bounds calculation
+        use_pos_for_bounds = False                         # False: bounds fit only nodes in the dataframe;
+                                                           # True: also stretch bounds to every key in pos,
+                                                           # even nodes not drawn at this stack level
 
         draw_border    = True
         txt_h          = 12
@@ -1290,7 +1292,7 @@ class Polars2SVG(P2SColorsMixin,
                        = {p2s.SM_COUNT}                    # share count normalization for link_size='vary' / node_size='vary'
                        = {p2s.SM_COLOR}                    # share color-stat range for magnitude-mode coloring
         
-                       ** - note that "use_pos_for_bounds" when True (by default) will override SM_X and SM_Y
+                       ** - note that "use_pos_for_bounds" when True will override SM_X and SM_Y
 
         legend = False (default)                        # no legend -- output identical to pre-legend renders
                = True                                   # same as 'right'

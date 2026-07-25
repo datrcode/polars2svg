@@ -237,7 +237,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
             'wxh':                    (256, 256),
             'insets':                 (3, 3),
             'bounds_percent':         0.05,
-            'use_pos_for_bounds':     True,
+            'use_pos_for_bounds':     False,
             # Convex hulls
             'convex_hull_lu':           None,
             'convex_hull_opacity':      0.3,

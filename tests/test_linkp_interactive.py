@@ -906,5 +906,68 @@ class TestCommunityDetection(unittest.TestCase):
         self.assertEqual(_before_, _after_)
 
 
+@unittest.skipUnless(_PANEL_AVAILABLE_, 'panel not installed')
+class TestCKeyRecenterAfterPush(unittest.TestCase):
+    """Regression: after removing a node with 'x', pressing 'c' (no modifier, no
+    selection) must recenter/rescale on the remaining (rendered) nodes only.
+
+    The removed node's stale position survives in the pushed level's pos dict
+    (__renderView__ copies the parent pos wholesale). With the old
+    use_pos_for_bounds=True default, __calculateGeometry__ stretched the bounds
+    back out to that removed node, so 'c' refit a window that still enclosed it.
+    use_pos_for_bounds now defaults to False, so the fit ignores off-df nodes."""
+
+    def setUp(self):
+        self.p2s = Polars2SVG()
+        # a-b-c triangle plus a far outlier 'far' edged to a. 'far' is the node
+        # we remove; its position is 100x beyond the triangle's extent.
+        self.df  = pl.DataFrame({'fm': ['a', 'b', 'c', 'far'],
+                                 'to': ['b', 'c', 'a', 'a']})
+        self.pos = {'a': (0.0, 0.0), 'b': (1.0, 0.0), 'c': (0.5, 0.866),
+                    'far': (100.0, 100.0)}
+        self.lp   = self.p2s.linkp(self.df, relationships=[('fm', 'to')], pos=self.pos)
+        self.ctrl = self.p2s.linkpi(self.lp)
+
+    def _press(self, key):
+        self.ctrl.key_op_finished = key
+        asyncio.run(self.ctrl.applyKeyOp(None))
+
+    def _remove_far(self):
+        self.ctrl.selected_entities = {'far'}
+        self.assertTrue(self.ctrl.apply_push_selected())   # 'x'
+        self.assertEqual(self.ctrl.df_level, 1)
+        # pushStack intersects the selection with the surviving nodes, so 'far'
+        # has already dropped out — 'c' sees an empty selection.
+        self.assertEqual(self.ctrl.selected_entities, set())
+
+    def test_push_leaves_removed_node_in_pos(self):
+        # Precondition the fix hinges on: 'far' is gone from the graph/df but its
+        # position lingers in the pushed level's pos dict.
+        self._remove_far()
+        _ln_ = self.ctrl.dfs_layout[self.ctrl.df_level]
+        self.assertNotIn('far', self.ctrl.graphs[self.ctrl.df_level].nodes())
+        self.assertIn('far', _ln_.pos)
+
+    def test_c_after_push_fits_only_visible_nodes(self):
+        self._remove_far()
+        self._press('c')
+        wx0, wy0, wx1, wy1 = self.ctrl.dfs_layout[self.ctrl.df_level].view_window
+        # a,b,c span x in [0,1], y in [0,0.866]; the removed 'far' at (100,100)
+        # must not stretch the window. Ceilings are generous vs. bounds_percent.
+        self.assertLess(wx1, 10.0)
+        self.assertLess(wy1, 10.0)
+
+    def test_use_pos_for_bounds_true_still_includes_removed_node(self):
+        # Opt-in contrast: with the flag on, the stale pos DOES drag the bounds
+        # out to the removed node — exactly what the new default avoids.
+        self._remove_far()
+        _ln_ = self.ctrl.dfs_layout[self.ctrl.df_level]
+        _ln_.use_pos_for_bounds = True
+        self._press('c')
+        wx0, wy0, wx1, wy1 = _ln_.view_window
+        self.assertGreater(wx1, 50.0)
+        self.assertGreater(wy1, 50.0)
+
+
 if __name__ == '__main__':
     unittest.main()

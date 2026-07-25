@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2] — 2026-07-25
+
 ### Added
 
 - **Force-directed origin-destination flow maps — `link_shape='flowmap'` on
@@ -86,9 +88,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   node's count (its total incident edge weight), falling back to the number of
   neighbours when the graph is unweighted. Deterministic; pure NumPy/SciPy
   (`ncp_layout.py`).
+- **Interactive community detection in `linkpi` — the `d` key.** Runs Louvain
+  community detection (`networkx`, resolution 1.0, fixed seed) over the graph at
+  the current stack level and recolors the nodes one hue per community. Exactly
+  coincident nodes are contracted first so a stacked group counts as a single
+  member, and each community's color is hashed off its canonical (lexicographically
+  smallest) member so re-running `d` keeps colors stable rather than reshuffling
+  them with louvain's ordering. The new colors are pushed across every stack
+  level; `shift-d` restores the node coloring the `LinkP` was created with. An
+  algorithm failure leaves the view untouched rather than killing the callback.
+- **`websocket_max_message_size=` on `panelize()`.** The Bokeh WebSocket message
+  limit (in bytes) you intend to serve the dashboard under. `panelize()` measures
+  the composed SVG document and, when it would exceed the limit, logs a warning
+  naming the measured size — a large `linkp` (e.g. timing marks over a
+  netflow-sized frame) can push the document past Bokeh's 20 MB default and make
+  the browser fail with "Unexpected end of JSON input". Pass the same value to
+  your `show()`/serve call to actually raise the limit (and silence the warning).
+  Defaults to `None` (no check), so existing calls are unaffected.
 
 ### Fixed
 
+- **Interactive `linkpi` state now stays consistent across the whole dataframe
+  stack.** Layout operations (`w`), even-out-distribution (`E`), and layouts
+  loaded from a file now propagate their node positions to every level of the
+  stack, and background / label / node-color state is written down onto every
+  layer — including `dfs_layout[0]`, the template that pushed layers clone from.
+  Previously these applied only to the currently active level, so pushing or
+  popping the stack could surface a stale layout, background, or node coloring.
 - **`shift-Q` (select common neighbors) did not reach the other components.**
   `linkpi` assigned `selected_entities` directly instead of going through
   `setSelectedEntitiesAndNotifyOthers()`, so the new selection never
@@ -122,6 +148,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the color logic shared by `histop`/`timep` into `p2s_bin_component_mixin`
   (~1,100 lines of duplication removed).
 - The `[mlx]` extra now serves `ODFlowLayout` in addition to `TFDPLayout`.
+- **`linkp`'s `use_pos_for_bounds` now defaults to `False`** (was `True`). By
+  default the view bounds fit only the nodes present in the dataframe at each
+  stack level, instead of stretching to every key in `pos` (including nodes not
+  drawn at that level). Set it back to `True` to include all `pos` keys in the
+  bounds; when `True` it still overrides `SM_X` / `SM_Y` under small multiples.
 
 ## [0.1.1] — 2026-07-16
 
@@ -255,6 +286,7 @@ large frames.
 - **SECURITY.md** documenting the SVG-injection threat model (row-data label text
   is HTML-escaped; component configuration is trusted).
 
-[Unreleased]: https://github.com/datrcode/polars2svg/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/datrcode/polars2svg/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/datrcode/polars2svg/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/datrcode/polars2svg/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/datrcode/polars2svg/releases/tag/v0.1.0

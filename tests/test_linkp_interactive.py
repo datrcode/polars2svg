@@ -907,6 +907,117 @@ class TestCommunityDetection(unittest.TestCase):
 
 
 @unittest.skipUnless(_PANEL_AVAILABLE_, 'panel not installed')
+class TestStickyLabelsAcrossStack(unittest.TestCase):
+    """Tests for the 's' family — sticky labels (label_only) and label-mode
+    (draw_labels) must be applied to EVERY stack layer, including dfs_layout[0]
+    (the template future pushed layers are cloned from), so the label state is
+    consistent as the user navigates and grows the stack. Regression: these ops
+    used to write only self.dfs_layout[self.df_level]."""
+
+    def setUp(self):
+        self.p2s = Polars2SVG()
+        self.df  = pl.DataFrame({
+            'fm': ['a1', 'a2', 'a3', 'b1', 'b2', 'b3', 'a1'],
+            'to': ['a2', 'a3', 'a1', 'b2', 'b3', 'b1', 'b1'],
+        })
+        self.lp   = self.p2s.linkp(self.df, relationships=[('fm', 'to')])
+        self.ctrl = self.p2s.linkpi(self.lp)
+
+    def _press(self, key, shift=False, ctrl=False):
+        self.ctrl.shiftkey        = shift
+        self.ctrl.ctrlkey         = ctrl
+        self.ctrl.key_op_finished = key
+        asyncio.run(self.ctrl.applyKeyOp(None))
+
+    # ── sticky-label set (s / shift-s / ctrl-s) ──────────────────────────────
+
+    def test_s_sets_sticky_labels_on_every_existing_level(self):
+        self.ctrl.selected_entities = {'b3'}
+        self.ctrl.apply_push_selected()                 # level 1
+        self.ctrl.label_mode = 'sticky labels'
+        self.ctrl.selected_entities = {'a1', 'a2'}
+        self._press('s')                                # replace sticky set
+        self.assertEqual(self.ctrl.sticky_labels, {'a1', 'a2'})
+        for _layout_ in self.ctrl.dfs_layout:
+            self.assertTrue(_layout_.draw_labels)
+            self.assertEqual(_layout_.label_only, {'a1', 'a2'})
+
+    def test_setting_labels_at_deep_level_updates_the_template(self):
+        # Regression: at level 1 the old handler touched only dfs_layout[1], so
+        # dfs_layout[0] (the template) never learned the sticky set.
+        self.ctrl.selected_entities = {'b3'}
+        self.ctrl.apply_push_selected()                 # level 1
+        self.assertEqual(self.ctrl.df_level, 1)
+        self.ctrl.label_mode = 'sticky labels'
+        self.ctrl.selected_entities = {'a1', 'a2'}
+        self._press('s')
+        self.assertEqual(self.ctrl.dfs_layout[0].label_only, {'a1', 'a2'})
+        self.assertTrue(self.ctrl.dfs_layout[0].draw_labels)
+
+    def test_new_layer_pushed_after_setting_labels_inherits_them(self):
+        # The key end-to-end guarantee: grow the stack AFTER choosing sticky
+        # labels and the fresh (cloned) layer still carries them.
+        self.ctrl.selected_entities = {'a3'}
+        self.ctrl.apply_push_selected()                 # level 1 (so we set at level 1)
+        self.ctrl.label_mode = 'sticky labels'
+        self.ctrl.selected_entities = {'a1'}
+        self._press('s')
+        self.ctrl.selected_entities = {'b3'}
+        self.ctrl.apply_push_selected()                 # level 2, cloned from template
+        _top_ = self.ctrl.dfs_layout[self.ctrl.df_level]
+        self.assertTrue(_top_.draw_labels)
+        self.assertEqual(_top_.label_only, {'a1'})
+
+    def test_ctrl_s_adds_and_shift_s_removes_across_stack(self):
+        self.ctrl.selected_entities = {'b3'}
+        self.ctrl.apply_push_selected()                 # level 1
+        self.ctrl.label_mode = 'sticky labels'
+        self.ctrl.selected_entities = {'a1'}
+        self._press('s')                                # {a1}
+        self.ctrl.selected_entities = {'a2'}
+        self._press('s', ctrl=True)                     # add -> {a1, a2}
+        self.assertEqual(self.ctrl.sticky_labels, {'a1', 'a2'})
+        self.ctrl.selected_entities = {'a1'}
+        self._press('s', shift=True)                    # remove -> {a2}
+        self.assertEqual(self.ctrl.sticky_labels, {'a2'})
+        for _layout_ in self.ctrl.dfs_layout:
+            self.assertEqual(_layout_.label_only, {'a2'})
+
+    # ── label-visibility mode (ctrl-shift-s) ─────────────────────────────────
+
+    def test_ctrl_shift_s_cycles_mode_on_every_level(self):
+        self.ctrl.selected_entities = {'b3'}
+        self.ctrl.apply_push_selected()                 # level 1
+        self.ctrl.label_mode = 'all labels'
+        self._press('S', shift=True, ctrl=True)         # all -> sticky
+        self.assertEqual(self.ctrl.label_mode, 'sticky labels')
+        for _layout_ in self.ctrl.dfs_layout:
+            self.assertTrue(_layout_.draw_labels)
+        self._press('S', shift=True, ctrl=True)         # sticky -> no labels
+        self.assertEqual(self.ctrl.label_mode, 'no labels')
+        for _layout_ in self.ctrl.dfs_layout:
+            self.assertFalse(_layout_.draw_labels)
+        self._press('S', shift=True, ctrl=True)         # no labels -> all
+        self.assertEqual(self.ctrl.label_mode, 'all labels')
+        for _layout_ in self.ctrl.dfs_layout:
+            self.assertTrue(_layout_.draw_labels)
+            self.assertEqual(_layout_.label_only, set())
+
+    def test_all_labels_mode_clears_label_only_everywhere(self):
+        self.ctrl.label_mode = 'sticky labels'
+        self.ctrl.selected_entities = {'a1'}
+        self._press('s')
+        self.ctrl.selected_entities = {'b3'}
+        self.ctrl.apply_push_selected()                 # level 1, inherits sticky
+        # ctrl-shift-s: sticky -> no labels -> all labels
+        self._press('S', shift=True, ctrl=True)         # -> no labels
+        self._press('S', shift=True, ctrl=True)         # -> all labels
+        for _layout_ in self.ctrl.dfs_layout:
+            self.assertTrue(_layout_.draw_labels)
+            self.assertEqual(_layout_.label_only, set())
+
+
+@unittest.skipUnless(_PANEL_AVAILABLE_, 'panel not installed')
 class TestCKeyRecenterAfterPush(unittest.TestCase):
     """Regression: after removing a node with 'x', pressing 'c' (no modifier, no
     selection) must recenter/rescale on the remaining (rendered) nodes only.

@@ -1792,6 +1792,15 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
     # updateLinkNodeParam() - update a param & refresh the views
     # - performs at all levels of the stack
     #
+    # This is THE chokepoint for any per-layer render setting that must stay
+    # consistent as the user navigates or grows the stack. It writes every entry
+    # of dfs_layout -- crucially including dfs_layout[0], which *is* the _linkp_
+    # template that future pushed layers are cloned from (pushStack -> __renderView__
+    # -> render_with(template=_linkp_); _clone_template_state copies the template's
+    # current __dict__). Writing layer 0 is what makes the setting reach not-yet-
+    # created layers too. Any handler that instead writes only
+    # self.dfs_layout[self.df_level] is a stack-consistency bug (the labels and
+    # background handlers used to do exactly that).
     def updateLinkNodeParam(self, name, value):
         for i in range(len(self.dfs_layout)):
             setattr(self.dfs_layout[i], name, value)
@@ -1803,6 +1812,28 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
                 self.dfs_layout[i].__resolveTimeField__()
             self.dfs_layout[i].invalidateRender()
         self.__refreshView__(comp=True)
+
+    #
+    # _applyLabelStateAcrossStack_() - project the controller's label_mode +
+    # sticky_labels onto EVERY stack layer (draw_labels + label_only).
+    #
+    # label_mode / sticky_labels live on the controller and are the single source
+    # of truth for label rendering; this is the one place that pushes them down onto
+    # the LinkP layers, following the same all-layers-incl-template invariant as
+    # updateLinkNodeParam() so labels stay consistent for existing AND future layers.
+    # Callers issue their own __refreshView__ afterwards (this only invalidates).
+    #
+    def _applyLabelStateAcrossStack_(self):
+        if   self.label_mode == 'no labels':     _draw_, _only_ = False, set()
+        elif self.label_mode == 'sticky labels': _draw_, _only_ = True,  set(self.sticky_labels)
+        else:                                     _draw_, _only_ = True,  set()   # 'all labels'
+        for _lp_ in self.dfs_layout:
+            _lp_.draw_labels = _draw_
+            _lp_.label_only  = _only_
+            _lp_.invalidateRender()
+        # keep ln_params (init snapshot) in sync; the real propagation is the writes above
+        self.ln_params['draw_labels'] = _draw_
+        self.ln_params['label_only']  = _only_
 
     #
     # ^^^ -- These methods are for external callers
@@ -1911,20 +1942,27 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
         return ('no background', 'background', 'background + labels')[self.background_state]
 
     #
-    # __applyBackgroundState__() - push the current background-cycle state onto the
-    # active LinkP. State 0 hides the background; state 1 shows the layout-provided
-    # shapes; state 2 shows the shapes plus their labels. With no layout background
-    # available, nothing is drawn regardless of state.
+    # __applyBackgroundState__() - project the current background-cycle state onto
+    # EVERY stack layer. State 0 hides the background; state 1 shows the layout-
+    # provided shapes; state 2 shows the shapes plus their labels. With no layout
+    # background available, nothing is drawn regardless of state.
+    #
+    # background_state + layout_background live on the controller and are the single
+    # source of truth; this writes them down onto every entry of dfs_layout -- incl.
+    # dfs_layout[0] (the template future pushed layers clone from) -- following the
+    # same all-layers invariant as updateLinkNodeParam() / _applyLabelStateAcrossStack_(),
+    # so the background stays consistent as the stack is navigated or grown.
     #
     def __applyBackgroundState__(self, refresh=True):
-        _ln_ = self.dfs_layout[self.df_level]
         if self.background_state == 0 or self.layout_background is None:
-            _ln_.background             = None
-            _ln_.background_label_color = None
+            _bg_, _bg_label_ = None, None
         else:
-            _ln_.background             = self.layout_background
-            _ln_.background_label_color = self._bg_label_color_ if self.background_state == 2 else None
-        _ln_.invalidateRender()
+            _bg_       = self.layout_background
+            _bg_label_ = self._bg_label_color_ if self.background_state == 2 else None
+        for _lp_ in self.dfs_layout:
+            _lp_.background             = _bg_
+            _lp_.background_label_color = _bg_label_
+            _lp_.invalidateRender()
         if refresh: self.__refreshView__()
 
     #
@@ -2223,35 +2261,21 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
             # "S" - Set Sticky Labels & Remove Sticky Labels
             #
             elif self.key_op_finished == 's' or self.key_op_finished == 'S':
-                _label_set_changed_ = True
-                if   self.shiftkey and self.ctrlkey:
-                    if   self.label_mode == 'all labels':    
-                        self.label_mode = 'sticky labels'
-                        _ln_.labelOnly(self.sticky_labels)
-                        _ln_.drawLabels(True)
-                        self.ln_params['draw_labels'] = True
-                    elif self.label_mode == 'sticky labels':
-                        self.label_mode = 'no labels'
-                        _ln_.drawLabels(False)
-                        self.ln_params['draw_labels'] = False                        
-                    else:                                    
-                        self.label_mode = 'all labels'
-                        _ln_.drawLabels(True)
-                        self.ln_params['draw_labels'] = True
-                        _ln_.labelOnly(set())
-                    _label_set_changed_ = False
+                # label_mode + sticky_labels are the single source of truth;
+                # _applyLabelStateAcrossStack_() pushes them onto every layer
+                # (incl. the template future layers clone from), so labels stay
+                # consistent as the stack is navigated or grown.
+                if   self.shiftkey and self.ctrlkey:   # ctrl-shift-s: cycle label visibility mode
+                    if   self.label_mode == 'all labels':    self.label_mode = 'sticky labels'
+                    elif self.label_mode == 'sticky labels': self.label_mode = 'no labels'
+                    else:                                    self.label_mode = 'all labels'
+                    self._applyLabelStateAcrossStack_()
                     self.__refreshView__(all_ents=False, sel_ents=False)
-                elif self.shiftkey:
-                    self.sticky_labels  = self.sticky_labels - self.selected_entities # subtract from the current set
-                elif                   self.ctrlkey:
-                    self.sticky_labels = self.sticky_labels | self.selected_entities  # add to the current set
-                else:
-                    self.sticky_labels  = set(self.selected_entities)                 # make a new set object with the selected
-
-                # if the set of sticky labels has changed, update the label set & refresh
-                if _label_set_changed_:
-                    if self.label_mode == 'sticky labels': _ln_.labelOnly(self.sticky_labels)
-                    self.ln_params['label_only'] = self.sticky_labels
+                else:                                  # change the sticky-label set (s / shift-s / ctrl-s)
+                    if   self.shiftkey: self.sticky_labels = self.sticky_labels - self.selected_entities  # remove selected
+                    elif self.ctrlkey:  self.sticky_labels = self.sticky_labels | self.selected_entities  # add selected
+                    else:               self.sticky_labels = set(self.selected_entities)                  # replace with selected
+                    self._applyLabelStateAcrossStack_()
                     self.__refreshView__(info=False, all_ents=False, sel_ents=False)
 
             #
@@ -2950,6 +2974,7 @@ z . | select node under mouse by color (shift, ctrl, and ctrl-shift apply)
         'selectedEntities':                   selectedEntities,
         'selectedNodes':                      selectedNodes,
         'updateLinkNodeParam':                updateLinkNodeParam,
+        '_applyLabelStateAcrossStack_':       _applyLabelStateAcrossStack_,
         '__cacheNodePositions__':             __cacheNodePositions__,
         'setSelectedEntitiesAndNotifyOthers': setSelectedEntitiesAndNotifyOthers,
         '__buildLayoutRegistry__':            __buildLayoutRegistry__,

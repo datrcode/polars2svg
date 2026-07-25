@@ -1013,6 +1013,62 @@ class TestLINKPIBackgroundCycling(unittest.TestCase):
         ctrl.__refreshView__(comp=False, all_ents=False, sel_ents=False)
         self.assertIn('background + labels', ctrl.info_str)
 
+    # ── background + visibility propagate across the whole stack ──────────────
+    def _stacked_ctrl_with_background(self):
+        # Capture a real layout background at the base level, then grow the stack.
+        ctrl = self._make_ctrl()
+        ctrl.__layoutOperation__(ctrl.CIRCLE_PACK, ctrl.dfs_layout[0], ctrl.graphs[0], set())
+        ctrl.pushStack(_make_link_df().filter(pl.col('fm') == 'a'))
+        self.assertEqual(len(ctrl.dfs_layout), 2)
+        return ctrl
+
+    def test_background_reaches_every_existing_level(self):
+        ctrl = self._stacked_ctrl_with_background()
+        ctrl.background_state = 1
+        ctrl.__applyBackgroundState__(refresh=False)
+        for _layout_ in ctrl.dfs_layout:
+            self.assertIsNotNone(_layout_.background)
+            self.assertIsNone(_layout_.background_label_color)
+
+    def test_background_labels_state_reaches_every_existing_level(self):
+        ctrl = self._stacked_ctrl_with_background()
+        ctrl.background_state = 2
+        ctrl.__applyBackgroundState__(refresh=False)
+        for _layout_ in ctrl.dfs_layout:
+            self.assertIsNotNone(_layout_.background)
+            self.assertIsNotNone(_layout_.background_label_color)
+
+    def test_background_cleared_on_every_level(self):
+        ctrl = self._stacked_ctrl_with_background()
+        ctrl.background_state = 1
+        ctrl.__applyBackgroundState__(refresh=False)
+        ctrl.background_state = 0
+        ctrl.__applyBackgroundState__(refresh=False)
+        for _layout_ in ctrl.dfs_layout:
+            self.assertIsNone(_layout_.background)
+            self.assertIsNone(_layout_.background_label_color)
+
+    def test_new_layer_pushed_after_enabling_background_inherits_it(self):
+        # The future-layers guarantee: enable background, THEN grow the stack; the
+        # fresh (cloned) layer still carries both the background and its visibility.
+        ctrl = self._make_ctrl()
+        ctrl.__layoutOperation__(ctrl.CIRCLE_PACK, ctrl.dfs_layout[0], ctrl.graphs[0], set())
+        ctrl.background_state = 2
+        ctrl.__applyBackgroundState__(refresh=False)
+        ctrl.pushStack(_make_link_df().filter(pl.col('fm') == 'a'))
+        _top_ = ctrl.dfs_layout[ctrl.df_level]
+        self.assertIsNotNone(_top_.background)
+        self.assertIsNotNone(_top_.background_label_color)
+
+    def test_b_key_cycle_at_deep_level_reaches_the_base_level(self):
+        # End-to-end via the actual 'b' key handler at a pushed level.
+        ctrl = self._stacked_ctrl_with_background()
+        self.assertEqual(ctrl.df_level, 1)
+        self._press_b(ctrl)                       # state 0 -> 1
+        self.assertEqual(ctrl.background_state, 1)
+        self.assertIsNotNone(ctrl.dfs_layout[0].background)
+        self.assertIsNotNone(ctrl.dfs_layout[1].background)
+
 
 @unittest.skipUnless(PANEL_AVAILABLE, 'panel not installed')
 class TestLINKPILayoutStackPropagation(unittest.TestCase):

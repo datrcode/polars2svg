@@ -251,7 +251,7 @@ _INTERACTIVEP_CONFIG_ = {
         'fallback_shape':'SELECT_VERTICALp',
         'brush_seq':     '[0,1,2,3,4]',
         'has_z_key':     False,
-        'kbd_s_desc':    'toggle brush on/off',
+        'kbd_r_desc':    'toggle brush on/off',
     },
     'histopi': {
         'class_name':    'HISTOPI',
@@ -261,7 +261,7 @@ _INTERACTIVEP_CONFIG_ = {
         'brush_seq':     '[0,1,2,5,6]',
         'has_z_key':     False,
         'has_search':    True,
-        'kbd_s_desc':    'toggle brush on/off',
+        'kbd_r_desc':    'toggle brush on/off',
     },
     'xypi': {
         'class_name':    'XYPI',
@@ -270,7 +270,7 @@ _INTERACTIVEP_CONFIG_ = {
         'fallback_shape':'SELECT_HORIZONTALp',
         'brush_seq':     '[0,1,2,3,4,5,6]',
         'has_z_key':     True,
-        'kbd_s_desc':    'toggle brush on/off',
+        'kbd_r_desc':    'toggle brush on/off',
     },
     'chordpi': {
         'class_name':    'CHORDPI',
@@ -279,7 +279,7 @@ _INTERACTIVEP_CONFIG_ = {
         'fallback_shape':'SELECT_CIRCLEp',
         'brush_seq':     '[0,1,2]',
         'has_z_key':     False,
-        'kbd_s_desc':    'toggle brush on/off',
+        'kbd_r_desc':    'toggle brush on/off',
     },
     'piepi': {
         'class_name':    'PIEPI',
@@ -289,7 +289,7 @@ _INTERACTIVEP_CONFIG_ = {
         'brush_seq':     '[0,1,2]',
         'has_z_key':     False,
         'has_search':    True,
-        'kbd_s_desc':    'toggle brush on/off',
+        'kbd_r_desc':    'toggle brush on/off',
     },
 }
 
@@ -450,8 +450,8 @@ def _interactivep(_plot_, kind, **kwargs):
 h . | toggle help display
 q . | subtract the current from the top
 F . | pick selection shape (rectangle | oval)
-s . | {cfg['kbd_s_desc']}
-S . | cycle brush shape{_z_key_cmd_}{_search_cmd_}
+r . | {cfg['kbd_r_desc']}
+R . | cycle brush shape{_z_key_cmd_}{_search_cmd_}
         """
 
     # Build static SVG for keyboard help overlay
@@ -722,7 +722,7 @@ S . | cycle brush shape{_z_key_cmd_}{_search_cmd_}
                 data.ctrlkey  = event.ctrlKey;
                 data.x_mouse  = state.cur_mouse_x;
                 data.y_mouse  = state.cur_mouse_y;
-                {_z_block_}if (event.key == 's') {{
+                {_z_block_}if (event.key == 'r') {{
                     if (data.brush_state == 0) {{
                         var _seq_ = {brush_seq};
                         data.brush_state = _seq_[1];
@@ -733,7 +733,7 @@ S . | cycle brush shape{_z_key_cmd_}{_search_cmd_}
                     data.brush_changed += 1;
                     self.updateBrushCursor();
                 }}
-                else if (event.key == 'S') {{
+                else if (event.key == 'R') {{
                     var _seq_ = {brush_seq};
                     var _non0_ = _seq_.filter(function(x) {{ return x > 0; }});
                     if (data.brush_state == 0) {{
@@ -1138,7 +1138,7 @@ def smallpi(_smallp_, **kwargs):
         """,
         'myOnKeyDown': """
             var k = event.key;
-            if (k === 's') {
+            if (k === 'r') {
                 data.brush_on = !data.brush_on;
                 if (!data.brush_on) { data.key_op_finished = 'brush_off'; }
             } else if (k === 'q' && !event.shiftKey) {
@@ -1538,6 +1538,12 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
         self._orig_node_color_ = _linkp_.node_color
         self.community_colors  = None
 
+        # Brush receive: while a brushed subset from a peer is being shown, mod_inner
+        # holds a transient render (not a stack level).  The flag drives the revert on
+        # brushClear -- which re-sends the current stack df, so it can't be told apart
+        # from a no-op stack navigation by the df identity alone.
+        self._brush_active_ = False
+
         if _mvc_ is None:
             self.mvc = InteractionController()
             self.mvc.addStack('default', _linkp_.df_orig)
@@ -1562,6 +1568,8 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
         self.param.watch(self.applyWheelOp,           'wheel_op_finished')
         self.param.watch(self.applyMiddleOp,          'middle_op_finished')
         self.param.watch(self.applyKeyOp,             'key_op_finished')
+        self.param.watch(self.applyBrushOp,           'brush_changed')
+        self.param.watch(self.applyBrushLeave,        'brush_leave_done')
         self.param.watch(self.applyLayoutInteraction, 'layout_shape')
         self.param.watch(self.unselectedMoveOp,       'unselected_move_op_finished')
         self.param.watch(self.applySearchOp,          'search_op_finished')
@@ -1607,9 +1615,26 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
         _is_brush_ = df is not dfs[dfs_index]
         async with _self_.lock:
             if _is_brush_:
-                _self_.setSelectedEntitiesAndNotifyOthers(_self_._extractNodes_(df))
-                _self_.__refreshView__(comp=False, all_ents=False)
+                # Brush from a peer: re-render just the brushed rows in place, reusing the
+                # current level's positions/view window so nodes keep their screen spots and
+                # only the brushed subgraph is drawn (matches the other interactive views).
+                # The stack (dfs/dfs_layout/df_level) is left untouched.
+                _cur_      = _self_.dfs_layout[_self_.df_level]
+                _brush_ln_ = _linkp_.render_with(df, pos=dict(_cur_.pos), view_window=_cur_.view_window)
+                _self_._brush_active_ = True
+                _self_.selectionpath  = 'M -100 -100 l 10 0 l 0 10 l -10 0 l 0 -10 Z'
+                if use_webgpu:
+                    if _self_.gpu_error: _self_.mod_inner   = _gpu_error_overlay(_self_.gpu_error, _w_, _h_)
+                    else:                _self_.gpu_payload = _brush_ln_.webgpu()
+                else:
+                    _self_.mod_inner = _brush_ln_.renderSVG()
             else:
+                # Not a brush: if we were showing a brushed subset, revert to the current
+                # level's render first, then run the normal stack navigation (a brushClear
+                # arrives here with df == the current level df, so the loops are no-ops).
+                if _self_._brush_active_:
+                    _self_._brush_active_ = False
+                    _self_.__refreshView__()
                 while _self_.df_level < dfs_index:
                     _self_.pushStack(dfs[_self_.df_level + 1])
                 while _self_.df_level > dfs_index:
@@ -2711,6 +2736,51 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
         return _updated_pos_
 
     #
+    # _doBrushAt() - hit-test the current layout at screen xy and broadcast the matched
+    # rows (nearest edges/nodes within the state's radius) to the stack peers.
+    #
+    async def _doBrushAt(self, xy, state_idx):
+        _state_def_ = BRUSH_STATES[state_idx]
+        _shape_     = getattr(self.rt_self, _state_def_[0])
+        _threshold_ = _state_def_[1]
+        _ln_        = self.dfs_layout[self.df_level]
+        try:
+            _filtered_ = _ln_.recordsAt(xy, shape=_shape_, threshold=_threshold_)
+        except ValueError:
+            try:
+                _filtered_ = _ln_.recordsAt(xy, shape=self.rt_self.SELECT_CIRCLEp, threshold=_threshold_)
+            except Exception:
+                return
+        if _filtered_ is None or len(_filtered_) == 0:
+            await self.mvc.brushClear(self)
+        else:
+            await self.mvc.brushUpdate(self, _filtered_)
+
+    #
+    # applyBrushOp() - fires on mouse move (when brush active) or on brush state change.
+    #
+    async def applyBrushOp(self, event):
+        async with self.lock:
+            _state_ = self.brush_state
+            _xy_    = (self.x_mouse, self.y_mouse)
+        if _state_ == 0:
+            await self.mvc.brushClear(self)
+        else:
+            await self._doBrushAt(_xy_, _state_)
+
+    #
+    # applyBrushLeave() - fires when the mouse leaves the component while brush is active.
+    #
+    async def applyBrushLeave(self, event):
+        async with self.lock:
+            if not self.brush_leave_done: return
+            if self.brush_state == 0:
+                self.brush_leave_done = False
+                return
+            self.brush_leave_done = False
+        await self.mvc.brushClear(self)
+
+    #
     # applyDragOp() - select the nodes within the drag operations bounding box.
     #
     async def applyDragOp(self, event):
@@ -2841,6 +2911,8 @@ n . | select node under mouse by shape (shift, ctrl, and ctrl-shift apply)
  .. | shift-p ........ | open node size picker (ctrl-p reverses)
 q . | invert selection
  .. | shift-q ........ | common neighbors
+r . | toggle brush (broadcast nearest edges/nodes to linked views)
+ .. | shift-r ........ | cycle brush radius (r=5 | r=15)
 s . | set sticky labels
  .. | shift-s ........ | remove sticky labels from selected
  .. | ctrl-s ......... | add selected to sticky labels
@@ -2905,6 +2977,8 @@ z . | select node under mouse by color (shift, ctrl, and ctrl-shift apply)
           onmousedown="${{script('downMove')}}"           onmousemove="${{script('myOnMouseMove')}}"
           onmouseup="${{script('myOnMouseUp')}}" />
     <text id="searchtext" x="{_w_//2}" y="{_h_-2}" text-anchor="middle" fill="#0000cc" font-size="11px" font-family="monospace"></text>
+    <g id="brushindicator" pointer-events="none"></g>
+    <g id="brushmodelabel" pointer-events="none"></g>
     <g id="pickermenu" pointer-events="none"></g>
 </svg>
 """
@@ -3004,6 +3078,9 @@ z . | select node under mouse by color (shift, ctrl, and ctrl-shift apply)
         'apply_layout_operation':             apply_layout_operation,
         'apply_undo':                         apply_undo,
         'applyKeyOp':                         applyKeyOp,
+        '_doBrushAt':                         _doBrushAt,
+        'applyBrushOp':                       applyBrushOp,
+        'applyBrushLeave':                    applyBrushLeave,
         'applyDragOp':                        applyDragOp,
         'applyMoveOp':                        applyMoveOp,
         'unselectedMoveOp':                   unselectedMoveOp,
@@ -3054,6 +3131,10 @@ z . | select node under mouse by color (shift, ctrl, and ctrl-shift apply)
     'x_mouse'                     : param.Integer(default=0),
     'y_mouse'                     : param.Integer(default=0),
     'has_focus'                   : param.Boolean(default=False),
+    'brushing_mode'               : param.Boolean(default=False),
+    'brush_state'                 : param.Integer(default=0),
+    'brush_changed'               : param.Integer(default=0),
+    'brush_leave_done'            : param.Boolean(default=False),
     'search_str'                  : param.String(default=''),
     'search_op_finished'          : param.Boolean(default=False),
 
@@ -3094,6 +3175,13 @@ z . | select node under mouse by color (shift, ctrl, and ctrl-shift apply)
             data.move_op_finished    = false;
             state.search_mode        = false;
             state.search_buffer      = '';
+            data.brush_state         = 0;
+            data.brushing_mode       = false;
+            data.brush_changed       = 0;
+            state.last_brush_x       = -999;
+            state.last_brush_y       = -999;
+            state.brush_defs         = [null,['circle',5],['circle',15]];
+            state.brush_names        = ['','circ r=5','circ r=15'];
 
             myanimate.addEventListener("endEvent", () => { data.animation_inner = ""; opanimation.innerHTML = data.animation_inner; });
 
@@ -3116,8 +3204,27 @@ z . | select node under mouse by color (shift, ctrl, and ctrl-shift apply)
                 svgparent.focus();
         """,
 
+        'updateBrushCursor': f"""
+                var _bs_ = data.brush_state;
+                if (_bs_ == 0) {{
+                    brushindicator.innerHTML = '';
+                    brushmodelabel.innerHTML = '';
+                    return;
+                }}
+                var _x_ = state.cur_mouse_x, _y_ = state.cur_mouse_y;
+                var _d_ = state.brush_defs[_bs_], _r_ = _d_[1];
+                var _s_ = 'stroke="rgba(100,150,255,0.8)" fill="none" pointer-events="none"';
+                brushindicator.innerHTML = '<circle cx="'+_x_+'" cy="'+_y_+'" r="'+_r_+'" '+_s_+' stroke-width="1.5"/>';
+                var _nm_ = state.brush_names[_bs_];
+                var _tw_ = _nm_.length * 6 + 10, _rx_ = {_w_} - _tw_ - 3;
+                brushmodelabel.innerHTML = '<rect x="'+_rx_+'" y="3" width="'+_tw_+'" height="15" rx="3" fill="rgba(100,150,255,0.3)" stroke="rgba(100,150,255,0.7)" stroke-width="0.5" pointer-events="none"/>'
+                    + '<text x="'+(_rx_+5)+'" y="14" font-size="10px" fill="rgba(40,60,200,1.0)" font-family="monospace" pointer-events="none">'+_nm_+'</text>';
+        """,
+
         'myOnMouseOut':"""
                 data.has_focus = false;
+                brushindicator.innerHTML = '';
+                if (data.brush_state > 0) { data.brush_leave_done = true; }
                 if (state.menu_open) { self.menuCommit(); }
         """,
 
@@ -3281,6 +3388,24 @@ z . | select node under mouse by color (shift, ctrl, and ctrl-shift apply)
                      event.key == "N") { data.key_op_finished = 'n';  }
             else if (event.key == "q") { data.key_op_finished = 'q';  } // Invert selection
             else if (event.key == "Q") { data.key_op_finished = 'Q';  } // Select common neighbors to selected nodes
+            else if (event.key == "r") {                                // Toggle the radius brush on/off
+                if (data.brush_state == 0) { data.brush_state = 1; }
+                else                       { data.brush_state = 0; }
+                data.brushing_mode = data.brush_state > 0;
+                data.brush_changed += 1;
+                self.updateBrushCursor();
+            }
+            else if (event.key == "R") {                                // Cycle the brush radius (r=5 | r=15)
+                var _seq_ = [1, 2];
+                if (data.brush_state == 0) { data.brush_state = _seq_[0]; }
+                else {
+                    var _i_ = _seq_.indexOf(data.brush_state);
+                    data.brush_state = _seq_[(_i_ + 1) % _seq_.length];
+                }
+                data.brushing_mode = true;
+                data.brush_changed += 1;
+                self.updateBrushCursor();
+            }
             else if (event.key == "s") { if (event.ctrlKey) event.preventDefault(); data.key_op_finished = 's';  } // Set sticky labels; ctrl-s cycles label mode (ctrl-s is browser Save Page As)
             else if (event.key == "S") { if (event.ctrlKey) event.preventDefault(); data.key_op_finished = 'S';  } // Subtract selected from sticky labels; ctrl-shift-s cycles label mode
             else if (event.key == "t") { data.key_op_finished = 't';  } // Collapse selected to a single point
@@ -3331,6 +3456,18 @@ z . | select node under mouse by color (shift, ctrl, and ctrl-shift apply)
             if (state.move_op)               { selectionlayer.setAttribute("transform", "translate(" + (state.x1_drag - state.x0_drag) + "," + (state.y1_drag - state.y0_drag) + ")"); }
             if (state.unselected_move_op)    { selectionlayer.setAttribute("transform", "translate(" + (state.x1_drag - state.x0_drag) + "," + (state.y1_drag - state.y0_drag) + ")"); }
             if (state.layout_op_shape != "") { self.myUpdateLayoutOp(); }
+            if (data.brush_state > 0) {
+                self.updateBrushCursor();
+                var _dx_ = event.offsetX - state.last_brush_x;
+                var _dy_ = event.offsetY - state.last_brush_y;
+                if (_dx_*_dx_ + _dy_*_dy_ >= 9) {   // throttle: re-brush only after ~3px of travel
+                    state.last_brush_x = event.offsetX;
+                    state.last_brush_y = event.offsetY;
+                    data.x_mouse       = event.offsetX;
+                    data.y_mouse       = event.offsetY;
+                    data.brush_changed += 1;
+                }
+            }
         """,
         'downAllEntities':"""
             data.ctrlkey  = event.ctrlKey;

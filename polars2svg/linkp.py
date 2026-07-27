@@ -1817,6 +1817,85 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
                         (xy[0] + 5, xy[1] + 5), (xy[0] + 5, xy[1] - 5)])
         return self.overlappingEntities(poly)
 
+    # __segmentDistSqExpr__() - squared screen distance from point (px,py) to the line
+    # segment (ax_col,ay_col)->(bx_col,by_col).  Standard clamped-projection formula;
+    # degenerate zero-length segments (self-loops) collapse to point distance.  Int32
+    # screen columns are lifted to Float64 so squaring can't overflow.
+    def __segmentDistSqExpr__(self, px, py, ax_col, ay_col, bx_col, by_col):
+        _ax_, _ay_ = pl.col(ax_col).cast(pl.Float64), pl.col(ay_col).cast(pl.Float64)
+        _bx_, _by_ = pl.col(bx_col).cast(pl.Float64), pl.col(by_col).cast(pl.Float64)
+        _dx_, _dy_ = _bx_ - _ax_, _by_ - _ay_
+        _seg_ = _dx_ * _dx_ + _dy_ * _dy_
+        _t_   = pl.when(_seg_ <= 0.0).then(pl.lit(0.0)).otherwise(
+                    (((px - _ax_) * _dx_ + (py - _ay_) * _dy_) / _seg_).clip(0.0, 1.0))
+        _cx_, _cy_ = _ax_ + _t_ * _dx_, _ay_ + _t_ * _dy_
+        return (px - _cx_).pow(2) + (py - _cy_).pow(2)
+
+    # recordsAt() - rows near the screen point xy, for brush propagation.  Mirrors the
+    # recordsAt() contract of xyp/chordp/timep (returns a row-subset with the original
+    # schema), but a LinkP hit-tests two things within `threshold` pixels:
+    #   * nearest links (edges): each hit contributes its own rows.  Because a row already
+    #     encodes its fm->to orientation, only rows drawn in the hit edge's direction are
+    #     included (directional edges stay directional).
+    #   * nearest nodes: each hit node contributes every row where it appears as a source
+    #     OR a destination in any relationship.
+    # Matching is done on __p2s_index__ (a stable row id) and the original columns are
+    # re-selected, so synthetic concat/geometry columns never leak to peers.  Only
+    # SELECT_CIRCLEp is supported (a radius); bands don't fit a 2-D node-link view.
+    def recordsAt(self, xy, shape=None, threshold=5.0):
+        if shape is None: shape = self.p2s.SELECT_CIRCLEp
+        if shape != self.p2s.SELECT_CIRCLEp:
+            raise ValueError(f'LinkP.recordsAt(): only SELECT_CIRCLEp is supported, got {shape}')
+        if self.df is None or self.df_orig is None:
+            return self.df_orig if self.df_orig is not None else pl.DataFrame()
+        # Screen geometry is produced by renderSVG(); it is cached, so this re-runs only
+        # when the layout was invalidated since the last paint.
+        if '__rel0_fm_sx__' not in self.df.columns or self.df_node is None:
+            self.renderSVG()
+
+        _px_, _py_ = float(xy[0]), float(xy[1])
+        _r2_       = float(threshold) ** 2
+        _idx_      = set()
+
+        # (1) edges - point-to-segment distance, per relationship
+        for i in range(len(self.relationships)):
+            _fm_sx_, _fm_sy_ = f'__rel{i}_fm_sx__', f'__rel{i}_fm_sy__'
+            _to_sx_, _to_sy_ = f'__rel{i}_to_sx__', f'__rel{i}_to_sy__'
+            if _fm_sx_ not in self.df.columns: continue
+            _dsq_ = self.__segmentDistSqExpr__(_px_, _py_, _fm_sx_, _fm_sy_, _to_sx_, _to_sy_)
+            _hits_ = self.df.filter(
+                pl.col(_fm_sx_).is_not_null() & pl.col(_to_sx_).is_not_null() & (_dsq_ <= _r2_)
+            )
+            _idx_.update(_hits_['__p2s_index__'].to_list())
+
+        # (2) nodes within radius -> node names
+        _nodes_ = set()
+        if self.df_node is not None and len(self.df_node) > 0:
+            _dfn_ = self.df_node.filter(
+                (pl.col('__sx__').cast(pl.Float64) - _px_).pow(2) +
+                (pl.col('__sy__').cast(pl.Float64) - _py_).pow(2) <= _r2_
+            )
+            for _nm_list_ in _dfn_['__nm__'].to_list():
+                for _nm_ in (_nm_list_ if isinstance(_nm_list_, (list, set)) else [_nm_list_]):
+                    _nodes_.add(str(_nm_))
+
+        # (2b) node -> rows where the node is a source or destination in any relationship
+        if _nodes_:
+            _node_list_ = list(_nodes_)
+            _pred_ = None
+            for _rel_ in self.relationships:
+                for _fld_ in (_rel_[0], _rel_[1]):
+                    if _fld_ in self.df.columns:
+                        _c_ = pl.col(_fld_).cast(pl.String).is_in(_node_list_)
+                        _pred_ = _c_ if _pred_ is None else (_pred_ | _c_)
+            if _pred_ is not None:
+                _idx_.update(self.df.filter(_pred_)['__p2s_index__'].to_list())
+
+        # (3) assemble the subset with the pristine input schema
+        _out_  = self.df.filter(pl.col('__p2s_index__').is_in(list(_idx_)))
+        _keep_ = [c for c in self.df_orig.columns if c in _out_.columns]
+        return _out_.select(_keep_)
+
     def nodeColor(self, node):
         return self.color_nodes_final.get(node)
 

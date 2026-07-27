@@ -2,6 +2,7 @@ import asyncio
 import unittest
 import polars as pl
 from polars2svg import Polars2SVG
+from polars2svg.interactive_controller import linkpi, InteractionController
 
 
 def _make_df():
@@ -1078,6 +1079,138 @@ class TestCKeyRecenterAfterPush(unittest.TestCase):
         wx0, wy0, wx1, wy1 = _ln_.view_window
         self.assertGreater(wx1, 50.0)
         self.assertGreater(wy1, 50.0)
+
+
+def _node_screen_xy(lp):
+    """Map node name -> (sx, sy) screen coords from a rendered LinkP."""
+    lp.renderSVG()
+    out = {}
+    for sx, sy, nm in lp.df_node.select('__sx__', '__sy__', '__nm__').iter_rows():
+        for n in (nm if isinstance(nm, (list, set)) else [nm]):
+            out[str(n)] = (sx, sy)
+    return out
+
+
+class TestLinkPRecordsAt(unittest.TestCase):
+    """LinkP.recordsAt() — the spatial hit-test that feeds brush propagation."""
+
+    def setUp(self):
+        self.p2s = Polars2SVG()
+        # a->b appears twice; b->c and c->a once each -> lets us prove directionality
+        self.df = pl.DataFrame({
+            'fm':  ['a', 'b', 'c', 'a'],
+            'to':  ['b', 'c', 'a', 'b'],
+            'amt': [ 1,   2,   3,   4 ],
+        })
+        self.pos = {'a': [0, 0], 'b': [1, 0], 'c': [1, 1]}
+        self.lp  = self.p2s.linkp(self.df, relationships=[('fm', 'to')], pos=self.pos)
+        self.scr = _node_screen_xy(self.lp)
+
+    def test_node_hit_returns_rows_where_node_is_source_or_dest(self):
+        sx, sy = self.scr['a']
+        out = self.lp.recordsAt((sx, sy), threshold=6)
+        # every row touching 'a': a->b (x2), c->a
+        rows = set(out.select('fm', 'to').iter_rows())
+        self.assertEqual(rows, {('a', 'b'), ('c', 'a')})
+
+    def test_edge_hit_is_directional(self):
+        (ax, ay), (bx, by) = self.scr['a'], self.scr['b']
+        mx, my = (ax + bx) // 2, (ay + by) // 2
+        out = self.lp.recordsAt((mx, my), threshold=4)
+        # only a->b rows (the drawn direction); not b->c or c->a
+        self.assertEqual(set(out['to'].to_list()), {'b'})
+        self.assertEqual(set(out['fm'].to_list()), {'a'})
+        self.assertEqual(len(out), 2)  # both a->b rows
+
+    def test_far_away_returns_empty_with_schema(self):
+        out = self.lp.recordsAt((-50, -50), threshold=3)
+        self.assertEqual(len(out), 0)
+        self.assertEqual(out.columns, self.df.columns)
+
+    def test_result_has_only_original_columns(self):
+        sx, sy = self.scr['a']
+        out = self.lp.recordsAt((sx, sy), threshold=6)
+        self.assertEqual(out.columns, self.df.columns)
+
+    def test_default_shape_matches_circle(self):
+        sx, sy = self.scr['a']
+        self.assertEqual(
+            self.lp.recordsAt((sx, sy), threshold=6).sort('amt').rows(),
+            self.lp.recordsAt((sx, sy), shape=self.p2s.SELECT_CIRCLEp, threshold=6).sort('amt').rows(),
+        )
+
+    def test_band_shapes_raise(self):
+        with self.assertRaises(ValueError):
+            self.lp.recordsAt((0, 0), shape=self.p2s.SELECT_HORIZONTALp)
+        with self.assertRaises(ValueError):
+            self.lp.recordsAt((0, 0), shape=self.p2s.SELECT_VERTICALp)
+
+
+class TestLinkPInteractiveBrush(unittest.TestCase):
+    """Brush round-trip: a linkp source broadcasts a subset to a linkp peer on the
+    same stack, and the peer re-renders it (and reverts on clear)."""
+
+    def setUp(self):
+        self.p2s = Polars2SVG()
+        self.df  = pl.DataFrame({
+            'fm':  ['a', 'b', 'c', 'a'],
+            'to':  ['b', 'c', 'a', 'b'],
+            'amt': [ 1,   2,   3,   4 ],
+        })
+        self.pos = {'a': [0, 0], 'b': [1, 0], 'c': [1, 1]}
+        self.mvc = InteractionController()
+        self.mvc.addStack('default', self.df)
+        self.src  = linkpi(self.p2s.linkp(self.df, relationships=[('fm', 'to')], pos=self.pos), mvc=self.mvc)
+        self.peer = linkpi(self.p2s.linkp(self.df, relationships=[('fm', 'to')], pos=self.pos), mvc=self.mvc)
+        self.mvc.view_stack[id(self.src)]  = 'default'
+        self.mvc.view_stack[id(self.peer)] = 'default'
+        self.scr = _node_screen_xy(self.src.dfs_layout[0])
+
+    def _edge_midpoint(self, u, v):
+        (ux, uy), (vx, vy) = self.scr[u], self.scr[v]
+        return (ux + vx) // 2, (uy + vy) // 2
+
+    def test_peer_rerenders_subset_on_edge_brush(self):
+        full = self.peer.mod_inner
+        self.src.brush_state = 1
+        mx, my = self._edge_midpoint('a', 'b')
+        asyncio.run(self.src._doBrushAt((mx, my), 1))
+        self.assertTrue(self.peer._brush_active_)
+        self.assertNotEqual(self.peer.mod_inner, full)
+        # edge brush -> fewer links drawn than the full graph
+        self.assertLess(self.peer.mod_inner.count('<line'), full.count('<line'))
+
+    def test_source_does_not_brush_itself(self):
+        self.src.brush_state = 1
+        mx, my = self._edge_midpoint('a', 'b')
+        asyncio.run(self.src._doBrushAt((mx, my), 1))
+        self.assertFalse(self.src._brush_active_)
+
+    def test_brush_clear_reverts_peer(self):
+        full = self.peer.mod_inner
+        self.src.brush_state = 1
+        mx, my = self._edge_midpoint('a', 'b')
+        asyncio.run(self.src._doBrushAt((mx, my), 1))
+        self.assertTrue(self.peer._brush_active_)
+        asyncio.run(self.mvc.brushClear(self.src))
+        self.assertFalse(self.peer._brush_active_)
+        self.assertEqual(self.peer.mod_inner, full)
+
+    def test_empty_hit_clears_rather_than_brushes(self):
+        self.src.brush_state = 1
+        asyncio.run(self.src._doBrushAt((-50, -50), 1))
+        self.assertFalse(self.peer._brush_active_)
+
+    def test_brush_state_zero_broadcasts_clear(self):
+        # turning the brush off (state 0) should revert peers, not brush them
+        self.src.brush_state = 1
+        mx, my = self._edge_midpoint('a', 'b')
+        asyncio.run(self.src._doBrushAt((mx, my), 1))
+        self.assertTrue(self.peer._brush_active_)
+        self.src.brush_state = 0
+        self.src.x_mouse, self.src.y_mouse = mx, my
+        asyncio.run(self.src.applyBrushOp(None))
+        self.assertFalse(self.peer._brush_active_)
 
 
 if __name__ == '__main__':

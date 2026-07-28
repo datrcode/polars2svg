@@ -80,6 +80,7 @@ _LAYOUT_OP_MENU_ = [
     ('C', 'circle pack'),
     ('n', 'neighborhood (spatial)'),
     ('N', 'neighborhood (graph)'),
+    ('e', 'even distribution'),
 ]
 if _TFDP_AVAILABLE:
     _LAYOUT_OP_MENU_.append(('t', 't-fdp'))
@@ -1504,6 +1505,7 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
         self.CIRCLE_PACK          = 'circle pack'
         self.NEIGHBORHOOD_SPATIAL = 'neighborhood (spatial)'
         self.NEIGHBORHOOD_GRAPH   = 'neighborhood (graph)'
+        self.EVEN_DISTRIBUTION    = 'even distribution'
         self.TFDP_LAYOUT          = 't-fdp'
         self.NCP_PACK             = 'ncp pack'
         self.layout_operations    = [label for _, label in _LAYOUT_OP_MENU_]
@@ -1915,6 +1917,23 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
             pos, shapes = rt.circlePackLayout(g, ln.pos)
             return pos, shapes   # shapes -> background (the enclosing circles)
 
+        def _even_distribution_(ln, g, sel):
+            # Nudge nodes toward a uniform spatial distribution via the sector-
+            # based transformation, weighting each node by its graph degree.
+            # Operates on the selection when there is one, otherwise on every
+            # positioned node. (Formerly the ctrl-e key operation.)
+            _nodes_ = [n for n in (sel if len(sel) > 0 else g.nodes()) if n in ln.pos]
+            if len(_nodes_) < 2:
+                return None
+            _df_  = pl.DataFrame({
+                'e': _nodes_,
+                'x': [ln.pos[n][0] for n in _nodes_],
+                'y': [ln.pos[n][1] for n in _nodes_],
+                'w': [g.degree(n)  for n in _nodes_],
+            })
+            _res_ = rt.uniformSampleDistributionInScatterplotsViaSectorBasedTransformation(_df_, 'x', 'y', 'w')
+            return {_res_['e'][i]: (_res_['x'][i], _res_['y'][i]) for i in range(len(_res_))}
+
         registry = {
             self.SPRING_NX:            lambda ln, g, sel: nx.spring_layout(g) if len(sel) == 0 else None,
             self.FORCE_DIRECTED:       lambda ln, g, sel: (
@@ -1941,6 +1960,7 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
             ),
             self.LANDMARK_MDS_POS:     _landmark_mds_pos_,
             self.PIVOT_MDS:            lambda ln, g, sel: PivotMDSLayout(g, rt_self=rt).results() if len(sel) == 0 else None,
+            self.EVEN_DISTRIBUTION:    _even_distribution_,
         }
         if _TFDP_AVAILABLE:
             registry[self.TFDP_LAYOUT] = lambda ln, g, sel: (
@@ -2227,28 +2247,20 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
         async with self.lock:
             _ln_ = self.dfs_layout[self.df_level]
             #
-            # "E" - Expand / Expand w/ Directed
+            # "E" - Expand (undirected) / directed (shift-e forward, ctrl-e reverse)
             #
             if self.key_op_finished == 'e' or self.key_op_finished == 'E':
-                if   self.ctrlkey and len(self.selected_entities) > 0:
-                    _entities_, _xs_, _ys_, _weights_ = [], [], [], []
-                    for _entity_ in self.selected_entities:
-                        _xy_ = _ln_.pos[_entity_]
-                        _entities_.append(_entity_), _xs_.append(_xy_[0]), _ys_.append(_xy_[1]), _weights_.append(self.graphs[self.df_level].degree(_entity_))
-                    _df_      = pl.DataFrame({'e':_entities_, 'x':_xs_, 'y':_ys_, 'w':_weights_})
-                    _results_ = self.rt_self.uniformSampleDistributionInScatterplotsViaSectorBasedTransformation(_df_, 'x', 'y', 'w')
-                    _updated_pos_ = {}
-                    for i in range(len(_results_)):
-                        _entity_, _x_, _y_ = _results_['e'][i], _results_['x'][i], _results_['y'][i]
-                        _ln_.pos[_entity_] = (_x_, _y_)
-                        _updated_pos_[_entity_] = _ln_.pos[_entity_]
-                    self._propagate_positions(_updated_pos_)
-                    self.__refreshView__()
-                elif self.key_op_finished == 'E':
+                if self.key_op_finished == 'E' or self.ctrlkey:
+                    # Directed expand: shift-e grows the selection along edge
+                    # direction (successors); ctrl-e grows it against edge
+                    # direction (predecessors).
                     _digraph_ = self.rt_self.createNetworkXGraph(self.dfs[self.df_level], self.ln_params['relationships'], use_digraph=True)
+                    _forward_ = (self.key_op_finished == 'E')
                     _new_set_ = set(self.selected_entities)
                     for _node_ in self.selected_entities:
-                        for _nbor_ in _digraph_.neighbors(_node_):
+                        if _node_ not in _digraph_: continue
+                        _nbors_ = _digraph_.neighbors(_node_) if _forward_ else _digraph_.predecessors(_node_)
+                        for _nbor_ in _nbors_:
                             _new_set_.add(_nbor_)
                     self.setSelectedEntitiesAndNotifyOthers(_new_set_)
                     self.__refreshView__(comp=False, all_ents=False)
@@ -2899,8 +2911,8 @@ c . | reset view or focus view on selected
  .. | ctrl-c ......... | copy selected nodes to clipboard (ctrl-shift-c uses node labels)
 d . | detect communities (louvain) & color nodes by community
  .. | shift-d ........ | clear community colors
-e . | expand selection | shift-e uses directed graph
- .. | ctrl-e ......... | even out distribution of selected nodes
+e . | expand selection | shift-e follows directed edges
+ .. | ctrl-e ......... | expand along reversed directed edges
 g . | layout upon next mouse drag
  .. | shift-g ........ | open layout-mode picker: mnemonic key selects; ctrl-g reverses
 h . | toggle help display
@@ -3371,8 +3383,8 @@ z . | select node under mouse by color (shift, ctrl, and ctrl-shift apply)
             else if (event.key == "C") { if (event.ctrlKey) event.preventDefault(); data.key_op_finished = 'C';  } // Zoom to selected + neighbors; ctrl-shift-c copies labels
             else if (event.key == "d") { data.key_op_finished = 'd';  } // Detect communities (louvain) & color nodes by community
             else if (event.key == "D") { data.key_op_finished = 'D';  } // Clear the community colors
-            else if (event.key == "e") { if (event.ctrlKey) event.preventDefault(); data.key_op_finished = 'e';  } // Expand; ctrl-e evens out distribution (ctrl-e is browser search-bar focus)
-            else if (event.key == "E") { data.key_op_finished = 'E';  } // Expand (w/ digraph)
+            else if (event.key == "e") { if (event.ctrlKey) event.preventDefault(); data.key_op_finished = 'e';  } // Expand (undirected); ctrl-e expands along reversed directed edges (preventDefault: ctrl-e is browser search-bar focus)
+            else if (event.key == "E") { data.key_op_finished = 'E';  } // Expand (w/ digraph, forward)
             else if (event.key == "g") { state.layout_op        = true; // Mouse press is layout shape
                                          state.layout_line_flag = false; } 
             else if (event.key == "G") { state.menu_kind = 'mode';      self.menuOpen(); } // Open the layout-mode picker menu

@@ -9,19 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Interactive time-axis navigation on `xypi` — `u` / `e` keyboard shortcuts.**
-  When the interactive xy view's x-axis represents linear time, three shortcuts
-  refilter the interaction stack against the base (bottom-of-stack) dataframe by
-  time window. `u` unfilters every base row within the currently visible
-  timeframe — the visible rows plus any that were filtered out of it — and is a
-  no-op at the base of the stack. `e` expands the timeframe in **both**
-  directions; `shift+e` expands backward (earlier events) only and `ctrl+e`
-  forward (later events) only. Each expansion pulls in a chunk equal to
-  `x_time_expand_perc` of the visible time span per direction and pushes the
-  widened dataframe onto the stack (a no-op when there are no further rows to
-  add). New **`x_time_expand_perc=` on `xyp`** (default `0.1`) sets the chunk
-  size and is carried through `template=` clones. The shortcuts are inert on
-  non-time x-axes.
+- **Interactive time-axis navigation on `xypi` and `timepi` — `u` / `e`
+  keyboard shortcuts.** When the interactive view's time axis represents linear
+  time, three shortcuts refilter the interaction stack against the base
+  (bottom-of-stack) dataframe by time window. `u` unfilters every base row
+  within the currently visible timeframe — the visible rows plus any that were
+  filtered out of it — and is a no-op at the base of the stack. `e` expands the
+  timeframe in **both** directions; `shift+e` expands backward (earlier events)
+  only and `ctrl+e` forward (later events) only. Each expansion pulls in a chunk
+  equal to `x_time_expand_perc` of the visible time span per direction and
+  pushes the widened dataframe onto the stack (a no-op when there are no further
+  rows to add). New **`x_time_expand_perc=` on `xyp` and `timep`** (default
+  `0.1`) sets the expansion amount and is carried through `template=` clones.
+  The shortcuts are inert on non-time / non-linear axes.
+
+  The two components differ in how expansion snaps, matching their axis type:
+  `xypi` has a continuous axis, so it grows by a **raw time slice** equal to
+  `x_time_expand_perc` of the visible span. `timepi` is **binned**, so its
+  visible timeframe spans the currently visible bins (start of the first to end
+  of the last) and expansion snaps to **whole bins** — each side grows by
+  `max(1, round(x_time_expand_perc × visible_bin_count))` bins, so a day/week/
+  month view always gains whole day/week/month bars rather than a partial edge
+  bar. `timepi`'s shortcuts are additionally inert on a **periodic** time axis.
 
 ## [0.1.2] — 2026-07-25
 

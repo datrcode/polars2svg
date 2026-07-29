@@ -252,6 +252,7 @@ _INTERACTIVEP_CONFIG_ = {
         'fallback_shape':'SELECT_VERTICALp',
         'brush_seq':     '[0,1,2,3,4]',
         'has_z_key':     False,
+        'has_time_keys': True,
         'kbd_r_desc':    'toggle brush on/off',
     },
     'histopi': {

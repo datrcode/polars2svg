@@ -17,7 +17,7 @@ class Timep(P2SBinComponentMixin, ExportMixin):
         'wxh', 'insets', 'draw_context', 'draw_border', 'txt_h',
         'sm_shared', 'use_lazy_execution', 'min_bar_w',
         'swarm_max_pts', 'remainder_threshold', 'color_stat_range_shared',
-        'date_range_shared', 'min_label_spacing', 'legend',
+        'date_range_shared', 'min_label_spacing', 'legend', 'x_time_expand_perc',
     })
 
     def __init__(self, *args, **kwargs):
@@ -88,6 +88,7 @@ class Timep(P2SBinComponentMixin, ExportMixin):
             'date_range_shared':       None,
             'min_label_spacing':       15,
             'legend':                  False,
+            'x_time_expand_perc':      0.1,       # interactive: fraction of the visible time span pulled in per timeframe expansion (linear time only)
         }
         self.p2s.assertParamSpecMatches('Timep', self._VALID_KWARGS, _defaults_)
 
@@ -1516,3 +1517,81 @@ class Timep(P2SBinComponentMixin, ExportMixin):
             _df_result_ = _df_with_bin_.filter(pl.col('__bin_key__') == _bin_ts_)
             return _df_result_.drop([c for c in ['__p2s_index__', '__bin_key__']
                                      if c in _df_result_.columns])
+
+    #
+    # __currentTimeframe__() - (t0, t1) of the visible LINEAR time axis: the start of the
+    # first visible bin to the end (exclusive) of the last visible bin.
+    # - returns None for periodic time or when nothing is rendered
+    #
+    def __currentTimeframe__(self):
+        if self._is_periodic_: return None
+        if not (self.p2s.dateColumn(self.df, self._time_field_) or
+                self.p2s.dateTimeColumn(self.df, self._time_field_)): return None
+        _trunc_  = self.__linearTruncMap__().get(self._time_enum_)
+        _df_agg_ = getattr(self, 'df_agg', None)
+        if _trunc_ is None or _df_agg_ is None or self._time_field_ not in _df_agg_.columns: return None
+        _bins_ = _df_agg_[self._time_field_]
+        if len(_bins_) == 0: return None
+        _lo_, _hi_bin_ = _bins_.min(), _bins_.max()
+        if _lo_ is None or _hi_bin_ is None: return None
+        _hi_ = pl.Series([_hi_bin_]).dt.offset_by(_trunc_)[0]   # end of the last bin (exclusive)
+        return (_lo_, _hi_)
+
+    #
+    # filterByTimeframe() - time-based interactive filtering against a base ('top') dataframe.
+    #
+    # Mirrors XYp.filterByTimeframe(); only active for LINEAR (non-periodic) time.  `top_df` is
+    # the fully-unfiltered dataframe at the bottom of the interactive stack; the current
+    # (visible) dataframe is self.df.  The visible timeframe is [t0, t1) -- the start of the
+    # first visible bin to the end of the last visible bin.  `mode` selects the operation:
+    #
+    #   'unfilter'      : every top_df row inside the visible timeframe (i.e. the current rows
+    #                     plus any rows that were filtered out of it).  Returns None at the base
+    #                     of the stack (nothing to add back).
+    #   'expand_before' : the current rows plus top_df rows immediately *before* the timeframe.
+    #   'expand_after'  : the current rows plus top_df rows immediately *after*  the timeframe.
+    #   'expand_both'   : the current rows plus both the before and after chunks.
+    #
+    # Unlike XYp (a continuous axis, which grows by a raw time slice), expansion here snaps to
+    # WHOLE bins: each requested side grows by max(1, round(x_time_expand_perc * visible_bin_count))
+    # bins, so a day/week/month view always gains whole day/week/month bars rather than a partial
+    # edge bar.  Returns the new dataframe to push onto the stack, or None when nothing applies /
+    # there are no additional rows to bring in.
+    #
+    def filterByTimeframe(self, top_df, mode):
+        _tf_ = self.__currentTimeframe__()
+        if _tf_ is None: return None
+        _t0_, _t1_ = _tf_
+        _col_ = self._time_field_
+        if top_df is None or _col_ not in top_df.columns:                                     return None
+        if not (self.p2s.dateColumn(top_df, _col_) or self.p2s.dateTimeColumn(top_df, _col_)): return None
+        # The interactive stack carries user columns only -- drop the reserved index if present
+        if '__p2s_index__' in top_df.columns: top_df = top_df.drop('__p2s_index__')
+        _cur_ = self.df
+        if _cur_ is not None and '__p2s_index__' in _cur_.columns: _cur_ = _cur_.drop('__p2s_index__')
+
+        if mode == 'unfilter':
+            _new_ = top_df.filter((pl.col(_col_) >= _t0_) & (pl.col(_col_) < _t1_))
+            if _cur_ is not None and len(_new_) <= len(_cur_): return None
+            return _new_
+
+        # Snap the expansion to whole bins: grow by max(1, round(perc * visible_bin_count)) bins.
+        _trunc_    = self.__linearTruncMap__()[self._time_enum_]
+        _range_fn_ = pl.date_range if self.p2s.dateColumn(self.df, self._time_field_) else pl.datetime_range
+        _n_bins_   = _range_fn_(_t0_, _t1_, interval=_trunc_, closed='left', eager=True).len()
+        _n_add_    = max(1, round(float(self.x_time_expand_perc) * _n_bins_))
+        # Scale the bin interval string ("15m", "3mo", ...) by _n_add_ whole bins for the offset.
+        _d_ = 0
+        while _d_ < len(_trunc_) and _trunc_[_d_].isdigit(): _d_ += 1
+        _step_      = f'{int(_trunc_[:_d_]) * _n_add_}{_trunc_[_d_:]}'
+        _before_lo_ = pl.Series([_t0_]).dt.offset_by('-' + _step_)[0]
+        _after_hi_  = pl.Series([_t1_]).dt.offset_by(       _step_)[0]
+        _before_ = (pl.col(_col_) >= _before_lo_) & (pl.col(_col_) < _t0_)
+        _after_  = (pl.col(_col_) >= _t1_)        & (pl.col(_col_) < _after_hi_)
+        if   mode == 'expand_before': _chunk_ = top_df.filter(_before_)
+        elif mode == 'expand_after':  _chunk_ = top_df.filter(_after_)
+        elif mode == 'expand_both':   _chunk_ = top_df.filter(_before_ | _after_)
+        else:                         return None
+        if len(_chunk_) == 0: return None
+        if _cur_ is None:     return _chunk_
+        return pl.concat([_cur_, _chunk_], how='diagonal_relaxed').unique(maintain_order=True)

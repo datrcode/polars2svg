@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Interactive structure navigation on `linkpi` — `f` / `F` keyboard
+  shortcuts.** Two graph-structure counterparts to the `xypi`/`timepi` time
+  shortcuts: instead of a time window, they recover rows from the base
+  (bottom-of-stack) dataframe by graph adjacency and **add them on top of the
+  current view**. `f` *edge-unfilters* — for the currently-visible edges it adds
+  back every base row lying on those edges (restoring rows thinned by
+  color/brush/other filters). `shift+f` *node-expands* — for the
+  currently-visible nodes it adds back every base row incident to them (source or
+  destination), pulling previously-filtered neighbors and their edges in. Both
+  keep the entire current view; a targeted edge is refilled to its full base set
+  while every other visible row is preserved. When nodes are selected, the
+  operation is scoped to the selected subgraph — `f` refills only the edges among
+  the selected nodes and `F` only the rows incident to them, leaving the rest of
+  the view untouched. Each op mines the pristine base dataframe, pushes onto the
+  stack (undoable via `X`), and is a no-op when nothing new can be added.
+
 - **Interactive time-axis navigation on `xypi` and `timepi` — `u` / `e`
   keyboard shortcuts.** When the interactive view's time axis represents linear
   time, three shortcuts refilter the interaction stack against the base

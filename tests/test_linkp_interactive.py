@@ -1213,5 +1213,160 @@ class TestLinkPInteractiveBrush(unittest.TestCase):
         self.assertFalse(self.peer._brush_active_)
 
 
+@unittest.skipUnless(_PANEL_AVAILABLE_, 'panel not installed')
+class TestEdgeUnfilter(unittest.TestCase):
+    """Tests for the 'f' key — edge unfilter: ADD base-dataframe rows lying on the
+    currently-visible edges on top of the current view (the rest of the view is kept).
+    With a selection, scope to the subgraph induced by the selected nodes first."""
+
+    def setUp(self):
+        self.p2s = Polars2SVG()
+        # a-b has 3 rows, b-c/c-a have 1 each, far-a (peripheral) has 2 rows: 7 total.
+        self.df = pl.DataFrame({
+            'fm':       ['a', 'a', 'a', 'b', 'c', 'far', 'far'],
+            'to':       ['b', 'b', 'b', 'c', 'a', 'a',   'a'  ],
+            'category': ['x', 'y', 'x', 'y', 'x', 'z',   'z'  ],
+        })
+        self.lp   = self.p2s.linkp(self.df, relationships=[('fm', 'to')])
+        self.ctrl = self.p2s.linkpi(self.lp)
+
+    def _press(self, key):
+        self.ctrl.key_op_finished = key
+        asyncio.run(self.ctrl.applyKeyOp(None))
+
+    def _len_here(self):
+        return len(self.ctrl.dfs[self.ctrl.df_level])
+
+    def _edge_count(self, fm, to):
+        _df_ = self.ctrl.dfs[self.ctrl.df_level]
+        return _df_.filter((pl.col('fm') == fm) & (pl.col('to') == to)).height
+
+    # ── no selection ─────────────────────────────────────────────────────────
+
+    def test_refills_thinned_edges(self):
+        # Collapse every edge to one row (4 rows), then edge-unfilter restores all 7.
+        self.assertTrue(self.ctrl.apply_collapse_edges())
+        self.assertEqual(self._len_here(), 4)
+        self.assertTrue(self.ctrl.apply_edge_unfilter())
+        self.assertEqual(self.ctrl.df_level, 2)
+        self.assertEqual(self._len_here(), 7)
+
+    def test_no_op_when_nothing_filtered(self):
+        # At the base with every row present there is nothing to add back.
+        self.assertFalse(self.ctrl.apply_edge_unfilter())
+        self.assertEqual(self.ctrl.df_level, 0)
+        self.assertEqual(len(self.ctrl.dfs), 1)
+
+    # ── with a selection: ADDITIVE (rest of the view is preserved) ────────────
+
+    def test_selection_refills_only_that_edge_and_keeps_the_rest(self):
+        # Collapse thins every edge to one row (a-b now shows 1 of 3). Selecting the
+        # neighbors a & b and edge-unfiltering refills a-b to its full 3 rows while
+        # leaving the b-c / c-a / far-a rows untouched -- an additive operation.
+        self.assertTrue(self.ctrl.apply_collapse_edges())     # level 1, 4 rows
+        self.assertEqual(self._edge_count('a', 'b'), 1)
+        self.ctrl.selected_entities = {'a', 'b'}
+        self.assertTrue(self.ctrl.apply_edge_unfilter())      # level 2
+        self.assertEqual(self._len_here(), 6)                 # 3 kept (b-c,c-a,far-a) + 3 a-b
+        self.assertEqual(self._edge_count('a', 'b'), 3)       # a-b fully restored
+        self.assertEqual(set(self.ctrl.graphs[self.ctrl.df_level].nodes()),
+                         {'a', 'b', 'c', 'far'})              # rest of the graph preserved
+
+    # ── key dispatch + discoverability ───────────────────────────────────────
+
+    def test_f_key_dispatches_edge_unfilter(self):
+        # Drive both steps through the key handler so the mvc stack stays in sync:
+        # collapse (ctrl-shift-x) thins the edges, then 'f' restores every row.
+        self._press('ctrl_shift_x')
+        self.assertEqual(self.ctrl.df_level, 1)
+        self._press('f')
+        self.assertEqual(self.ctrl.df_level, 2)
+        self.assertEqual(self._len_here(), 7)
+
+    def test_keydown_js_captures_f_and_F(self):
+        kd = type(self.ctrl)._scripts['myOnKeyDown']
+        self.assertIn("data.key_op_finished = 'f'", kd)
+        self.assertIn("data.key_op_finished = 'F'", kd)
+
+    def test_help_text_advertises_f_and_F(self):
+        self.assertIn('edge unfilter',  self.ctrl._keyboard_commands_)
+        self.assertIn('node expansion', self.ctrl._keyboard_commands_)
+
+
+@unittest.skipUnless(_PANEL_AVAILABLE_, 'panel not installed')
+class TestNodeExpansion(unittest.TestCase):
+    """Tests for the 'F' key — node expansion: ADD base-dataframe rows incident to the
+    currently-visible nodes (source or destination) on top of the current view, which
+    can pull previously-filtered neighbors back in. With a selection, scope to the
+    selected nodes first; every other visible row is preserved."""
+
+    def setUp(self):
+        self.p2s = Polars2SVG()
+        self.df = pl.DataFrame({
+            'fm':       ['a', 'a', 'a', 'b', 'c', 'far', 'far'],
+            'to':       ['b', 'b', 'b', 'c', 'a', 'a',   'a'  ],
+            'category': ['x', 'y', 'x', 'y', 'x', 'z',   'z'  ],
+        })
+        self.lp   = self.p2s.linkp(self.df, relationships=[('fm', 'to')])
+        self.ctrl = self.p2s.linkpi(self.lp)
+
+    def _press(self, key):
+        self.ctrl.key_op_finished = key
+        asyncio.run(self.ctrl.applyKeyOp(None))
+
+    def _len_here(self):
+        return len(self.ctrl.dfs[self.ctrl.df_level])
+
+    def _edge_count(self, fm, to):
+        _df_ = self.ctrl.dfs[self.ctrl.df_level]
+        return _df_.filter((pl.col('fm') == fm) & (pl.col('to') == to)).height
+
+    # ── with a selection: ADDITIVE (rest of the view is preserved) ────────────
+
+    def test_selection_expands_selected_and_keeps_the_rest(self):
+        # Remove 'far' via 'x' (level 1, 5 rows: a-b x3, b-c, c-a; far hidden). Then
+        # select the visible node 'a' and node-expand: 'a's incident base rows return
+        # -- including far-a, so 'far' comes back -- while b-c (not incident to a) is
+        # kept. Additive: nothing already visible is dropped.
+        self.ctrl.selected_entities = {'far'}
+        self.assertTrue(self.ctrl.apply_push_selected())      # level 1
+        self.assertEqual(self._len_here(), 5)
+        self.ctrl.selected_entities = {'a'}
+        self.assertTrue(self.ctrl.apply_node_expansion())     # level 2
+        self.assertEqual(self._len_here(), 7)
+        self.assertIn('far', self.ctrl.graphs[self.ctrl.df_level].nodes())  # neighbor pulled back
+        self.assertEqual(self._edge_count('b', 'c'), 1)       # non-incident row preserved
+
+    # ── no selection: reaches into the base to restore filtered neighbors ─────
+
+    def test_restores_a_removed_neighbor(self):
+        # Remove 'far' via 'x' (down to 5 rows), then node-expand from the visible core
+        # {a,b,c}: 'far' and its 2 rows return because far-a is incident to a.
+        self.ctrl.selected_entities = {'far'}
+        self.assertTrue(self.ctrl.apply_push_selected())
+        self.assertEqual(self._len_here(), 5)
+        self.assertEqual(self.ctrl.selected_entities, set())   # 'far' left the graph
+        self.assertTrue(self.ctrl.apply_node_expansion())
+        self.assertEqual(self._len_here(), 7)
+        self.assertIn('far', self.ctrl.graphs[self.ctrl.df_level].nodes())
+
+    def test_no_op_on_full_graph(self):
+        # Nothing has been filtered, so expanding from every visible node adds nothing.
+        self.assertFalse(self.ctrl.apply_node_expansion())
+        self.assertEqual(self.ctrl.df_level, 0)
+
+    # ── key dispatch ─────────────────────────────────────────────────────────
+
+    def test_F_key_dispatches_node_expansion(self):
+        # Remove 'far' (mvc-synced), then 'F' brings it back on top of the visible core.
+        self.ctrl.selected_entities = {'far'}
+        self._press('x')
+        self.assertEqual(self.ctrl.df_level, 1)
+        self._press('F')
+        self.assertEqual(self.ctrl.df_level, 2)
+        self.assertEqual(self._len_here(), 7)
+        self.assertIn('far', self.ctrl.graphs[self.ctrl.df_level].nodes())
+
+
 if __name__ == '__main__':
     unittest.main()

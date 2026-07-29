@@ -2477,6 +2477,20 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
                 if self.df_level > _level_before_: _mvc_stack_action_ = ('push', self.dfs[self.df_level])
 
             #
+            # 'f' - edge unfilter: re-add base rows on the currently-visible edges (push the stack)
+            # 'F' - node expansion: re-add base rows incident to the currently-visible nodes (push the stack)
+            #
+            elif self.key_op_finished == 'f':
+                _level_before_ = self.df_level
+                self.apply_edge_unfilter()
+                if self.df_level > _level_before_: _mvc_stack_action_ = ('push', self.dfs[self.df_level])
+
+            elif self.key_op_finished == 'F':
+                _level_before_ = self.df_level
+                self.apply_node_expansion()
+                if self.df_level > _level_before_: _mvc_stack_action_ = ('push', self.dfs[self.df_level])
+
+            #
             # Degree Related Operations
             #
             elif len(self.key_op_finished) == 1 and self.key_op_finished in '0123456789':
@@ -2608,6 +2622,48 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
             self.pushStack(_df_)
             return True
         return False
+
+    def _refilter_union_(self, _op_g_):
+        """Shared body of the structural unfilter/expand ops: ADD the base-dataframe
+        rows lying on the operative edges to the current view, keeping every currently
+        visible row that is not on one of those edges. The recovered rows are the base's
+        full set for the operative edges (so a thinned edge is fully restored), unioned
+        with the untouched remainder of the current view -- these two are disjoint (an
+        operative row and a non-operative row never share an fm/to pair), so a plain
+        concat is the correct multiset union. Pushes the result if it gained rows."""
+        _rels_      = self.ln_params['relationships']
+        _cols_      = self.dfs[0].columns                       # canonical (pre-filter) columns
+        _cur_       = self.dfs[self.df_level].select(_cols_)
+        _from_base_ = self.rt_self.filterDataFrameByGraph(self.dfs[0], _rels_, _op_g_).select(_cols_)  # all base rows on the operative edges
+        _cur_op_    = self.rt_self.filterDataFrameByGraph(_cur_,       _rels_, _op_g_).select(_cols_)  # current rows on those edges
+        _cur_kept_  = _cur_.join(_cur_op_, on=_cols_, how='anti', nulls_equal=True)                    # the rest of the current view
+        _result_    = pl.concat([_cur_kept_, _from_base_])
+        if len(_result_) > len(_cur_):                          # rows were actually recovered
+            self.pushStack(_result_)
+            return True
+        return False
+
+    def apply_edge_unfilter(self):
+        """Simulate the 'f' key: add back the base-dataframe rows that lie on the
+        currently visible edges (restoring rows thinned by color/brush/other filters),
+        on top of the current view. With a selection, scope to the subgraph induced by
+        the selected nodes first, so only edges among the selected nodes are refilled;
+        every other visible row is preserved."""
+        _vis_g_ = self.graphs[self.df_level]
+        _op_g_  = _vis_g_.subgraph(self.selected_entities) if self.selected_entities else _vis_g_
+        return self._refilter_union_(_op_g_)
+
+    def apply_node_expansion(self):
+        """Simulate the 'F' key: add back the base-dataframe rows incident to the
+        currently visible nodes (source or destination), on top of the current view --
+        this can pull previously-filtered neighbors and their edges in. With a
+        selection, scope to the selected nodes first, so only rows incident to those
+        nodes are added; every other visible row is preserved."""
+        _base_g_    = self.graphs[0]
+        _op_nodes_  = set(self.selected_entities) if self.selected_entities else set(self.graphs[self.df_level].nodes())
+        _inc_edges_ = [(_u_, _v_) for _u_, _v_ in _base_g_.edges() if _u_ in _op_nodes_ or _v_ in _op_nodes_]
+        _op_g_      = _base_g_.edge_subgraph(_inc_edges_) if _inc_edges_ else nx.Graph()
+        return self._refilter_union_(_op_g_)
 
     def apply_community_detection(self):
         """Simulate the 'd' key: louvain communities over the graph at this stack level,
@@ -2941,6 +2997,8 @@ d . | detect communities (louvain) & color nodes by community
  .. | shift-d ........ | clear community colors
 e . | expand selection | shift-e follows directed edges
  .. | ctrl-e ......... | expand along reversed directed edges
+f . | edge unfilter: add rows on visible edges into the view (selected: scope to edges among selected)
+ .. | shift-f ........ | node expansion: add rows incident to visible nodes into the view (selected: scope to selected)
 g . | layout upon next mouse drag
  .. | shift-g ........ | open layout-mode picker: mnemonic key selects; ctrl-g reverses
 h . | toggle help display
@@ -3112,6 +3170,9 @@ z . | select node under mouse by color (shift, ctrl, and ctrl-shift apply)
         'apply_push_selected':                apply_push_selected,
         'apply_pop':                          apply_pop,
         'apply_collapse_edges':               apply_collapse_edges,
+        'apply_edge_unfilter':                apply_edge_unfilter,
+        'apply_node_expansion':               apply_node_expansion,
+        '_refilter_union_':                   _refilter_union_,
         'apply_community_detection':          apply_community_detection,
         'apply_collapse_to':                  apply_collapse_to,
         'apply_layout_interaction':           apply_layout_interaction,
@@ -3413,6 +3474,8 @@ z . | select node under mouse by color (shift, ctrl, and ctrl-shift apply)
             else if (event.key == "D") { data.key_op_finished = 'D';  } // Clear the community colors
             else if (event.key == "e") { if (event.ctrlKey) event.preventDefault(); data.key_op_finished = 'e';  } // Expand (undirected); ctrl-e expands along reversed directed edges (preventDefault: ctrl-e is browser search-bar focus)
             else if (event.key == "E") { data.key_op_finished = 'E';  } // Expand (w/ digraph, forward)
+            else if (event.key == "f") { data.key_op_finished = 'f';  } // Edge unfilter: re-add base rows on the currently-visible edges
+            else if (event.key == "F") { data.key_op_finished = 'F';  } // Node expansion: re-add base rows incident to the currently-visible nodes
             else if (event.key == "g") { state.layout_op        = true; // Mouse press is layout shape
                                          state.layout_line_flag = false; } 
             else if (event.key == "G") { state.menu_kind = 'mode';      self.menuOpen(); } // Open the layout-mode picker menu

@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Interactive time-axis navigation on `xypi` — `u` / `e` keyboard shortcuts.**
+  When the interactive xy view's x-axis represents linear time, three shortcuts
+  refilter the interaction stack against the base (bottom-of-stack) dataframe by
+  time window. `u` unfilters every base row within the currently visible
+  timeframe — the visible rows plus any that were filtered out of it — and is a
+  no-op at the base of the stack. `e` expands the timeframe in **both**
+  directions; `shift+e` expands backward (earlier events) only and `ctrl+e`
+  forward (later events) only. Each expansion pulls in a chunk equal to
+  `x_time_expand_perc` of the visible time span per direction and pushes the
+  widened dataframe onto the stack (a no-op when there are no further rows to
+  add). New **`x_time_expand_perc=` on `xyp`** (default `0.1`) sets the chunk
+  size and is carried through `template=` clones. The shortcuts are inert on
+  non-time x-axes.
+
 ## [0.1.2] — 2026-07-25
 
 ### Added

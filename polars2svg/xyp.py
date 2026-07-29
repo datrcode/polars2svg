@@ -53,7 +53,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
         'background', 'background_label_color', 'background_opacity',
         'background_fill', 'background_stroke_w', 'background_stroke',
         'draw_context', 'draw_border', 'insets', 'wxh', 'txt_h', 'sm_shared',
-        'use_lazy_execution', 'legend',
+        'use_lazy_execution', 'legend', 'x_time_expand_perc',
     })
 
     #
@@ -232,6 +232,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
             'dot_size_global_max':             None,
             'use_lazy_execution':    True,
             'legend':                False,
+            'x_time_expand_perc':    0.1,       # interactive: fraction of the visible time span pulled in per timeframe expansion (time x-axis only)
         }
         self.p2s.assertParamSpecMatches('XYp', self._VALID_KWARGS, _defaults_)
 
@@ -3497,4 +3498,76 @@ class XYp(P2SBackgroundMixin, ExportMixin):
             raise ValueError(f'recordsAt(): unknown shape {shape}')
         _df_filtered_ = _df_filtered_.drop(set(_df_filtered_.columns) - set(['__p2s_index__']))
         return self.df.join(_df_filtered_, on='__p2s_index__').drop('__p2s_index__')
+
+    #
+    # __xAxisIsTime__() - True when the x-axis represents linear (date/datetime) time
+    #
+    def __xAxisIsTime__(self):
+        return self.df_flat is not None and '__x__' in self.df_flat.columns and \
+               (self.p2s.dateColumn(self.df_flat, '__x__') or self.p2s.dateTimeColumn(self.df_flat, '__x__'))
+
+    #
+    # __currentTimeframe__() - (t_min, t_max) of the currently visible x (time) axis, or None
+    # - the visible timeframe is the min/max of the x values actually rendered at this stack level
+    #
+    def __currentTimeframe__(self):
+        if not self.__xAxisIsTime__() or len(self.df_flat) == 0: return None
+        return (self.df_flat['__x__'].min(), self.df_flat['__x__'].max())
+
+    #
+    # __timeColumn__() - the raw source column backing a single-column time x-axis (else None)
+    #
+    def __timeColumn__(self):
+        if self.x_clean is None or len(self.x_clean) != 1: return None
+        _c_ = self.x_clean[0]
+        return _c_ if isinstance(_c_, str) else None
+
+    #
+    # filterByTimeframe() - time-based interactive filtering against a base ('top') dataframe.
+    #
+    # Only meaningful when the x-axis represents linear time and it maps to a single source
+    # column.  `top_df` is the fully-unfiltered dataframe at the bottom of the interactive
+    # stack; the current (visible) dataframe is self.df.  The visible timeframe is
+    # [t_min, t_max] (the earliest/latest visible x values).  `mode` selects the operation:
+    #
+    #   'unfilter'      : every top_df row inside the visible timeframe (i.e. the current
+    #                     rows plus any rows that were filtered out of that timeframe).
+    #                     Returns None at the base of the stack (nothing to add back).
+    #   'expand_before' : the current rows plus top_df rows immediately *before* the visible
+    #                     timeframe -- a chunk equal to x_time_expand_perc of the visible span.
+    #   'expand_after'  : the current rows plus top_df rows immediately *after*  the visible
+    #                     timeframe -- a chunk equal to x_time_expand_perc of the visible span.
+    #   'expand_both'   : the current rows plus top_df rows in both the before *and* after
+    #                     chunks (each x_time_expand_perc of the visible span).
+    #
+    # Returns the new dataframe to push onto the stack, or None when the operation does not
+    # apply or brings in no additional rows.
+    #
+    def filterByTimeframe(self, top_df, mode):
+        _tf_ = self.__currentTimeframe__()
+        if _tf_ is None: return None
+        _t0_, _t1_ = _tf_
+        _col_ = self.__timeColumn__()
+        if _col_ is None or top_df is None or _col_ not in top_df.columns:                 return None
+        if not (self.p2s.dateColumn(top_df, _col_) or self.p2s.dateTimeColumn(top_df, _col_)): return None
+        # The interactive stack carries user columns only -- drop the reserved index if present
+        if '__p2s_index__' in top_df.columns: top_df = top_df.drop('__p2s_index__')
+        _cur_ = self.df
+        if _cur_ is not None and '__p2s_index__' in _cur_.columns: _cur_ = _cur_.drop('__p2s_index__')
+
+        if mode == 'unfilter':
+            _new_ = top_df.filter((pl.col(_col_) >= _t0_) & (pl.col(_col_) <= _t1_))
+            if _cur_ is not None and len(_new_) <= len(_cur_): return None
+            return _new_
+
+        _delta_  = (_t1_ - _t0_) * float(self.x_time_expand_perc)
+        _before_ = (pl.col(_col_) >= (_t0_ - _delta_)) & (pl.col(_col_) <  _t0_)
+        _after_  = (pl.col(_col_) >   _t1_)            & (pl.col(_col_) <= (_t1_ + _delta_))
+        if   mode == 'expand_before': _chunk_ = top_df.filter(_before_)
+        elif mode == 'expand_after':  _chunk_ = top_df.filter(_after_)
+        elif mode == 'expand_both':   _chunk_ = top_df.filter(_before_ | _after_)
+        else:                         return None
+        if len(_chunk_) == 0: return None
+        if _cur_ is None:     return _chunk_
+        return pl.concat([_cur_, _chunk_], how='diagonal_relaxed').unique(maintain_order=True)
 

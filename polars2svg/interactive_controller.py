@@ -271,6 +271,7 @@ _INTERACTIVEP_CONFIG_ = {
         'fallback_shape':'SELECT_HORIZONTALp',
         'brush_seq':     '[0,1,2,3,4,5,6]',
         'has_z_key':     True,
+        'has_time_keys': True,
         'kbd_r_desc':    'toggle brush on/off',
     },
     'chordpi': {
@@ -309,6 +310,7 @@ def _interactivep(_plot_, kind, **kwargs):
     brush_seq      = cfg['brush_seq']
     has_z_key      = cfg['has_z_key']
     has_search     = cfg.get('has_search', False)
+    has_time_keys  = cfg.get('has_time_keys', False)
     _cls_ref_      = [None]
     # Constructor
     def __init__(self, **kwargs):
@@ -391,6 +393,7 @@ def _interactivep(_plot_, kind, **kwargs):
             _key_   = self.key_op_finished
             _xy_    = (self.x_mouse, self.y_mouse)
             _shift_ = self.shiftkey
+            _ctrl_  = self.ctrlkey
             self.key_op_finished = ''
         if has_z_key and (_key_ == 'z' or _key_ == 'Z'):
             _df_ = self._plot_.filterByColorAtXY(_xy_, _shift_)
@@ -398,6 +401,17 @@ def _interactivep(_plot_, kind, **kwargs):
             else:                                  await self.mvc.popStack(self)
         elif _key_ == 'q':
             await self.mvc.subtractCurrentStackFromTop(self)
+        # Time-axis shortcuts (xy only): 'u' unfilters the visible timeframe; 'e' expands the
+        # timeframe both directions, shift+'e' / ctrl+'e' expand it backward / forward only.
+        # Each pulls rows from the base (top) dataframe and pushes the result onto the stack
+        # when there is something to add.
+        elif has_time_keys and _key_ == 'u':
+            _df_ = self._plot_.filterByTimeframe(self.mvc.stackTopDataFrame(self), 'unfilter')
+            if _df_ is not None and len(_df_) > 0: await self.mvc.pushStack(self, _df_)
+        elif has_time_keys and _key_ == 'e':
+            _mode_ = 'expand_before' if _shift_ else ('expand_after' if _ctrl_ else 'expand_both')
+            _df_ = self._plot_.filterByTimeframe(self.mvc.stackTopDataFrame(self), _mode_)
+            if _df_ is not None and len(_df_) > 0: await self.mvc.pushStack(self, _df_)
     # Callbacks - applyBrushOp() — fires on mouse move (when brush active) or on brush state change
     async def applyBrushOp(self, event):
         async with self.lock:
@@ -447,12 +461,16 @@ def _interactivep(_plot_, kind, **kwargs):
     # Build keyboard commands string
     _z_key_cmd_ = '\nz . | filter to color nearest to mouse (shift filters those records out)' if has_z_key else ''
     _search_cmd_ = '\n/ . | filter bins: type substring + Enter (prefix -remove); Escape to cancel' if has_search else ''
+    _time_key_cmd_ = ('\nu . | (time x-axis) unfilter rows within the visible timeframe'
+                      '\ne . | (time x-axis) expand timeframe both directions'
+                      '\nshift+e . | (time x-axis) expand timeframe backward (earlier events)'
+                      '\nctrl+e . | (time x-axis) expand timeframe forward (later events)') if has_time_keys else ''
     _keyboard_commands_ = f"""
 h . | toggle help display
 q . | subtract the current from the top
 F . | pick selection shape (rectangle | oval)
 r . | {cfg['kbd_r_desc']}
-R . | cycle brush shape{_z_key_cmd_}{_search_cmd_}
+R . | cycle brush shape{_z_key_cmd_}{_search_cmd_}{_time_key_cmd_}
         """
 
     # Build static SVG for keyboard help overlay
@@ -474,6 +492,15 @@ R . | cycle brush shape{_z_key_cmd_}{_search_cmd_}
     _z_block_ = (
         """if      (event.key == 'z' || event.key == 'Z') { data.key_op_finished = "z"; }\n                else """
         if has_z_key else ""
+    )
+
+    # Build JS time-key block (xy time-axis shortcuts). 'e'/'E' funnel to the same op;
+    # the shift/ctrl state (synced just above) picks backward vs. forward in applyKeyOp.
+    _time_block_ = (
+        """if      (event.key == 'u' || event.key == 'U') { data.key_op_finished = "u"; }
+                else if (event.key == 'e' || event.key == 'E') { data.key_op_finished = "e"; }
+                else """
+        if has_time_keys else ""
     )
 
     # Build JS search blocks for myOnKeyDown (histopi only)
@@ -723,7 +750,7 @@ R . | cycle brush shape{_z_key_cmd_}{_search_cmd_}
                 data.ctrlkey  = event.ctrlKey;
                 data.x_mouse  = state.cur_mouse_x;
                 data.y_mouse  = state.cur_mouse_y;
-                {_z_block_}if (event.key == 'r') {{
+                {_z_block_}{_time_block_}if (event.key == 'r') {{
                     if (data.brush_state == 0) {{
                         var _seq_ = {brush_seq};
                         data.brush_state = _seq_[1];

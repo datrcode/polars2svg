@@ -230,6 +230,108 @@ class TestStackControlClickRouting(_StackControlBase):
         self._click(sc, _y_)   # must not raise
 
 
+class TestStackControlKeyOps(_StackControlBase):
+    """Keyboard shortcuts: 'c' collapses to base+current, ctrl+shift+c rebases
+    the visible dataframe as the new base, and 'h' toggles the help overlay."""
+
+    def _key(self, sc, op):
+        sc.key_op_finished = op
+        asyncio.run(sc.applyKeyOp(None))
+
+    def test_collapse_reduces_to_base_and_current(self):
+        dfs = self._stack_of(4)
+        sc, mvc = self._make_sc(dfs=dfs, index=2)
+        self._key(sc, 'collapse')
+        s = mvc.stacks['default']
+        self.assertEqual(len(s['dfs']), 2)
+        self.assertIs(s['dfs'][0], dfs[0])   # base unchanged
+        self.assertIs(s['dfs'][1], dfs[2])   # previously-visible frame on top
+        self.assertEqual(s['index'], 1)
+
+    def test_collapse_when_viewing_base_leaves_single_frame(self):
+        dfs = self._stack_of(4)
+        sc, mvc = self._make_sc(dfs=dfs, index=0)
+        self._key(sc, 'collapse')
+        s = mvc.stacks['default']
+        self.assertEqual(len(s['dfs']), 1)   # no duplicated base frame
+        self.assertIs(s['dfs'][0], dfs[0])
+        self.assertEqual(s['index'], 0)
+
+    def test_collapse_propagates_to_peers(self):
+        dfs = self._stack_of(4)
+        sc, mvc = self._make_sc(dfs=dfs, index=2)
+        peer = _PeerView()
+        mvc.view_stack[id(peer)] = 'default'
+        mvc.view_refs[id(peer)]  = peer
+        self._key(sc, 'collapse')
+        self.assertEqual(len(peer.display_calls), 1)
+        self.assertIs(peer.display_calls[0][0], dfs[2])
+        self.assertEqual(peer.display_calls[0][1], 1)
+
+    def test_rebase_sets_current_as_new_base(self):
+        dfs = self._stack_of(4)
+        sc, mvc = self._make_sc(dfs=dfs, index=2)
+        self._key(sc, 'rebase')
+        s = mvc.stacks['default']
+        self.assertEqual(len(s['dfs']), 1)
+        self.assertIs(s['dfs'][0], dfs[2])   # visible frame is now the sole base
+        self.assertEqual(s['index'], 0)
+
+    def test_rebase_propagates_to_peers(self):
+        dfs = self._stack_of(4)
+        sc, mvc = self._make_sc(dfs=dfs, index=2)
+        peer = _PeerView()
+        mvc.view_stack[id(peer)] = 'default'
+        mvc.view_refs[id(peer)]  = peer
+        self._key(sc, 'rebase')
+        self.assertEqual(len(peer.display_calls), 1)
+        self.assertIs(peer.display_calls[0][0], dfs[2])
+        self.assertEqual(peer.display_calls[0][1], 0)
+
+    def test_collapse_does_not_serve_stale_tile_on_id_collision(self):
+        # Simulate a reused id(): the kept frame's cache slot holds another frame's
+        # render. The identity guard must re-render rather than serve the stale tile.
+        dfs = self._stack_of(4)
+        sc, _ = self._make_sc(dfs=dfs, index=2)
+        sc._svg_cache_[id(dfs[2])] = (_make_df(), '<svg id="STALE_TILE"></svg>')
+        self._key(sc, 'collapse')
+        self.assertNotIn('STALE_TILE', sc.mod_inner)
+        self.assertIs(sc._svg_cache_[id(dfs[2])][0], dfs[2])   # slot rebound to the kept df
+
+    def test_rebase_does_not_serve_stale_tile_on_id_collision(self):
+        dfs = self._stack_of(4)
+        sc, _ = self._make_sc(dfs=dfs, index=2)
+        sc._svg_cache_[id(dfs[2])] = (_make_df(), '<svg id="STALE_TILE"></svg>')
+        self._key(sc, 'rebase')
+        self.assertNotIn('STALE_TILE', sc.mod_inner)
+
+    def test_key_op_finished_is_reset_after_apply(self):
+        dfs = self._stack_of(3)
+        sc, _ = self._make_sc(dfs=dfs, index=1)
+        self._key(sc, 'collapse')
+        self.assertEqual(sc.key_op_finished, '')
+
+    def test_unknown_key_op_is_ignored(self):
+        dfs = self._stack_of(3)
+        sc, mvc = self._make_sc(dfs=dfs, index=1)
+        self._key(sc, 'nonsense')
+        self.assertEqual(len(mvc.stacks['default']['dfs']), 3)   # untouched
+
+    def test_key_op_without_mvc_is_noop(self):
+        sc = self._make_sc()
+        self._key(sc, 'collapse')   # must not raise
+
+    def test_help_overlay_hidden_by_default_and_baked_into_template(self):
+        sc = self._make_sc()
+        self.assertEqual(sc.help_display, 'none')              # not rendered until toggled
+        self.assertIn('toggle help', sc._template)             # help chrome is present
+        self.assertIn('keyboardhelp', sc._template)
+        # Hidden via display (not an off-screen translate), so it can't spill into a
+        # neighbouring component while the root <svg> has overflow:visible.
+        self.assertIn('display="${help_display}"', sc._template)
+        self.assertNotIn('translate(-1000', sc._template)
+
+
 class TestStackControlDisplay(_StackControlBase):
 
     def test_display_rerenders_frame_map(self):
@@ -262,6 +364,16 @@ class TestStackControlDisplay(_StackControlBase):
         _tile_ = sc._svg_cache_[id(dfs[1])]
         asyncio.run(sc.display(dfs[0], dfs, 0))
         self.assertIs(sc._svg_cache_[id(dfs[1])], _tile_)
+
+    def test_display_identity_guard_rerenders_on_id_collision(self):
+        # A cache slot holding another object's render (as a reused id() would)
+        # must not be served: display re-renders and rebinds the slot to the real df.
+        dfs = self._stack_of(2)
+        sc, _ = self._make_sc(dfs=dfs, index=1)
+        sc._svg_cache_[id(dfs[1])] = (_make_df(), '<svg id="STALE_TILE"></svg>')
+        asyncio.run(sc.display(dfs[1], dfs, 1))
+        self.assertNotIn('STALE_TILE', sc.mod_inner)
+        self.assertIs(sc._svg_cache_[id(dfs[1])][0], dfs[1])
 
 
 class TestStackControlPlacement(unittest.TestCase):

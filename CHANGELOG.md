@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Stack control widget — `c` / `ctrl+shift+c` collapse shortcuts and an `h`
+  help overlay.** Two keyboard shortcuts prune the interaction stack directly
+  from the stack control widget. `c` *collapses* the stack to just the base and
+  the currently visible frame, leaving `[base, current]` (or just `[base]` when
+  the base itself is the visible frame). `ctrl+shift+c` *rebases* — it discards
+  the entire stack and makes the visible dataframe the new base, leaving
+  `[current]` (routed through `replaceStack`, so peers that track a base
+  dataframe — e.g. the graph view — reset accordingly). Both ops propagate to
+  every view sharing the stack. A new `h` **help overlay** lists the shortcuts in
+  the same translucent-box style as the other interactive components' help
+  menus, and the widget now takes keyboard focus on hover so it receives keys.
+
 - **Interactive structure navigation on `linkpi` — `f` / `F` keyboard
   shortcuts.** Two graph-structure counterparts to the `xypi`/`timepi` time
   shortcuts: instead of a time window, they recover rows from the base
@@ -47,6 +59,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `max(1, round(x_time_expand_perc × visible_bin_count))` bins, so a day/week/
   month view always gains whole day/week/month bars rather than a partial edge
   bar. `timepi`'s shortcuts are additionally inert on a **periodic** time axis.
+
+### Fixed
+
+- **Interactive render caches could serve a stale render after an `id()`
+  collision.** Each interactive view memoizes rendered frames in a cache keyed on
+  `id(df)`, but a dropped frame's id can be reused by a later dataframe, so a
+  cache hit was not guaranteed to belong to the requested frame — occasionally
+  painting a since-freed frame's render. Cache entries now carry their source
+  dataframe and every hit is identity-checked, re-rendering on a mismatch.
+  Affects the stack control widget, the generic interactive views
+  (`xypi` / `timepi` / `histopi` / `chordpi` / `piepi`), `smallpi`, and
+  `spreadlinepi`.
 
 ## [0.1.2] — 2026-07-25
 

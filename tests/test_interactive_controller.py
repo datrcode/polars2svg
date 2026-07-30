@@ -413,6 +413,19 @@ class TestP2SInteractiveMethods(unittest.TestCase):
     def test_xypi_class_name_is_XYPI(self):
         self.assertEqual(type(self.p2s.xypi(self.xyp_obj)).__name__, 'XYPI')
 
+    def test_display_identity_guard_rerenders_on_id_collision(self):
+        # The render cache keys on id(df); a dropped frame's id can be reused by a
+        # later dataframe. Entries are (df, plot) and hits are identity-guarded, so
+        # a slot holding another object's render must be re-rendered, not served.
+        xi = self.p2s.xypi(self.p2s.xyp(self.df, 'x', 'y'))
+        df_orig = next(iter(xi._cache_.values()))[0]
+        df2 = df_orig.head(3)
+        asyncio.run(xi.display(df2, [df_orig, df2], 1))
+        xi._cache_[id(df2)] = (object(), 'STALE_PLOT')     # simulate an id() collision
+        asyncio.run(xi.display(df2, [df_orig, df2], 1))
+        self.assertIs(xi._cache_[id(df2)][0], df2)          # slot rebound to the real df
+        self.assertNotEqual(xi._cache_[id(df2)][1], 'STALE_PLOT')
+
     # ── histopi ───────────────────────────────────────────────────────────────
 
     def test_histopi_returns_reactive_html(self):
@@ -436,6 +449,41 @@ class TestP2SInteractiveMethods(unittest.TestCase):
 
     def test_linkpi_class_name_is_LINKPI(self):
         self.assertEqual(type(self.p2s.linkpi(self.linkp_obj)).__name__, 'LINKPI')
+
+    def test_linkpi_display_reconciles_internal_stack_on_collapse(self):
+        # A stack-control 'collapse' replaces the MVC stack [base, A, B, C] with
+        # [base, C]; index 1 now holds C, not A. LINKPI keeps its own level-indexed
+        # stack, so display must reconcile it rather than walk to its stale level 1.
+        ldf  = pl.DataFrame({'fm': ['a', 'b', 'c', 'd', 'e'],
+                             'to': ['b', 'c', 'd', 'e', 'a']})
+        ctrl = self.p2s.linkpi(self.p2s.linkp(ldf, relationships=[('fm', 'to')]))
+        base = ctrl.dfs[0]
+        A, B, C = base.head(4), base.head(3), base.head(2)
+        asyncio.run(ctrl.display(A, [base, A], 1))
+        asyncio.run(ctrl.display(B, [base, A, B], 2))
+        asyncio.run(ctrl.display(C, [base, A, B, C], 3))
+        self.assertEqual(ctrl.df_level, 3)
+        asyncio.run(ctrl.display(C, [base, C], 1))                  # collapse
+        self.assertEqual(len(ctrl.dfs), 2)
+        self.assertIs(ctrl.dfs[0], base)
+        self.assertIs(ctrl.dfs[ctrl.df_level], C)                  # shows C, not the stale A
+        self.assertIsNot(ctrl.dfs[ctrl.df_level], A)
+        self.assertIs(ctrl.dfs_layout[ctrl.df_level].df_orig, C)   # C's layout reused (positions kept)
+
+    def test_linkpi_display_normal_navigation_still_uses_level_walk(self):
+        # Append/truncate navigation is identity-prefix compatible, so it keeps
+        # using the cheap level-walk (reconciliation only kicks in on divergence).
+        ldf  = pl.DataFrame({'fm': ['a', 'b', 'c', 'd', 'e'],
+                             'to': ['b', 'c', 'd', 'e', 'a']})
+        ctrl = self.p2s.linkpi(self.p2s.linkp(ldf, relationships=[('fm', 'to')]))
+        base = ctrl.dfs[0]
+        A = base.head(3)
+        asyncio.run(ctrl.display(A, [base, A], 1))
+        self.assertIs(ctrl.dfs[ctrl.df_level], A)
+        asyncio.run(ctrl.display(base, [base, A], 0))              # pop back to base
+        self.assertEqual(ctrl.df_level, 0)
+        self.assertIs(ctrl.dfs[ctrl.df_level], base)
+        self.assertEqual(len(ctrl.dfs), 2)                        # internal stack intact
 
     # ── neighborhood layout operations ────────────────────────────────────────
 

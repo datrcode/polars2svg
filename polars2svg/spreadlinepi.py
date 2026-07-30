@@ -129,7 +129,7 @@ def spreadlinepi(_spread_, use_webgpu=False, **kwargs):
         super(_cls_[0], self).__init__(**kwargs)
         self.lock              = asyncio.Lock()
         self._spread_          = _spread_ref_[0]
-        self._cache_           = {id(_spread_ref_[0].df_orig): _spread_ref_[0]}
+        self._cache_           = {id(_spread_ref_[0].df_orig): (_spread_ref_[0].df_orig, _spread_ref_[0])}
         self.selected_entities = set()
         if _mvc_ is None:
             self.mvc = InteractionController()
@@ -178,9 +178,12 @@ def spreadlinepi(_spread_, use_webgpu=False, **kwargs):
     # ── MVC callbacks ────────────────────────────────────────────────────────
     async def display(self, df, dfs, dfs_index):
         async with self.lock:
-            if id(df) not in self._cache_:
-                self._cache_[id(df)] = _spread_ref_[0].render_with(df)
-            self._spread_ = self._cache_[id(df)]
+            # entries are (df, spread); identity-guard the id() key against reuse
+            entry = self._cache_.get(id(df))
+            if entry is None or entry[0] is not df:
+                entry = (df, _spread_ref_[0].render_with(df))
+                self._cache_[id(df)] = entry
+            self._spread_ = entry[1]
             self._apply_render_()
             keep = {id(d) for d in dfs}
             for k in list(self._cache_):
@@ -245,7 +248,7 @@ def spreadlinepi(_spread_, use_webgpu=False, **kwargs):
                        else set(self.selected_entities))
             new_spread = _spread_ref_[0].render_with(self._spread_.df_orig, ego=new_ego)
             _spread_ref_[0] = new_spread
-            self._cache_ = {id(new_spread.df_orig): new_spread}
+            self._cache_ = {id(new_spread.df_orig): (new_spread.df_orig, new_spread)}
             self._spread_ = new_spread
             self._apply_render_()
             await self._broadcastSelection()

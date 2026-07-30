@@ -328,7 +328,7 @@ def _interactivep(_plot_, kind, **kwargs):
             self.mvc = mvc
         # Render state
         self._plot_  = _plot_
-        self._cache_ = {id(_plot_.df_orig): _plot_}
+        self._cache_ = {id(_plot_.df_orig): (_plot_.df_orig, _plot_)}
         self.template = _plot_
         # Watch for callbacks
         self.param.watch(self.applyDragOp,     'drag_op_finished')
@@ -448,10 +448,14 @@ def _interactivep(_plot_, kind, **kwargs):
     # MVC
     async def display(self, df, dfs, dfs_index):
         async with self.lock:
-            # render if not already rendered
-            if id(df) not in self._cache_: self._cache_[id(df)] = self.__renderView__(df)
+            # render if not already rendered — entries are (df, plot); the identity
+            # guard re-renders when a reused id would otherwise serve a freed df's plot
+            _entry_ = self._cache_.get(id(df))
+            if _entry_ is None or _entry_[0] is not df:
+                _entry_ = (df, self.__renderView__(df))
+                self._cache_[id(df)] = _entry_
             # set the current & refresh
-            self._plot_ = self._cache_[id(df)]
+            self._plot_ = _entry_[1]
             self.__refreshView__()
             # clean up the cache
             _ids_ = set([id(df) for df in dfs])
@@ -984,7 +988,7 @@ def smallpi(_smallp_, **kwargs):
             self.mvc.view_stack[id(self)] = 'default'
             self.mvc.view_refs[id(self)]  = self
         self._plot_  = _smallp_
-        self._cache_ = {id(_smallp_.df_orig): _smallp_}
+        self._cache_ = {id(_smallp_.df_orig): (_smallp_.df_orig, _smallp_)}
         self.param.watch(self.applyDragOp,     'drag_op_finished')
         self.param.watch(self.applyBrushOp,    'brush_changed')
         self.param.watch(self.applyBrushLeave, 'brush_leave_done')
@@ -1010,9 +1014,12 @@ def smallpi(_smallp_, **kwargs):
 
     async def display(self, df, dfs, dfs_index):
         async with self.lock:
-            if id(df) not in self._cache_:
-                self._cache_[id(df)] = self.__renderView__(df)
-            self._plot_ = self._cache_[id(df)]
+            # entries are (df, plot); identity-guard the id() key against reuse
+            _entry_ = self._cache_.get(id(df))
+            if _entry_ is None or _entry_[0] is not df:
+                _entry_ = (df, self.__renderView__(df))
+                self._cache_[id(df)] = _entry_
+            self._plot_ = _entry_[1]
             self.__refreshView__()
             _ids_ = {id(d) for d in dfs}
             for _id_ in list(self._cache_.keys()):
@@ -1665,10 +1672,50 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
                 if _self_._brush_active_:
                     _self_._brush_active_ = False
                     _self_.__refreshView__()
-                while _self_.df_level < dfs_index:
-                    _self_.pushStack(dfs[_self_.df_level + 1])
-                while _self_.df_level > dfs_index:
-                    _self_.popStack()
+                # The level-walk below assumes our internal stack still mirrors `dfs`
+                # (append/truncate only). A stack-control 'collapse' drops/reorders
+                # frames, so an index that used to hold one frame now holds another —
+                # walking to it would surface a stale frame. Detect that divergence by
+                # identity and rebuild the internal stack to match instead.
+                _diverged_ = any(_self_.dfs[_i_] is not dfs[_i_]
+                                 for _i_ in range(min(len(_self_.dfs), len(dfs))))
+                if _diverged_:
+                    _self_._reconcileStack(dfs, dfs_index)
+                else:
+                    while _self_.df_level < dfs_index:
+                        _self_.pushStack(dfs[_self_.df_level + 1])
+                    while _self_.df_level > dfs_index:
+                        _self_.popStack()
+
+    #
+    # _reconcileStack() - rebuild the internal stack (dfs / dfs_layout / graphs) to
+    # mirror an MVC dfs list that changed structurally (e.g. a stack-control
+    # 'collapse' dropping/reordering frames). Each incoming frame reuses its
+    # existing layout & graph when we already hold that exact dataframe (by
+    # identity), so arranged node positions survive the move; frames we don't hold
+    # are rendered fresh (inheriting the current level's pan/zoom).
+    #
+    def _reconcileStack(self, dfs, dfs_index):
+        _held_ = {id(d): i for i, d in enumerate(self.dfs)}
+        new_dfs, new_dfs_layout, new_graphs = [], [], []
+        for d in dfs:
+            i = _held_.get(id(d))
+            if i is not None and self.dfs[i] is d:
+                new_dfs.append(self.dfs[i])
+                new_dfs_layout.append(self.dfs_layout[i])
+                new_graphs.append(self.graphs[i])
+            else:
+                _g_  = self.rt_self.createNetworkXGraph(d, self.ln_params['relationships'])
+                _ln_ = self.__renderView__(d)
+                _ln_.applyViewConfiguration(self.dfs_layout[self.df_level])
+                new_dfs.append(d)
+                new_dfs_layout.append(_ln_)
+                new_graphs.append(_g_)
+        self.dfs, self.dfs_layout, self.graphs = new_dfs, new_dfs_layout, new_graphs
+        self.df_level          = max(0, min(dfs_index, len(new_dfs) - 1))
+        self.previous_layouts  = []   # undo history referenced the old stack shape
+        self.selected_entities &= set(new_graphs[self.df_level].nodes())
+        self.__refreshView__()
 
     #
     # replaceBaseDataframe() - MVC callback: swap in a new base dataframe, reset stack, preserve node positions
@@ -3138,6 +3185,7 @@ z . | select node under mouse by color (shift, ctrl, and ctrl-shift apply)
         '__renderView__':                     __renderView__,
         '__refreshView__':                    __refreshView__,
         'display':                            display,
+        '_reconcileStack':                    _reconcileStack,
         'replaceBaseDataframe':               replaceBaseDataframe,
         'receiveSelection':                   receiveSelection,
         '_extractNodes_':                     _extractNodes_,

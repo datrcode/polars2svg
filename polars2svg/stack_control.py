@@ -147,6 +147,32 @@ def _placement(n, index, avail, slot, ell_h):
     return lo, hi, base_on, top_on, _gap_below_(lo, base_on), _gap_above_(hi, top_on)
 
 
+# Keyboard help overlay — same look & feel as the other interactive components'
+# help menus (translucent gray rounded box, Courier text, toggled by 'h'); see
+# interactive_controller._keyboard_help_svg_ for the sibling.  Kept concise so
+# the box stays legible on the narrow stack-control widget; the root <svg> is
+# also given overflow:visible so a wider box is never clipped.
+_STACK_KEYBOARD_COMMANDS_ = (
+    'h . | toggle help\n'
+    'c . | keep base + current\n'
+    'ctrl+shift+c . | current -> base'
+)
+
+
+def _stackKeyboardHelpSvg_():
+    _lines_ = _STACK_KEYBOARD_COMMANDS_.split('\n')
+    _hw_    = max(len(_l_) for _l_ in _lines_) * 7 + 20
+    _hh_    = len(_lines_) * 14 + 12
+    _style_ = "font-family: 'Courier New', monospace; font-size: 11px; fill: #222;"
+    _text_  = ''.join(f'<text x="10" y="{12 + _i_ * 14}" style="{_style_}">{_l_}</text>'
+                      for _i_, _l_ in enumerate(_lines_))
+    return (f'<rect x="0" y="0" width="{_hw_}" height="{_hh_}" '
+            f'fill="rgba(240,240,240,0.95)" stroke="#888" stroke-width="1" rx="3"/>{_text_}')
+
+
+_STACK_HELP_SVG_ = _stackKeyboardHelpSvg_()
+
+
 def stack_controli(component, stack_name='default', insets=(2, 2), hgap=4,
                    wxh=(160, 256), txt_h=10, **kwargs):
     w, h   = wxh
@@ -201,10 +227,15 @@ def stack_controli(component, stack_name='default', insets=(2, 2), hgap=4,
         avail  = y_base - y_top
 
         def _add_frame(df, y, stack_idx):
+            # Cache entries are (df, tile_svg): id() alone is an unsafe key because a
+            # dropped frame's id can be reused by a later dataframe, so guard every
+            # hit with an identity check and re-render on a mismatch.
             df_id = id(df)
-            if df_id not in cache:
-                cache[df_id] = component.render_with(df)._repr_svg_()
-            tile_svg    = cache[df_id]
+            entry = cache.get(df_id)
+            if entry is None or entry[0] is not df:
+                entry = (df, component.render_with(df)._repr_svg_())
+                cache[df_id] = entry
+            tile_svg    = entry[1]
             is_selected = (stack_idx == index)
             label_color = p2s_ref.colorTyped('label', 'defaultfg') if is_selected else p2s_ref.colorTyped('label', 'inner')
             x_lbl = x0 + wc + 4
@@ -335,6 +366,17 @@ def stack_controli(component, stack_name='default', insets=(2, 2), hgap=4,
                 self.mod_inner   = svg
                 self._frame_map_ = fm
         self.param.watch(self.applyClickOp, 'click_op_finished')
+        self.param.watch(self.applyKeyOp,   'key_op_finished')
+
+    # _broadcastStackChange() — push the (already mutated) stack out to every view
+    # registered on the same stack name, so peers re-render in lock-step.  Shared
+    # by the click handler and the keyboard ops below.
+    async def _broadcastStackChange(self, sn, df, dfs, index):
+        for vid, vsn in self.mvc.view_stack.items():
+            if vsn == sn:
+                view = self.mvc.view_refs.get(vid)
+                if view is not None:
+                    await view.display(df, dfs, index)
 
     async def applyClickOp(self, event):
         cy  = self.click_y
@@ -352,12 +394,42 @@ def stack_controli(component, stack_name='default', insets=(2, 2), hgap=4,
         if s is None or idx < 0 or idx >= len(s['dfs']):
             return
         s['index'] = idx
-        df = s['dfs'][idx]
-        for vid, vsn in self.mvc.view_stack.items():
-            if vsn == sn:
-                view = self.mvc.view_refs.get(vid)
-                if view is not None:
-                    await view.display(df, s['dfs'], idx)
+        await self._broadcastStackChange(sn, s['dfs'][idx], s['dfs'], idx)
+
+    # applyKeyOp() — keyboard shortcuts routed from myOnKeyDown.  The 'h' help
+    # toggle lives entirely in JS (it just flips help_display); only the two
+    # stack-collapsing ops need Python:
+    #   'collapse' (c)            -> drop every frame except the base and the
+    #                                currently visible one, leaving [base, current]
+    #                                (or just [base] when the base itself is visible)
+    #   'rebase'   (ctrl+shift+c) -> discard the whole stack and make the visible
+    #                                dataframe the new base, leaving [current]
+    async def applyKeyOp(self, event):
+        _op_ = self.key_op_finished
+        if _op_:
+            self.key_op_finished = ''      # reset so an identical next press re-fires
+        if not _op_ or self.mvc is None:
+            return
+        sn = self.mvc.view_stack.get(id(self))
+        if sn is None:
+            return
+        s = self.mvc.stacks.get(sn)
+        if s is None or not s['dfs']:
+            return
+        idx = s['index']
+        if idx < 0 or idx >= len(s['dfs']):
+            return
+        base_df, cur_df = s['dfs'][0], s['dfs'][idx]
+        # A stale tile can no longer be served for the kept frame: the tile cache
+        # is identity-guarded (see _add_frame), so a reused id re-renders rather
+        # than reusing a since-freed frame's render.
+        if _op_ == 'collapse':
+            new_dfs = [base_df] if cur_df is base_df else [base_df, cur_df]
+            new_idx = len(new_dfs) - 1
+            s['dfs'], s['index'] = new_dfs, new_idx
+            await self._broadcastStackChange(sn, new_dfs[new_idx], new_dfs, new_idx)
+        elif _op_ == 'rebase':
+            await self.mvc.replaceStack(self, cur_df)
 
     async def display(self, df, dfs, dfs_index):
         if df is not dfs[dfs_index]:
@@ -379,23 +451,56 @@ def stack_controli(component, stack_name='default', insets=(2, 2), hgap=4,
         'mod_inner':         param.String(default=_initial_svg_),
         'click_y':           param.Integer(default=0),
         'click_op_finished': param.Boolean(default=False),
+        'key_op_finished':   param.String(default=''),
+        'help_display':      param.String(default='none'),
         'wxh':               wxh,
+        # The help box is wider than the (narrow) widget, so the root <svg> needs
+        # overflow:visible for it to show in full when open.  That means the help
+        # must be *hidden by not rendering it* (display:none) rather than parked
+        # off-screen — an off-screen copy would spill past the widget's left edge
+        # into the neighbouring component instead of being clipped away.
         '_template': (
-            f'<svg id="svgstackcontrol" width="{w}" height="{h}">'
+            f'<svg id="svgstackcontrol" width="{w}" height="{h}" tabindex="0"'
+            f' style="overflow: visible;" onkeydown="${{script(\'myOnKeyDown\')}}">'
             f'<svg id="mod" width="{w}" height="{h}">${{mod_inner}}</svg>'
+            f'<g id="keyboardhelp" transform="translate(5 0)" display="${{help_display}}">{_STACK_HELP_SVG_}</g>'
             f'<rect id="screen" x="0" y="0" width="{w}" height="{h}" opacity="0"'
-            f' style="cursor:pointer;" onclick="${{script(\'myOnClick\')}}" />'
+            f' style="cursor:pointer;" onclick="${{script(\'myOnClick\')}}"'
+            f' onmouseover="${{script(\'focusSelf\')}}" />'
             f'</svg>'
         ),
         '_scripts': {
             'render':    'mod.innerHTML = data.mod_inner;',
             'mod_inner': 'mod.innerHTML = data.mod_inner;',
             'myOnClick': 'data.click_y = Math.round(event.offsetY); data.click_op_finished = !data.click_op_finished;',
+            # grab focus on hover so the widget receives key events (matches the
+            # other interactive components)
+            'focusSelf': 'svgstackcontrol.focus();',
+            # 'h' toggles the help overlay (JS-only, shown/hidden via display);
+            # 'c' collapses to base+current; ctrl+shift+c rebases the visible
+            # dataframe as the new base.  Both ops funnel through key_op_finished,
+            # which the Python watcher reads & resets.
+            'myOnKeyDown': (
+                "event.stopPropagation();\n"
+                "var k = event.key;\n"
+                "if (k === 'h') {\n"
+                "    data.help_display = (data.help_display === 'none') ? 'inline' : 'none';\n"
+                "    event.preventDefault();\n"
+                "} else if ((k === 'c' || k === 'C') && event.ctrlKey && event.shiftKey) {\n"
+                "    data.key_op_finished = 'rebase';\n"
+                "    event.preventDefault();\n"
+                "} else if (k === 'c' && !event.ctrlKey && !event.shiftKey && !event.altKey && !event.metaKey) {\n"
+                "    data.key_op_finished = 'collapse';\n"
+                "    event.preventDefault();\n"
+                "}"
+            ),
         },
-        '__init__':     __init__,
-        'display':      display,
-        'applyClickOp': applyClickOp,
-        'sketchHtml':   sketchHtml,
+        '__init__':              __init__,
+        'display':               display,
+        'applyClickOp':          applyClickOp,
+        'applyKeyOp':            applyKeyOp,
+        '_broadcastStackChange': _broadcastStackChange,
+        'sketchHtml':            sketchHtml,
     })
     _cls_ref_[0] = cls
     return cls(**kwargs)

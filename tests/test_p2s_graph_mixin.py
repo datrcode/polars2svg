@@ -347,6 +347,117 @@ class TestLayoutMethods(unittest.TestCase):
         for n in nodes:
             self.assertIn(n, result)
 
+    # -- circularNodeColorLayout ------------------------------------------------
+
+    @staticmethod
+    def _color_ring_(p2s, g, nodes, color_lu, xy=(0.0, 0.0), r=1.0):
+        """Run the layout and return (result, [color in circumference order])."""
+        result = p2s.circularNodeColorLayout(g, nodes, {n: (0.0, 0.0) for n in nodes},
+                                             color_lu, xy=xy, r=r)
+        ordered = sorted(result, key=lambda n: math.atan2(result[n][1] - xy[1],
+                                                          result[n][0] - xy[0]))
+        return result, [color_lu.get(n) for n in ordered]
+
+    def test_circular_node_color_layout_groups_colors_contiguously(self):
+        g        = nx.complete_graph(9)
+        nodes    = list(g.nodes())
+        color_lu = {n: ['#ff0000', '#00ff00', '#0000ff'][n % 3] for n in nodes}
+        result, ring = self._color_ring_(self.p2s, g, nodes, color_lu)
+        self.assertEqual(len(result), len(nodes))
+        # Walking the circle, the color may only change len(colors) times --
+        # i.e. each color occupies exactly one contiguous arc (the ring wraps,
+        # so compare each entry against its predecessor cyclically).
+        switches = sum(1 for i in range(len(ring)) if ring[i] != ring[i-1])
+        self.assertEqual(switches, 3, f'each color must form one arc: {ring}')
+
+    def test_circular_node_color_layout_gap_between_colors(self):
+        g        = nx.complete_graph(12)
+        nodes    = list(g.nodes())
+        color_lu = {n: ['#ff0000', '#00ff00'][n % 2] for n in nodes}
+        result, ring = self._color_ring_(self.p2s, g, nodes, color_lu)
+        ordered = sorted(result, key=lambda n: math.atan2(result[n][1], result[n][0]))
+        angles  = [math.atan2(result[n][1], result[n][0]) for n in ordered]
+        within, between = [], []
+        for i in range(len(angles)):
+            _d_ = (angles[i] - angles[i-1]) % (2 * math.pi)
+            (between if ring[i] != ring[i-1] else within).append(_d_)
+        self.assertEqual(len(between), 2)
+        self.assertGreater(min(between), max(within),
+                           'color boundaries must be spaced wider than within-color steps')
+
+    def test_circular_node_color_layout_all_on_circle(self):
+        g        = nx.complete_graph(7)
+        nodes    = list(g.nodes())
+        color_lu = {n: ['#ff0000', '#00ff00'][n % 2] for n in nodes}
+        result   = self.p2s.circularNodeColorLayout(g, nodes, {n: (0.0, 0.0) for n in nodes},
+                                                    color_lu, xy=(3.0, -2.0), r=5.0)
+        for n in nodes:
+            _d_ = math.hypot(result[n][0] - 3.0, result[n][1] + 2.0)
+            self.assertAlmostEqual(_d_, 5.0, places=6)
+
+    def test_circular_node_color_layout_falls_back_when_uncolored(self):
+        # No color information at all -> plain circle layout (which is random for
+        # unanchored nodes, so only the "every node landed on the circle" part is
+        # checkable -- the fallback itself is what this asserts).
+        g      = nx.complete_graph(6)
+        nodes  = list(g.nodes())
+        result = self.p2s.circularNodeColorLayout(g, nodes, {n: (0.0, 0.0) for n in nodes},
+                                                  {}, xy=(0.0, 0.0), r=2.0)
+        self.assertEqual(len(result), len(nodes))
+        for n in nodes:
+            self.assertAlmostEqual(math.hypot(*result[n]), 2.0, places=6)
+
+    def test_circular_node_color_layout_falls_back_when_all_colors_differ(self):
+        g        = nx.complete_graph(6)
+        nodes    = list(g.nodes())
+        color_lu = {n: f'#00000{n}' for n in nodes}
+        result   = self.p2s.circularNodeColorLayout(g, nodes, {n: (0.0, 0.0) for n in nodes},
+                                                    color_lu, xy=(0.0, 0.0), r=2.0)
+        self.assertEqual(len(result), len(nodes))
+        # A color per node means no gaps: the slots are the plain 2*pi/n circle.
+        angles = sorted(math.atan2(result[n][1], result[n][0]) for n in nodes)
+        steps  = [(angles[i] - angles[i-1]) % (2 * math.pi) for i in range(len(angles))]
+        for _s_ in steps:
+            self.assertAlmostEqual(_s_, 2 * math.pi / len(nodes), places=6)
+
+    def test_circular_node_color_layout_arc_lands_near_its_neighbors(self):
+        # Two colors, each attached to an external anchor on opposite sides of the
+        # circle; each arc should end up on its anchor's side.
+        g = nx.Graph()
+        reds, greens = ['r0', 'r1', 'r2'], ['g0', 'g1', 'g2']
+        for n in reds:   g.add_edge(n, 'east')
+        for n in greens: g.add_edge(n, 'west')
+        pos = {n: (0.0, 0.0) for n in reds + greens}
+        pos['east'], pos['west'] = (10.0, 0.0), (-10.0, 0.0)
+        color_lu = {**{n: '#ff0000' for n in reds}, **{n: '#00ff00' for n in greens}}
+        result   = self.p2s.circularNodeColorLayout(g, reds + greens, pos, color_lu,
+                                                    xy=(0.0, 0.0), r=1.0)
+        for n in reds:
+            self.assertGreater(result[n][0], 0.0, f'{n} should sit on the east side')
+        for n in greens:
+            self.assertLess(result[n][0], 0.0, f'{n} should sit on the west side')
+
+    def test_circular_node_color_layout_node_absent_from_graph(self):
+        # Same regression guard as the plain circular layout: a node in `nodes`
+        # and `pos` but not in the graph must not raise.
+        g = nx.Graph()
+        g.add_edge('a', 'b')
+        pos      = {'a': (0.0, 0.0), 'b': (1.0, 0.0), 'orphan': (0.5, 0.5)}
+        color_lu = {'a': '#ff0000', 'b': '#ff0000', 'orphan': '#00ff00'}
+        result   = self.p2s.circularNodeColorLayout(g, ['a', 'b', 'orphan'], pos, color_lu,
+                                                    xy=(0.5, 0.5), r=0.5)
+        for n in ('a', 'b', 'orphan'):
+            self.assertIn(n, result)
+
+    def test_circular_node_color_layout_deterministic(self):
+        g        = nx.complete_graph(10)
+        nodes    = list(g.nodes())
+        color_lu = {n: ['#ff0000', '#00ff00', '#0000ff'][n % 3] for n in nodes}
+        pos      = {n: (0.0, 0.0) for n in nodes}
+        first    = self.p2s.circularNodeColorLayout(g, nodes, pos, color_lu)
+        second   = self.p2s.circularNodeColorLayout(g, nodes, pos, color_lu)
+        self.assertEqual(first, second)
+
     def test_hyper_tree_layout_returns_all_nodes(self):
         pos = self.p2s.hyperTreeLayout(self.g_tree)
         for n in self.g_tree.nodes():

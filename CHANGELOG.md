@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`linkpi` layout mode `circle (color)` (shift-G → `C`).** A color-grouped
+  counterpart to `circle`, in the same spirit as `grid (color)` is to `grid`. It
+  uses the identical circular drag shape (press-point = center, drag distance =
+  radius), but hands out the circumference slots one color at a time, so every
+  node color owns a single contiguous arc, with an extra slot-width of empty
+  space at each color boundary to make the switch visible. Arcs are ordered — and
+  the whole ring rotated — by the direction of each color's off-circle neighbors,
+  and nodes within an arc are ordered the same way, so a color lands near the
+  nodes it connects to. When the grouping carries no information (every node one
+  color / uncolored, or every node its own color) it falls back to the plain
+  `circle` layout. Backed by the new `Polars2SVG.circularNodeColorLayout()`.
+
 - **Stack control widget — `c` / `ctrl+shift+c` collapse shortcuts and an `h`
   help overlay.** Two keyboard shortcuts prune the interaction stack directly
   from the stack control widget. `c` *collapses* the stack to just the base and

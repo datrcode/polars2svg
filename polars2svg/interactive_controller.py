@@ -62,6 +62,7 @@ except ImportError:
 _LAYOUT_MODE_MENU_ = [
     ('g', 'grid'),
     ('c', 'circle'),
+    ('C', 'circle (color)'),
     ('s', 'sunflower'),
     ('o', 'grid (color)'),
     ('d', 'grid (color, clouds)'),
@@ -1522,6 +1523,7 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
 
         self.GRID                 = 'grid'
         self.CIRCLE               = 'circle'
+        self.CIRCLE_BY_COLOR      = 'circle (color)'
         self.SUNFLOWER            = 'sunflower'
         self.GRID_BY_COLOR        = 'grid (color)'
         self.GRID_BY_COLOR_CLOUDS = 'grid (color, clouds)'
@@ -2802,12 +2804,17 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
                     x_new, y_new = x0 + xperc*(x1 - x0), y0 + yperc*(y1 - y0)
                     _ln_.pos[_node_] = (float(_ln_.xT_inv(x_new)), float(_ln_.yT_inv(y_new)))
                     _updated_pos_[_node_] = _ln_.pos[_node_]
-            elif layout_shape == self.CIRCLE:
+            elif layout_shape == self.CIRCLE or layout_shape == self.CIRCLE_BY_COLOR:
                 wx0, wy0 = _ln_.xT_inv(x0), _ln_.yT_inv(y0)
                 wx1, wy1 = _ln_.xT_inv(x1), _ln_.yT_inv(y1)
                 r = sqrt((wx0 - wx1)**2 + (wy0 - wy1)**2)
                 if r < 0.001: r = 0.001
-                pos_adj = self.rt_self.circularOptimizedLayout(self.graphs[self.df_level], as_list, _ln_.pos, xy=(wx0,wy0), r=r)
+                if layout_shape == self.CIRCLE_BY_COLOR:
+                    _node_to_color_ = {}
+                    for _node_ in as_list: _node_to_color_[_node_] = _ln_.nodeColor(_node_)
+                    pos_adj = self.rt_self.circularNodeColorLayout(self.graphs[self.df_level], as_list, _ln_.pos, _node_to_color_, xy=(wx0,wy0), r=r)
+                else:
+                    pos_adj = self.rt_self.circularOptimizedLayout(self.graphs[self.df_level], as_list, _ln_.pos, xy=(wx0,wy0), r=r)
                 self.__cacheNodePositions__()
                 for _node_ in pos_adj:
                     _ln_.pos[_node_] = (pos_adj[_node_][0], pos_adj[_node_][1])
@@ -3670,7 +3677,8 @@ z . | select node under mouse by color (shift, ctrl, and ctrl-shift apply)
             var dx = state.x1_drag - state.x0_drag,
                 dy = state.y1_drag - state.y0_drag;
             var reset_circle = true, reset_sunflower = true, reset_rect = true, reset_line = true;
-            if        (state.layout_op_shape == "circle")    { reset_circle = false;
+            if        (state.layout_op_shape == "circle" ||
+                       state.layout_op_shape == "circle (color)") { reset_circle = false;
                 layoutcircle.setAttribute("cx", state.x0_drag);
                 layoutcircle.setAttribute("cy", state.y0_drag);
                 layoutcircle.setAttribute("r",  Math.sqrt(dx*dx + dy*dy));

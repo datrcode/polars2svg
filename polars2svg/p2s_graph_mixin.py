@@ -3,7 +3,7 @@ from __future__ import annotations
 import ipaddress
 import json
 import random
-from math import sqrt, cos, sin, acos, pi, ceil, inf
+from math import sqrt, cos, sin, acos, atan2, pi, ceil, inf
 from collections.abc import Iterable
 
 import polars as pl
@@ -971,6 +971,118 @@ class P2SGraphMixin:
                 placeNodeIntoClosestSlot(_node_, (_x_, _y_))
             else:
                 placeNodeIntoClosestSlot(_node_)
+
+        return adj_pos
+
+    def circularNodeColorLayout(self, g, nodes, pos, node_color_lu, xy=(0.0, 0.0), r=1.0, gap=1.0):
+        """Circular layout that keeps same-colored nodes together on the circumference.
+
+        Same circle as :meth:`circularOptimizedLayout` (center ``xy``, radius
+        ``r``), but the slots are handed out one color at a time, so each color
+        owns a single contiguous arc.  ``gap`` extra slot-widths of empty space
+        are inserted at every color boundary so the switch is visible.
+
+        Placement is cheap rather than optimal.  Every node gets a *preferred
+        angle* — the direction (from the circle center) of the barycenter of its
+        neighbors outside ``nodes``, falling back to its own current position
+        when it has none.  Arcs are laid out in preferred-angle order and the
+        whole ring is then rotated by the size-weighted circular mean of the
+        leftover error, so each arc lands near the nodes it connects to; within
+        an arc, nodes are ordered by preferred angle as well.
+
+        ``node_color_lu`` is a ``{node: color}`` dict; a node missing from it —
+        or mapped to ``None`` — joins the single "uncolored" group.  When the
+        grouping carries no information (every node one color, or every node its
+        own color) this falls back to :meth:`circularOptimizedLayout`.
+        """
+        _requireGraphLayoutDeps_()
+        if isinstance(nodes, list) == False: nodes = list(nodes)
+        if len(nodes) == 0: return {}
+        _default_color_ = '#4988b6'
+
+        _color_to_nodes_ = {}
+        for _node_ in nodes:
+            _color_ = node_color_lu.get(_node_) or _default_color_
+            if _color_ not in _color_to_nodes_: _color_to_nodes_[_color_] = []
+            _color_to_nodes_[_color_].append(_node_)
+
+        # No usable grouping (a single color, or a color per node) -- the color
+        # arcs would either be the whole circle or one node wide, so this is
+        # exactly the plain circle layout.
+        if len(_color_to_nodes_) <= 1 or len(_color_to_nodes_) == len(nodes):
+            return self.circularOptimizedLayout(g, nodes, pos, xy=xy, r=r)
+
+        # Preferred angle: where the node "wants" to sit on the circle.  Neighbors
+        # outside the selection anchor it (they aren't moving); otherwise the node
+        # keeps the direction it is already in.  None = no opinion.
+        as_set = set(nodes)
+        def preferredAngle(node):
+            _x_sum_, _y_sum_, _samples_ = 0.0, 0.0, 0
+            if node in g:
+                for _nbor_ in g.neighbors(node):
+                    if _nbor_ in as_set or _nbor_ not in pos: continue
+                    _x_sum_, _y_sum_, _samples_ = _x_sum_ + pos[_nbor_][0], _y_sum_ + pos[_nbor_][1], _samples_ + 1
+            if   _samples_ > 0: _x_, _y_ = _x_sum_ / _samples_, _y_sum_ / _samples_
+            elif node in pos:   _x_, _y_ = pos[node]
+            else:               return None
+            _dx_, _dy_ = _x_ - xy[0], _y_ - xy[1]
+            if _dx_ == 0.0 and _dy_ == 0.0: return None
+            return atan2(_dy_, _dx_)
+
+        _angle_of_ = {_node_: preferredAngle(_node_) for _node_ in nodes}
+
+        # Per-color mean direction (circular mean of the members' preferred
+        # angles), then order the colors around the ring by it.  Colors whose
+        # members all lack an opinion go last, largest first, name-tie-broken so
+        # the result stays deterministic.
+        _groups_ = []
+        for _color_, _members_ in _color_to_nodes_.items():
+            _cos_sum_, _sin_sum_ = 0.0, 0.0
+            for _node_ in _members_:
+                _a_ = _angle_of_[_node_]
+                if _a_ is None: continue
+                _cos_sum_, _sin_sum_ = _cos_sum_ + cos(_a_), _sin_sum_ + sin(_a_)
+            _has_ = (_cos_sum_ != 0.0 or _sin_sum_ != 0.0)
+            _mean_ = atan2(_sin_sum_, _cos_sum_) if _has_ else None
+            _groups_.append((0 if _has_ else 1, _mean_ if _has_ else 0.0, -len(_members_), str(_color_), _color_, _mean_))
+        _groups_.sort(key=lambda t: t[:4])
+
+        # Slot geometry: len(nodes) node slots plus one `gap`-wide space per color
+        # boundary (a ring of k arcs has k boundaries), spread over the full circle.
+        _step_ = 2 * pi / (len(nodes) + gap * len(_groups_))
+
+        # Walk the arcs to get each one's un-rotated start/center, then pick the
+        # single rotation that minimizes the size-weighted angular error against
+        # the color mean directions.
+        _cursor_, _starts_, _cos_sum_, _sin_sum_ = 0.0, [], 0.0, 0.0
+        for _grp_ in _groups_:
+            _members_, _mean_ = _color_to_nodes_[_grp_[4]], _grp_[5]
+            _starts_.append(_cursor_)
+            if _mean_ is not None:
+                _center_ = _cursor_ + (len(_members_) - 1) * _step_ / 2.0
+                _delta_  = _mean_ - _center_
+                _cos_sum_, _sin_sum_ = _cos_sum_ + len(_members_) * cos(_delta_), _sin_sum_ + len(_members_) * sin(_delta_)
+            _cursor_ += (len(_members_) + gap) * _step_
+        _rotation_ = atan2(_sin_sum_, _cos_sum_) if (_cos_sum_ != 0.0 or _sin_sum_ != 0.0) else 0.0
+
+        adj_pos = {}
+        for i in range(len(_groups_)):
+            _color_, _mean_ = _groups_[i][4], _groups_[i][5]
+            _members_       = _color_to_nodes_[_color_]
+            # Within the arc, order by preferred angle relative to the arc's own
+            # mean direction (wrapped to +/- pi so the cyclic order is well defined);
+            # opinion-less nodes trail at the end in a stable order.
+            if _mean_ is None:
+                _ordered_ = sorted(_members_, key=lambda n: str(n))
+            else:
+                def _within_(n):
+                    _a_ = _angle_of_[n]
+                    if _a_ is None: return (1, 0.0, str(n))
+                    return (0, (_a_ - _mean_ + pi) % (2 * pi) - pi, str(n))
+                _ordered_ = sorted(_members_, key=_within_)
+            for j in range(len(_ordered_)):
+                _angle_ = _rotation_ + _starts_[i] + j * _step_
+                adj_pos[_ordered_[j]] = (xy[0] + r * cos(_angle_), xy[1] + r * sin(_angle_))
 
         return adj_pos
 

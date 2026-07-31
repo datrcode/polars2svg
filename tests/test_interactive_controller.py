@@ -1279,6 +1279,100 @@ class TestLINKPIPickerMenu(unittest.TestCase):
 
 
 @unittest.skipUnless(PANEL_AVAILABLE, 'panel not installed')
+class TestLINKPICircleByColorLayout(unittest.TestCase):
+    """The 'circle (color)' layout mode: same circular drag shape as 'circle',
+    but the nodes are grouped by color around the circumference."""
+
+    # Six nodes in a ring, two colors alternating around it -- so the color
+    # grouping has to actually re-order them to make each color contiguous.
+    _NODES_  = ['n0', 'n1', 'n2', 'n3', 'n4', 'n5']
+    _COLORS_ = {'n0': '#ff0000', 'n2': '#ff0000', 'n4': '#ff0000',
+                'n1': '#00ff00', 'n3': '#00ff00', 'n5': '#00ff00'}
+
+    def _make_ctrl(self, node_color=None):
+        import math
+        from polars2svg.interactive_controller import linkpi
+        p2s = Polars2SVG()
+        df  = pl.DataFrame({'fm': self._NODES_,
+                            'to': self._NODES_[1:] + self._NODES_[:1]})
+        pos = {n: [math.cos(i * math.pi / 3), math.sin(i * math.pi / 3)]
+               for i, n in enumerate(self._NODES_)}
+        linkp = p2s.linkp(df, relationships=[('fm', 'to')], pos=pos,
+                          node_color=(self._COLORS_ if node_color is None else node_color))
+        ctrl  = linkpi(linkp)
+        ctrl.selected_entities = set(self._NODES_)
+        return ctrl
+
+    def _ring_(self, ctrl, updated):
+        """Colors in circumference order, starting from an arbitrary node."""
+        import math
+        _ln_ = ctrl.dfs_layout[ctrl.df_level]
+        cx, cy = _ln_.xT_inv(200.0), _ln_.yT_inv(200.0)
+        ordered = sorted(updated, key=lambda n: math.atan2(updated[n][1] - cy, updated[n][0] - cx))
+        return [self._COLORS_.get(n) for n in ordered]
+
+    def test_mode_is_in_the_picker_menu(self):
+        from polars2svg.interactive_controller import _LAYOUT_MODE_MENU_
+        self.assertIn('circle (color)', [label for _, label in _LAYOUT_MODE_MENU_])
+
+    def test_constant_matches_menu_label(self):
+        ctrl = self._make_ctrl()
+        self.assertEqual(ctrl.CIRCLE_BY_COLOR, 'circle (color)')
+        self.assertIn(ctrl.CIRCLE_BY_COLOR, ctrl.layout_modes)
+
+    def test_uses_the_circular_drag_shape_in_js(self):
+        # The JS shape preview must treat it exactly like 'circle' (layoutcircle),
+        # not fall through to the rectangle branch.
+        cls   = type(self._make_ctrl())
+        shape = cls._scripts['myUpdateLayoutOp']
+        self.assertIn('state.layout_op_shape == "circle (color)"', shape)
+        _circle_branch_ = shape.split('reset_circle = false;')[0]
+        self.assertIn('"circle (color)"', _circle_branch_)
+
+    def test_groups_colors_contiguously_on_the_circle(self):
+        ctrl    = self._make_ctrl()
+        updated = ctrl.apply_layout_interaction(200.0, 200.0, 300.0, 200.0, 'circle (color)')
+        self.assertEqual(set(updated), set(self._NODES_))
+        ring = self._ring_(ctrl, updated)
+        switches = sum(1 for i in range(len(ring)) if ring[i] != ring[i-1])
+        self.assertEqual(switches, 2, f'each color must form one arc: {ring}')
+
+    def test_all_nodes_land_on_the_dragged_circle(self):
+        import math
+        ctrl    = self._make_ctrl()
+        updated = ctrl.apply_layout_interaction(200.0, 200.0, 300.0, 200.0, 'circle (color)')
+        _ln_    = ctrl.dfs_layout[ctrl.df_level]
+        cx, cy  = _ln_.xT_inv(200.0), _ln_.yT_inv(200.0)
+        r       = math.hypot(_ln_.xT_inv(300.0) - cx, _ln_.yT_inv(200.0) - cy)
+        for n in self._NODES_:
+            self.assertAlmostEqual(math.hypot(updated[n][0] - cx, updated[n][1] - cy), r, places=6)
+
+    def test_uncolored_nodes_fall_back_to_plain_circle(self):
+        # A single node color for everything -> no grouping to do; the result is
+        # the plain circle layout (evenly spaced, no color gaps).
+        import math
+        ctrl    = self._make_ctrl(node_color='#4988b6')
+        updated = ctrl.apply_layout_interaction(200.0, 200.0, 300.0, 200.0, 'circle (color)')
+        _ln_    = ctrl.dfs_layout[ctrl.df_level]
+        cx, cy  = _ln_.xT_inv(200.0), _ln_.yT_inv(200.0)
+        angles  = sorted(math.atan2(updated[n][1] - cy, updated[n][0] - cx) for n in self._NODES_)
+        for i in range(len(angles)):
+            _step_ = (angles[i] - angles[i-1]) % (2 * math.pi)
+            self.assertAlmostEqual(_step_, 2 * math.pi / len(self._NODES_), places=6)
+
+    def test_propagates_positions_across_the_stack(self):
+        ctrl = self._make_ctrl()
+        ctrl.selected_entities = {'n5'}
+        self.assertTrue(ctrl.apply_push_selected())
+        ctrl.selected_entities = set(self._NODES_)
+        updated = ctrl.apply_layout_interaction(200.0, 200.0, 300.0, 200.0, 'circle (color)')
+        for level in range(len(ctrl.dfs_layout)):
+            for n in self._NODES_:
+                if n in ctrl.dfs_layout[level].pos:
+                    self.assertEqual(ctrl.dfs_layout[level].pos[n], updated[n])
+
+
+@unittest.skipUnless(PANEL_AVAILABLE, 'panel not installed')
 class TestLINKPISizeCycleMenus(unittest.TestCase):
     """Verify the shift-L / shift-O / shift-P size & opacity cycle pickers and
     the 'l' link-shape picker: default selections, the JS commit path onto the

@@ -1,5 +1,7 @@
+import itertools
 import json
 import math
+import random
 import tempfile
 import types
 import unittest
@@ -57,6 +59,57 @@ def _donut_tree():
         for leaf in leaves:
             g.add_edge(c, leaf)
     return g, root, cat_leaves
+
+
+def _crossing_tree():
+    """Minimized tree that hyperTreeLayout used to draw with crossing edges.
+
+    Two long chains hanging off node 0, rooted at the far end of one of them --
+    which is what makes the angular sectors wide enough that a parent-to-child
+    segment cut back across the inner disk and through a sibling subtree.
+    Returns (graph, root); the root is pinned so the case stays deterministic.
+    """
+    g = nx.Graph()
+    g.add_edges_from([(0, 1), (0, 2), (1, 7), (2, 3), (3, 4), (4, 5), (5, 6),
+                      (6, 12), (7, 8), (7, 14), (8, 9), (8, 15), (9, 10),
+                      (10, 11), (10, 13)])
+    return g, 12
+
+
+def _skewed_tree(n, seed):
+    """Random tree biased toward attaching to the most recent node, which grows
+    the deep, lopsided shapes that stress the wedge assignment."""
+    rng, g, nodes = random.Random(seed), nx.Graph(), [0]
+    g.add_node(0)
+    for i in range(1, n):
+        g.add_edge(nodes[-1] if rng.random() < 0.6 else rng.choice(nodes), i)
+        nodes.append(i)
+    return g
+
+
+def _drawn_tree_edges(g):
+    """The edges hyperTreeLayout actually places: each component's spanning tree."""
+    g = nx.to_undirected(g)
+    return [e
+            for c in nx.connected_components(g)
+            for e in nx.to_undirected(nx.minimum_spanning_tree(g.subgraph(c).copy())).edges()]
+
+
+def _proper_crossings(edges, pos):
+    """Count pairs of non-adjacent segments that properly cross. Shared or
+    merely touching endpoints are not crossings and are excluded."""
+    def _side(a, b, c):
+        v = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
+        return 0 if abs(v) < 1e-9 else (1 if v > 0 else -1)
+
+    total = 0
+    for (a, b), (c, d) in itertools.combinations(edges, 2):
+        if len({a, b, c, d}) < 4: continue
+        o1, o2 = _side(pos[a], pos[b], pos[c]), _side(pos[a], pos[b], pos[d])
+        o3, o4 = _side(pos[c], pos[d], pos[a]), _side(pos[c], pos[d], pos[b])
+        if 0 in (o1, o2, o3, o4): continue
+        if o1 != o2 and o3 != o4: total += 1
+    return total
 
 
 class TestCreateNetworkXGraph(unittest.TestCase):
@@ -298,6 +351,63 @@ class TestLayoutMethods(unittest.TestCase):
         pos = self.p2s.hyperTreeLayout(self.g_tree)
         for n in self.g_tree.nodes():
             self.assertIn(n, pos)
+
+    def test_hyper_tree_layout_no_crossings_regression(self):
+        # Regression: this tree drew 2 crossings before the annulus-wedge clip.
+        g, root = _crossing_tree()
+        pos = self.p2s.hyperTreeLayout(g, roots=[root])
+        self.assertEqual(_proper_crossings(_drawn_tree_edges(g), pos), 0)
+
+    def test_hyper_tree_layout_no_crossings_random_trees(self):
+        # The radial layout is crossing-free for the tree it draws, at any shape.
+        # Crossings were rare pre-fix (seeds 49/108/113/119 here), so keep the
+        # sweep wide enough to still catch a regression.
+        for seed in range(120):
+            for n in (5, 20, 60, 150):
+                with self.subTest(seed=seed, n=n):
+                    g   = _skewed_tree(n, seed)
+                    pos = self.p2s.hyperTreeLayout(g)
+                    self.assertEqual(_proper_crossings(_drawn_tree_edges(g), pos), 0)
+
+    def test_hyper_tree_layout_no_crossings_small_components(self):
+        # Components of 1-4 nodes are laid out by the same radial algorithm as
+        # everything else; a 4-node path used to be drawn as a crossed 'X'.
+        for n in (1, 2, 3, 4):
+            with self.subTest(n=n):
+                g = nx.path_graph(n)
+                pos = self.p2s.hyperTreeLayout(g)
+                self.assertEqual(set(pos), set(g.nodes()))
+                self.assertEqual(_proper_crossings(_drawn_tree_edges(g), pos), 0)
+
+    def test_hyper_tree_layout_no_crossings_multi_component(self):
+        # Components are packed by treeMapLayout; that affine per-component
+        # transform must not reintroduce crossings.
+        g, offset = nx.Graph(), 0
+        for n in (1, 2, 4, 9, 40):
+            t = _skewed_tree(n, seed=n)
+            g.add_nodes_from(x + offset for x in t.nodes())
+            g.add_edges_from((a + offset, b + offset) for a, b in t.edges())
+            offset += n
+        pos = self.p2s.hyperTreeLayout(g)
+        self.assertEqual(set(pos), set(g.nodes()))
+        self.assertEqual(_proper_crossings(_drawn_tree_edges(g), pos), 0)
+
+    def test_hyper_tree_layout_edges_stay_outside_parent_circle(self):
+        # The invariant that buys planarity: the tangent clip keeps every
+        # parent-to-child segment out of the disk the parent sits on, so each
+        # edge stays inside its own annulus band and angular sector.
+        g   = _skewed_tree(120, seed=3)
+        pos = self.p2s.hyperTreeLayout(g)          # single component -> centered on origin
+
+        def _dist_to_origin(p, q):
+            dx, dy = q[0] - p[0], q[1] - p[1]
+            d2     = dx * dx + dy * dy
+            t      = 0.0 if d2 == 0 else max(0.0, min(1.0, -(p[0] * dx + p[1] * dy) / d2))
+            return math.hypot(p[0] + t * dx, p[1] + t * dy)
+
+        for a, b in _drawn_tree_edges(g):
+            r_parent = min(math.hypot(*pos[a]), math.hypot(*pos[b]))
+            self.assertGreaterEqual(_dist_to_origin(pos[a], pos[b]), r_parent - 1e-6)
 
     def test_hyper_tree_donut_layout_returns_all_nodes(self):
         pos = self.p2s.hyperTreeDonutLayout(self.g_tree)

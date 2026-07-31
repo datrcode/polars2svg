@@ -205,6 +205,10 @@ implementation file carries the full citation in its module header.
   U. Brandes and C. Pich, "Eigensolver Methods for Progressive Multidimensional
   Scaling of Large Data," *Proc. 14th Symposium on Graph Drawing (GD)*, 2006,
   pp. 42–53.
+- **Radial ("hypertree") tree drawing** (`hyperTreeLayout()` —
+  [p2s_graph_mixin.py](polars2svg/p2s_graph_mixin.py)):
+  P. Eades, "Drawing free trees," *Bulletin of the Institute for Combinatorics
+  and its Applications*, vol. 5, pp. 10–36, 1992.
 - **Laguerre-Voronoi (power) diagrams** (`laguerre_voronoi()` —
   [laguerre_voronoi.py](polars2svg/laguerre_voronoi.py)):
   H. Imai, M. Iri, and K. Murota, "Voronoi Diagram in the Laguerre Geometry and

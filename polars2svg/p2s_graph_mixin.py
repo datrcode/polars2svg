@@ -3,7 +3,7 @@ from __future__ import annotations
 import ipaddress
 import json
 import random
-from math import sqrt, cos, sin, pi, ceil, inf
+from math import sqrt, cos, sin, acos, pi, ceil, inf
 from collections.abc import Iterable
 
 import polars as pl
@@ -975,6 +975,30 @@ class P2SGraphMixin:
         return adj_pos
 
     def hyperTreeLayout(self, _graph, roots=None, bounds_percent=0.1):
+        """Radial ("hypertree") layout of each component's minimum spanning tree.
+
+        Implements the *annulus wedge* radial tree drawing of Eades, "Drawing
+        free trees" (1992) -- also §3.1.3 of Di Battista/Eades/Tamassia/Tollis,
+        *Graph Drawing*. Depth sets the radius, and every node owns a contiguous
+        angular sector sized by its leaf count, placing itself at the sector's
+        midpoint.
+
+        The load-bearing detail is the tangent (annulus wedge) constraint. A
+        purely proportional sector is *not* crossing-free: when a node's sector
+        is wide, the straight segment down to a child on the far side of that
+        sector dips back inside the node's own circle and cuts through a
+        sibling subtree. So the sector handed down to the children is also
+        clipped to the tangent cone of the node's circle,
+        ``|theta - theta_node| <= acos(r_depth / r_depth+1)``, which pins every
+        parent-to-child segment inside the annulus band *and* inside the node's
+        own sector. Sibling sectors are disjoint, so no two edges of the tree
+        can cross.
+
+        The guarantee covers the **spanning tree** that this layout draws.
+        Edges of ``_graph`` outside that tree (any cycle in the input) are not
+        placed by the layout and may still cross -- no radial layout can avoid
+        that for a non-tree graph.
+        """
         _requireGraphLayoutDeps_()
         if roots is not None and isinstance(roots, list) == False: roots = list(roots)
 
@@ -984,14 +1008,6 @@ class P2SGraphMixin:
         pos = {}
         for _subgraph in S:
             G = nx.to_undirected(nx.minimum_spanning_tree(_subgraph))
-
-            if len(G) <= 4:
-                as_list = list(G.nodes())
-                if len(G) >= 1: pos[as_list[0]] = (0, 0)
-                if len(G) >= 2: pos[as_list[1]] = (1, 1)
-                if len(G) >= 3: pos[as_list[2]] = (1, 0)
-                if len(G) >= 4: pos[as_list[3]] = (0, 1)
-                continue
 
             my_root = None
             if roots is not None:
@@ -1011,21 +1027,30 @@ class P2SGraphMixin:
             _max_depth = self.__p2sg_treeDepth__(G, None, my_root)
 
             _R_ = 8.0
-            # Top-down wedge assignment: each node owns a contiguous angular sector
-            # [_start, _end] and is placed at its midpoint — guarantees disjoint sectors
-            # across siblings, which eliminates all edge crossings in the spanning tree.
+            # Top-down annulus-wedge assignment: each node owns a contiguous angular
+            # sector [_start, _end] and is placed at its midpoint, so sibling sectors
+            # are disjoint. Children are then confined to the tangent cone of the
+            # node's own circle so their edges cannot leave the sector -- see the
+            # docstring; both halves are needed for a crossing-free drawing.
             def placeSubtree(_parent, _node, _depth, _start, _end):
-                _r = _depth * _R_ / _max_depth
+                _r   = _depth * _R_ / _max_depth
                 _mid = (_start + _end) / 2.0
                 pos[_node] = (_r * cos(_mid), _r * sin(_mid))
                 children = [x for x in G[_node] if x != _parent]
                 if not children:
                     return
-                total = sum(max(1, _leaf_count.get(c, 0)) for c in children)
-                _cur = _start
+                # Tangent cone half-angle: a child further around than this pulls its
+                # edge back inside the circle of radius _r and into a sibling sector.
+                # At the center (_r == 0) every direction is free -- edges out of the
+                # root are radial and cannot cross each other -- so nothing is clipped.
+                _r_next = (_depth + 1) * _R_ / _max_depth
+                _tau    = pi if _r <= 0.0 else acos(min(1.0, _r / _r_next))
+                _span   = min(_end - _start, 2.0 * _tau)
+                _cur    = _mid - _span / 2.0
+                total   = sum(max(1, _leaf_count.get(c, 0)) for c in children)
                 for child in sorted(children, key=lambda x: _leaf_count.get(x, 0), reverse=True):
                     frac = max(1, _leaf_count.get(child, 0)) / total
-                    child_end = _cur + frac * (_end - _start)
+                    child_end = _cur + frac * _span
                     placeSubtree(_node, child, _depth + 1, _cur, child_end)
                     _cur = child_end
 

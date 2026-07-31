@@ -182,3 +182,39 @@ references:
     year: 2026
     url: "https://arxiv.org/abs/2602.00668"
     notes: "Implemented in polars2svg/ncp_layout.py (NCPLayout — the 'ncp pack' linkp layout op)"
+  - type: article
+    title: "Drawing free trees"
+    authors:
+      - family-names: "Eades"
+        given-names: "Peter"
+    journal: "Bulletin of the Institute for Combinatorics and its Applications"
+    volume: 5
+    year: 1992
+    start: 10
+    end: 36
+    notes: "Annulus-wedge radial tree drawing — implemented in polars2svg/p2s_graph_mixin.py (hyperTreeLayout)"
+  - type: article
+    title: "Force-directed layout of origin-destination flow maps"
+    authors:
+      - family-names: "Jenny"
+        given-names: "Bernhard"
+      - family-names: "Stephen"
+        given-names: "Daniel M."
+      - family-names: "Muehlenhaus"
+        given-names: "Ian"
+      - family-names: "Marston"
+        given-names: "Brooke E."
+      - family-names: "Sharma"
+        given-names: "Ritesh"
+      - family-names: "Zhang"
+        given-names: "Eugene"
+      - family-names: "Jenny"
+        given-names: "Helen"
+    journal: "International Journal of Geographical Information Science"
+    volume: 31
+    issue: 8
+    year: 2017
+    start: 1521
+    end: 1540
+    doi: "10.1080/13658816.2017.1307378"
+    notes: "Implemented in polars2svg/od_flow_layout.py (ODFlowLayout — the linkp flowmap link shape)"

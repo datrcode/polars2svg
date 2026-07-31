@@ -62,6 +62,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`hyperTreeLayout` drew crossing edges.** The radial layout gave each node an
+  angular sector sized by its leaf count and placed the node at the sector's
+  midpoint, but never constrained where in that sector the children could go.
+  When a sector was wide, the straight segment from a node down to a child on
+  the far side of it dipped back inside the node's own circle and cut through a
+  sibling subtree. The layout now also clips the children's range to the tangent
+  cone of the node's circle, `|θ − θ_node| ≤ acos(r_depth / r_depth+1)` — the
+  *annulus wedge* constraint from Eades' "Drawing free trees" (1992) — which
+  pins every parent-to-child segment inside both its annulus band and its own
+  sector, so no two edges of the drawn tree can cross. Separately, components of
+  four or fewer nodes were placed at hard-coded square corners, which drew a
+  4-node path as a crossed `X`; they now go through the same radial algorithm as
+  every other component. The guarantee covers the spanning tree the layout
+  draws; edges of the input graph outside that tree (any cycle) are not placed
+  by the layout and may still cross. `hyperTreeDonutLayout` is unchanged — its
+  leaves are packed into a 2-D ring band by design, so its leaf edges cross
+  regardless of the sector math.
+
 - **Interactive render caches could serve a stale render after an `id()`
   collision.** Each interactive view memoizes rendered frames in a cache keyed on
   `id(df)`, but a dropped frame's id can be reused by a later dataframe, so a

@@ -1897,7 +1897,11 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
         return _out_.select(_keep_)
 
     def nodeColor(self, node):
-        return self.color_nodes_final.get(node)
+        # color_nodes_final is keyed by the stringified node names (__nm__), but entitiesAtPoint()
+        # / overlappingEntities() hand back the original pos keys -- which aren't strings when the
+        # node ids are ints.  Fall back to the string form so those callers resolve a color.
+        if node in self.color_nodes_final: return self.color_nodes_final[node]
+        return self.color_nodes_final.get(str(node))
 
     def nodesWithColor(self, color):
         return {k for k, v in self.color_nodes_final.items() if v == color}

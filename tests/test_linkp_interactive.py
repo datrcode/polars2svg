@@ -578,6 +578,27 @@ class TestLinkPInteractiveIntegerNodes(unittest.TestCase):
             self.fail(f'__createPathDescriptionOfSelectedEntities__ raised TypeError: {e}')
         self.assertIn('M ', path)
 
+    def test_nodeColor_resolves_integer_node_ids(self):
+        # color_nodes_final is keyed by the stringified __nm__ names while the hit-test
+        # hands back the original int ids -- nodeColor() has to bridge the two.
+        self.lp.renderSVG()
+        for _node_ in self.pos.keys():
+            self.assertIsNotNone(self.lp.nodeColor(_node_),
+                                 f'nodeColor({_node_!r}) returned None for an int node id')
+
+    def test_color_query_roundtrip_from_hit_test_with_integer_ids(self):
+        # The 'z'-key chain: entitiesAtPoint -> nodeColor -> nodesWithColor.  A None from
+        # nodeColor() silently collapsed this to an empty selection.
+        _lp_ = self.p2s.linkp(self.df, relationships=[('fm', 'to')], pos=self.pos,
+                              node_color={'103244': '#2166ac', '103245': '#d6604d',
+                                          '103246': '#2166ac'})
+        _lp_.renderSVG()
+        _row_  = _lp_.df_node.explode('__nm__').filter(pl.col('__nm__') == '103244')
+        _found_ = set()
+        for _e_ in _lp_.entitiesAtPoint((_row_['__sx__'][0], _row_['__sy__'][0])):
+            _found_ |= set(_lp_.nodesWithColor(_lp_.nodeColor(_e_)))
+        self.assertEqual(_found_, {'103244', '103246'})
+
 
 class TestLinkPTKeyCollapse(unittest.TestCase):
     """Regression tests: the 't'-key collapse must always land nodes at the
@@ -1366,6 +1387,45 @@ class TestNodeExpansion(unittest.TestCase):
         self.assertEqual(self.ctrl.df_level, 2)
         self.assertEqual(self._len_here(), 7)
         self.assertIn('far', self.ctrl.graphs[self.ctrl.df_level].nodes())
+
+
+@unittest.skipUnless(_PANEL_AVAILABLE_, 'panel not installed')
+class TestZKeyColorSelection(unittest.TestCase):
+    """Regression tests: 'z' selects every node sharing the color under the mouse.
+
+    With integer node ids the hit-test returns ints while color_nodes_final is keyed by
+    the stringified names, so nodeColor() returned None and 'z' silently selected
+    nothing -- the case hit by panelize([[linkp]]) over an int-id graph."""
+
+    def setUp(self):
+        self.p2s    = Polars2SVG()
+        self.df     = pl.DataFrame({'fm': [0, 1, 2, 3], 'to': [1, 2, 3, 0]})
+        self.pos    = {0: (0.0, 0.0), 1: (1.0, 0.0), 2: (1.0, 1.0), 3: (0.0, 1.0)}
+        self.colors = {'0': '#2166ac', '1': '#d6604d', '2': '#2166ac', '3': '#1a9850'}
+        self.lp     = self.p2s.linkp(self.df, relationships=[('fm', 'to')], pos=self.pos,
+                                     node_color=self.colors)
+        self.lp.renderSVG()
+        self.ctrl   = self.p2s.linkpi(self.lp)
+
+    def _press_z_over(self, node):
+        _row_ = self.lp.df_node.explode('__nm__').filter(pl.col('__nm__') == str(node))
+        self.ctrl.x_mouse, self.ctrl.y_mouse = _row_['__sx__'][0], _row_['__sy__'][0]
+        self.ctrl.key_op_finished = 'z'
+        asyncio.run(self.ctrl.applyKeyOp(None))
+        return set(self.ctrl.selected_entities)
+
+    def test_selects_every_node_sharing_the_color(self):
+        self.assertEqual(self._press_z_over(0), {0, 2})
+
+    def test_selects_just_the_node_when_the_color_is_unique(self):
+        self.assertEqual(self._press_z_over(1), {1})
+
+    def test_selection_keeps_the_original_node_id_type(self):
+        _selected_ = self._press_z_over(3)
+        self.assertEqual(_selected_, {3})
+        for _node_ in _selected_:
+            self.assertIsInstance(_node_, int,
+                                  f'selection holds {_node_!r} ({type(_node_).__name__}), expected int')
 
 
 if __name__ == '__main__':

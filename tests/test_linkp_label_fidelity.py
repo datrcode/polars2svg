@@ -22,7 +22,7 @@ def _build_linkp(p2s, labels, node_labels=None):
     display string -- so the labels under test are the dict *values*.'''
     df = pl.DataFrame({'fm': labels, 'to': labels[1:] + labels[:1]})
     pos = {lab: [(i % 6) * 2.0, -(i // 6) * 2.0] for i, lab in enumerate(labels)}
-    return p2s.linkp(df, [('fm', 'to')], pos=pos, draw_labels=True, node_labels=node_labels,
+    return p2s.linkp(df, [('fm', 'to')], pos=pos, draw_node_labels=True, node_labels=node_labels,
                      label_line_width=128, label_max_lines=-1, wxh=(1400, 1000))
 
 

@@ -1234,13 +1234,27 @@ class Polars2SVG(P2SColorsMixin,
         node_size      = 'medium'                          # 'nil' | 'small' | 'medium' | 'large' | 'vary' | None | float
         node_opacity   = 1.0
         node_size_range = (0.3, 4)                         # (min, max) radius for node_size='vary'
-        draw_labels    = False                             # when True, draw text labels on non-collapsed nodes
-        node_labels    = None                              # {node_name: label_str}
-        label_only     = set()                             # restrict labels to these nodes (list or str also accepted); if empty, all nodes are labeled
+        draw_node_labels = False                           # when True, draw text labels on non-collapsed nodes
+        node_labels    = None                              # {node_name: label_str}; a node absent from the dict is not labeled
+        label_only     = set()                             # restrict labels to these NAMES (list or str also accepted); if
+                                                            # empty, everything is labeled.  Gates both channels: a node by its
+                                                            # name, an edge by its label value (a '*' edge survives if any of
+                                                            # the values behind the '*' is in the set).  Tested against the raw
+                                                            # value, before node_labels / link_labels rename it for display.
 
         link_size      = 'small'                           # 'nil' | 'small' | 'medium' | 'large' | 'vary' | None | float
         link_shape     = 'line'                            # 'line' | 'curve' | 'flowmap' (force-directed OD flow layout, Jenny et al. 2017)
         link_arrows    = False                             # draw arrowheads at link destinations
+        draw_link_labels = False                           # label each edge with the relationship tuple's third
+                                                            # element -- or, for a two-part tuple, with the field
+                                                            # driving color=.  'line' rotates the text onto the edge,
+                                                            # 'curve' runs it along the curve; 'flowmap' is not
+                                                            # labeled.  An edge whose rows disagree is labeled '*'.
+                                                            # Both directions of a bidirectional pair are labeled, on
+                                                            # opposite sides of the edge.  Independent of
+                                                            # draw_node_labels.
+        link_labels    = None                              # {label_value: label_str} -- the link-side node_labels; an edge
+                                                            # whose value is absent from the dict is not labeled
         link_opacity   = 1.0
         link_size_range = (0.25, 4)                        # (min, max) stroke width for link_size='vary'
 

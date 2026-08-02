@@ -19,7 +19,7 @@ def _rels():
 def _lp(**kwargs):
     p2s = Polars2SVG()
     return p2s.linkp(_make_df(), relationships=_rels(), pos=_make_pos(),
-                     draw_labels=True, **kwargs)
+                     draw_node_labels=True, **kwargs)
 
 def _bare_instance():
     """Return a LinkP with just enough state for _wrap_label_ tests."""

@@ -9,6 +9,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`draw_link_labels=` on `linkp`** — label each drawn edge with the third element
+  of its relationship tuple (`[('fm','to','predicate')]`), or, for a two-part tuple,
+  with the field driving `color=` (rtsvg `rt_linknode_mixin.py:1413-1425`
+  parity, where that fallback was `color_by`). An edge whose rows carry more than
+  one value is labeled `*` rather than left blank, so a collision never reads as
+  an edge with no data. A label whose field is also the link color field takes the
+  link's color; otherwise it uses the default label foreground. Text is cropped to
+  the edge length and dropped entirely when not even one character fits.
+  - **`link_labels=`** is the link-side counterpart of `node_labels=`: a
+    `{label_value: display_str}` dict that renames values for display, and — like
+    `node_labels=` — leaves an edge unlabeled when its value is absent from the
+    dict. `'*'` is a value like any other, so a collision marker can be renamed too.
+  - **`label_only=` now gates both channels** from one set of names: a node by its
+    node name, an edge by its label value. A `*` edge survives when any of the
+    values behind it is in the set (rtsvg `rt_linknode_mixin.py:1419-1422`). Both
+    tests run against the raw value, before `node_labels=`/`link_labels=` rename it
+    for display. Consequence worth knowing: a `label_only=` naming only nodes now
+    silences every edge label.
+  - **Bidirectional edges are labeled twice**, once per direction, on opposite
+    sides of the edge: both directions are canonicalized onto one baseline
+    (ordered by node name), so `a→b` and `b→a` never overprint.
+  - **Clearance is measured to the ink, not the baseline.** A label whose glyphs
+    grow away from its edge is offset by its descent; one whose glyphs grow back
+    over the edge is offset by its ascent — so both sides of a pair sit the same
+    distance off the edge whatever the strings are. Ascent/descent come from a
+    character-class approximation (`_labelInk_`), because the emitted markup names
+    no font-family and so carries no real metrics. Measured against WebKit, every
+    string shape now clears by 2.5px ±0.3 at `txt_h=12`; a single flat offset put
+    x-height-only labels (`cow`) ~3px too far out and let a descender (`dog`)
+    touch the edge on the other side.
+  - **`link_shape='line'`** rotates the text onto the chord and
+    **`link_shape='curve'`** runs it along the drawn Bezier via an SVG
+    `<textPath>` (one invisible per-edge path in `<defs>`, id-scoped per
+    instance). Rotations stay within ±90° so text is never upside down.
+    **`'flowmap'` is not labeled** — its edges are force-routed around each other
+    and text threaded along them fights the routing; setting `draw_link_labels=`
+    with that shape warns.
+  - The **WebGPU** path draws the same labels as rotated glyph runs; having no
+    text-on-path primitive, it approximates the curve case as a straight run along
+    the curve's midpoint tangent (same anchor, same side).
+  - Independent of `draw_node_labels=`. The third tuple element is validated only
+    when `draw_link_labels=` is on, so renders that carry an unused third element
+    keep working.
+
+- **`linkpi`'s label cycle (`ctrl-shift-s`) covers the link channel.** The walk is
+  now `none → node → node+link → link → sticky → none`, so edge labels can be
+  brought up on their own or alongside node labels. The two link states are only
+  offered when the graph has something to put in them — some relationship naming a
+  label field (a third tuple element, or a `color=` field for the two-part
+  fallback) on a `line`/`curve` shape; without one the cycle stays the three-state
+  walk it was before. `LinkP.linkLabelsAvailable()` is the check, and
+  `labelModeCycle()` / `nextLabelMode()` expose the walk. The sticky state keeps
+  link labels off: sticky holds selected *nodes*, and `label_only=` now gates both
+  channels off the same names, so leaving them on would filter every edge label
+  away. A mode that becomes unreachable (link shape switched to `flowmap`) restarts
+  the cycle rather than sticking.
+
 - **`linkpi` layout mode `circle (color)` (shift-G → `C`).** A color-grouped
   counterpart to `circle`, in the same spirit as `grid (color)` is to `grid`. It
   uses the identical circular drag shape (press-point = center, drag distance =
@@ -101,6 +158,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Affects the stack control widget, the generic interactive views
   (`xypi` / `timepi` / `histopi` / `chordpi` / `piepi`), `smallpi`, and
   `spreadlinepi`.
+
+### Changed
+
+- **BREAKING — `linkp`'s `draw_labels=` is now `draw_node_labels=`.** With edges
+  labelable too (see `draw_link_labels=` above), one `draw_labels=` could no
+  longer say which channel it meant. `linkp` gains the matched pair
+  `draw_node_labels=` / `node_labels=` and `draw_link_labels=` / `link_labels=`.
+  The rename is **linkp-only** — `chordp`, `histop`, `piep`, `smallp` and the
+  udist tiles each have exactly one kind of entity to label and keep plain
+  `draw_labels=`. Passing `draw_labels=` to `linkp` raises `TypeError` naming the
+  replacement rather than being silently ignored, matching how `node_shape=` /
+  `draw_context=` were retired from the component. The interactive setter
+  `LinkP.drawLabels()` becomes `drawNodeLabels()`, joined by `drawLinkLabels()`.
 
 ## [0.1.2] — 2026-07-25
 

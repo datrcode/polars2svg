@@ -1479,6 +1479,27 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
     if _timing_spacing_cur_ not in [_lbl_ for _, _lbl_ in _timing_spacing_items_]:
         _timing_spacing_items_.append(['#', _timing_spacing_cur_])
 
+    # ── label-visibility cycle (ctrl-shift-s) ──
+    # The full cycle walks node labels, then both channels, then link labels alone, and
+    # ends on the sticky set before going dark again.  A graph whose relationships carry
+    # no label field has nothing to put in the two link states, so it cycles the short
+    # list instead (which is what it did before edge labels existed).
+    _LABEL_MODES_           = ['no labels', 'node labels', 'node + link labels',
+                               'link labels', 'sticky labels']
+    _LABEL_MODES_NO_LINKS_  = ['no labels', 'node labels', 'sticky labels']
+    # mode -> (draw_node_labels, draw_link_labels, restrict to the sticky set).  Sticky
+    # holds selected *nodes*, and label_only gates both channels off the same names, so
+    # the sticky state leaves link labels off rather than filtering them all away.
+    _LABEL_MODE_STATE_      = {
+        'no labels':          (False, False, False),
+        'node labels':        (True,  False, False),
+        'node + link labels': (True,  True,  False),
+        'link labels':        (False, True,  False),
+        'sticky labels':      (True,  False, True),
+    }
+    _LABEL_MODE_FOR_FLAGS_  = {(False, False): 'no labels',   (True, False): 'node labels',
+                               (True, True): 'node + link labels', (False, True): 'link labels'}
+
     #
     # Constructor
     #
@@ -1496,13 +1517,19 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
         self.graphs     = [self.rt_self.createNetworkXGraph(_linkp_.df_orig, _linkp_.relationships)]
 
         self.selected_entities = set()
-        self.label_mode        = 'all labels' if _linkp_.draw_labels else 'no labels'
         self.sticky_labels     = set(_linkp_.label_only) if _linkp_.label_only else set()
+        # Start on whichever cycle state matches how the linkp was constructed; a sticky
+        # set already in place (label_only) means it was built in the sticky state.
+        if   self.sticky_labels and _linkp_.draw_node_labels:  self.label_mode = 'sticky labels'
+        else:
+            self.label_mode = _LABEL_MODE_FOR_FLAGS_.get(
+                (bool(_linkp_.draw_node_labels), bool(_linkp_.draw_link_labels)), 'no labels')
 
         self.ln_params = {
             'relationships': _linkp_.relationships,
             'pos':           _linkp_.pos,
-            'draw_labels':   _linkp_.draw_labels,
+            'draw_node_labels': _linkp_.draw_node_labels,
+            'draw_link_labels': _linkp_.draw_link_labels,
             'label_only':    _linkp_.label_only,
         }
         if _linkp_.node_labels is not None:
@@ -1919,7 +1946,7 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
 
     #
     # _applyLabelStateAcrossStack_() - project the controller's label_mode +
-    # sticky_labels onto EVERY stack layer (draw_labels + label_only).
+    # sticky_labels onto EVERY stack layer (draw_node_labels + label_only).
     #
     # label_mode / sticky_labels live on the controller and are the single source
     # of truth for label rendering; this is the one place that pushes them down onto
@@ -1928,16 +1955,33 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
     # Callers issue their own __refreshView__ afterwards (this only invalidates).
     #
     def _applyLabelStateAcrossStack_(self):
-        if   self.label_mode == 'no labels':     _draw_, _only_ = False, set()
-        elif self.label_mode == 'sticky labels': _draw_, _only_ = True,  set(self.sticky_labels)
-        else:                                     _draw_, _only_ = True,  set()   # 'all labels'
+        _node_, _link_, _sticky_ = _LABEL_MODE_STATE_[self.label_mode]
+        _only_ = set(self.sticky_labels) if _sticky_ else set()
         for _lp_ in self.dfs_layout:
-            _lp_.draw_labels = _draw_
-            _lp_.label_only  = _only_
+            _lp_.draw_node_labels = _node_
+            _lp_.draw_link_labels = _link_
+            _lp_.label_only       = _only_
             _lp_.invalidateRender()
         # keep ln_params (init snapshot) in sync; the real propagation is the writes above
-        self.ln_params['draw_labels'] = _draw_
-        self.ln_params['label_only']  = _only_
+        self.ln_params['draw_node_labels'] = _node_
+        self.ln_params['draw_link_labels'] = _link_
+        self.ln_params['label_only']       = _only_
+
+    #
+    # labelModeCycle() - the ordered label modes this graph can reach, and
+    # nextLabelMode() - the one after the current, wrapping at the end.  A mode that is
+    # not in the cycle (link labels became unreachable after a shape/relationship change)
+    # restarts the walk rather than sticking.
+    #
+    def labelModeCycle(self):
+        _lp_ = self.dfs_layout[0] if self.dfs_layout else None
+        if _lp_ is not None and _lp_.linkLabelsAvailable(): return _LABEL_MODES_
+        return _LABEL_MODES_NO_LINKS_
+
+    def nextLabelMode(self):
+        _cycle_ = self.labelModeCycle()
+        if self.label_mode not in _cycle_: return _cycle_[0]
+        return _cycle_[(_cycle_.index(self.label_mode) + 1) % len(_cycle_)]
 
     #
     # ^^^ -- These methods are for external callers
@@ -2380,9 +2424,7 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
                 # (incl. the template future layers clone from), so labels stay
                 # consistent as the stack is navigated or grown.
                 if   self.shiftkey and self.ctrlkey:   # ctrl-shift-s: cycle label visibility mode
-                    if   self.label_mode == 'all labels':    self.label_mode = 'sticky labels'
-                    elif self.label_mode == 'sticky labels': self.label_mode = 'no labels'
-                    else:                                    self.label_mode = 'all labels'
+                    self.label_mode = self.nextLabelMode()
                     self._applyLabelStateAcrossStack_()
                     self.__refreshView__(all_ents=False, sel_ents=False)
                 else:                                  # change the sticky-label set (s / shift-s / ctrl-s)
@@ -3068,7 +3110,7 @@ r . | toggle brush (broadcast nearest edges/nodes to linked views)
 s . | set sticky labels
  .. | shift-s ........ | remove sticky labels from selected
  .. | ctrl-s ......... | add selected to sticky labels
- .. | ctrl-shift-s ... | cycle label visibility (all | sticky | none) 
+ .. | ctrl-shift-s ... | cycle labels (none | node | node+link | link | sticky)
 t . | consolidate .... | shift-t (horizontal) | ctrl-t (vertical)
 u . | undo last layout action (limited undo's)
 w . | apply layout operation to [selected] nodes
@@ -3202,6 +3244,8 @@ z . | select node under mouse by color (shift, ctrl, and ctrl-shift apply)
         'selectedNodes':                      selectedNodes,
         'updateLinkNodeParam':                updateLinkNodeParam,
         '_applyLabelStateAcrossStack_':       _applyLabelStateAcrossStack_,
+        'labelModeCycle':                     labelModeCycle,
+        'nextLabelMode':                      nextLabelMode,
         '__cacheNodePositions__':             __cacheNodePositions__,
         'setSelectedEntitiesAndNotifyOthers': setSelectedEntitiesAndNotifyOthers,
         '__buildLayoutRegistry__':            __buildLayoutRegistry__,

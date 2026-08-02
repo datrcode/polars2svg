@@ -19,9 +19,10 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
         'relationships', 'pos', 'view_window',
         'color', 'node_color', 'count',
         'node_size', 'node_opacity', 'node_size_range',
-        'draw_labels', 'node_labels', 'label_only',
+        'draw_node_labels', 'node_labels', 'label_only',
         'label_line_width', 'label_max_lines', 'label_ellipsis',
         'link_size', 'link_shape', 'link_opacity', 'link_size_range', 'link_arrows',
+        'draw_link_labels', 'link_labels',
         'time', 'timing_marks_length', 'timing_marks_spacing',
         'wxh', 'insets', 'bounds_percent', 'use_pos_for_bounds',
         'convex_hull_lu', 'convex_hull_opacity', 'convex_hull_labels', 'convex_hull_stroke_width',
@@ -39,6 +40,22 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
     _ARROW_LEN_FACTOR_ = 3.2
     _ARROW_LEN_MIN_     = 6.0
 
+    # How far a text run's ink reaches above and below its baseline, as fractions of txt_h.
+    # A link label is positioned by its baseline, but what has to clear the edge is its ink,
+    # and that varies with the string: 'cow' rises only to the x-height where 'CAT2' reaches
+    # the cap height, and 'dog' hangs a descender below.  One constant for all of them put
+    # x-height labels ~3px farther off their edge than cap-height ones (txt_h=12) and let a
+    # descender touch the edge on the other side.  The markup names no font-family, so these
+    # are the usual proportions of a default face -- measured against the one WebKit picks --
+    # rather than metrics of a specific font.
+    _INK_ASCENDER_    = 0.67   # caps, digits, b d f h i k l; also the fallback for anything else
+    _INK_SHORT_ASC_   = 0.56   # t clears the x-height but stops well short of the ascender
+    _INK_XHEIGHT_     = 0.46   # bodies of the letters below
+    _INK_DESCENT_     = 0.20   # g j p q y
+    _XHEIGHT_CHARS_   = frozenset('acemnorsuvwxz')
+    _SHORT_ASC_CHARS_ = frozenset('t')
+    _DESCENDER_CHARS_ = frozenset('gjpqy')
+
     #
     # __init__()
     #
@@ -49,7 +66,10 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
         self.gatherMetrics(self.__parseInput__, *args, **kwargs)
         self.gatherMetrics(self.__validateInput__)
         if self.df is not None:
-            rand_id = random.randint(0, 2**32)  # nosec B311 - non-cryptographic SVG id scoping, see SECURITY.md
+            # nosec B311 - non-cryptographic SVG id scoping, see SECURITY.md.  Held on self
+            # because __renderLinks__ mints <textPath> ids for link labels before
+            # __renderSVG__ runs.
+            rand_id = self._rand_id_ = random.randint(0, 2**32)
             self.gatherMetrics(self.__calculateGeometry__)
             self.gatherMetrics(self.__calculateScreenCoordinates__)
             self.gatherMetrics(self.__renderLinks__)
@@ -136,6 +156,12 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
                         _rgb_  = np.repeat(_arr_[:, 6:9], 3, axis=0)
                         _rgba_ = np.hstack([_rgb_, np.full((len(_rgb_), 1), self.link_opacity)])
                         _dl_.tris(_xy_.flatten().tolist(), list(range(len(_xy_))), _rgba_)
+        # Link labels (recorded during __renderLinks__).  The GPU has no text-on-path
+        # primitive, so the 'curve' shape's <textPath> becomes a straight run rotated to
+        # the curve's midpoint tangent -- same anchor and side, no per-glyph bend.
+        for _lx_, _ly_, _ldeg_, _ltxt_, _lco_ in getattr(self, '_link_label_info_', []):
+            _dl_.text(self.p2s, _ltxt_, _lx_, _ly_, txt_h=self.txt_h, anchor='middle',
+                      color=_lco_, rotation=_ldeg_, svg='')
         # Nodes
         _nsz_lu_ = {'small': 3, 'medium': 5, 'large': 7, 'nil': 0.5}
         if self.df_node is not None and self.node_size is not None and len(self.df_node) > 0:
@@ -188,10 +214,17 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
     #
     # __parseInput__()
     #
+    # Parameters renamed when the link-label channel landed, kept here only to turn the
+    # generic unknown-kwarg TypeError into one that names the replacement.
+    _RENAMED_KWARGS_ = {'draw_labels': 'draw_node_labels'}
+
     def __parseInput__(self, *args, **kwargs):
         _unknown_ = set(kwargs) - self._VALID_KWARGS
         if _unknown_:
-            raise TypeError(f'LinkP: unexpected keyword argument(s): {sorted(_unknown_)}')
+            _hints_ = [f'{k} -> {self._RENAMED_KWARGS_[k]}' for k in sorted(_unknown_)
+                       if k in self._RENAMED_KWARGS_]
+            _hint_  = f' (renamed: {"; ".join(_hints_)})' if _hints_ else ''
+            raise TypeError(f'LinkP: unexpected keyword argument(s): {sorted(_unknown_)}{_hint_}')
 
         # Single source of truth for every parameter (name -> from-scratch default);
         # drives both the from-scratch assignment and the keyword-override copy below.
@@ -210,8 +243,12 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
             'node_size':              'medium',
             'node_opacity':           1.0,
             'node_size_range':        (0.3, 4),
-            'draw_labels':            False,
+            'draw_node_labels':       False,
             'node_labels':            None,
+            # label_only gates BOTH channels: a node is labeled only if its name is in the
+            # set, and an edge only if its label value is (for a '*' collision, if any of
+            # the values behind the '*' is).  Filtering happens on the raw value, before
+            # node_labels / link_labels rename it for display.
             'label_only':             set(),
             'label_line_width':       32,
             'label_max_lines':        4,
@@ -222,6 +259,15 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
             'link_opacity':           1.0,
             'link_size_range':        (0.25, 4),
             'link_arrows':            False,
+            # Edge labels (rtsvg rt_linknode_mixin.py:1413 parity): label each drawn edge with
+            # the third element of its relationship tuple -- or, for a two-part tuple, with the
+            # field driving the link color.  Only 'line' and 'curve' are labeled ('flowmap' is
+            # not).  Independent of draw_node_labels, which governs the node channel.
+            'draw_link_labels':       False,
+            # {label_value: display_str} -- the link-side counterpart of node_labels, and it
+            # behaves the same way: when supplied, an edge whose value is absent from the dict
+            # goes unlabeled.
+            'link_labels':            None,
             # Timing marks (rtsvg linknode parity): short colored ticks along each edge
             # encoding when each event occurred (position + spectrum color) and the
             # direction of activity (side of the edge + slight slant).  Rendered iff
@@ -351,6 +397,12 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
         if isinstance(self.label_only, list): self.label_only = set(self.label_only)
         if isinstance(self.label_only, str):  self.label_only = {self.label_only}
 
+        # link_labels is a display-name dict, not the on/off flag; catch the confusion
+        # here rather than letting it fail on len() deep inside the render.
+        if isinstance(self.link_labels, bool):
+            raise TypeError('LinkP: link_labels= is a {label_value: display_str} dict; use '
+                            'draw_link_labels= to turn edge labels on')
+
         # "No data" placeholder for early error visibility -- only ever seen when
         # no df is supplied (a successful render overwrites self.svg); makes a
         # dropped-df plumbing mistake visible instead of a silently blank canvas.
@@ -430,6 +482,22 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
         return lines
 
     #
+    # _labelInk_() - (above, below) reach of a label's ink from its own baseline, in pixels.
+    # The run rises as far as its tallest character (x-height / short ascender / ascender,
+    # with anything unclassified -- caps, digits, punctuation, non-latin -- taken as a full
+    # ascender) and drops by _INK_DESCENT_ if any descender letter is present.
+    #
+    def _labelInk_(self, txt):
+        _chars_ = [c for c in str(txt) if not c.isspace()]
+        if not _chars_: return 0.0, 0.0
+        _asc_  = max(self._INK_XHEIGHT_   if c in self._XHEIGHT_CHARS_ or c in self._DESCENDER_CHARS_
+                     else self._INK_SHORT_ASC_ if c in self._SHORT_ASC_CHARS_
+                     else self._INK_ASCENDER_
+                     for c in _chars_)
+        _desc_ = self._INK_DESCENT_ if any(c in self._DESCENDER_CHARS_ for c in _chars_) else 0.0
+        return _asc_ * float(self.txt_h), _desc_ * float(self.txt_h)
+
+    #
     # _createConcatColumn_() - concatenate multiple fields into one string column
     #
     def _createConcatColumn_(self, df, fields, new_col):
@@ -480,6 +548,29 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
             for _field_ in _rel_[:2]:
                 if _field_ not in self.df.columns:
                     raise ValueError(f'LinkP.__validateInput__(): field "{_field_}" not found in DataFrame{_rel_hint_}')
+        # The third tuple element is only read when draw_link_labels is on, so it is only
+        # validated then -- a stale third element in an unlabeled render keeps working.
+        if self.draw_link_labels:
+            for _rel_ in self.relationships:
+                if len(_rel_) == 3 and _rel_[2] not in self.df.columns:
+                    raise ValueError(f'LinkP.__validateInput__(): link label field "{_rel_[2]}" '
+                                     f'not found in DataFrame{_rel_hint_}')
+            if self.link_shape == 'flowmap':
+                self.p2s.logger.warning(
+                    "LinkP: draw_link_labels= is set but link_shape='flowmap' edges are not "
+                    "labeled; use link_shape='line' or 'curve'"
+                )
+            elif self.link_size is None:
+                self.p2s.logger.warning(
+                    'LinkP: draw_link_labels= is set but link_size=None draws no links, so there '
+                    'is nothing to label'
+                )
+            elif all(self.__linkLabelField__(i) is None for i in range(len(self.relationships))):
+                self.p2s.logger.warning(
+                    'LinkP: draw_link_labels= is set but no relationship has a third (label '
+                    'field) element and color= names no field, so there is nothing to label; use '
+                    "relationships=[('fm','to','label_field')]"
+                )
         for _field_ in self.__countFields__():
             if _field_ not in self.df.columns:
                 raise ValueError(f'LinkP.__validateInput__(): count field "{_field_}" not found in DataFrame')
@@ -830,6 +921,261 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
         )
 
     #
+    # __linkLabelField__() - the column whose values label relationship i's edges: the third
+    # element of the relationship tuple, or -- when the tuple has only two parts -- the field
+    # driving the link color (rtsvg rt_linknode_mixin.py:1414, where that was color_by).
+    # None when neither exists, i.e. this relationship has nothing to label.
+    #
+    def __linkLabelField__(self, i):
+        _rel_ = self.relationships[i]
+        if len(_rel_) == 3: return _rel_[2]
+        return self._link_color_mode_['field']
+
+    #
+    # __linkLabelsActive__() - is relationship i labeled?  'flowmap' is excluded: its edges
+    # are force-routed around each other and threading text along them fights the routing,
+    # so only 'line' and 'curve' carry labels.
+    #
+    def __linkLabelsActive__(self, i):
+        return self.draw_link_labels and self.__linkLabelDrawable__(i)
+
+    def __linkLabelDrawable__(self, i):
+        return (self.link_size is not None and self.link_shape in ('line', 'curve')
+                and self.__linkLabelField__(i) is not None)
+
+    #
+    # linkLabelsAvailable() - would draw_link_labels= have anything to draw?  True when
+    # some relationship names a label field (a third tuple element, or -- for a two-part
+    # tuple -- the field driving the link color) and the shape is one that carries labels.
+    # Lets a caller (linkpi's label-mode cycle) offer the link-label states only when the
+    # graph actually has edge labels to show.
+    #
+    def linkLabelsAvailable(self):
+        if self.df is None or not self.relationships: return False
+        return any(self.__linkLabelDrawable__(i) for i in range(len(self.relationships)))
+
+    #
+    # __linkLabelAggExprs__() - the extra aggregations link labels add to the per-edge
+    # group_by in __renderLinks__: the edge's distinct label values (one value labels the
+    # edge, several collapse to '*', and label_only tests the whole list so a '*' survives
+    # when any value behind it was asked for), plus the endpoint node names that decide
+    # which side of the edge the label sits on.  Sorted/min() rather than first() because
+    # group_by output order is not stable and several node names can collapse onto one
+    # screen pixel -- both keep the render deterministic.
+    #
+    def __linkLabelAggExprs__(self, i):
+        if not self.__linkLabelsActive__(i): return []
+        _fm_, _to_ = self.relationships[i][0], self.relationships[i][1]
+        _vals_     = pl.col(self.__linkLabelField__(i)).cast(pl.String).drop_nulls()
+        return [
+            pl.col(_fm_).cast(pl.String).min().alias('__ll_fm__'),
+            pl.col(_to_).cast(pl.String).min().alias('__ll_to__'),
+            _vals_.unique().sort().alias('__ll_vals__'),
+        ]
+
+    _LINK_LABEL_AGG_COLS_ = ['__ll_fm__', '__ll_to__', '__ll_vals__']
+
+    #
+    # __renderLinkLabels__() - label relationship i's edges (rtsvg rt_linknode_mixin.py:
+    # 1413-1425 parity).  Called from __renderLinks__ with the aggregated edge table, so a
+    # label sees exactly the edge grouping, color and stroke width its edge was drawn with.
+    #
+    # Placement: both directions of a bidirectional pair are canonicalized onto one
+    # A(smaller node name) -> B baseline and then pushed to opposite sides of it, so fm->to
+    # and to->fm each get their own legible label instead of overprinting.  'line' rotates
+    # the text onto the chord; 'curve' hands SVG a <textPath> so the glyphs follow the drawn
+    # Bezier.  Both cases are also recorded in _link_label_info_ for the GPU path, which has
+    # no text-on-path primitive and draws the curve case straight along the midpoint tangent.
+    #
+    # Two filters run before any of that, in the same order the node channel applies its
+    # pair: label_only restricts which raw values get labeled at all, then link_labels
+    # renames the survivors for display (and drops anything it does not name).
+    #
+    def __renderLinkLabels__(self, df, i, stroke_w_expr):
+        _fm_sx_, _fm_sy_ = f'__rel{i}_fm_sx__', f'__rel{i}_fm_sy__'
+        _to_sx_, _to_sy_ = f'__rel{i}_to_sx__', f'__rel{i}_to_sy__'
+        _f4_    = lambda c: pl.col(c).cast(pl.Float64)
+        _fmlt_  = pl.col('__ll_fmlt__')
+        _curve_ = (self.link_shape == 'curve')
+
+        _d_ = df.filter(pl.col('__ll_vals__').list.len() > 0).drop_nulls(
+            subset=[_fm_sx_, _fm_sy_, _to_sx_, _to_sy_])
+        if len(_d_) == 0: return
+
+        # The label value, or '*' when the edge's rows disagree.  '*' rather than nothing:
+        # an unlabeled edge would read as an edge with no data (rtsvg parity).
+        _d_ = _d_.with_columns(
+            pl.when(pl.col('__ll_vals__').list.len() == 1)
+              .then(pl.col('__ll_vals__').list.first())
+              .otherwise(pl.lit('*')).alias('__ll_txt__'),
+            (pl.col('__ll_fm__') < pl.col('__ll_to__')).fill_null(True).alias('__ll_fmlt__'),
+            stroke_w_expr.cast(pl.Float64).alias('__ll_sw__'),
+        )
+
+        # label_only (rtsvg rt_linknode_mixin.py:1419-1422): an edge is labeled when its
+        # value was asked for, and a '*' survives when any of the values behind it was --
+        # a collision on a requested value is still worth showing.
+        if self.label_only and len(self.label_only) > 0:
+            _only_ = [str(v) for v in self.label_only]
+            _d_ = _d_.filter(
+                pl.col('__ll_txt__').is_in(_only_) |
+                ((pl.col('__ll_txt__') == '*') &
+                 (pl.col('__ll_vals__').list.set_intersection(_only_).list.len() > 0))
+            )
+            if len(_d_) == 0: return
+
+        # link_labels display names, mirroring node_labels: what the dict does not name
+        # goes unlabeled.  Applied after label_only so both filters read raw values.
+        if self.link_labels is not None and len(self.link_labels) > 0:
+            _map_ = {str(k): str(v) for k, v in self.link_labels.items()}
+            _d_ = _d_.with_columns(
+                pl.col('__ll_txt__').replace_strict(_map_, default=None).alias('__ll_txt__')
+            ).filter(pl.col('__ll_txt__').is_not_null())
+            if len(_d_) == 0: return
+
+        # Canonical baseline A -> B ordered by node name, so the two directions of a pair
+        # share one perpendicular; __ll_side__ (+1 on the fm<to direction) then sends their
+        # labels to opposite sides of it.
+        _d_ = _d_.with_columns(
+            pl.when(_fmlt_).then(pl.lit(1.0)).otherwise(pl.lit(-1.0)).alias('__ll_side__'),
+            pl.when(_fmlt_).then(_f4_(_fm_sx_)).otherwise(_f4_(_to_sx_)).alias('__ll_ax__'),
+            pl.when(_fmlt_).then(_f4_(_fm_sy_)).otherwise(_f4_(_to_sy_)).alias('__ll_ay__'),
+            pl.when(_fmlt_).then(_f4_(_to_sx_)).otherwise(_f4_(_fm_sx_)).alias('__ll_bx__'),
+            pl.when(_fmlt_).then(_f4_(_to_sy_)).otherwise(_f4_(_fm_sy_)).alias('__ll_by__'),
+        )
+
+        # Interior control points in the same canonical order.  For 'line' the collinear
+        # thirds reduce every formula below to the straight chord, so one path serves both.
+        if _curve_:
+            _xo0_, _yo0_ = f'__xo0{i}__', f'__yo0{i}__'
+            _xo1_, _yo1_ = f'__xo1{i}__', f'__yo1{i}__'
+            _d_ = _d_.with_columns(
+                pl.when(_fmlt_).then(_f4_(_xo0_)).otherwise(_f4_(_xo1_)).alias('__ll_c1x__'),
+                pl.when(_fmlt_).then(_f4_(_yo0_)).otherwise(_f4_(_yo1_)).alias('__ll_c1y__'),
+                pl.when(_fmlt_).then(_f4_(_xo1_)).otherwise(_f4_(_xo0_)).alias('__ll_c2x__'),
+                pl.when(_fmlt_).then(_f4_(_yo1_)).otherwise(_f4_(_yo0_)).alias('__ll_c2y__'),
+            )
+        else:
+            _d_ = _d_.with_columns(
+                (pl.col('__ll_ax__') + (pl.col('__ll_bx__') - pl.col('__ll_ax__')) / 3.0).alias('__ll_c1x__'),
+                (pl.col('__ll_ay__') + (pl.col('__ll_by__') - pl.col('__ll_ay__')) / 3.0).alias('__ll_c1y__'),
+                (pl.col('__ll_ax__') + (pl.col('__ll_bx__') - pl.col('__ll_ax__')) * 2.0 / 3.0).alias('__ll_c2x__'),
+                (pl.col('__ll_ay__') + (pl.col('__ll_by__') - pl.col('__ll_ay__')) * 2.0 / 3.0).alias('__ll_c2y__'),
+            )
+
+        # Anchor B(0.5) and the tangent there (proportional to c2 + c3 - c0 - c1), plus the
+        # chord length the label has to fit inside -- a curve's arc is a little longer than
+        # its chord, so cropping to the chord errs short.
+        _d_ = _d_.with_columns(
+            ((pl.col('__ll_ax__') + 3.0 * pl.col('__ll_c1x__') + 3.0 * pl.col('__ll_c2x__') + pl.col('__ll_bx__')) / 8.0).alias('__ll_mx__'),
+            ((pl.col('__ll_ay__') + 3.0 * pl.col('__ll_c1y__') + 3.0 * pl.col('__ll_c2y__') + pl.col('__ll_by__')) / 8.0).alias('__ll_my__'),
+            (pl.col('__ll_c2x__') + pl.col('__ll_bx__') - pl.col('__ll_ax__') - pl.col('__ll_c1x__')).alias('__ll_tx__'),
+            (pl.col('__ll_c2y__') + pl.col('__ll_by__') - pl.col('__ll_ay__') - pl.col('__ll_c1y__')).alias('__ll_ty__'),
+            (((pl.col('__ll_bx__') - pl.col('__ll_ax__')) ** 2 +
+              (pl.col('__ll_by__') - pl.col('__ll_ay__')) ** 2).sqrt()).alias('__ll_mag__'),
+        ).with_columns(
+            ((pl.col('__ll_tx__') ** 2 + pl.col('__ll_ty__') ** 2).sqrt()).alias('__ll_tlen__'),
+        ).filter((pl.col('__ll_mag__') > 1e-9) & (pl.col('__ll_tlen__') > 1e-9))
+        if len(_d_) == 0: return
+
+        _d_ = _d_.with_columns(
+            (pl.col('__ll_tx__') / pl.col('__ll_tlen__')).alias('__ll_ux__'),
+            (pl.col('__ll_ty__') / pl.col('__ll_tlen__')).alias('__ll_uy__'),
+        ).with_columns(
+            # the baseline's perpendicular; the label is offset along side * this
+            pl.col('__ll_uy__').alias('__ll_px__'),
+            (-pl.col('__ll_ux__')).alias('__ll_py__'),
+            # sigma flips a baseline that would run right-to-left, keeping the text upright
+            # and every rotation within +/-90 degrees
+            pl.when(pl.col('__ll_ux__') >  1e-9).then(pl.lit(1.0))
+              .when(pl.col('__ll_ux__') < -1e-9).then(pl.lit(-1.0))
+              .when(pl.col('__ll_uy__') >  0.0).then(pl.lit(1.0))
+              .otherwise(pl.lit(-1.0)).alias('__ll_sig__'),
+        ).with_columns(
+            pl.arctan2(pl.col('__ll_sig__') * pl.col('__ll_uy__'),
+                       pl.col('__ll_sig__') * pl.col('__ll_ux__')).degrees().alias('__ll_deg__'),
+            # rtsvg's clearance from the edge: 2 + stroke/2.  The ink term that turns this
+            # into a baseline offset is per-label (it depends on the string) and so is added
+            # in the emission loop below, once the text has been cropped to its final form.
+            (2.0 + pl.col('__ll_sw__') / 2.0).alias('__ll_clr__'),
+        )
+
+        if _curve_:
+            _sigpos_ = pl.col('__ll_sig__') > 0.0
+            _d_ = _d_.with_columns(
+                # the label's own path, emitted sigma-ward so the text reads left to right
+                pl.when(_sigpos_).then(pl.col('__ll_ax__')).otherwise(pl.col('__ll_bx__')).alias('__ll_q0x__'),
+                pl.when(_sigpos_).then(pl.col('__ll_ay__')).otherwise(pl.col('__ll_by__')).alias('__ll_q0y__'),
+                pl.when(_sigpos_).then(pl.col('__ll_c1x__')).otherwise(pl.col('__ll_c2x__')).alias('__ll_q1x__'),
+                pl.when(_sigpos_).then(pl.col('__ll_c1y__')).otherwise(pl.col('__ll_c2y__')).alias('__ll_q1y__'),
+                pl.when(_sigpos_).then(pl.col('__ll_c2x__')).otherwise(pl.col('__ll_c1x__')).alias('__ll_q2x__'),
+                pl.when(_sigpos_).then(pl.col('__ll_c2y__')).otherwise(pl.col('__ll_c1y__')).alias('__ll_q2y__'),
+                pl.when(_sigpos_).then(pl.col('__ll_bx__')).otherwise(pl.col('__ll_ax__')).alias('__ll_q3x__'),
+                pl.when(_sigpos_).then(pl.col('__ll_by__')).otherwise(pl.col('__ll_ay__')).alias('__ll_q3y__'),
+            )
+
+        # Deterministic emission order: group_by output order is not stable, and the
+        # <textPath> ids below are handed out in iteration order.
+        _d_ = _d_.sort(['__ll_ax__', '__ll_ay__', '__ll_bx__', '__ll_by__', '__ll_side__', '__ll_txt__'])
+
+        # rtsvg parity: a label whose field is also the link color field is drawn in the
+        # link's color; anything else uses the default label foreground.
+        _follows_link_color_ = (self.__linkLabelField__(i) == self._link_color_mode_['field'])
+        _default_co_ = self.p2s.colorTyped('label', 'defaultfg')
+        _cols_ = ['__ll_txt__', '__ll_mag__', '__ll_mx__', '__ll_my__', '__ll_px__', '__ll_py__',
+                  '__ll_side__', '__ll_sig__', '__ll_clr__', '__ll_deg__', '__lc_hex__']
+        if _curve_:
+            _cols_ = _cols_ + ['__ll_q0x__', '__ll_q0y__', '__ll_q1x__', '__ll_q1y__',
+                               '__ll_q2x__', '__ll_q2y__', '__ll_q3x__', '__ll_q3y__']
+        _r2_ = lambda v: round(float(v), 2)
+        for _row_ in _d_.select(_cols_).iter_rows(named=True):
+            # rtsvg parity: keep the label clear of both endpoints on all but short edges
+            _mag_   = float(_row_['__ll_mag__'])
+            _avail_ = (_mag_ - 10.0) if _mag_ > 15.0 else _mag_
+            _txt_   = self.p2s.cropText(_row_['__ll_txt__'], self.txt_h, _avail_)
+            if not _txt_ or _txt_ == '...': continue   # edge too short to say anything
+            _co_  = _row_['__lc_hex__'] if _follows_link_color_ else _default_co_
+            _esc_ = _txt_.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+
+            # Baseline offset from the edge.  Glyphs rise from the baseline toward sigma, so
+            # on the side that matches (sig*side > 0) only the descender hangs back toward
+            # the edge and the baseline moves out by that much; on the opposite side the
+            # whole ascent points back at the edge and has to be cleared instead.  Measured
+            # on the cropped string, so a crop that drops the only ascender is accounted for.
+            _asc_, _desc_ = self._labelInk_(_txt_)
+            _side_, _sig_ = float(_row_['__ll_side__']), float(_row_['__ll_sig__'])
+            _k_  = float(_row_['__ll_clr__']) + (_desc_ if _sig_ * _side_ > 0.0 else _asc_)
+            _cx_ = float(_row_['__ll_mx__']) + _side_ * float(_row_['__ll_px__']) * _k_
+            _cy_ = float(_row_['__ll_my__']) + _side_ * float(_row_['__ll_py__']) * _k_
+
+            if _curve_:
+                _pd_ = (f'M {_r2_(_row_["__ll_q0x__"])} {_r2_(_row_["__ll_q0y__"])} '
+                        f'C {_r2_(_row_["__ll_q1x__"])} {_r2_(_row_["__ll_q1y__"])} '
+                        f'{_r2_(_row_["__ll_q2x__"])} {_r2_(_row_["__ll_q2y__"])} '
+                        f'{_r2_(_row_["__ll_q3x__"])} {_r2_(_row_["__ll_q3y__"])}')
+                # <textPath> dy runs along the path's own +y (right of travel) and the path
+                # runs sigma-ward, so -side*sigma*k lands the baseline on the label's side
+                _dy_  = _r2_(-_side_ * _sig_ * _k_)
+                _key_ = (_pd_, _esc_, _dy_, _co_)
+                if _key_ in self._link_label_seen_: continue
+                self._link_label_seen_.add(_key_)
+                _pid_ = f'p2sll{self._rand_id_}_{len(self._link_label_defs_)}'
+                self._link_label_defs_.append(f'<path id="{_pid_}" fill="none" stroke="none" d="{_pd_}" />')
+                self._link_label_svg_.append(
+                    f'<text font-size="{self.txt_h}px" fill="{_co_}" text-anchor="middle" dy="{_dy_}">'
+                    f'<textPath href="#{_pid_}" startOffset="50%">{_esc_}</textPath></text>'
+                )
+            else:
+                _x_, _y_ = _r2_(_cx_), _r2_(_cy_)
+                _svg_ = (f'<text x="{_x_}" y="{_y_}" font-size="{self.txt_h}px" fill="{_co_}" '
+                         f'text-anchor="middle" transform="rotate({_r2_(_row_["__ll_deg__"])},{_x_},{_y_})">'
+                         f'{_esc_}</text>')
+                if _svg_ in self._link_label_seen_: continue
+                self._link_label_seen_.add(_svg_)
+                self._link_label_svg_.append(_svg_)
+            self._link_label_info_.append((_cx_, _cy_, float(_row_['__ll_deg__']), _txt_, _co_))
+
+    #
     # __flowmapControlPoints__() - run the force-directed origin-destination
     # flow layout (Jenny et al., IJGIS 2017; see od_flow_layout.py) once over
     # the combined aggregated flow set of every relationship; returns a join
@@ -956,6 +1302,10 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
 
         _all_svg_ = set()
         self.df_link = None
+        # Link labels (populated by __renderLinkLabels__ from pass 2; _seen_ dedupes
+        # identical labels drawn by more than one relationship)
+        self._link_label_svg_, self._link_label_defs_ = [], []
+        self._link_label_info_, self._link_label_seen_ = [], set()
 
         # Pass 1: per-relationship aggregation + link color resolution
         _rel_tables_ = []
@@ -963,7 +1313,8 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
             _fm_sx_, _fm_sy_ = f'__rel{i}_fm_sx__', f'__rel{i}_fm_sy__'
             _to_sx_, _to_sy_ = f'__rel{i}_to_sx__', f'__rel{i}_to_sy__'
             _gb_       = [_fm_sx_, _fm_sy_, _to_sx_, _to_sy_]
-            _df_link_  = self.df.group_by(_gb_).agg(self.__countAggExpr__(), *_lc_agg_)
+            _df_link_  = self.df.group_by(_gb_).agg(self.__countAggExpr__(), *_lc_agg_,
+                                                    *self.__linkLabelAggExprs__(i))
             _rel_tables_.append(self.__applyColorToDF__(_df_link_, self._link_color_mode_, 'lc', _data_co_))
 
         # flowmap: the force layout couples every flow, so it runs once over the
@@ -1018,6 +1369,14 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
 
             _link_col_ = '__link_svg__'
             _df_link_  = _df_link_.with_columns(_link_expr_.alias(_link_col_))
+
+            # Edge labels come off the same aggregated table (same grouping, color and
+            # stroke width as the edge), then the label-only columns are dropped so the
+            # retained df_link stays what the interactive/GPU paths expect.
+            if self.__linkLabelsActive__(i):
+                self.__renderLinkLabels__(_df_link_, i, _stroke_w_)
+                _df_link_ = _df_link_.drop(self._LINK_LABEL_AGG_COLS_)
+
             self.df_link = _df_link_ if self.df_link is None else pl.concat([self.df_link, _df_link_], how='diagonal')
 
             if self.link_size is not None:
@@ -1339,7 +1698,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
         # Labels (deferred to after main node SVG)
         self._node_label_svg_  = []
         self._node_label_info_ = []   # (sx, y0, lines) -- for the WebGPU glyph path
-        if self.draw_labels and len(_svg_strs_) > 0:
+        if self.draw_node_labels and len(_svg_strs_) > 0:
             _sz_for_label_ = _node_size_lu_.get(self.node_size, self.node_size) \
                 if isinstance(self.node_size, str) else (float(self.node_size) if self.node_size is not None else 5)
             _df_labels_ = self.df_node.filter(pl.col('__nodes__') == 1)
@@ -1660,7 +2019,10 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
             '7.45137 9.83659 8.58999 8.76283 9.955 8.80151C10.2738 8.80108 10.5901 8.85764 10.889 8.96851C'
             '11.4867 7.74927 12.7333 6.98347 14.091 7.00151Z" '
             'stroke="#000000" stroke-linecap="round" stroke-linejoin="round"/>'
-            '</svg></g></defs>'
+            '</svg></g>'
+            # invisible per-edge paths for the 'curve' shape's <textPath> link labels
+            + ''.join(getattr(self, '_link_label_defs_', []))
+            + '</defs>'
         )
         svg.append(f'<rect x="0" y="0" width="{w}" height="{h}" fill="{_bg_co_}" />')
 
@@ -1676,6 +2038,9 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
 
         # Timing marks (above the edges, below the nodes)
         svg.extend(getattr(self, '_timing_mark_svg_list_', []))
+
+        # Link labels (rtsvg parity: over the edges, under the nodes)
+        svg.extend(getattr(self, '_link_label_svg_', []))
 
         # Nodes
         svg.extend(self._node_svg_list_)
@@ -1753,7 +2118,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
 
     def renderSVG(self):
         if self._render_invalid_:
-            rand_id = random.randint(0, 2**32)  # nosec B311 - non-cryptographic SVG id scoping, see SECURITY.md
+            rand_id = self._rand_id_ = random.randint(0, 2**32)  # nosec B311 - see __init__
             self.gatherMetrics(self.__calculateGeometry__)
             self.gatherMetrics(self.__calculateScreenCoordinates__)
             self.gatherMetrics(self.__renderLinks__)
@@ -1956,6 +2321,10 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
         self.label_only = set(label_set) if label_set else set()
         self.invalidateRender()
 
-    def drawLabels(self, draw_labels):
-        self.draw_labels = draw_labels
+    def drawNodeLabels(self, draw_node_labels):
+        self.draw_node_labels = draw_node_labels
+        self.invalidateRender()
+
+    def drawLinkLabels(self, draw_link_labels):
+        self.draw_link_labels = draw_link_labels
         self.invalidateRender()

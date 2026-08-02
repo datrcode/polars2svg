@@ -293,10 +293,22 @@ class TestSpecialCharacterLabels(_EdgeCaseBase):
                                                     draw_labels=True))
 
     def test_script_payload_linkp_label(self):
+        # node_labels= is the display dict, not the on/off switch: without
+        # draw_node_labels= no label was drawn and this asserted nothing.
         pos = {self._SCRIPT_PAYLOAD_: [0, 0], 'b': [1, 1]}
         df  = pl.DataFrame({'fm': [self._SCRIPT_PAYLOAD_, 'b'], 'to': ['b', self._SCRIPT_PAYLOAD_]})
-        self._assert_no_raw_script(self.p2s.linkp(df, relationships=[('fm', 'to')],
-                                                   pos=pos, node_labels=True))
+        _lp_ = self.p2s.linkp(df, relationships=[('fm', 'to')], pos=pos, draw_node_labels=True)
+        self.assertIn('&lt;script', _lp_.svg)   # the payload really is on the canvas
+        self._assert_no_raw_script(_lp_)
+
+    def test_script_payload_linkp_link_label(self):
+        pos = {'a': [0, 0], 'b': [1, 1]}
+        df  = pl.DataFrame({'fm': ['a'], 'to': ['b'], 'dsc': [self._SCRIPT_PAYLOAD_]})
+        for _shape_ in ('line', 'curve'):
+            _lp_ = self.p2s.linkp(df, relationships=[('fm', 'to', 'dsc')], pos=pos,
+                                  draw_link_labels=True, link_shape=_shape_, wxh=(400, 400))
+            self.assertIn('&lt;script', _lp_.svg)
+            self._assert_no_raw_script(_lp_)
 
     # spreadlinesp built <text> for timestamp/annotation labels by raw f-string
     # interpolation, bypassing svgText()/html.escape -- so an XML-special

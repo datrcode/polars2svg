@@ -206,7 +206,7 @@ class TestLinkPWebGPU(unittest.TestCase):
             self.assertAlmostEqual(r, float(row[4]), places=5)
 
     def test_labels_emit_glyphs(self):
-        lp = _P2S_.linkp(df=_DF_, relationships=[('fm', 'to')], pos=_POS_, draw_labels=True)
+        lp = _P2S_.linkp(df=_DF_, relationships=[('fm', 'to')], pos=_POS_, draw_node_labels=True)
         self.assertGreater(manifest_count(lp.webgpu(), 'glyph'), 0)
 
 

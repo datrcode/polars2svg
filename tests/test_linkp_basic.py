@@ -121,14 +121,14 @@ class TestLinkPBasic(unittest.TestCase):
         lp  = self.p2s.linkp(df, relationships=[('fm', 'to')], pos=pos, link_arrows=True)
         self.assertEqual(lp.svg.count('<polygon'), 2)
 
-    def test_draw_labels(self):
+    def test_draw_node_labels(self):
         lp = self.p2s.linkp(_make_df(), relationships=_rels(), pos=_make_pos(),
-                            draw_labels=True)
+                            draw_node_labels=True)
         self.assertIn('<text', lp.svg)
 
     def test_node_labels_dict(self):
         lp = self.p2s.linkp(_make_df(), relationships=_rels(), pos=_make_pos(),
-                            draw_labels=True, node_labels={'a': 'Alice', 'b': 'Bob', 'c': 'Carol'})
+                            draw_node_labels=True, node_labels={'a': 'Alice', 'b': 'Bob', 'c': 'Carol'})
         self.assertIn('Alice', lp.svg)
 
     def test_multiple_relationships(self):

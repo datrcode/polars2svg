@@ -18,7 +18,7 @@ _POS_ = {'a': (0.0, 0.5), 'b': (0.5, 0.0), 'c': (1.0, 0.5), 'd': (0.5, 1.0)}
 
 def _linkp_params(**extra):
     return dict(df=_DF_, relationships=_REL_, pos=_POS_,
-                wxh=(96, 96), link_shape='curve', draw_labels=True,
+                wxh=(96, 96), link_shape='curve', draw_node_labels=True,
                 insets=(16, 16), **extra)
 
 

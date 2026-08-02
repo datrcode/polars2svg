@@ -397,21 +397,21 @@ class TestLinkPInteractive(unittest.TestCase):
         self.assertTrue(self.lp._render_invalid_)
 
     # -------------------------------------------------------------------------
-    # drawLabels()
+    # drawNodeLabels()
     # -------------------------------------------------------------------------
 
-    def test_drawLabels_sets_true(self):
-        self.lp.drawLabels(True)
-        self.assertTrue(self.lp.draw_labels)
+    def test_drawNodeLabels_sets_true(self):
+        self.lp.drawNodeLabels(True)
+        self.assertTrue(self.lp.draw_node_labels)
 
-    def test_drawLabels_sets_false(self):
-        self.lp.drawLabels(True)
+    def test_drawNodeLabels_sets_false(self):
+        self.lp.drawNodeLabels(True)
         self.lp.renderSVG()
-        self.lp.drawLabels(False)
-        self.assertFalse(self.lp.draw_labels)
+        self.lp.drawNodeLabels(False)
+        self.assertFalse(self.lp.draw_node_labels)
 
-    def test_drawLabels_invalidates_render(self):
-        self.lp.drawLabels(True)
+    def test_drawNodeLabels_invalidates_render(self):
+        self.lp.drawNodeLabels(True)
         self.assertTrue(self.lp._render_invalid_)
 
     # -------------------------------------------------------------------------
@@ -931,7 +931,7 @@ class TestCommunityDetection(unittest.TestCase):
 @unittest.skipUnless(_PANEL_AVAILABLE_, 'panel not installed')
 class TestStickyLabelsAcrossStack(unittest.TestCase):
     """Tests for the 's' family — sticky labels (label_only) and label-mode
-    (draw_labels) must be applied to EVERY stack layer, including dfs_layout[0]
+    (draw_node_labels) must be applied to EVERY stack layer, including dfs_layout[0]
     (the template future pushed layers are cloned from), so the label state is
     consistent as the user navigates and grows the stack. Regression: these ops
     used to write only self.dfs_layout[self.df_level]."""
@@ -961,7 +961,7 @@ class TestStickyLabelsAcrossStack(unittest.TestCase):
         self._press('s')                                # replace sticky set
         self.assertEqual(self.ctrl.sticky_labels, {'a1', 'a2'})
         for _layout_ in self.ctrl.dfs_layout:
-            self.assertTrue(_layout_.draw_labels)
+            self.assertTrue(_layout_.draw_node_labels)
             self.assertEqual(_layout_.label_only, {'a1', 'a2'})
 
     def test_setting_labels_at_deep_level_updates_the_template(self):
@@ -974,7 +974,7 @@ class TestStickyLabelsAcrossStack(unittest.TestCase):
         self.ctrl.selected_entities = {'a1', 'a2'}
         self._press('s')
         self.assertEqual(self.ctrl.dfs_layout[0].label_only, {'a1', 'a2'})
-        self.assertTrue(self.ctrl.dfs_layout[0].draw_labels)
+        self.assertTrue(self.ctrl.dfs_layout[0].draw_node_labels)
 
     def test_new_layer_pushed_after_setting_labels_inherits_them(self):
         # The key end-to-end guarantee: grow the stack AFTER choosing sticky
@@ -987,7 +987,7 @@ class TestStickyLabelsAcrossStack(unittest.TestCase):
         self.ctrl.selected_entities = {'b3'}
         self.ctrl.apply_push_selected()                 # level 2, cloned from template
         _top_ = self.ctrl.dfs_layout[self.ctrl.df_level]
-        self.assertTrue(_top_.draw_labels)
+        self.assertTrue(_top_.draw_node_labels)
         self.assertEqual(_top_.label_only, {'a1'})
 
     def test_ctrl_s_adds_and_shift_s_removes_across_stack(self):
@@ -1008,35 +1008,159 @@ class TestStickyLabelsAcrossStack(unittest.TestCase):
     # ── label-visibility mode (ctrl-shift-s) ─────────────────────────────────
 
     def test_ctrl_shift_s_cycles_mode_on_every_level(self):
+        '''These relationships are two-part with no color field, so the graph has no edge
+        labels and the cycle skips both link states (see TestLabelModeCycle).'''
         self.ctrl.selected_entities = {'b3'}
         self.ctrl.apply_push_selected()                 # level 1
-        self.ctrl.label_mode = 'all labels'
-        self._press('S', shift=True, ctrl=True)         # all -> sticky
+        self.ctrl.label_mode = 'node labels'
+        self._press('S', shift=True, ctrl=True)         # node -> sticky
         self.assertEqual(self.ctrl.label_mode, 'sticky labels')
         for _layout_ in self.ctrl.dfs_layout:
-            self.assertTrue(_layout_.draw_labels)
+            self.assertTrue(_layout_.draw_node_labels)
         self._press('S', shift=True, ctrl=True)         # sticky -> no labels
         self.assertEqual(self.ctrl.label_mode, 'no labels')
         for _layout_ in self.ctrl.dfs_layout:
-            self.assertFalse(_layout_.draw_labels)
-        self._press('S', shift=True, ctrl=True)         # no labels -> all
-        self.assertEqual(self.ctrl.label_mode, 'all labels')
+            self.assertFalse(_layout_.draw_node_labels)
+        self._press('S', shift=True, ctrl=True)         # no labels -> node
+        self.assertEqual(self.ctrl.label_mode, 'node labels')
         for _layout_ in self.ctrl.dfs_layout:
-            self.assertTrue(_layout_.draw_labels)
+            self.assertTrue(_layout_.draw_node_labels)
             self.assertEqual(_layout_.label_only, set())
 
-    def test_all_labels_mode_clears_label_only_everywhere(self):
+    def test_leaving_sticky_clears_label_only_everywhere(self):
         self.ctrl.label_mode = 'sticky labels'
         self.ctrl.selected_entities = {'a1'}
         self._press('s')
         self.ctrl.selected_entities = {'b3'}
         self.ctrl.apply_push_selected()                 # level 1, inherits sticky
-        # ctrl-shift-s: sticky -> no labels -> all labels
+        # ctrl-shift-s: sticky -> no labels -> node labels
         self._press('S', shift=True, ctrl=True)         # -> no labels
-        self._press('S', shift=True, ctrl=True)         # -> all labels
+        self._press('S', shift=True, ctrl=True)         # -> node labels
         for _layout_ in self.ctrl.dfs_layout:
-            self.assertTrue(_layout_.draw_labels)
+            self.assertTrue(_layout_.draw_node_labels)
             self.assertEqual(_layout_.label_only, set())
+
+
+@unittest.skipUnless(_PANEL_AVAILABLE_, 'panel not installed')
+class TestLabelModeCycle(unittest.TestCase):
+    """ctrl-shift-s walks the label-visibility cycle:
+
+        none -> node -> node+link -> link -> sticky -> none
+
+    The two link states only exist when the graph has edge labels to show (a third
+    element on some relationship tuple, or a color= field for the two-part fallback);
+    without one the cycle is the three-state walk it was before edge labels existed."""
+
+    _DF_ = pl.DataFrame({
+        'fm':  ['a1', 'a2', 'a3', 'b1'],
+        'to':  ['a2', 'a3', 'a1', 'b2'],
+        'dsc': ['x',  'y',  'z',  'w'],
+    })
+
+    def setUp(self):
+        self.p2s = Polars2SVG()
+
+    def _ctrl(self, rels, **kwargs):
+        return self.p2s.linkpi(self.p2s.linkp(self._DF_, relationships=rels, **kwargs))
+
+    def _press(self, ctrl):
+        ctrl.shiftkey, ctrl.ctrlkey, ctrl.key_op_finished = True, True, 'S'
+        asyncio.run(ctrl.applyKeyOp(None))
+
+    def _walk(self, ctrl, n):
+        _seen_ = []
+        for _ in range(n):
+            self._press(ctrl)
+            _seen_.append(ctrl.label_mode)
+        return _seen_
+
+    # ── with edge labels: the full five-state cycle ──────────────────────────
+    def test_full_cycle_order(self):
+        _c_ = self._ctrl([('fm', 'to', 'dsc')])
+        self.assertEqual(_c_.label_mode, 'no labels')
+        self.assertEqual(self._walk(_c_, 5),
+                         ['node labels', 'node + link labels', 'link labels',
+                          'sticky labels', 'no labels'])
+
+    def test_full_cycle_flags_at_each_step(self):
+        _c_ = self._ctrl([('fm', 'to', 'dsc')])
+        _want_ = {'node labels':        (True,  False),
+                  'node + link labels': (True,  True),
+                  'link labels':        (False, True),
+                  'sticky labels':      (True,  False),
+                  'no labels':          (False, False)}
+        for _ in range(5):
+            self._press(_c_)
+            for _lp_ in _c_.dfs_layout:
+                self.assertEqual((_lp_.draw_node_labels, _lp_.draw_link_labels),
+                                 _want_[_c_.label_mode], msg=_c_.label_mode)
+
+    def test_link_states_actually_render_edge_labels(self):
+        _c_ = self._ctrl([('fm', 'to', 'dsc')])
+        self._press(_c_); self._press(_c_)               # -> node + link labels
+        self.assertEqual(_c_.label_mode, 'node + link labels')
+        _svg_ = _c_.dfs_layout[0].renderSVG()
+        self.assertIn('>x</text>', _svg_)                # an edge label
+        self.assertIn('>a1</text>', _svg_)               # a node label
+        self._press(_c_)                                 # -> link labels
+        _svg_ = _c_.dfs_layout[0].renderSVG()
+        self.assertIn('>x</text>', _svg_)
+        self.assertNotIn('>a1</text>', _svg_)            # nodes now unlabeled
+
+    def test_two_part_tuple_with_a_color_field_still_gets_the_link_states(self):
+        '''The colour fallback is a real label source, so the cycle offers it.'''
+        _c_ = self._ctrl([('fm', 'to')], color='dsc')
+        self.assertIn('link labels', _c_.labelModeCycle())
+
+    # ── without edge labels: the short cycle ─────────────────────────────────
+    def test_short_cycle_when_there_is_nothing_to_label(self):
+        _c_ = self._ctrl([('fm', 'to')])
+        self.assertEqual(_c_.labelModeCycle(), ['no labels', 'node labels', 'sticky labels'])
+        self.assertEqual(self._walk(_c_, 3), ['node labels', 'sticky labels', 'no labels'])
+
+    def test_flowmap_has_no_link_states(self):
+        '''flowmap edges are never labeled, so neither link state is reachable.'''
+        _c_ = self._ctrl([('fm', 'to', 'dsc')], link_shape='flowmap')
+        self.assertEqual(_c_.labelModeCycle(), ['no labels', 'node labels', 'sticky labels'])
+
+    def test_link_size_none_has_no_link_states(self):
+        _c_ = self._ctrl([('fm', 'to', 'dsc')], link_size=None)
+        self.assertEqual(_c_.labelModeCycle(), ['no labels', 'node labels', 'sticky labels'])
+
+    # ── entry point + robustness ─────────────────────────────────────────────
+    def test_initial_mode_reflects_how_the_linkp_was_built(self):
+        for _kw_, _mode_ in ((dict(), 'no labels'),
+                             (dict(draw_node_labels=True), 'node labels'),
+                             (dict(draw_node_labels=True, draw_link_labels=True), 'node + link labels'),
+                             (dict(draw_link_labels=True), 'link labels'),
+                             (dict(draw_node_labels=True, label_only={'a1'}), 'sticky labels')):
+            _c_ = self._ctrl([('fm', 'to', 'dsc')], **_kw_)
+            self.assertEqual(_c_.label_mode, _mode_, msg=str(_kw_))
+
+    def test_a_mode_outside_the_cycle_restarts_it(self):
+        '''A linkp built with link labels whose shape later rules them out must not get
+        stuck on an unreachable mode.'''
+        _c_ = self._ctrl([('fm', 'to', 'dsc')], draw_link_labels=True)
+        self.assertEqual(_c_.label_mode, 'link labels')
+        for _lp_ in _c_.dfs_layout: _lp_.link_shape = 'flowmap'
+        self.assertEqual(_c_.nextLabelMode(), 'no labels')
+
+    def test_sticky_set_survives_a_lap_of_the_cycle(self):
+        _c_ = self._ctrl([('fm', 'to', 'dsc')])
+        _c_.selected_entities = {'a1', 'a2'}
+        _c_.shiftkey, _c_.ctrlkey, _c_.key_op_finished = False, False, 's'
+        asyncio.run(_c_.applyKeyOp(None))
+        self.assertEqual(_c_.sticky_labels, {'a1', 'a2'})
+        self._walk(_c_, 5)                               # all the way around
+        self.assertEqual(_c_.sticky_labels, {'a1', 'a2'})
+        self._walk(_c_, 4)                               # back to sticky
+        self.assertEqual(_c_.label_mode, 'sticky labels')
+        for _lp_ in _c_.dfs_layout:
+            self.assertEqual(_lp_.label_only, {'a1', 'a2'})
+
+    def test_help_text_lists_the_cycle(self):
+        _c_ = self._ctrl([('fm', 'to', 'dsc')])
+        self.assertIn('node+link', _c_._keyboard_commands_)
 
 
 @unittest.skipUnless(_PANEL_AVAILABLE_, 'panel not installed')

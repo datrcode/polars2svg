@@ -66,10 +66,9 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
         self.gatherMetrics(self.__parseInput__, *args, **kwargs)
         self.gatherMetrics(self.__validateInput__)
         if self.df is not None:
-            # nosec B311 - non-cryptographic SVG id scoping, see SECURITY.md.  Held on self
-            # because __renderLinks__ mints <textPath> ids for link labels before
-            # __renderSVG__ runs.
-            rand_id = self._rand_id_ = random.randint(0, 2**32)
+            # Held on self because __renderLinks__ mints <textPath> ids for link
+            # labels before __renderSVG__ runs.
+            rand_id = self._rand_id_ = random.randint(0, 2**32)  # nosec B311 - non-cryptographic SVG id scoping, see SECURITY.md
             self.gatherMetrics(self.__calculateGeometry__)
             self.gatherMetrics(self.__calculateScreenCoordinates__)
             self.gatherMetrics(self.__renderLinks__)

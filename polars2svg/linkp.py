@@ -16,7 +16,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
 
     _VALID_KWARGS = frozenset({
         'template', 'df',
-        'relationships', 'pos', 'view_window',
+        'relationships', 'pos', 'view_window', 'null_nodes',
         'color', 'node_color', 'count',
         'node_size', 'node_opacity', 'node_size_range',
         'draw_node_labels', 'node_labels', 'label_only',
@@ -233,6 +233,10 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
             'relationships':          None,
             'pos':                    {},
             'view_window':            None,
+            # Draw a missing relationship endpoint as that entity's own null node
+            # (p2s.NULL_NODE_PREFIX + entity) instead of leaving the entity as an
+            # unconnected dot. Off by default: it changes what is rendered.
+            'null_nodes':             False,
             # Color (p2s style)
             'color':                  None,   # None | '#rrggbb' | 'field'
             'node_color':             None,
@@ -547,6 +551,15 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
             for _field_ in _rel_[:2]:
                 if _field_ not in self.df.columns:
                     raise ValueError(f'LinkP.__validateInput__(): field "{_field_}" not found in DataFrame{_rel_hint_}')
+        # null_nodes= materializes a missing endpoint as that entity's own null node, in
+        # BOTH frames: df drives this render, while df_orig is what linkpi() puts on the
+        # interaction stack and builds its NetworkX graph from. Filling only one of them
+        # would leave the render and the graph disagreeing about which nodes exist -- the
+        # very split this parameter exists to close. Idempotent, so a template clone of an
+        # already-filled frame (render_with() on a pushed df) is a no-op.
+        if self.null_nodes:
+            self.df = self.df_orig = self.p2s.nullFillEndpoints(self.df, self.relationships)
+
         # The third tuple element is only read when draw_link_labels is on, so it is only
         # validated then -- a stale third element in an unlabeled render keeps working.
         if self.draw_link_labels:
@@ -1713,6 +1726,15 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
             else:
                 _df_labels_ = _df_labels_.with_columns(pl.col('__first__').alias('__label__'))
 
+            # A null_nodes= partner is named with the non-printable NULL_NODE_PREFIX, so it
+            # is shown as '(null)' -- the same internal-key/display split MULTI_FIELD_SEP
+            # has. A name renamed by node_labels= no longer carries the prefix and so keeps
+            # whatever the caller mapped it to.
+            _df_labels_ = _df_labels_.with_columns(
+                pl.when(pl.col('__label__').str.starts_with(self.p2s.NULL_NODE_PREFIX))
+                  .then(pl.lit(self.p2s.nullNodeDisplay(self.p2s.NULL_NODE_PREFIX)))
+                  .otherwise(pl.col('__label__')).alias('__label__')
+            )
             _df_labels_ = _df_labels_.with_columns(
                 pl.col('__label__').str.replace_all('&', '&amp;')
                                    .str.replace_all('<', '&lt;')

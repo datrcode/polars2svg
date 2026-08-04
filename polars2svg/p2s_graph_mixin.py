@@ -69,6 +69,40 @@ class P2SGraphMixin:
             else:                    return pl.struct(_fields_).n_unique().alias('__count__')
         return pl.len().alias('__count__')
 
+    #
+    # nullFillEndpoints() - materialize null relationship endpoints as private null nodes.
+    #
+    # A row with exactly one null endpoint becomes a real edge from the surviving entity to
+    # that entity's own null partner (nullNode(entity)); a row with both endpoints null has
+    # no entity to anchor to and is left alone (it stays dropped downstream, as before).
+    # This is what linkp(null_nodes=True) applies to its frame, and it is the only place the
+    # substitution happens -- the filled frame then flows into createNetworkXGraph(),
+    # filterDataFrameByGraph() and the render path alike, so none of them can disagree about
+    # which nodes exist.
+    #
+    # Dtype note: a sentinel is a string, so a relationship whose endpoint column actually
+    # contains nulls has BOTH of its endpoint columns cast to String -- otherwise one side
+    # would keep e.g. Int64 node names and 5 and '5' would be two different nodes. Columns
+    # without nulls are left untouched, dtype included.
+    #
+    def nullFillEndpoints(self, df, relationships):
+        for _rel_ in relationships:
+            _fm_, _to_ = _rel_[0], _rel_[1]
+            if _fm_ not in df.columns or _to_ not in df.columns: continue
+            if df[_fm_].null_count() == 0 and df[_to_].null_count() == 0: continue
+            _fm_str_, _to_str_ = pl.col(_fm_).cast(pl.String), pl.col(_to_).cast(pl.String)
+            # Applied one relationship at a time: two relationships may share an endpoint
+            # column, and a single with_columns() cannot alias the same output name twice.
+            df = df.with_columns(
+                pl.when(pl.col(_fm_).is_null() & pl.col(_to_).is_not_null())
+                  .then(pl.lit(self.NULL_NODE_PREFIX) + _to_str_)
+                  .otherwise(_fm_str_).alias(_fm_),
+                pl.when(pl.col(_to_).is_null() & pl.col(_fm_).is_not_null())
+                  .then(pl.lit(self.NULL_NODE_PREFIX) + _fm_str_)
+                  .otherwise(_to_str_).alias(_to_),
+            )
+        return df
+
     def createNetworkXGraph(self,
                             df,
                             relationships,
@@ -109,6 +143,22 @@ class P2SGraphMixin:
                 params = {}
                 if len(rel_tuple) == 3: params[rel_tuple[2]] = _row_[rel_tuple[2]][0]
                 nx_g.add_edge(_row_[rel_tuple[0]][0], _row_[rel_tuple[1]][0], weight=_row_['__count__'][0], **params)
+
+            # Every entity named in an endpoint column is a node of this graph, including
+            # the ones whose rows never became an edge: polarsFilterColumnsWithNaNs() above
+            # drops a whole row when EITHER endpoint is null (and, for a three-part
+            # relationship, when the label field is null), so an entity that only ever
+            # appears opposite a null used to be absent here entirely.
+            #
+            # linkp draws and hit-tests from the same columns without that row filter, so
+            # those entities are on screen and selectable. Leaving them out of the graph
+            # broke the "every drawn node is a graph node" invariant that the interactive
+            # ops rely on: removing a selection that contained one ('x') raised
+            # NetworkXError and aborted the filter, and invert-selection ('q') could never
+            # reach them. They enter as isolated nodes, so nothing new is drawn -- see
+            # linkp(null_nodes=True) to give them a visible null partner instead.
+            nx_g.add_nodes_from(df[rel_tuple[0]].drop_nulls().unique().to_list())
+            nx_g.add_nodes_from(df[rel_tuple[1]].drop_nulls().unique().to_list())
 
         return nx_g
 

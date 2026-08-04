@@ -2315,6 +2315,14 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
 
         self.df_level -= 1
 
+        # Keep the selection a subset of the level being shown, the way pushStack() does.
+        # A pop is usually a widening (a filter push shrinks the graph, so its parent has
+        # every node back), but not always: 'f'/'F' push a SUPERSET, and popping off one of
+        # those lands on a graph that never had the nodes selected up there. Notification is
+        # deliberately skipped -- display() pops in a loop to walk the stack, and one mvc
+        # broadcast per level would be pure chatter.
+        self.selected_entities &= set(self.graphs[self.df_level].nodes())
+
         self.__refreshView__()
 
         at_top = 'TOP' if self.df_level == 0 else ''
@@ -2327,6 +2335,10 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
         if i_found < 0 or i_found >= len(self.dfs_layout): return
 
         self.df_level = i_found
+
+        # Same subset invariant as pushStack()/popStack(): an arbitrary jump can land on a
+        # level that never had the currently selected nodes.
+        self.selected_entities &= set(self.graphs[self.df_level].nodes())
 
         self.__refreshView__()
 
@@ -2388,6 +2400,7 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
                 else:
                     _new_set_ = set(self.selected_entities)
                     for _node_ in self.selected_entities:
+                        if _node_ not in self.graphs[self.df_level]: continue   # as the 'E' path guards
                         for _nbor_ in self.graphs[self.df_level].neighbors(_node_):
                             _new_set_.add(_nbor_)
                     self.setSelectedEntitiesAndNotifyOthers(_new_set_)
@@ -2400,6 +2413,7 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
                 if   self.key_op_finished == 'Q': # common neighbors
                     inter_set = None
                     for _node_ in self.selected_entities:
+                        if _node_ not in self.graphs[self.df_level]: continue   # as the 'E' path guards
                         nbor_set = set()
                         for _nbor_ in self.graphs[self.df_level].neighbors(_node_):
                             nbor_set.add(_nbor_)
@@ -2689,11 +2703,23 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
         if not self.selected_entities:
             return False
         _g_ = copy.deepcopy(self.graphs[self.df_level])
-        for _entity_ in self.selected_entities:
-            _g_.remove_node(_entity_)
+        # remove_nodes_from() rather than a remove_node() loop: it ignores a name the graph
+        # does not have, where remove_node() raises NetworkXError and aborts the whole
+        # filter over a single entity. The selection is re-intersected with the level's
+        # graph everywhere it can go stale (pushStack / popStack / setStackPostion /
+        # receiveSelection), so this is the backstop, not the mechanism.
+        _g_.remove_nodes_from(self.selected_entities)
         _df_ = self.rt_self.filterDataFrameByGraph(
             self.dfs[self.df_level], self.ln_params['relationships'], _g_)
         if len(_df_) > 0:
+            # _g_ is handed to pushStack() instead of rebuilding the graph from _df_ (the
+            # expensive path), so it has to be trimmed to what _df_ actually contains:
+            # filterDataFrameByGraph() keeps only rows that are edges, which drops the rows
+            # of any node left edgeless -- a leaf whose only neighbor was just removed, or
+            # an entity that was only ever an isolated node. Those would otherwise linger in
+            # the graph as nodes the pushed view does not draw, and invert-selection would
+            # hand back names with nothing on screen behind them.
+            _g_.remove_nodes_from(set(_g_.nodes()) - self._extractNodes_(_df_))
             self.pushStack(_df_, g=_g_)
             return True
         return False

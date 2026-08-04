@@ -129,8 +129,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   month view always gains whole day/week/month bars rather than a partial edge
   bar. `timepi`'s shortcuts are additionally inert on a **periodic** time axis.
 
+- **`null_nodes=` on `linkp`** — draw a missing relationship endpoint instead of
+  silently leaving the entity beside it as an unconnected dot. Each entity gets its
+  **own** null partner, `p2s.NULL_NODE_PREFIX + entity`, so a row with a null `to`
+  renders as a short stub edge from the entity to a node of its own; two records
+  with a missing endpoint are never asserted to point at the same thing. (A single
+  shared null node would make every such entity one connected component — neighbor
+  expansion from it would select all of them at once, community detection would
+  group them, and force layout would ball them up.) Off by default, since it
+  changes what is rendered.
+  - The sentinel is built from the non-printable ASCII US (`0x1f`), like
+    `MULTI_FIELD_SEP`, because `'None'`, `'null'` and `''` are all plausible values
+    in real data and a readable sentinel would collide with them. Node labels show
+    it as `(null)` via `nullNodeDisplay()`.
+  - The substitution happens once, in `linkp.__validateInput__()`, and fills both
+    `df` and `df_orig` — the render reads the first, `linkpi()`'s stack and graph
+    read the second, and filling only one would recreate the very split the
+    parameter exists to close. `p2s.nullFillEndpoints()` is idempotent, so a
+    template clone of an already-filled frame is a no-op. Rows with **both**
+    endpoints null have no entity to anchor to and are left alone.
+
 ### Fixed
 
+- **A node could be drawn but absent from the graph, so `x` crashed on it.**
+  `createNetworkXGraph()` builds a graph purely from `add_edge()` calls over rows
+  that survive `polarsFilterColumnsWithNaNs()`, which drops a whole row when
+  *either* endpoint is null — or, for a three-part relationship, when the label
+  field is null. `linkp` draws and hit-tests from the same columns *without* that
+  row filter, so an entity that only ever appears opposite a null was on screen and
+  rubber-band selectable while the graph had never heard of it. Every graph-derived
+  interactive op then disagreed with the view: removing the selection (`x`) raised
+  `NetworkXError: The node ... is not in the graph` and aborted the whole filter
+  after deep-copying the graph, and invert-selection (`q`) could never reach those
+  nodes, so they stayed stubbornly unselected. Entities like this now enter the
+  graph as **isolated nodes**, restoring the "every drawn node is a graph node"
+  invariant without changing what any existing chart renders. Reported against a
+  ~69K-node email graph where 21,846 rows carried a null `to`, stranding 486
+  entities. Use `null_nodes=True` (above) to give them a visible partner instead.
+- **A selection could outlive the stack level it was made on.** `pushStack()`
+  re-intersected the selection with the new level's graph but `popStack()` and
+  `setStackPostion()` did not. That is harmless for a plain filter push (the parent
+  has every node back), but `f`/`F` push a **superset**, so popping off one of those
+  — or jumping levels outright — left entities selected that the landing level had
+  never had, and the next `x` raised `NetworkXError` again. Both now re-intersect,
+  without an mvc broadcast (`display()` pops in a loop to walk the stack, and one
+  notification per level would be chatter). `apply_push_selected()` additionally
+  uses `remove_nodes_from()` as a backstop, which ignores an unknown name instead of
+  raising, and the `e` / `Q` key ops guard their neighbor lookups the way `E`
+  already did.
+- **`x` left orphaned nodes in the pushed graph.** `apply_push_selected()` hands
+  its surgically-edited graph to `pushStack()` rather than paying to rebuild one
+  from the filtered dataframe, but `filterDataFrameByGraph()` keeps only rows that
+  are edges — so a leaf whose only neighbor was just removed lost all of its rows
+  while staying in the graph. The pushed level then held nodes it did not draw, and
+  invert-selection handed back names with nothing on screen behind them. The graph
+  is now trimmed to the entities the filtered frame actually contains.
 - **`hyperTreeLayout` drew crossing edges.** The radial layout gave each node an
   angular sector sized by its leaf count and placed the node at the sector's
   midpoint, but never constrained where in that sector the children could go.

@@ -178,6 +178,18 @@ class Polars2SVG(P2SColorsMixin,
     # every text-display site via formatMultiFieldValue(), so labels are unchanged.
     MULTI_FIELD_SEP      = '\x1f'
 
+    # Prefix of the node name given to a null relationship endpoint that
+    # linkp(null_nodes=True) materializes. The prefix is followed by the name of the
+    # entity on the other end, so every entity gets its OWN null partner: two records
+    # with a missing endpoint are not asserted to point at the same thing. A single
+    # shared null node would instead make every such entity one connected component --
+    # neighbor expansion from it would select all of them, community detection would
+    # group them, and force layout would ball them up. Like MULTI_FIELD_SEP this is
+    # built from the non-printable ASCII US (0x1f) rather than a readable 'None'/'null'
+    # /'', all of which are plausible values in real data and would collide with it.
+    # nullNodeDisplay() restores a readable '(null)' at every text-display site.
+    NULL_NODE_PREFIX     = '\x1fNULL\x1f'
+
     # roundSvgFloats() below trims verbose float tails in the final SVG. This
     # matches a decimal number (optional leading '-', optional integer part, a
     # dot, and a fractional part). The callback leaves short numbers untouched and
@@ -1195,6 +1207,15 @@ class Polars2SVG(P2SColorsMixin,
         pos            = {node_name: [x, y], ...}          # networkx-style position dict
                                                             # nodes absent from pos get random positions
 
+        null_nodes     = False                             # default — a row with one null endpoint draws only the
+                                                            # entity beside it, as an unconnected dot
+                       = True                              # draw the missing endpoint too, as that entity's OWN null
+                                                            # node (p2s.NULL_NODE_PREFIX + entity, labeled '(null)'),
+                                                            # so the row becomes a visible stub edge. Per-entity, not
+                                                            # one shared node: records with a missing endpoint are not
+                                                            # connected to each other. Rows with BOTH endpoints null
+                                                            # are left alone.
+
         template       = None                              # another LinkP instance; copies all settings, then applies any overrides
 
         === %< === %< === %< === %< === %< === %< === %< === %< === %< === %< === %< ===
@@ -1892,6 +1913,22 @@ class Polars2SVG(P2SColorsMixin,
     #
     def formatMultiFieldValue(self, value):
         return str(value).replace(self.MULTI_FIELD_SEP, '|')
+
+    #
+    # nullNode() / isNullNode() / nullNodeDisplay() - the private null partner of an
+    # entity, materialized by linkp(null_nodes=True). See NULL_NODE_PREFIX for why the
+    # partner is per-entity rather than one shared node. nullNodeDisplay() is the
+    # NULL_NODE_PREFIX counterpart of formatMultiFieldValue(): the internal name is
+    # non-printable, so anything drawn as text goes through it first.
+    #
+    def nullNode(self, entity):
+        return f'{self.NULL_NODE_PREFIX}{entity}'
+
+    def isNullNode(self, value):
+        return isinstance(value, str) and value.startswith(self.NULL_NODE_PREFIX)
+
+    def nullNodeDisplay(self, value):
+        return '(null)' if self.isNullNode(value) else value
 
     #
     # tField() - create a transformation field

@@ -8,8 +8,8 @@ from piep_dataframes import makePieDf
 
 
 class TestDrawBorderNewlyAdded(unittest.TestCase):
-    '''draw_border is new on xyp/timep/histop/piep as of item 4 of
-    20260714_open_todos.md; it defaults True everywhere it's accepted
+    '''draw_border is new on xyp/timep/histop/piep as of the 2026-07-15 draw_*
+    consistency audit; it defaults True everywhere it's accepted
     (mirroring linkp/chordp/spreadlinesp/smallp, which already had it).'''
 
     def __init__(self, *args, **kwargs):

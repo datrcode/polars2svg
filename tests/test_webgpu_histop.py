@@ -79,7 +79,7 @@ class TestHistopWebGPUParity(unittest.TestCase):
 
     def test_no_context_means_no_glyphs(self):
         # draw_labels=False too: bin labels are gated separately from draw_context
-        # (see item 4 of 20260714_open_todos.md) and default True on histop.
+        # (see parameter_conventions.md) and default True on histop.
         h = _P2S_.histop(_DF_, 'cat', draw_context=False, draw_labels=False)
         payload = h.webgpu()
         self.assertEqual(manifest_count(payload, 'glyph'), 0)

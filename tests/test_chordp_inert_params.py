@@ -20,7 +20,7 @@ class TestChordPInertParamsRemoved(unittest.TestCase):
     '''node_shape and draw_context were accepted-but-inert in chordp (stored, never
     read by __renderSVG__) -- the same class of bug already fixed in linkp
     (see test_linkp_inert_params.py). They are removed from chordp entirely so
-    passing them raises instead of being ignored. See item 4 of 20260714_open_todos.md.'''
+    passing them raises instead of being ignored. See parameter_conventions.md.'''
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)

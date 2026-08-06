@@ -202,9 +202,5 @@ exclude = [
   ".python-version",
   "pypi_instructions.txt",
   "CLAUDE.md",
-  "20260704_whats_missing_from_framework.md",
-  "20260708_pypi_must_dos.md",
-  "20260708_pypi_nice_to_haves.md",
-  "20260708_pypi_readiness_report.md",
-  "20260708_pypi_should_dos.md",
+  "PLANNING.md",
 ]

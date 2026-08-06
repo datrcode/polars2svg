@@ -18,7 +18,8 @@ def _rels():
 
 class TestSpreadLinesPDrawContextIsTimestampRow(unittest.TestCase):
     '''draw_context (not draw_labels) now controls the timestamp row along the
-    bottom of each bin -- rewired as part of item 4 of 20260714_open_todos.md.'''
+    bottom of each bin -- rewired as part of the 2026-07-15 draw_* consistency
+    audit; see parameter_conventions.md.'''
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)

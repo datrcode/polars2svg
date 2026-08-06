@@ -3298,7 +3298,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
             _border_co_  = self.p2s.colorTyped('axis', 'inner')
             _svg_border_ = f'<rect x="0" y="0" width="{w-1}" height="{h-1}" fill="none" stroke="{_border_co_}" stroke-width="1" />'
 
-        self.svg = f'''<svg id="xyp_{_randid_}" x="0" y="0" width="{w}" height="{h}" xmlns="http://www.w3.org/2000/svg">
+        self.svg = f'''<svg id="xyp_{_randid_}" x="0" y="0" width="{w}" height="{h}" font-family="{self.p2s.default_font}" xmlns="http://www.w3.org/2000/svg">
                         {self.svg_defs}
                         {_svg_style_}
                         <rect x="0" y="0" width="{w}" height="{h}" fill="{_background_default_}" stroke="{_background_default_}" />

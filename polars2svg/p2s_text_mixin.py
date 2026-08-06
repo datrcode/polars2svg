@@ -4,6 +4,26 @@ class P2STextMixin:
     def __init__(self):
         pass
 
+    #
+    # default_font - the face every text measurement in this package assumes.
+    #
+    # textLength()/textInk() answer from the bundled NotoSans-Regular-subset.ttf, and the
+    # GPU glyph atlas rasterizes that same file, so every text-derived coordinate in the
+    # output is a statement about Noto Sans.  The markup has to say so, or a renderer
+    # substitutes a face with different metrics and the layout drifts from what was
+    # measured -- silently, because a slightly-too-long label just looks like a label.
+    #
+    # Contract: every component's *root* <svg> element carries font-family="{default_font}",
+    # so the assumption is stated once per document and CSS inheritance carries it to every
+    # <text> underneath -- including the raw <text> strings linkp/spreadlinesp/xyp emit
+    # without going through svgText().  A <text> that wants a different face (the interactive
+    # chrome's monospace help overlays) overrides it with its own font-family attribute.
+    # tests/test_font_consistency.py holds both halves of that contract.
+    #
+    # This is a request, not a guarantee: a machine with no Noto Sans installed falls back to
+    # the generic sans and the measurement is approximate again.  Guaranteeing it would mean
+    # embedding the subset as a base64 @font-face (~90KB/document) -- deliberately not done.
+    #
     def __p2s_text_mixin_init__(self):
         self.default_font = "'Noto Sans', sans-serif"
         self._glyph_atlas_ = None
@@ -163,4 +183,26 @@ class P2STextMixin:
             return 0
         from polars2svg.p2s_font_metrics import textAdvance
         return textAdvance(txt, int(round(txt_h)))
+
+    #
+    # textInk() - (above, below) reach of txt's ink from its own baseline, in pixels
+    #
+    # The vertical companion to textLength(), from the same baked table and for the same
+    # reason: a caller that positions text by where its glyphs actually land -- rather than
+    # by the baseline -- needs metrics that belong to the font, not to whatever face the
+    # viewer's renderer happened to substitute.  'cow' rises to the x-height, 'CAT' to the
+    # cap height, 'dog' hangs a descender; both returned values are non-negative distances
+    # from the baseline, and a run with no ink (empty or whitespace) measures (0.0, 0.0).
+    #
+    # Size is quantized to an integer exactly as textLength() does, so a run's measured
+    # width and its measured height are always taken at the same size.
+    #
+    # Guarded on None rather than falsiness: a label value of 0 is a glyph like any other,
+    # and str() it before measuring so a numeric label measures its rendered form.
+    #
+    def textInk(self, txt, txt_h):
+        if txt is None:
+            return 0.0, 0.0
+        from polars2svg.p2s_font_metrics import textInk
+        return textInk(str(txt), int(round(txt_h)))
 

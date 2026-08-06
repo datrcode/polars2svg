@@ -33,12 +33,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Clearance is measured to the ink, not the baseline.** A label whose glyphs
     grow away from its edge is offset by its descent; one whose glyphs grow back
     over the edge is offset by its ascent — so both sides of a pair sit the same
-    distance off the edge whatever the strings are. Ascent/descent come from a
-    character-class approximation (`_labelInk_`), because the emitted markup names
-    no font-family and so carries no real metrics. Measured against WebKit, every
-    string shape now clears by 2.5px ±0.3 at `txt_h=12`; a single flat offset put
-    x-height-only labels (`cow`) ~3px too far out and let a descender (`dog`)
-    touch the edge on the other side.
+    distance off the edge whatever the strings are. Ascent and descent come from
+    the bundled font's own glyph outlines (`_labelInk_` → `textInk()`, see below),
+    so every string shape clears its edge by exactly the intended 2 + stroke/2 px;
+    a single flat offset put x-height-only labels (`cow`) ~3px too far out and let
+    a descender (`dog`) touch the edge on the other side.
   - **`link_shape='line'`** rotates the text onto the chord and
     **`link_shape='curve'`** runs it along the drawn Bezier via an SVG
     `<textPath>` (one invisible per-edge path in `<defs>`, id-scoped per
@@ -150,6 +149,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     endpoints null have no entity to anchor to and are left alone.
 
 ### Fixed
+
+- **Text was measured in one font and rendered in another.** Every text-derived
+  coordinate the package emits — where a label is cropped, how wide a legend is,
+  how far a link label sits off its edge — is computed from the bundled
+  `NotoSans-Regular-subset.ttf` via the baked table in `p2s_font_metrics.py`. The
+  emitted markup never said so. `P2STextMixin.default_font` was only ever applied
+  by `svgText()`; the raw `<text>` strings that `linkp` (12 of them), `spreadlinesp`
+  (5) and `xyp` (1) build by hand named no `font-family` at all, so they inherited
+  whatever the host page or viewer supplied, and `chordp`'s two label emitters
+  asked for a bare `sans-serif`. Under a wider face a label overflows the width
+  `cropText()` trimmed it to fit; under a taller one a link label touches the edge
+  it was offset to clear. Neither reads as a metrics bug downstream — an
+  overflowing label just looks slightly too long — and no golden could catch it,
+  since the SVG goldens compare our markup to our markup and the PNG goldens
+  rasterize through a third font engine.
+  - **Every component's root `<svg>` now carries `font-family="{default_font}"`**,
+    which CSS inheritance carries to every `<text>` beneath it — one site per
+    component rather than one per emitter, so a newly added raw emitter is covered
+    by construction. `chordp`'s two label emitters name the same face explicitly.
+  - Still a *request*, not a guarantee: a machine without Noto Sans installed falls
+    back to the generic sans and the measurement is approximate again. Embedding
+    the subset as a base64 `@font-face` (~90KB per document) would close that and
+    is deliberately not done.
+- **`linkp` link-label clearance came from constants calibrated against a font that
+  was not being used.** `_labelInk_`'s four per-character-class fractions (0.67em
+  ascender, 0.56em short ascender, 0.46em x-height, 0.20em descent) were eyeballed
+  against whatever face WebKit picked. Real Noto Sans ascends 0.760em, descends
+  0.240em and has a 0.536em x-height, so every class of label sat ~0.5–1.1px closer
+  to its edge than intended. `tools/gen_font_metrics.py` now bakes per-glyph ink
+  extents (`INK_EXTENTS`, the outlines' yMin/yMax) alongside the advances, and the
+  new `Polars2SVG.textInk(txt, txt_h)` — the vertical companion to `textLength()`,
+  quantizing size the same way — reads them. Link labels move out by that much;
+  nothing else in any component moves.
 
 - **A node could be drawn but absent from the graph, so `x` crashed on it.**
   `createNetworkXGraph()` builds a graph purely from `add_edge()` calls over rows

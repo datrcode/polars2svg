@@ -432,7 +432,7 @@ class Smallp(ExportMixin):
             _bg_color_    = self.p2s.colorTyped('background', 'default')
             _axis_color_  = self.p2s.colorTyped('axis',       'default')
             _label_color_ = self.p2s.colorTyped('label',      'defaultfg')
-            _svg_ = [f'<svg x="0" y="0" width="{_w_}" height="{_h_}" xmlns="http://www.w3.org/2000/svg">']
+            _svg_ = [f'<svg x="0" y="0" width="{_w_}" height="{_h_}" font-family="{self.p2s.default_font}" xmlns="http://www.w3.org/2000/svg">']
             _svg_.append(f'<rect width="{_w_}" height="{_h_}" x="0" y="0" fill="{_bg_color_}" />')
             for _tuple_, _xy_ in self.category_to_xy.items():
                 _label_ = self._label_for_tuple_(_tuple_)
@@ -491,7 +491,7 @@ class Smallp(ExportMixin):
         _bg_color_     = self.p2s.colorTyped('background', 'default')
         _label_color_  = self.p2s.colorTyped('label',      'defaultfg')
         _axis_color_   = self.p2s.colorTyped('axis',       'default')
-        _svg_          = [f'<svg id="smallp_{rand_id}" x="0" y="0" width="{_w_}" height="{_h_}" xmlns="http://www.w3.org/2000/svg">']
+        _svg_          = [f'<svg id="smallp_{rand_id}" x="0" y="0" width="{_w_}" height="{_h_}" font-family="{self.p2s.default_font}" xmlns="http://www.w3.org/2000/svg">']
         _svg_.append(f'<rect width="{_w_}" height="{_h_}" x="0" y="0" fill="{_bg_color_}" />')
         if self.cycle_by is not None:
             _render_lu_ = {

@@ -40,22 +40,6 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
     _ARROW_LEN_FACTOR_ = 3.2
     _ARROW_LEN_MIN_     = 6.0
 
-    # How far a text run's ink reaches above and below its baseline, as fractions of txt_h.
-    # A link label is positioned by its baseline, but what has to clear the edge is its ink,
-    # and that varies with the string: 'cow' rises only to the x-height where 'CAT2' reaches
-    # the cap height, and 'dog' hangs a descender below.  One constant for all of them put
-    # x-height labels ~3px farther off their edge than cap-height ones (txt_h=12) and let a
-    # descender touch the edge on the other side.  The markup names no font-family, so these
-    # are the usual proportions of a default face -- measured against the one WebKit picks --
-    # rather than metrics of a specific font.
-    _INK_ASCENDER_    = 0.67   # caps, digits, b d f h i k l; also the fallback for anything else
-    _INK_SHORT_ASC_   = 0.56   # t clears the x-height but stops well short of the ascender
-    _INK_XHEIGHT_     = 0.46   # bodies of the letters below
-    _INK_DESCENT_     = 0.20   # g j p q y
-    _XHEIGHT_CHARS_   = frozenset('acemnorsuvwxz')
-    _SHORT_ASC_CHARS_ = frozenset('t')
-    _DESCENDER_CHARS_ = frozenset('gjpqy')
-
     #
     # __init__()
     #
@@ -486,19 +470,19 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
 
     #
     # _labelInk_() - (above, below) reach of a label's ink from its own baseline, in pixels.
-    # The run rises as far as its tallest character (x-height / short ascender / ascender,
-    # with anything unclassified -- caps, digits, punctuation, non-latin -- taken as a full
-    # ascender) and drops by _INK_DESCENT_ if any descender letter is present.
+    #
+    # A link label is positioned by its baseline, but what has to clear the edge is its ink,
+    # and that varies with the string: 'cow' rises only to the x-height where 'CAT2' reaches
+    # the cap height, and 'dog' hangs a descender below.  Both numbers come from the bundled
+    # font's own glyph outlines (p2s_font_metrics.INK_EXTENTS), the same table textLength()
+    # measures widths from -- and the root <svg> names that font, so the metrics describe the
+    # face that actually draws the glyphs.  (This was a set of hand-tuned per-character-class
+    # constants calibrated against whatever face WebKit picked, back when the markup named no
+    # font at all; every class of string clears its edge by ~0.5-1px more now, because a real
+    # ascender reaches 0.76em where the constant said 0.67em.)
     #
     def _labelInk_(self, txt):
-        _chars_ = [c for c in str(txt) if not c.isspace()]
-        if not _chars_: return 0.0, 0.0
-        _asc_  = max(self._INK_XHEIGHT_   if c in self._XHEIGHT_CHARS_ or c in self._DESCENDER_CHARS_
-                     else self._INK_SHORT_ASC_ if c in self._SHORT_ASC_CHARS_
-                     else self._INK_ASCENDER_
-                     for c in _chars_)
-        _desc_ = self._INK_DESCENT_ if any(c in self._DESCENDER_CHARS_ for c in _chars_) else 0.0
-        return _asc_ * float(self.txt_h), _desc_ * float(self.txt_h)
+        return self.p2s.textInk(txt, self.txt_h)
 
     #
     # _createConcatColumn_() - concatenate multiple fields into one string column
@@ -2018,7 +2002,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
         _bg_co_     = self.p2s.colorTyped('background', 'default')
         _border_co_ = self.p2s.colorTyped('axis', 'inner')
 
-        svg = [f'<svg x="0" y="0" width="{w}" height="{h}" xmlns="http://www.w3.org/2000/svg">']
+        svg = [f'<svg x="0" y="0" width="{w}" height="{h}" font-family="{self.p2s.default_font}" xmlns="http://www.w3.org/2000/svg">']
         #
         # Cloud Icon in <defs> -- attribution is as follows:
         #

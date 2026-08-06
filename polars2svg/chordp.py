@@ -846,7 +846,7 @@ class ChP(P2SComponentColorMixin, ExportMixin):
 
         # Sketch the SVG (for prototyping)
         _bg_  = self.p2s.colorTyped('background', 'default')
-        _svg_ = [f'<svg x="0" y="0" width="{w}" height="{h}" xmlns="http://www.w3.org/2000/svg">',
+        _svg_ = [f'<svg x="0" y="0" width="{w}" height="{h}" font-family="{self.p2s.default_font}" xmlns="http://www.w3.org/2000/svg">',
                  f'<rect x="0" y="0" width="{w}" height="{h}" fill="{_bg_}" />']
 
         for _nm_, (_a0_, _a1_) in self.node_to_arc.items():
@@ -1105,7 +1105,7 @@ class ChP(P2SComponentColorMixin, ExportMixin):
 
         _bg_ = self.p2s.colorTyped('background', 'default')
         self.svg = ''.join([
-            f'<svg x="0" y="0" width="{w}" height="{h}" xmlns="http://www.w3.org/2000/svg">',
+            f'<svg x="0" y="0" width="{w}" height="{h}" font-family="{self.p2s.default_font}" xmlns="http://www.w3.org/2000/svg">',
             f'<rect x="0" y="0" width="{w}" height="{h}" fill="{_bg_}" />',
             *self.df_node['__node_svg__'].to_list(),
             '</svg>',
@@ -1831,7 +1831,12 @@ class ChP(P2SComponentColorMixin, ExportMixin):
         self._node_label_svg_ = []
         if self.draw_labels:
             _label_co_  = self.p2s.colorTyped('label', 'defaultfg')
-            _ff_        = 'sans-serif'
+            # The circular style measures per-character advances (see __arcLabel__) with
+            # textLength(), which answers from the bundled Noto Sans -- so the markup has to
+            # name that face and not a bare generic sans, or the glyphs step along the arc
+            # at the wrong pitch.  Same font the root <svg> pins; named here because these
+            # two emitters have always carried their own font-family.
+            _ff_        = self.p2s.default_font
             _rand_id_   = random.randint(0, 2**32)  # nosec B311 - non-cryptographic SVG id scoping, see SECURITY.md
             _label_map_ = {str(k): str(v) for k, v in (self.node_labels or {}).items()}
             _label_only_ = set(str(x) for x in self.label_only) if self.label_only else set()
@@ -1925,7 +1930,7 @@ class ChP(P2SComponentColorMixin, ExportMixin):
         _bg_co_     = self.p2s.colorTyped('background', 'default')
         _border_co_ = self.p2s.colorTyped('axis', 'inner')
 
-        svg = [f'<svg x="0" y="0" width="{w}" height="{h}" xmlns="http://www.w3.org/2000/svg">']
+        svg = [f'<svg x="0" y="0" width="{w}" height="{h}" font-family="{self.p2s.default_font}" xmlns="http://www.w3.org/2000/svg">']
         svg.append(f'<rect x="0" y="0" width="{w}" height="{h}" fill="{_bg_co_}" />')
 
         # Skeleton background (rendered before links so it appears underneath)

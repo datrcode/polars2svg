@@ -1431,7 +1431,7 @@ class SpreadLinesP(ExportMixin):
 
         if not self.bin_to_timestamps:
             # No data — blank
-            svg.insert(0, f'<svg x="0" y="0" width="{w}" height="{h}" xmlns="http://www.w3.org/2000/svg">')
+            svg.insert(0, f'<svg x="0" y="0" width="{w}" height="{h}" font-family="{self.p2s.default_font}" xmlns="http://www.w3.org/2000/svg">')
             svg.insert(1, f'<rect x="0" y="0" width="{w}" height="{h}" fill="{_bg_co_}"/>')
             svg.append('</svg>')
             self.svg = ''.join(svg)
@@ -1692,6 +1692,7 @@ class SpreadLinesP(ExportMixin):
         _vh_ = self.vy1 - self.vy0
         svg.insert(0, (f'<svg x="0" y="0" width="{w}" height="{h}"'
                        f' viewBox="{self.vx0:.1f} {self.vy0:.1f} {_vw_:.1f} {_vh_:.1f}"'
+                       f' font-family="{self.p2s.default_font}"'
                        f' xmlns="http://www.w3.org/2000/svg">'))
         svg.insert(1, (f'<rect x="{self.vx0:.1f}" y="{self.vy0:.1f}"'
                        f' width="{_vw_:.1f}" height="{_vh_:.1f}" fill="{_bg_co_}"/>'))

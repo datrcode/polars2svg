@@ -302,8 +302,9 @@ class TestLinkLabelPlacement(_LinkLabelTestBase_):
         _above_ = _edge_y_ - _ys_['calls'] - _lp_._labelInk_('calls')[1]
         # 'answers' sits below and grows back up, so its ascent is what reaches the edge
         _below_ = _ys_['answers'] - _lp_._labelInk_('answers')[0] - _edge_y_
-        self.assertAlmostEqual(_above_, _below_, places=6)
-        self.assertAlmostEqual(_above_, 2.5, places=6)   # rtsvg's 2 + stroke/2, stroke=1
+        # tolerance is the emitted baseline's own 2-decimal rounding, nothing more
+        self.assertAlmostEqual(_above_, _below_, delta=0.005)
+        self.assertAlmostEqual(_above_, 2.5, delta=0.005)   # rtsvg's 2 + stroke/2, stroke=1
 
     def test_clearance_is_the_same_whatever_the_string_is_made_of(self):
         '''Regression: with the offset anchored on a single text height, 'cow' (no
@@ -317,8 +318,8 @@ class TestLinkLabelPlacement(_LinkLabelTestBase_):
             _ys_ = sorted(float(t[1]['y']) for t in _texts(_lp_.svg))
             _edge_y_ = float(re.search(r'<line x1="[\d.]+" y1="([\d.]+)"', _lp_.svg).group(1))
             _asc_, _desc_ = _lp_._labelInk_(_s_)
-            self.assertAlmostEqual(_edge_y_ - _ys_[0] - _desc_, 2.5, places=6, msg=f'above {_s_}')
-            self.assertAlmostEqual(_ys_[1] - _asc_ - _edge_y_, 2.5, places=6, msg=f'below {_s_}')
+            self.assertAlmostEqual(_edge_y_ - _ys_[0] - _desc_, 2.5, delta=0.005, msg=f'above {_s_}')
+            self.assertAlmostEqual(_ys_[1] - _asc_ - _edge_y_, 2.5, delta=0.005, msg=f'below {_s_}')
 
     def test_one_way_edge_gets_exactly_one_label(self):
         _df_ = pl.DataFrame({'fm': ['a'], 'to': ['b'], 'dsc': ['calls']})
@@ -364,12 +365,24 @@ class TestLinkLabelPlacement(_LinkLabelTestBase_):
 
 
 class TestLabelInk(_LinkLabelTestBase_):
-    '''_labelInk_ approximates how far a run's glyphs reach from their baseline. It is
-    what makes the clearance uniform, so its ordering has to hold.'''
+    '''_labelInk_ reports how far a run's glyphs reach from their baseline, reading the
+    bundled font's outlines (p2s_font_metrics.INK_EXTENTS) exactly as textLength() reads
+    its advances. It is what makes the clearance uniform, so its ordering has to hold.
+
+    The per-character-class constants this replaced are in tests/test_font_consistency.py's
+    sights from the other direction: the metrics only describe the rendered glyphs because
+    the markup names the font they came from.'''
 
     def setUp(self):
         super().setUp()
         self.lp = self.linkp()
+
+    def test_ink_comes_from_the_shared_font_table(self):
+        '''Not a private approximation: the same measurement textLength() uses, so a
+        regenerated font table moves label placement with it.'''
+        for _s_ in ('cow', 'CAT2', 'dog'):
+            self.assertEqual(self.lp._labelInk_(_s_),
+                             self.p2s.textInk(_s_, self.lp.txt_h), msg=_s_)
 
     def test_x_height_run_reaches_least(self):
         self.assertLess(self.lp._labelInk_('cow')[0], self.lp._labelInk_('cat')[0])
@@ -379,15 +392,28 @@ class TestLabelInk(_LinkLabelTestBase_):
         self.assertLess(_x_, _t_)
         self.assertLess(_t_, _cap_)
 
-    def test_digits_and_punctuation_reach_the_ascender(self):
+    def test_digits_and_punctuation_reach_the_cap_height(self):
+        '''They cleared the same bar as caps under the old character-class constants (one
+        bucket for everything unclassified); with real outlines they land near it -- digits
+        overshoot the flat caps slightly, an accented lowercase clears them outright.'''
         _cap_ = self.lp._labelInk_('CAT')[0]
+        _xh_  = self.lp._labelInk_('cow')[0]
         for _s_ in ('12.5', '#!?', 'ünïcode-ish'):
-            self.assertAlmostEqual(self.lp._labelInk_(_s_)[0], _cap_, places=9, msg=_s_)
+            self.assertGreater(self.lp._labelInk_(_s_)[0], _xh_, msg=_s_)
+            self.assertAlmostEqual(self.lp._labelInk_(_s_)[0], _cap_, delta=0.6, msg=_s_)
 
-    def test_only_descenders_reach_below(self):
-        self.assertGreater(self.lp._labelInk_('dog')[1], 0.0)
-        self.assertEqual(self.lp._labelInk_('cat')[1], 0.0)
-        self.assertEqual(self.lp._labelInk_('CAT')[1], 0.0)
+    def test_descenders_hang_far_below_and_nothing_else_does(self):
+        '''Round letters dip a hair under the baseline (Noto Sans overshoots by 10/1000 em);
+        a real descender goes 24x further. The old constants said flatly zero for the first
+        case, which is why this asserts the ratio rather than equality with zero.'''
+        _desc_ = self.lp._labelInk_('dog')[1]
+        self.assertGreater(_desc_, 0.2 * self.lp.txt_h)
+        for _s_ in ('cat', 'CAT'):
+            self.assertLess(self.lp._labelInk_(_s_)[1], 0.02 * self.lp.txt_h, msg=_s_)
+            self.assertLess(self.lp._labelInk_(_s_)[1], _desc_ / 10.0, msg=_s_)
+
+    def test_flat_capital_sits_on_the_baseline(self):
+        self.assertEqual(self.lp._labelInk_('B')[1], 0.0)
 
     def test_tallest_character_wins(self):
         self.assertEqual(self.lp._labelInk_('cowB')[0], self.lp._labelInk_('B')[0])
@@ -398,11 +424,20 @@ class TestLabelInk(_LinkLabelTestBase_):
                                places=9)
 
     def test_empty_and_whitespace_have_no_ink(self):
-        for _s_ in ('', '   ', '\t'):
-            self.assertEqual(self.lp._labelInk_(_s_), (0.0, 0.0))
+        '''Including whitespace the font has no glyph for at all -- a tab must not be
+        measured as a missing glyph and get .notdef's box.'''
+        for _s_ in ('', '   ', '\t', '\n', ' \t '):
+            self.assertEqual(self.lp._labelInk_(_s_), (0.0, 0.0), msg=repr(_s_))
 
     def test_spaces_do_not_count_as_unclassified_characters(self):
         self.assertEqual(self.lp._labelInk_('cow cow'), self.lp._labelInk_('cow'))
+
+    def test_out_of_font_character_falls_back_to_notdef(self):
+        '''Same substitution textLength() makes for an unknown codepoint: the glyph a
+        renderer would draw in its place has ink, so it is measured, not skipped.'''
+        from polars2svg.p2s_font_metrics import NOTDEF_INK, UNITS_PER_EM
+        _asc_ = self.lp._labelInk_('\U0001f600')[0]     # emoji: outside the subset
+        self.assertAlmostEqual(_asc_, NOTDEF_INK[1] * self.lp.txt_h / UNITS_PER_EM, places=9)
 
 
 # ---------------------------------------------------------------------------

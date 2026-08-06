@@ -1,4 +1,4 @@
-<svg id="xyp_TESTID" x="0" y="0" width="256" height="192" xmlns="http://www.w3.org/2000/svg">
+<svg id="xyp_TESTID" x="0" y="0" width="256" height="192" font-family="'Noto Sans', sans-serif" xmlns="http://www.w3.org/2000/svg">
                         <defs>
                                <clipPath id="plotClip-TESTID">
                                  <rect x="13" y="1" width="242" height="158" />

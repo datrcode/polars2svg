@@ -112,6 +112,10 @@ all = ["polars2svg[interactive,layouts,export,mlx]"]
 dev = [
   "pytest",
   "coverage",
+  "fonttools",  # build-time tool for tools/gen_font_metrics.py; here so
+                # tests/test_font_metrics_consistency.py can re-derive the baked
+                # metrics from the bundled TTF and catch a stale generated table
+                # (it skips, rather than fails, where fontTools is absent)
   "ipykernel",
   "kagglehub",
   "svglib<2",   # capped for the same reason as the [export] extra: svglib 2's

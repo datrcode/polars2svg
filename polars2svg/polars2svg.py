@@ -1811,7 +1811,7 @@ class Polars2SVG(P2SColorsMixin,
         w = w if isinstance(w, (int, float)) else 256
         h = h if isinstance(h, (int, float)) else 256
         _bg_ = self.colorTyped('background', 'default')
-        _parts_ = [f'<svg x="0" y="0" width="{w}" height="{h}" xmlns="http://www.w3.org/2000/svg">',
+        _parts_ = [f'<svg x="0" y="0" width="{w}" height="{h}" font-family="{self.default_font}" xmlns="http://www.w3.org/2000/svg">',
                    f'<rect x="0" y="0" width="{w}" height="{h}" fill="{_bg_}" />']
         if message:
             _parts_.append(self.svgText(message, w / 2, h / 2, txt_h=12, anchor='middle'))

@@ -792,7 +792,7 @@ class Piep(ExportMixin):
         _label_color_ = self.p2s.colorTyped('label',      'defaultfg')
 
         _dl_ = self._dl_ = DisplayList(w, h, bg=_bg_)
-        _svg_head_ = f'<svg id="piep_{rand_id}" x="0" y="0" width="{w}" height="{h}" xmlns="http://www.w3.org/2000/svg">'
+        _svg_head_ = f'<svg id="piep_{rand_id}" x="0" y="0" width="{w}" height="{h}" font-family="{self.p2s.default_font}" xmlns="http://www.w3.org/2000/svg">'
         _dl_.rect(0, 0, w, h, _bg_, svg=f'<rect x="0" y="0" width="{w}" height="{h}" fill="{_bg_}" />')
 
         _part_of_whole_ = self._base_slices_ is not None

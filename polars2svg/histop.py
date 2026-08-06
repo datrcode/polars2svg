@@ -637,7 +637,7 @@ class Histop(P2SBinComponentMixin, ExportMixin):
         _data_color_  = self.p2s.colorTyped('data',       'default')
 
         _dl_ = self._dl_ = DisplayList(w, h, bg=_bg_)
-        _svg_head_ = f'<svg id="histop_{rand_id}" x="0" y="0" width="{w}" height="{h}" xmlns="http://www.w3.org/2000/svg">'
+        _svg_head_ = f'<svg id="histop_{rand_id}" x="0" y="0" width="{w}" height="{h}" font-family="{self.p2s.default_font}" xmlns="http://www.w3.org/2000/svg">'
         _dl_.rect(0, 0, w, h, _bg_, svg=f'<rect x="0" y="0" width="{w}" height="{h}" fill="{_bg_}" />')
 
         _n_bins_ = len(self._sorted_bins_)

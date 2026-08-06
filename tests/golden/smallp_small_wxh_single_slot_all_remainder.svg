@@ -1,4 +1,4 @@
-<svg id="smallp_TESTID" x="0" y="0" width="190" height="190" xmlns="http://www.w3.org/2000/svg"><rect width="190" height="190" x="0" y="0" fill="#ffffff" /><g transform="translate(0,0)"><svg id="xyp_TESTID" x="0" y="0" width="128" height="128" xmlns="http://www.w3.org/2000/svg">
+<svg id="smallp_TESTID" x="0" y="0" width="190" height="190" font-family="'Noto Sans', sans-serif" xmlns="http://www.w3.org/2000/svg"><rect width="190" height="190" x="0" y="0" fill="#ffffff" /><g transform="translate(0,0)"><svg id="xyp_TESTID" x="0" y="0" width="128" height="128" font-family="'Noto Sans', sans-serif" xmlns="http://www.w3.org/2000/svg">
                         <defs>
                                <clipPath id="plotClip-TESTID">
                                  <rect x="13" y="0" width="115" height="115" />

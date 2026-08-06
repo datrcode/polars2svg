@@ -3,7 +3,8 @@ import random
 import time
 
 import polars2svg
-from polars2svg.p2s_displaylist import DisplayList, hexToRGBA, cubicBezierSegmentsTable
+from polars2svg.p2s_displaylist import (DisplayList, hexToRGBA, cubicBezierSegmentsTable,
+                                        CLOUD_ICON_W, CLOUD_ICON_H, CLOUD_ICON_RX)
 from polars2svg.export import ExportMixin
 from polars2svg.p2s_component_color_mixin import P2SComponentColorMixin
 from polars2svg.p2s_background_mixin import P2SBackgroundMixin
@@ -67,8 +68,8 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
     #
     # webgpu() - WebGPU payload of the same render, extracted from the retained
     # df_link / df_node tables (no recompute of the polars pipelines).  Curve links
-    # are flattened to line segments; collapsed-node clouds approximate as circles.
-    # Lazy + cached; invalidated by __renderSVG__.
+    # are flattened to line segments; collapsed-node clouds approximate as rounded
+    # rects (the shared CLOUD_ICON_* shape).  Lazy + cached; invalidated by __renderSVG__.
     #
     def webgpu(self):
         # Honor a pending relayout the same way renderSVG() does, so the
@@ -139,6 +140,16 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
                         _rgb_  = np.repeat(_arr_[:, 6:9], 3, axis=0)
                         _rgba_ = np.hstack([_rgb_, np.full((len(_rgb_), 1), self.link_opacity)])
                         _dl_.tris(_xy_.flatten().tolist(), list(range(len(_xy_))), _rgba_)
+        # Timing marks (above the edges, below the nodes -- SVG order).  Recorded during
+        # __renderTimingMarks__ and deliberately guarded on its own: marks are independent
+        # of whether links are drawn at all, so they render even at link_size=None.  A mark
+        # is a short straight tick regardless of link_shape, so unlike the links themselves
+        # it never goes through cubicBezierSegmentsTable.
+        _tm_ = getattr(self, '_timing_mark_dl_table_', None)
+        if _tm_ is not None and len(_tm_) > 0:
+            _dl_.lines_table(_tm_, '__tm_x0__', '__tm_y0__', '__tm_x1__', '__tm_y1__',
+                             ('__tm_cr__', '__tm_cg__', '__tm_cb__'), width=1.5, opacity=1.0,
+                             svg_col=None)
         # Link labels (recorded during __renderLinks__).  The GPU has no text-on-path
         # primitive, so the 'curve' shape's <textPath> becomes a straight run rotated to
         # the curve's midpoint tangent -- same anchor and side, no per-glyph bend.
@@ -160,11 +171,16 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
                 _dl_.circles_table(_singles_, '__sx__', '__sy__', _sz_,
                                    ('__r_f__', '__g_f__', '__b_f__'), opacity=self.node_opacity,
                                    stroke=hexToRGBA('#000000', self.node_opacity), stroke_w=_sw_, svg_col=None)
-                # Collapsed nodes (cloud icon in SVG) -- approximated as larger circles on GPU
-                _multis_ = _dfn_.filter(pl.col('__nodes__') > 1)
-                _dl_.circles_table(_multis_, '__sx__', '__sy__', 6.0,
-                                   ('__r_f__', '__g_f__', '__b_f__'), opacity=self.node_opacity,
-                                   stroke=hexToRGBA('#000000', self.node_opacity), stroke_w=0.5, svg_col=None)
+                # Collapsed nodes (<use href="#cloud"> in SVG) -- the same rounded-rect
+                # approximation svgToDisplayList() applies to that element, so a collapsed
+                # node reads identically here and in spreadlinesp's parsed GPU path
+                _multis_ = _dfn_.filter(pl.col('__nodes__') > 1).with_columns(
+                    (pl.col('__sx__') - CLOUD_ICON_W / 2.0).alias('__cloud_x__'),
+                    (pl.col('__sy__') - CLOUD_ICON_H / 2.0).alias('__cloud_y__'),
+                )
+                _dl_.rects_table(_multis_, '__cloud_x__', '__cloud_y__', CLOUD_ICON_W, CLOUD_ICON_H,
+                                 ('__r_f__', '__g_f__', '__b_f__'), rx=CLOUD_ICON_RX,
+                                 opacity=self.node_opacity, svg_col=None)
         # Node labels (info recorded during __renderNodes__)
         for _sx_, _y0_, _lines_ in getattr(self, '_node_label_info_', []):
             for _li_, _line_ in enumerate(_lines_):
@@ -1405,7 +1421,8 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
     #   any exact-coordinate collisions across relationships.  No-op unless time= is set.
     #
     def __renderTimingMarks__(self):
-        self._timing_mark_svg_list_ = []
+        self._timing_mark_svg_list_  = []
+        self._timing_mark_dl_table_  = None   # numeric mirror of the marks for gpuDisplayList()
         if self._time_field_ is None or self.df is None or len(self.df) == 0:
             return
         _tml_ = float(self.timing_marks_length)
@@ -1436,6 +1453,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
 
         _r2_        = lambda c: pl.col(c).round(2)
         _all_marks_ = set()
+        _dl_tables_ = []   # per-relationship numeric segments, concatenated after the loop
         for i, _rel_ in enumerate(self.relationships):
             _fm_name_, _to_name_ = _rel_[0], _rel_[1]
             _fm_sx_, _fm_sy_ = f'__rel{i}_fm_sx__', f'__rel{i}_fm_sy__'
@@ -1548,10 +1566,27 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
                     pl.lit('" stroke="'), pl.col('__tm_hex__'), pl.lit('" stroke-width="1.5" />'),
                 ]).alias('__tm_svg__')
             )
-            _all_marks_ |= set(_d_.drop_nulls(subset=['__tm_svg__'])['__tm_svg__'].unique())
+            _d_ = _d_.drop_nulls(subset=['__tm_svg__'])
+            _all_marks_ |= set(_d_['__tm_svg__'].unique())
+            # Numeric mirror for the GPU path: the same segments the SVG strings encode.
+            # Coordinates are rounded exactly as the strings are and the hex rides along as
+            # the color half of the dedup key, so the round-then-unique below collapses the
+            # same marks the SVG set() does.  The spectrum floats are kept as-is (a hex
+            # round-trip would only re-quantize what they already produced).
+            _dl_tables_.append(_d_.select(
+                _r2_('__tm_px__').alias('__tm_x0__'), _r2_('__tm_py__').alias('__tm_y0__'),
+                _r2_('__tm_xe__').alias('__tm_x1__'), _r2_('__tm_ye__').alias('__tm_y1__'),
+                pl.col('__tm_cr__'), pl.col('__tm_cg__'), pl.col('__tm_cb__'), pl.col('__tm_hex__'),
+            ))
 
         _sorted_ = sorted(_all_marks_)
         self._timing_mark_svg_list_ = (['<g fill="none">'] + _sorted_ + ['</g>']) if _sorted_ else []
+        if _dl_tables_:
+            _tm_dl_ = pl.concat(_dl_tables_).unique(
+                subset=['__tm_x0__', '__tm_y0__', '__tm_x1__', '__tm_y1__', '__tm_hex__'],
+                maintain_order=True,
+            )
+            self._timing_mark_dl_table_ = _tm_dl_ if len(_tm_dl_) > 0 else None
 
     #
     # __renderNodes__()

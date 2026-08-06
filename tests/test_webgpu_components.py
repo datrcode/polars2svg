@@ -4,13 +4,16 @@
 # (cubicBezierSegmentsTable, flattenPathD, svgToDisplayList).
 #
 import datetime
+import math
 import random
+import re
 import unittest
 
 import polars as pl
 
 import polars2svg
-from polars2svg.p2s_displaylist import (DisplayList, cubicBezierSegmentsTable,
+from polars2svg.p2s_displaylist import (CLOUD_ICON_H, CLOUD_ICON_RX, CLOUD_ICON_W,
+                                        DisplayList, cubicBezierSegmentsTable,
                                         flattenPathD, svgToDisplayList,
                                         _rootViewBoxTransform_)
 from webgpu_test_utils import (decode_buffer, hex_to_rgb01, manifest_count,
@@ -28,6 +31,17 @@ _DF_ = pl.DataFrame({
     'val': [random.random() for _ in range(300)],
 })
 _POS_ = {n: (random.random(), random.random()) for n in _NODES_}
+
+# a linkp timing mark in the SVG: stroke-width lives on the enclosing <g> for links,
+# so a per-element stroke-width="1.5" is unique to marks (see test_linkp_timing_marks.py)
+_MARK_RE_ = re.compile(
+    r'<line x1="([-\d.]+)" y1="([-\d.]+)" x2="([-\d.]+)" y2="([-\d.]+)" '
+    r'stroke="(#[0-9a-fA-F]+)" stroke-width="1.5" />'
+)
+
+
+def _svg_marks(svg):
+    return [(float(a), float(b), float(c), float(d), e) for a, b, c, d, e in _MARK_RE_.findall(svg)]
 
 
 class TestGeometryHelpers(unittest.TestCase):
@@ -209,6 +223,65 @@ class TestLinkPWebGPU(unittest.TestCase):
         lp = _P2S_.linkp(df=_DF_, relationships=[('fm', 'to')], pos=_POS_, draw_node_labels=True)
         self.assertGreater(manifest_count(lp.webgpu(), 'glyph'), 0)
 
+    # ── timing marks: GPU parity with the SVG path ─────────────────────────────
+    def test_no_timing_mark_table_without_time(self):
+        lp = _P2S_.linkp(df=_DF_, relationships=[('fm', 'to')], pos=_POS_)
+        self.assertIsNone(lp._timing_mark_dl_table_)
+        self.assertEqual(len(_svg_marks(lp.svg)), 0)
+
+    def test_timing_marks_emit_one_line_each(self):
+        # a mark is a straight tick whatever the link shape, so only the link segment
+        # count changes between shapes: line -> 1 per link, curve/flowmap -> 24
+        for shape, per_link in (('line', 1), ('curve', 24), ('flowmap', 24)):
+            lp = _P2S_.linkp(df=_DF_, relationships=[('fm', 'to')], pos=_POS_,
+                             link_shape=shape, time='ts')
+            n = len(_svg_marks(lp.svg))
+            self.assertGreater(n, 0, shape)
+            self.assertEqual(len(lp._timing_mark_dl_table_), n, shape)   # dedup parity with SVG
+            self.assertEqual(manifest_count(lp.webgpu(), 'line'),
+                             len(lp.df_link) * per_link + n + 4, shape)
+
+    def test_timing_marks_drawn_without_links(self):
+        # marks are independent of link drawing -- link_size=None draws no links but
+        # still draws marks (matching the SVG path)
+        lp = _P2S_.linkp(df=_DF_, relationships=[('fm', 'to')], pos=_POS_,
+                         time='ts', link_size=None)
+        n = len(_svg_marks(lp.svg))
+        self.assertGreater(n, 0)
+        self.assertEqual(manifest_count(lp.webgpu(), 'line'), n + 4)
+
+    def test_timing_mark_geometry_and_color_match_svg(self):
+        lp = _P2S_.linkp(df=_DF_, relationships=[('fm', 'to')], pos=_POS_, time='ts')
+        svg_marks = _svg_marks(lp.svg)
+        # buffer order follows the display list: links, then marks, then the 4 border lines
+        rows = decode_buffer(lp.webgpu(), 'line')[len(lp.df_link):len(lp.df_link) + len(svg_marks)]
+        self.assertEqual(len(rows), len(svg_marks))
+        gpu = {(round(float(r[0]), 2), round(float(r[1]), 2),
+                round(float(r[2]), 2), round(float(r[3]), 2)): r for r in rows}
+        for x1, y1, x2, y2, hx in svg_marks:
+            self.assertIn((x1, y1, x2, y2), gpu)
+            row = gpu[(x1, y1, x2, y2)]
+            self.assertAlmostEqual(float(row[4]), 1.5, places=5)      # stroke-width="1.5"
+            # the SVG hex is the truncation of these floats, so each channel sits in
+            # [hex, hex + 1/255)
+            for ch, val in enumerate(hex_to_rgb01(hx)):
+                self.assertGreaterEqual(float(row[5 + ch]), val - 1e-4, hx)
+                self.assertLess(float(row[5 + ch]), val + 1.0 / 255.0 + 1e-4, hx)
+
+    def test_collapsed_nodes_emit_cloud_rects(self):
+        # every node at one position -> a single collapsed node, drawn as the shared
+        # rounded-rect cloud approximation rather than a circle
+        _pos_ = {n: (0.5, 0.5) for n in _NODES_}
+        lp = _P2S_.linkp(df=_DF_, relationships=[('fm', 'to')], pos=_pos_)
+        self.assertIn('<use href="#cloud"', lp.svg)
+        payload = lp.webgpu()
+        self.assertEqual(manifest_count(payload, 'circle'), 0)
+        rects = decode_buffer(payload, 'rect')
+        _clouds_ = [r for r in rects if abs(float(r[2]) - CLOUD_ICON_W) < 1e-4
+                                    and abs(float(r[3]) - CLOUD_ICON_H) < 1e-4]
+        self.assertEqual(len(_clouds_), len(lp.df_node))
+        self.assertAlmostEqual(float(_clouds_[0][4]), CLOUD_ICON_RX, places=5)
+
 
 class TestChPWebGPU(unittest.TestCase):
     def test_curve_payload_has_segments_arrows_sectors(self):
@@ -244,6 +317,57 @@ class TestSpreadLinesPWebGPU(unittest.TestCase):
     def test_display_list_cached(self):
         sl = _P2S_.spreadlinesp(_DF_, [('fm', 'to')], ego=_NODES_[0], time='ts')
         self.assertIs(sl.webgpu(), sl.webgpu())
+
+    # ── instrumented (dual-recorded), not parsed back out of the SVG ───────────
+    def test_body_is_recorded_not_parsed(self):
+        sl = _P2S_.spreadlinesp(_DF_, [('fm', 'to')], ego=_NODES_[0], time='ts')
+        self.assertIsNotNone(sl._dl_body_)
+        # a re-render replaces the recording rather than reusing a stale one
+        _first_ = sl._dl_body_
+        sl.__renderSVG__(0)             # no name mangling: trailing dunder
+        self.assertIsNot(sl._dl_body_, _first_)
+
+    def test_instrumented_matches_the_parse_route(self):
+        # the parser stays the universal fallback, so the two routes must still agree
+        # on everything the parser gets right (it cannot do clips or stroked <use>).
+        # No legend here -- the legend is recorded in screen space and would be
+        # double-transformed by a parse of the world-space markup.
+        sl = _P2S_.spreadlinesp(_DF_, [('fm', 'to')], ego=_NODES_[0], time='ts')
+        self.assertIsNone(sl.legend_info)
+        _parsed_ = DisplayList(*sl.wxh, bg=sl.p2s.colorTyped('background', 'default'))
+        svgToDisplayList(sl.svg, _parsed_, sl.p2s)
+        _pp_ = _parsed_.webgpu_payload(sl.p2s.glyphAtlas())
+        _ip_ = sl.webgpu()
+        for kind in ('rect', 'circle', 'line', 'tri', 'glyph'):
+            self.assertEqual(manifest_count(_ip_, kind), manifest_count(_pp_, kind), kind)
+
+    def test_geometry_lands_inside_the_viewbox_letterbox(self):
+        # applyTransform() has to reproduce the root viewBox mapping: the recorded
+        # background rect must cover exactly what the SVG's background rect covers
+        sl = _P2S_.spreadlinesp(_DF_, [('fm', 'to')], ego=_NODES_[0], time='ts')
+        w, h = sl.wxh
+        _s_ = min(w / (sl.vx1 - sl.vx0), h / (sl.vy1 - sl.vy0))
+        _bg_ = decode_buffer(sl.webgpu(), 'rect')[0]
+        self.assertAlmostEqual(float(_bg_[0]), (w - (sl.vx1 - sl.vx0) * _s_) / 2.0, places=2)
+        self.assertAlmostEqual(float(_bg_[1]), (h - (sl.vy1 - sl.vy0) * _s_) / 2.0, places=2)
+        self.assertAlmostEqual(float(_bg_[2]), (sl.vx1 - sl.vx0) * _s_, places=2)
+        self.assertAlmostEqual(float(_bg_[3]), (sl.vy1 - sl.vy0) * _s_, places=2)
+
+    def test_selection_ring_is_drawn_and_clipped(self):
+        # the parse route lost this both ways: a full selection drew an alpha-0 rect
+        # (invisible) and a partial one drew the ring unclipped (looked fully selected)
+        _egos_ = [_NODES_[0], _NODES_[1]]
+        _none_ = _P2S_.spreadlinesp(_DF_, [('fm', 'to')], ego=_egos_, time='ts')
+        _full_ = _P2S_.spreadlinesp(_DF_, [('fm', 'to')], ego=_egos_, time='ts',
+                                    highlight_nodes=set(_egos_))
+        _part_ = _P2S_.spreadlinesp(_DF_, [('fm', 'to')], ego=_egos_, time='ts',
+                                    highlight_nodes={_egos_[0]})
+        _n_ = lambda sl: manifest_count(sl.webgpu(), 'line')
+        self.assertGreater(_n_(_full_), _n_(_none_))          # a ring is actually drawn
+        self.assertEqual(_n_(_part_), _n_(_full_))            # same ring, different clip
+        _scissored_ = lambda sl: [m for m in sl.webgpu()['manifest'] if 'scissor' in m]
+        self.assertEqual(len(_scissored_(_full_)), 0)         # unclipped when fully selected
+        self.assertGreater(len(_scissored_(_part_)), 0)       # clipped when partially
 
 
 class TestSmallpWebGPU(unittest.TestCase):
@@ -380,6 +504,79 @@ class TestPanelizeAllComponents(unittest.TestCase):
         self.assertEqual(len(views), len(plots))
         for v in views:
             self.assertIsNotNone(getattr(v, 'gpu_payload', None), type(v).__name__)
+
+
+#
+# Dash phase: SVG runs stroke-dasharray continuously along a whole path, so a stroke
+# flattened into GPU line instances has to carry the arc length already travelled --
+# without it every vertex restarts the pattern.
+#
+_LINE_DASH_ON_, _LINE_DASH_PHASE_ = 9, 11
+
+
+def _seg_len(r):
+    return math.hypot(float(r[2]) - float(r[0]), float(r[3]) - float(r[1]))
+
+
+class TestDashPhaseContinuity(unittest.TestCase):
+    def _dashed_rows_(self, payload):
+        return [r for r in decode_buffer(payload, 'line') if float(r[_LINE_DASH_ON_]) > 0.0]
+
+    def _line_df_(self):
+        return pl.concat([
+            pl.DataFrame({'time': list(range(10)), 'value': [2, 2, 3, 4, 4, 4, 5, 1, 1, 2],
+                          'sample': ['a'] * 10}),
+            pl.DataFrame({'time': list(range(10)), 'value': [8, 7, 7, 5, 6, 6, 5, 5, 4, 2],
+                          'sample': ['e'] * 10}),
+        ])
+
+    def test_display_list_records_phase(self):
+        dl = DisplayList(64, 64)
+        dl.line(0, 0, 10, 0, '#000000', dash=(5.0, 5.0))
+        dl.line(10, 0, 20, 0, '#000000', dash=(5.0, 5.0), dash_phase=10.0)
+        rows = decode_buffer(dl.webgpu_payload(None), 'line')
+        self.assertEqual(float(rows[0][_LINE_DASH_PHASE_]),  0.0)
+        self.assertEqual(float(rows[1][_LINE_DASH_PHASE_]), 10.0)
+
+    def test_xyp_dotted_polyline_phase_accumulates(self):
+        # one polyline, so the instances land in path order and the phase of each
+        # segment must equal the total length of the segments before it
+        df = self._line_df_().filter(pl.col('sample') == 'a')
+        xy = _P2S_.xyp(df, 'time', 'value', wxh=(256, 256), draw_context=False,
+                       line=('sample', _P2S_.LINESTYLE_DOTTED))
+        rows = self._dashed_rows_(xy.webgpu())
+        self.assertEqual(len(rows), 9)                  # 10 points -> 9 segments
+        _expected_ = 0.0
+        for r in rows:
+            self.assertAlmostEqual(float(r[_LINE_DASH_PHASE_]), _expected_, places=3)
+            _expected_ += _seg_len(r)
+        self.assertGreater(_expected_, 0.0)
+
+    def test_phase_restarts_per_polyline_not_per_vertex(self):
+        # two polylines -> exactly two phase-0 segments; every other segment inherits
+        # the running length (the pre-fix behavior was 18 zeros)
+        xy = _P2S_.xyp(self._line_df_(), 'time', 'value', wxh=(256, 256), draw_context=False,
+                       line=('sample', _P2S_.LINESTYLE_DOTTED))
+        rows = self._dashed_rows_(xy.webgpu())
+        self.assertEqual(len(rows), 18)                 # 2 polylines * 9 segments
+        self.assertEqual(sum(1 for r in rows if float(r[_LINE_DASH_PHASE_]) == 0.0), 2)
+
+    def test_xyp_solid_lines_carry_no_phase(self):
+        xy = _P2S_.xyp(self._line_df_(), 'time', 'value', wxh=(256, 256), draw_context=False,
+                       line=('sample', _P2S_.LINESTYLE_SOLID))
+        for r in decode_buffer(xy.webgpu(), 'line'):
+            self.assertEqual(float(r[_LINE_DASH_PHASE_]), 0.0)
+
+    def test_svg_parser_carries_phase_across_a_dashed_path(self):
+        dl = DisplayList(100, 100)
+        svgToDisplayList(
+            '<svg width="100" height="100">'
+            '<path d="M 0 0 L 30 0 L 30 40" fill="none" stroke="#000000" stroke-dasharray="5 5"/>'
+            '</svg>', dl, _P2S_)
+        rows = decode_buffer(dl.webgpu_payload(None), 'line')
+        self.assertEqual(len(rows), 2)
+        self.assertAlmostEqual(float(rows[0][_LINE_DASH_PHASE_]),  0.0, places=4)
+        self.assertAlmostEqual(float(rows[1][_LINE_DASH_PHASE_]), 30.0, places=4)
 
 
 if __name__ == '__main__':

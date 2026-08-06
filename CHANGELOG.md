@@ -148,6 +148,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     template clone of an already-filled frame is a no-op. Rows with **both**
     endpoints null have no entity to anchor to and are left alone.
 
+- **`linkp` timing marks now render on the WebGPU path.** `time=` marks shipped
+  SVG-only in 0.1.2, so a `use_webgpu=True` render — including a `linkp` drawn as a
+  `smallp` GPU cell — silently dropped them. `__renderTimingMarks__()` now retains the
+  per-mark segment geometry it already computes as a numeric table, and
+  `gpuDisplayList()` emits it as line primitives between the links and the nodes; the
+  GPU never re-derives the geometry, so the two paths cannot drift. The per-pixel
+  decimation and the exact-duplicate collapse are inherited from that same table, so the
+  GPU mark count equals the SVG mark count. Marks are guarded independently of link
+  drawing, matching SVG: `link_size=None` draws no links but still draws its marks.
+
+- **`p2s.chordpi()`, `p2s.piepi()` and `p2s.spreadlinepi()`** — three of the eight
+  interactive wrappers existed only as module-level functions. All eight are now
+  reachable as `p2s.` methods, like the other five.
+
+- **`p2s.panelizeSketch(layout, use_webgpu=)`** — the method dropped the argument the
+  underlying `interactive_controller.panelizeSketch()` has always accepted, so a sketch
+  could not be asked for GPU rendering through `p2s.`.
+
+- **`spreadlinesp` is instrumented for WebGPU** instead of reaching the GPU by re-parsing
+  its own finished SVG. It was the last component on the `svgToDisplayList()` route; every
+  component now records primitives as it renders, so both representations come from one set
+  of numbers. What this changes for a render:
+  - **The ego-cloud selection ring is correct again.** The parse route lost it in both
+    directions — a *fully* selected cloud stroked `<use href="#cloud_outline">`, which the
+    parser filled at alpha 0 (invisible, so it read as unselected), and a *partially*
+    selected cloud had its `<clipPath>` window ignored, so the whole ring was stroked and it
+    read as fully selected. The clip is now a `DisplayList` scissor.
+  - Curves (bin outlines, cross-connects, channel pills, discontinuity zigzags) are recorded
+    by handing their `d` string to the new shared `pathToDL()` — the same flattener the
+    parser uses, so a curve cannot land in two different places.
+  - Alter circles keep their translucent fill *and* opaque ring: `DisplayList.circle()` now
+    takes `stroke_opacity=` separately from `opacity=`.
+  - **`DisplayList.applyTransform(scale, tx, ty)`** is new and is what made this possible.
+    `spreadlinesp` sizes its viewBox from the bins it has just placed, so the world→canvas
+    mapping is not known until the render is over; the body records in world coordinates and
+    is mapped once at the end, using the same triple `_rootViewBoxTransform_()` derives. The
+    legend is recorded in screen pixels and spliced on afterwards, never transformed twice.
+  - Recording is unconditional, matching the other seven components, so an SVG-only render
+    now pays for GPU primitives it may not use: ~21 ms → ~31 ms on a 300-row / 800×400
+    fixture. Regenerate `tests/perf_baseline.json` (machine-local) if you track it.
+  - `svgToDisplayList()` stays as the universal fallback for markup that arrives as a
+    finished string — it is no longer any component's primary route.
+
 ### Fixed
 
 - **Text was measured in one font and rendered in another.** Every text-derived
@@ -243,6 +286,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Affects the stack control widget, the generic interactive views
   (`xypi` / `timepi` / `histopi` / `chordpi` / `piepi`), `smallpi`, and
   `spreadlinepi`.
+
+- **Dashed strokes restarted their dash pattern at every vertex on the WebGPU path.**
+  SVG runs `stroke-dasharray` continuously along a whole `<path>`, but each flattened
+  segment reached the shader as an independent instance whose dash offset began at zero
+  — so a dashed polyline or curve showed a dash boundary at every vertex, most visibly
+  on `xyp`'s `LINESTYLE_DOTTED` / `LINESTYLE_SPECIFIED` lines. The line instance now
+  carries a twelfth float, the arc length already travelled along the parent stroke,
+  which `line_vs` adds to the fragment's distance. Emitted by `xyp`'s polyline path and
+  by the `svgToDisplayList()` path/polygon stroke flattener; solid strokes are unaffected
+  and pay nothing for it.
+
+- **`linkp`'s collapsed-node cloud drew as a plain circle on the WebGPU path** while
+  `spreadlinesp`'s drew as a rounded rect, so the same collapsed node looked like two
+  different things depending on which component rendered it. Both now use one shared
+  approximation of the `<use href="#cloud">` icon (`CLOUD_ICON_W/H/RX` in
+  `p2s_displaylist.py`), which is also what the SVG parser has always produced.
+
+- **Three places still said WebGPU covered "currently xyp, histop".** All eight static
+  components have had a `webgpu()` representation for some time; `panelize()`'s
+  docstring, `webgpuHTML()`'s docstring and the `panelize()` dispatch comment now say so.
 
 ### Changed
 

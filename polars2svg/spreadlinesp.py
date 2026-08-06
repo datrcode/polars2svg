@@ -5,6 +5,8 @@ import time
 
 import polars2svg
 from polars2svg.export import ExportMixin
+from polars2svg.p2s_displaylist import (CLOUD_ICON_H, CLOUD_ICON_RX, CLOUD_ICON_W,
+                                        pathToDL, roundedRectPoints, strokePolylineDL)
 
 #
 # Implementation of the following:
@@ -84,20 +86,25 @@ class SpreadLinesP(ExportMixin):
 
     #
     # gpuDisplayList() / webgpu() - WebGPU representation of the same render.
-    # SpreadLinesP's SVG assembly is deeply string-composed (smoothed outlines,
-    # cloud icons, cross-connect inserts), so the GPU primitives are recovered by
-    # parsing the finished SVG through the generic svgToDisplayList() fallback.
+    #
+    # The body is dual-recorded during __renderSVG__ (self._dl_body_), in world
+    # coordinates, and mapped into canvas pixels there once the viewBox is known --
+    # so the GPU primitives come from the same numbers the SVG strings do rather than
+    # from re-parsing the finished document.  The legend is recorded separately in
+    # screen pixels (it is drawn at an inverse scale in the SVG so the root viewBox
+    # lands it at true pixel size) and is spliced on top here.
+    #
     # Lazy + cached; invalidated by __renderSVG__.
     #
     def gpuDisplayList(self):
         if self.df is None or getattr(self, 'svg', None) is None: return None
         if getattr(self, '_gpu_dl_', None) is not None: return self._gpu_dl_
-        from polars2svg.p2s_displaylist import DisplayList, svgToDisplayList
+        _body_ = getattr(self, '_dl_body_', None)
+        if _body_ is None: return None
+        from polars2svg.p2s_displaylist import DisplayList
         w, h = self.wxh
         _dl_ = DisplayList(w, h, bg=self.p2s.colorTyped('background', 'default'))
-        # Parse the legend-free SVG (the legend sits in an inverse-viewBox <g> the
-        # parser would double-transform), then splice in the screen-space legend ops.
-        svgToDisplayList(getattr(self, '_svg_sans_legend_', None) or self.svg, _dl_, self.p2s)
+        _dl_.extend(_body_)
         if getattr(self, '_dl_legend_', None) is not None: _dl_.extend(self._dl_legend_)
         self._gpu_dl_ = _dl_
         return _dl_
@@ -819,13 +826,44 @@ class SpreadLinesP(ExportMixin):
         return node_to_xy, left_overs, out_of
 
     # -------------------------------------------------------------------------
+    # GPU recording helpers
+    #
+    # The component records its own primitives as it renders (rather than parsing its
+    # finished SVG back), so both representations come from one set of numbers.  Two
+    # shapes need help because the display list has no direct equivalent:
+    #   - a *stroked* rounded rect: rect() is fill-only, so the outline is a polyline
+    #     through roundedRectPoints() -- four straight edges would cut the corners off
+    #   - a path 'd' string: handed to the shared pathToDL(), the same flattener
+    #     svgToDisplayList() uses, so a curve cannot land in two different places
+    # -------------------------------------------------------------------------
+
+    def __roundedRectToDL__(self, dl, x, y, w, h, rx, fill=None, fill_opacity=1.0,
+                            stroke=None, stroke_w=0.0, stroke_opacity=1.0, scissor=None):
+        if fill is not None and fill != 'none':
+            dl.rect(x, y, w, h, fill, rx=rx, opacity=fill_opacity, svg='', scissor=scissor)
+        if stroke is not None and stroke != 'none' and stroke_w > 0:
+            _pts_ = roundedRectPoints(x, y, w, h, rx)
+            strokePolylineDL(dl, _pts_ + [_pts_[0]], stroke, width=stroke_w,
+                             opacity=stroke_opacity, scissor=scissor)
+
+    # The selection ring around a collapsed ego: the SVG strokes the cloud outline,
+    # so on the GPU it rings the cloud's rounded-rect stand-in, 2px outside the
+    # silhouette.  scissor reproduces the partial-selection clip window.
+    def __selectionRingToDL__(self, dl, x, y, color, scissor=None):
+        self.__roundedRectToDL__(dl, x - CLOUD_ICON_W / 2.0 - 2, y - CLOUD_ICON_H / 2.0 - 2,
+                                 CLOUD_ICON_W + 4, CLOUD_ICON_H + 4, CLOUD_ICON_RX + 2,
+                                 stroke=color, stroke_w=2.0, scissor=scissor)
+
+    # -------------------------------------------------------------------------
     # renderAlter() — render circles (or clouds) for one alter group
     # -------------------------------------------------------------------------
 
+    # dl records the same primitives this method emits as SVG (world coordinates --
+    # __renderSVG__ maps the whole body into canvas pixels once the viewBox is known).
     def renderAlter(self, nodes, befores, afters, x, y, y_max, w_max, mul,
                     r_min, r_pref, circle_inter_d, circle_spacer,
                     h_collapsed_sections, _bin_, _alter_, _alter_side_,
-                    node_weights=None):
+                    node_weights=None, dl=None):
         xmin, ymin, xmax, ymax = x, y, x, y
         node_to_xyrepstat = {}
         svg               = []
@@ -846,6 +884,7 @@ class SpreadLinesP(ExportMixin):
                 xmax, ymax = max(xmax, _pt_[0]), max(ymax, _pt_[1])
             _co_  = '#ff0000' if d == 1 else '#0000ff'  # red=new(left), blue=ending(right)
             _path_= f'M {p0[0]:.1f} {p0[1]:.1f} L {p1[0]:.1f} {p1[1]:.1f} L {p2[0]:.1f} {p2[1]:.1f} Z'
+            if dl is not None: dl.polygon([p0, p1, p2], _co_, svg='')
             return f'<path d="{_path_}" stroke="none" fill="{_co_}" />'
 
         def _cloud_triangle_(tx, ty, offset, s, d):
@@ -858,6 +897,7 @@ class SpreadLinesP(ExportMixin):
                 xmax, ymax = max(xmax, _pt_[0]), max(ymax, _pt_[1])
             _co_  = '#d3494e' if d == 1 else '#658cbb'
             _path_= f'M {p0[0]:.1f} {p0[1]:.1f} L {p1[0]:.1f} {p1[1]:.1f} L {p2[0]:.1f} {p2[1]:.1f} Z'
+            if dl is not None: dl.polygon([p0, p1, p2], _co_, svg='')
             return f'<path d="{_path_}" stroke="none" fill="{_co_}" />'
 
         def _place_(n2xy):
@@ -870,6 +910,12 @@ class SpreadLinesP(ExportMixin):
                     f' stroke="{_co_}" stroke-width="{"2.50" if _hl_ else "1.25"}"'
                     f' fill="{_co_}" fill-opacity="{"0.80" if _hl_ else "0.25"}"/>'
                 )
+                if dl is not None:
+                    # the ring is opaque and only the fill is translucent, which is why
+                    # circle() takes the two alphas separately
+                    dl.circle(_xyr_[0], _xyr_[1], _xyr_[2], _co_, stroke=_co_,
+                              stroke_w=(2.50 if _hl_ else 1.25),
+                              opacity=(0.80 if _hl_ else 0.25), stroke_opacity=1.0, svg='')
                 xmin = min(xmin, _xyr_[0] - _xyr_[2])
                 ymin = min(ymin, _xyr_[1] - _xyr_[2])
                 xmax = max(xmax, _xyr_[0] + _xyr_[2])
@@ -893,6 +939,10 @@ class SpreadLinesP(ExportMixin):
                 f' rx="8" fill="{_cloud_co_}" fill-opacity="0.25"'
                 f' stroke="{_cloud_co_}" stroke-width="1"/>'
             )
+            if dl is not None:
+                self.__roundedRectToDL__(dl, x - 16, y_cloud - 8, 32, 16, 8,
+                                         fill=_cloud_co_, fill_opacity=0.25,
+                                         stroke=_cloud_co_, stroke_w=1.0)
             if ltriangle: svg.append(_cloud_triangle_(x, y_cloud, 16, 6, -1))
             if rtriangle: svg.append(_cloud_triangle_(x, y_cloud, 16, 6,  1))
             _txt_co_ = self.p2s.colorTyped('label', 'defaultfg')
@@ -900,6 +950,9 @@ class SpreadLinesP(ExportMixin):
                 f'<text x="{x:.1f}" y="{y_cloud + self.txt_h * 0.38:.1f}"'
                 f' font-size="{self.txt_h}px" text-anchor="middle" fill="{_txt_co_}">{html.escape(str(n))}</text>'
             )
+            if dl is not None:
+                dl.text(self.p2s, str(n), x, y_cloud + self.txt_h * 0.38, txt_h=self.txt_h,
+                        anchor='middle', color=_txt_co_, svg='')
             xmin = min(xmin, x - 22)
             ymin = min(ymin, y_cloud - 8)
             xmax = max(xmax, x + 22)
@@ -1020,14 +1073,16 @@ class SpreadLinesP(ExportMixin):
 
     def svgCrossConnect(self, x0, y0, x1, y1,
                         launch=None, shift0=None, shift1=None,
-                        color='#000000', width=1.0):
+                        color='#000000', width=1.0, dl=None):
         if launch is None: launch = (x1 - x0) * 0.1
         if shift0 is None: shift0 = 0
         if shift1 is None: shift1 = 0
         xm = (x0 + x1) / 2.0
-        return (f'<path d="M {x0:.1f} {y0:.1f} L {x0+launch:.1f} {y0:.1f}'
-                f' C {xm+shift0:.1f} {y0:.1f} {xm-shift1:.1f} {y1:.1f}'
-                f' {x1-launch:.1f} {y1:.1f} L {x1:.1f} {y1:.1f}"'
+        _d_ = (f'M {x0:.1f} {y0:.1f} L {x0+launch:.1f} {y0:.1f}'
+               f' C {xm+shift0:.1f} {y0:.1f} {xm-shift1:.1f} {y1:.1f}'
+               f' {x1-launch:.1f} {y1:.1f} L {x1:.1f} {y1:.1f}')
+        if dl is not None: pathToDL(dl, _d_, stroke=color, width=width)
+        return (f'<path d="{_d_}"'
                 f' stroke="{color}" stroke-width="{width}" fill="none" />')
 
     # -------------------------------------------------------------------------
@@ -1035,7 +1090,7 @@ class SpreadLinesP(ExportMixin):
     # -------------------------------------------------------------------------
 
     def bubbleNumberOnLine(self, x0, x1, y, txt,
-                           color='#c0c0c0', width=2.0):
+                           color='#c0c0c0', width=2.0, dl=None):
         _txt_h_  = self.txt_h
         _txt_w_  = len(str(txt)) * _txt_h_ * 0.62
         xm       = (x0 + x1) / 2.0
@@ -1057,7 +1112,12 @@ class SpreadLinesP(ExportMixin):
             f'L {x0:.1f} {y:.1f}',
         ]
         _txt_co_ = self.p2s.colorTyped('label', 'defaultfg')
-        return (f'<path d="{" ".join(p)}" stroke="{color}" stroke-width="{width}" fill="{color}"/>'
+        _d_      = ' '.join(p)
+        if dl is not None:
+            pathToDL(dl, _d_, fill=color, stroke=color, width=width)
+            dl.text(self.p2s, str(txt), xm, y + _txt_h_ * 0.38, txt_h=_txt_h_,
+                    anchor='middle', color=_txt_co_, svg='')
+        return (f'<path d="{_d_}" stroke="{color}" stroke-width="{width}" fill="{color}"/>'
                 f'<text x="{xm:.1f}" y="{y + _txt_h_ * 0.38:.1f}"'
                 f' font-size="{_txt_h_}px" text-anchor="middle" fill="{_txt_co_}">{html.escape(str(txt))}</text>')
 
@@ -1200,7 +1260,7 @@ class SpreadLinesP(ExportMixin):
     # renderBin() — render a full temporal bin column
     # -------------------------------------------------------------------------
 
-    def renderBin(self, b, x, y, max_w, max_h):
+    def renderBin(self, b, x, y, max_w, max_h, dl=None):
         r_min                = self.r_min
         r_pref               = self.r_pref
         circle_inter_d       = self.circle_inter_d
@@ -1238,11 +1298,19 @@ class SpreadLinesP(ExportMixin):
                 f'<use href="#cloud" x="{x:.1f}" y="{y:.1f}"'
                 f' fill="{_ego_co_}" stroke="{_axis_co_}" stroke-width="0.5"/>'
             )
+            if dl is not None:
+                # The cloud glyph has no GPU primitive; both this component and linkp
+                # approximate it with the shared CLOUD_ICON_* rounded rect.
+                self.__roundedRectToDL__(dl, x - CLOUD_ICON_W / 2.0, y - CLOUD_ICON_H / 2.0,
+                                         CLOUD_ICON_W, CLOUD_ICON_H, CLOUD_ICON_RX,
+                                         fill=_ego_co_, stroke=_axis_co_, stroke_w=0.5)
             if _n_sel_focal_ == _n_ego_total_ and _n_ego_total_ > 0:
                 svg.append(
                     f'<use href="#cloud_outline" x="{x:.1f}" y="{y:.1f}"'
                     f' fill="none" stroke="{_sel_co_}" stroke-width="2.0"/>'
                 )
+                if dl is not None:
+                    self.__selectionRingToDL__(dl, x, y, _sel_co_)
             elif _n_sel_focal_ > 0:
                 _clip_id_ = f'ccl_{b}'
                 svg.append(
@@ -1253,17 +1321,26 @@ class SpreadLinesP(ExportMixin):
                     f' fill="none" stroke="{_sel_co_}" stroke-width="2.0"'
                     f' clip-path="url(#{_clip_id_})"/>'
                 )
+                if dl is not None:
+                    # partial selection: the SVG shows the ring through a clip window,
+                    # which the display list expresses as a per-op scissor
+                    self.__selectionRingToDL__(dl, x, y, _sel_co_,
+                                               scissor=(x, y - 10, 15, 20))
         elif _n_focal_ == 1:
             _n_sel_focal_ = sum(1 for n in _focal_nodes_ if n in self.highlight_nodes)
             svg.append(
                 f'<circle cx="{x:.1f}" cy="{y:.1f}" r="{r_pref}"'
                 f' stroke="{_axis_co_}" stroke-width="0.4" fill="{_ego_co_}"/>'
             )
+            if dl is not None:
+                dl.circle(x, y, r_pref, _ego_co_, stroke=_axis_co_, stroke_w=0.4, svg='')
             if _n_sel_focal_ == 1:
                 svg.append(
                     f'<circle cx="{x:.1f}" cy="{y:.1f}" r="{r_pref + 2:.1f}"'
                     f' fill="none" stroke="{_sel_co_}" stroke-width="2.0"/>'
                 )
+                if dl is not None:
+                    dl.circle(x, y, r_pref + 2, 'none', stroke=_sel_co_, stroke_w=2.0, svg='')
         else:
             svg.append(
                 f'<rect x="{x-12:.1f}" y="{y-8:.1f}" width="24" height="16" rx="8"'
@@ -1274,6 +1351,11 @@ class SpreadLinesP(ExportMixin):
                 f'<text x="{x:.1f}" y="{y + self.txt_h * 0.38:.1f}"'
                 f' font-size="{self.txt_h}px" text-anchor="middle" fill="{_txt_co_}">{html.escape(str(_n_focal_))}</text>'
             )
+            if dl is not None:
+                self.__roundedRectToDL__(dl, x - 12, y - 8, 24, 16, 8,
+                                         fill=_ego_co_, stroke=_axis_co_, stroke_w=0.4)
+                dl.text(self.p2s, str(_n_focal_), x, y + self.txt_h * 0.38,
+                        txt_h=self.txt_h, anchor='middle', color=_txt_co_, svg='')
         _xyrepstat_ = (x, y, 'cloud' if self.ego_is_set else ('single' if _n_focal_ == 1 else 'cloud'),
                        'continuous', b, None, None, r_pref)
         for _fn_ in self.bin_to_focal_nodes_present[b]:
@@ -1290,7 +1372,7 @@ class SpreadLinesP(ExportMixin):
                 x, y - r_pref - 2 * circle_inter_d,
                 y - r_pref - max_alter_h, max_w, -1,
                 r_min, r_pref, circle_inter_d, circle_spacer, h_collapsed_sections,
-                b, 1, 'fm', node_weights=_wts_)
+                b, 1, 'fm', node_weights=_wts_, dl=dl)
             svg.append(_svg_); node_2_xyrs.update(_n2xyrs_)
             a1fm_bounds = _bnd_
             _prev_bnd_  = _bnd_
@@ -1307,7 +1389,7 @@ class SpreadLinesP(ExportMixin):
                 x, _prev_bnd_[1] - alter_separation_h,
                 _prev_bnd_[1] - alter_separation_h - max_alter_h, max_w, -1,
                 r_min, r_pref, circle_inter_d, circle_spacer, h_collapsed_sections,
-                b, 2, 'fm', node_weights=_wts_)
+                b, 2, 'fm', node_weights=_wts_, dl=dl)
             svg.append(_svg_); node_2_xyrs.update(_n2xyrs_)
             a2fm_bounds = _bnd_
 
@@ -1319,7 +1401,7 @@ class SpreadLinesP(ExportMixin):
                 x, y + r_pref + 2 * circle_inter_d,
                 y + r_pref + 2 * circle_inter_d + max_alter_h, max_w, 1,
                 r_min, r_pref, circle_inter_d, circle_spacer, h_collapsed_sections,
-                b, 1, 'to', node_weights=_wts_)
+                b, 1, 'to', node_weights=_wts_, dl=dl)
             svg.append(_svg_); node_2_xyrs.update(_n2xyrs_)
             a1to_bounds = _bnd_
             _prev_bnd_  = _bnd_
@@ -1336,7 +1418,7 @@ class SpreadLinesP(ExportMixin):
                 x, _prev_bnd_[3] + alter_separation_h,
                 _prev_bnd_[3] + alter_separation_h + max_alter_h, max_w, 1,
                 r_min, r_pref, circle_inter_d, circle_spacer, h_collapsed_sections,
-                b, 2, 'to', node_weights=_wts_)
+                b, 2, 'to', node_weights=_wts_, dl=dl)
             svg.append(_svg_); node_2_xyrs.update(_n2xyrs_)
             a2to_bounds = _bnd_
 
@@ -1352,10 +1434,13 @@ class SpreadLinesP(ExportMixin):
             x, y, _w2_, _ind_, r_pref,
             a1fm_bounds, a2fm_bounds, a1to_bounds, a2to_bounds,
         )
+        _outline_d_ = self._smoothedPath_(_pts_, corner_r=r_pref * 0.8)
         svg.append(
-            f'<path d="{self._smoothedPath_(_pts_, corner_r=r_pref * 0.8)}"'
+            f'<path d="{_outline_d_}"'
             f' stroke="{_axis_co_}" stroke-width="2.0" fill="none"/>'
         )
+        if dl is not None:
+            pathToDL(dl, _outline_d_, stroke=_axis_co_, width=2.0)
 
         # Bounds from the polygon corners (no string parsing needed)
         bx0 = min(pt[0] for pt in _pts_)
@@ -1406,8 +1491,8 @@ class SpreadLinesP(ExportMixin):
 
     def __renderSVG__(self, rand_id):
         self._gpu_dl_ = self._gpu_payload_ = None   # invalidate cached GPU state
+        self._dl_body_ = None
         self.__legendPrepare__()
-        self._svg_sans_legend_ = None
         w, h        = self.wxh
         _bg_co_     = self.p2s.colorTyped('background', 'default')
         _axis_co_   = self.p2s.colorTyped('axis', 'default')
@@ -1424,6 +1509,26 @@ class SpreadLinesP(ExportMixin):
 
         svg = []
 
+        # ── GPU recording layers ───────────────────────────────────────────────
+        # Everything below is emitted in *world* coordinates and mapped into canvas
+        # pixels at the end, once the viewBox is known (it is sized from the bins this
+        # method is about to place, so the transform cannot be known up front).
+        #
+        # The SVG list is assembled with insert(0) for the strokes that belong under
+        # the bins, which the display list has no equivalent for -- so each z-layer
+        # records separately and they are composed bottom-to-top at the end.  The two
+        # insert(0) groups end up in reverse emission order in the SVG, so their
+        # per-item lists are extended in reverse to match.
+        from polars2svg.p2s_displaylist import DisplayList
+        _mkdl_          = lambda: DisplayList(w, h, bg=_bg_co_)
+        _dl_ego_line_   = _mkdl_()      # bottom
+        _dl_zigzags_    = []            # per-item, reversed at compose time
+        _dl_connects_   = []            # per-item, reversed at compose time
+        _dl_bins_       = _mkdl_()
+        _dl_channels_   = _mkdl_()
+        _dl_anno_       = _mkdl_()
+        _dl_ts_labels_  = _mkdl_()      # top
+
         # ── Reset per-render state ─────────────────────────────────────────────
         self.vx0 = self.vy0 = self.vx1 = self.vy1 = None
         self.bin_to_bounds            = {}
@@ -1435,6 +1540,9 @@ class SpreadLinesP(ExportMixin):
             svg.insert(1, f'<rect x="0" y="0" width="{w}" height="{h}" fill="{_bg_co_}"/>')
             svg.append('</svg>')
             self.svg = ''.join(svg)
+            _dl_ = _mkdl_()
+            _dl_.rect(0, 0, w, h, _bg_co_, svg='')
+            self._dl_body_ = _dl_       # already canvas-space: no viewBox on this branch
             return
 
         # ── Render each bin ────────────────────────────────────────────────────
@@ -1444,7 +1552,8 @@ class SpreadLinesP(ExportMixin):
         by = h / 2.0
 
         for _b_ in _bins_:
-            _svg_, _bnd_, _n2xyrs_ = self.renderBin(_b_, bx, by, max_bin_w, max_bin_h)
+            _svg_, _bnd_, _n2xyrs_ = self.renderBin(_b_, bx, by, max_bin_w, max_bin_h,
+                                                    dl=_dl_bins_)
             bin_to_n2xyrs    [_b_] = _n2xyrs_
             self.bin_to_bounds[_b_] = _bnd_
             svg.append(_svg_)
@@ -1536,10 +1645,18 @@ class SpreadLinesP(ExportMixin):
             tuple_to_channel_geom[_ct_] = (_ch_x_, _y_, _ch_w_, _ch_h_)
             svg.append(self.bubbleNumberOnLine(_ch_x_, _ch_x_ + _ch_w_,
                                                _y_ + _ch_h_ / 2.0, str(_n_),
-                                               color=_axis_co_, width=2.0))
+                                               color=_axis_co_, width=2.0,
+                                               dl=_dl_channels_))
             _channel_max_y_ = max(_y_ + _ch_h_ + self.txt_h, _channel_max_y_)
 
         # ── Direct connects and channel end-connectors ─────────────────────────
+        # Each connect goes to its own DisplayList so the compose step can replay them
+        # in the order svg.insert(0) leaves them in (newest underneath).
+        def _connect_(*args, **kwargs):
+            _d_ = _mkdl_()
+            _dl_connects_.append(_d_)
+            return self.svgCrossConnect(*args, dl=_d_, **kwargs)
+
         for i in range(len(_bins_) - 1):
             _b0_, _b1_ = _bins_[i], _bins_[i + 1]
             _bnd0_     = self.bin_to_bounds[_b0_]
@@ -1555,7 +1672,7 @@ class SpreadLinesP(ExportMixin):
                 _key_   = (_bnd0_[2], _xyrs0_[1], _bnd1_[0], _xyrs1_[1])
                 if _key_ not in _drawn_:
                     _co_ = self.__nodeColor__(_nd_)
-                    svg.insert(0, self.svgCrossConnect(
+                    svg.insert(0, _connect_(
                         _bnd0_[2], _xyrs0_[1], _bnd1_[0], _xyrs1_[1],
                         color=_co_, width=1.5))
                     _drawn_.add(_key_)
@@ -1573,7 +1690,7 @@ class SpreadLinesP(ExportMixin):
                         _hway_   = max(_bnd1_[0], _cg_[0])
                         _k1_     = (_bnd0_[2], _xyrs_[1], _cg_[0], _cmid_)
                         if _k1_ not in _drawn_:
-                            svg.insert(0, self.svgCrossConnect(
+                            svg.insert(0, _connect_(
                                 _bnd0_[2], _xyrs_[1], _hway_, _cmid_,
                                 color=_axis_co_, width=2.0))
                             _drawn_.add(_k1_)
@@ -1584,7 +1701,7 @@ class SpreadLinesP(ExportMixin):
                                 _bnd_n_ = self.bin_to_bounds[_b_n_]
                                 _k2_ = (_bnd_n_[0], _xyrs_e_[1], _cg_[0] + _cg_[2], _cmid_)
                                 if _k2_ not in _drawn_:
-                                    svg.insert(0, self.svgCrossConnect(
+                                    svg.insert(0, _connect_(
                                         _bnd_n_[0], _xyrs_e_[1],
                                         _cg_[0] + _cg_[2], _cmid_,
                                         color=_axis_co_, width=2.0))
@@ -1617,6 +1734,9 @@ class SpreadLinesP(ExportMixin):
             svg.insert(0,
                 f'<path d="{" ".join(_d_)}" stroke="{_ctx_co_}" stroke-width="0.5"'
                 f' fill="none" stroke-dasharray="3 3"/>')
+            _dlz_ = _mkdl_()
+            pathToDL(_dlz_, ' '.join(_d_), stroke=_ctx_co_, width=0.5, dash=(3.0, 3.0))
+            _dl_zigzags_.append(_dlz_)
 
         # ── Ego horizontal line ────────────────────────────────────────────────
         if _bins_:
@@ -1625,6 +1745,7 @@ class SpreadLinesP(ExportMixin):
             svg.insert(0,
                 f'<line x1="{_x_l_:.1f}" y1="{by:.1f}" x2="{_x_r_:.1f}" y2="{by:.1f}"'
                 f' stroke="{_data_co_}" stroke-width="3.0"/>')
+            _dl_ego_line_.line(_x_l_, by, _x_r_, by, _data_co_, width=3.0, svg='')
 
         # ── Anno event lines ───────────────────────────────────────────────────
         _anno_ts_to_bx_ = {}
@@ -1640,10 +1761,14 @@ class SpreadLinesP(ExportMixin):
                 f' x2="{_ax_:.1f}" y2="{self.vy1:.1f}"'
                 f' stroke="{_axis_co_}" stroke-width="1.5" stroke-dasharray="6,3" opacity="0.7"/>'
             )
+            _dl_anno_.line(_ax_, self.vy0, _ax_, self.vy1, _axis_co_, width=1.5,
+                           dash=(6.0, 3.0), opacity=0.7, svg='')
             svg.append(
                 f'<text x="{_ax_ + 3:.1f}" y="{self.vy0 + self.txt_h:.1f}"'
                 f' font-size="{self.txt_h}px" fill="{_txt_co_}">{html.escape(str(_label_))}</text>'
             )
+            _dl_anno_.text(self.p2s, str(_label_), _ax_ + 3, self.vy0 + self.txt_h,
+                           txt_h=self.txt_h, anchor='start', color=_txt_co_, svg='')
 
         # ── Timestamp labels ───────────────────────────────────────────────────
         _channel_max_y_ = self.vy1
@@ -1662,6 +1787,9 @@ class SpreadLinesP(ExportMixin):
                     f' font-size="{self.txt_h}px" text-anchor="middle" fill="{_txt_co_}">'
                     f'{_lbl_}</text>'
                 )
+                _dl_ts_labels_.text(self.p2s, _ts_[:self._ts_label_len_], _lx_,
+                                    _channel_max_y_, txt_h=self.txt_h, anchor='middle',
+                                    color=_txt_co_, svg='')
             self.vy1 = _channel_max_y_ + self.txt_h
 
         # ── SVG header/footer with viewBox ─────────────────────────────────────
@@ -1731,10 +1859,9 @@ class SpreadLinesP(ExportMixin):
         # ── Legend ─────────────────────────────────────────────────────────────
         # The SVG copy is drawn in *world* coordinates (scale=1/s), so it needs no
         # transform group (svglib misorders chained <g> transforms) and comes out at
-        # true pixel size after the root viewBox mapping.  The GPU copy is recorded
-        # in screen pixels and spliced into gpuDisplayList() after the legend-free
-        # SVG parse (svgToDisplayList would double-transform world-space legend text).
-        self._svg_sans_legend_ = ''.join(svg + ['</svg>'])
+        # true pixel size after the root viewBox mapping.  The GPU copy is recorded in
+        # screen pixels instead and is spliced on top in gpuDisplayList(), after the
+        # body has had applyTransform() run over it -- it must not be transformed twice.
         if getattr(self, 'legend_info', None) is not None and (_leg_l_ or _leg_r_ or _leg_t_ or _leg_b_):
             _s_  = min(w / _vw_, h / _vh_)
             _tx_ = (w - _vw_ * _s_) / 2.0 - self.vx0 * _s_
@@ -1753,6 +1880,33 @@ class SpreadLinesP(ExportMixin):
             svg.append(_dl_world_.svg())
         svg.append('</svg>')
         self.svg = ''.join(svg)
+
+        # ── Compose the GPU body ───────────────────────────────────────────────
+        # Bottom-to-top in the order the SVG list ended up in: the ego line and the
+        # zigzags/connects were insert(0)-ed under the bins (newest first, hence the
+        # reversed replay), everything after the bins was appended over them.
+        _dl_body_ = _mkdl_()
+        _dl_body_.rect(self.vx0, self.vy0, _vw_, _vh_, _bg_co_, svg='')
+        _dl_body_.extend(_dl_ego_line_)
+        for _d_ in reversed(_dl_zigzags_):  _dl_body_.extend(_d_)
+        for _d_ in reversed(_dl_connects_): _dl_body_.extend(_d_)
+        _dl_body_.extend(_dl_bins_)
+        _dl_body_.extend(_dl_channels_)
+        _dl_body_.extend(_dl_anno_)
+        _dl_body_.extend(_dl_ts_labels_)
+        if self.draw_border:
+            strokePolylineDL(_dl_body_,
+                             [(self.vx0, self.vy0), (self.vx0 + _vw_ - 1, self.vy0),
+                              (self.vx0 + _vw_ - 1, self.vy0 + _vh_ - 1),
+                              (self.vx0, self.vy0 + _vh_ - 1), (self.vx0, self.vy0)],
+                             _border_co_, width=1.0)
+        # World -> canvas, the same mapping the root viewBox expresses.  The legend is
+        # already in screen pixels, so it is spliced in afterwards (gpuDisplayList()).
+        _s_fit_ = min(w / _vw_, h / _vh_)
+        _dl_body_.applyTransform(_s_fit_,
+                                 (w - _vw_ * _s_fit_) / 2.0 - self.vx0 * _s_fit_,
+                                 (h - _vh_ * _s_fit_) / 2.0 - self.vy0 * _s_fit_)
+        self._dl_body_ = _dl_body_
 
     # -------------------------------------------------------------------------
     # Small multiples / render_with

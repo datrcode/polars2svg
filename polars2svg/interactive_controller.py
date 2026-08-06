@@ -1381,7 +1381,8 @@ def panelize(layout: Any, stack: str = 'default', use_webgpu: bool = False,
             views.append(p)
         else:
             # use_webgpu applies only to components with a webgpu() representation
-            # (currently xyp, histop); the rest render through their SVG wrappers
+            # (all eight static components have one); anything else -- e.g. a dev-tree
+            # prototype supplying its own panelWrapper() -- renders through its SVG wrapper
             _kwargs_ = {'use_webgpu': True} if use_webgpu and getattr(p, 'webgpu', None) is not None else {}
             _wrapper_ = _PLOT_TYPE_TO_WRAPPER_.get(type(p).__name__)
             if   _wrapper_ is not None:        views.append(_wrapper_(p, mvc=mvc, **_kwargs_))

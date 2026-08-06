@@ -2818,10 +2818,20 @@ class XYp(P2SBackgroundMixin, ExportMixin):
         else:
             _r_, _g_, _b_, _ = hexToRGBA(color)
             _rgba_ = (_r_, _g_, _b_)
+        # Dash phase: SVG runs stroke-dasharray continuously along the whole <path>, so
+        # each segment needs the arc length of the polyline preceding it -- without this
+        # every vertex restarts the pattern.  Only computed when the stroke is dashed.
+        _phase_ = 0.0
+        if dash is not None:
+            _len_ = (((pl.col('__x2__') - pl.col('__xpx__')) ** 2 +
+                      (pl.col('__y2__') - pl.col('__ypx__')) ** 2).sqrt()).alias('__seg_len__')
+            _seg_ = _seg_.with_columns(_len_).with_columns(
+                (pl.col('__seg_len__').cum_sum().over('__line__') - pl.col('__seg_len__')).alias('__dash_phase__'))
+            _phase_ = '__dash_phase__'
         dl.lines_table(_seg_, '__xpx__', '__ypx__', '__x2__', '__y2__', _rgba_,
                        width=(width_col if width_col is not None else width),
                        opacity=(opacity_col if opacity_col is not None else opacity),
-                       dash=dash, svg_col=None)
+                       dash=dash, dash_phase=_phase_, svg_col=None)
 
     #
     # __renderLines_simple__()

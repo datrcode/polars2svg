@@ -686,8 +686,8 @@ class Polars2SVG(P2SColorsMixin,
         webgpuHTML(component)
 
         Render a component's WebGPU representation as a self-contained HTML string
-        (canvas + inline runtime + buffers).  The component must support webgpu()
-        (currently: xyp, histop).  Display in a notebook with IPython.display.HTML.
+        (canvas + inline runtime + buffers).  The component must support webgpu() --
+        all eight static components do.  Display in a notebook with IPython.display.HTML.
         '''
         if getattr(component, 'webgpu', None) is None:
             raise ValueError(f'webgpuHTML(): component {type(component).__name__} has no webgpu() representation')

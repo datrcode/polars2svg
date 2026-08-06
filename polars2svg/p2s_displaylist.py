@@ -20,10 +20,16 @@ import polars as pl
 FLOATS_PER_INSTANCE = {
     'rect':   9,    # x, y, w, h, rx, r, g, b, a
     'circle': 12,   # cx, cy, radius, stroke_w, fr, fg, fb, fa, sr, sg, sb, sa
-    'line':   11,   # x0, y0, x1, y1, width, r, g, b, a, dash_on, dash_off
+    'line':   12,   # x0, y0, x1, y1, width, r, g, b, a, dash_on, dash_off, dash_phase
     'glyph':  16,   # ox, oy, dx, dy, w, h, cos, sin, u0, v0, u1, v1, r, g, b, a
     'tri':    6,    # per-VERTEX: x, y, r, g, b, a (separate u32 index buffer)
 }
+
+# The collapsed-node cloud icon (<use href="#cloud">) has no GPU primitive.  Both the
+# svgToDisplayList() parser and LinkP's instrumented path approximate it with this
+# rounded rect, centered on the icon's anchor point -- shared here so linkp and
+# spreadlinesp cannot drift on what a collapsed node looks like under GPU.
+CLOUD_ICON_W, CLOUD_ICON_H, CLOUD_ICON_RX = 28.0, 14.0, 6.0
 
 _NAMED_COLORS_ = {
     'black': (0.0, 0.0, 0.0), 'white': (1.0, 1.0, 1.0), 'red':  (1.0, 0.0, 0.0),
@@ -144,6 +150,65 @@ def flattenPathD(d, samples_per_curve=16):
 
 
 #
+# roundedRectPoints() - closed clockwise outline of a rounded rect, as a point list
+#
+# The rect primitive is fill-only (its rounded corners come from the shader's SDF),
+# so a component that wants a *stroked* rounded rect draws the fill with rect() and
+# runs its outline through strokePolylineDL() using these points.  Four straight
+# edges would cut the corners off.
+#
+def roundedRectPoints(x, y, w, h, rx, samples_per_corner=6):
+    r = max(0.0, min(float(rx), w / 2.0, h / 2.0))
+    if r <= 0.0:
+        return [(x, y), (x + w, y), (x + w, y + h), (x, y + h)]
+    _pts_ = []
+    for cx, cy, a0 in ((x + w - r, y + r,     -math.pi / 2),   # top-right
+                       (x + w - r, y + h - r,  0.0),           # bottom-right
+                       (x + r,     y + h - r,  math.pi / 2),   # bottom-left
+                       (x + r,     y + r,      math.pi)):      # top-left
+        for k in range(samples_per_corner + 1):
+            a = a0 + (math.pi / 2) * k / samples_per_corner
+            _pts_.append((cx + r * math.cos(a), cy + r * math.sin(a)))
+    return _pts_
+
+
+#
+# strokePolylineDL() - stroke a flattened polyline as line primitives
+# - carries the running arc length as each segment's dash_phase so a dash pattern
+#   continues across vertices the way SVG runs it along the whole path
+#
+def strokePolylineDL(dl, pts, color, width=1.0, opacity=1.0, dash=None, scissor=None):
+    _ph_ = 0.0
+    for j in range(len(pts) - 1):
+        dl.line(pts[j][0], pts[j][1], pts[j+1][0], pts[j+1][1], color,
+                width=width, opacity=opacity, dash=dash, dash_phase=_ph_, scissor=scissor)
+        if dash is not None:
+            _ph_ += math.hypot(pts[j+1][0] - pts[j][0], pts[j+1][1] - pts[j][1])
+
+
+#
+# pathToDL() - record an SVG path 'd' string as GPU primitives
+#
+# Curves and arcs are flattened by flattenPathD(); closed subpaths fill as triangles
+# and any subpath strokes as a polyline.  Shared by svgToDisplayList() and by
+# components that compose a 'd' string directly (SpreadLinesP's smoothed bin
+# outlines, cross-connects and channel pills) -- the point of sharing is that the
+# flattening lives in one place, so an instrumented component and the parser can
+# never disagree about where a curve goes.  xform maps each flattened point into
+# the target space (identity when the caller records in its own coordinates).
+#
+def pathToDL(dl, d, fill=None, stroke=None, width=1.0, fill_opacity=1.0,
+             stroke_opacity=1.0, dash=None, scissor=None, xform=None):
+    for _pts_, _closed_ in flattenPathD(d):
+        if xform is not None: _pts_ = [xform(px, py) for px, py in _pts_]
+        if fill is not None and fill != 'none' and _closed_ and len(_pts_) >= 3:
+            dl.polygon(_pts_, fill, opacity=fill_opacity, scissor=scissor)
+        if stroke is not None and stroke != 'none':
+            strokePolylineDL(dl, _pts_ + [_pts_[0]] if _closed_ else _pts_, stroke,
+                             width=width, opacity=stroke_opacity, dash=dash, scissor=scissor)
+
+
+#
 # cubicBezierSegmentsTable() - flatten cubic beziers into line segments, polars-side
 # - df has one row per curve with endpoint/control-point columns (names passed in)
 # - returns one row per segment with __bx__/__by__ -> __bx2__/__by2__ endpoints;
@@ -198,13 +263,16 @@ def _rootViewBoxTransform_(svg_str):
 # svgToDisplayList() - generic SVG-string -> GPU primitive fallback
 #
 # Parses the primitive elements this codebase generates (rect, circle, line,
-# polygon, path, text, use) in document order and records them into dl.
-# Used by components whose SVG assembly is too string-composed to instrument
-# (SpreadLinesP) and as a universal fallback.  The document's root viewBox is
-# honored (coordinates, lengths, and font sizes are mapped into canvas pixels),
-# so viewBox-scaled views convert at the correct size.  <defs> blocks are
-# skipped; <use href="#cloud"> (the linkp/spreadlines cloud icon) approximates
-# as a rounded rect.  Gradients/clip-paths are ignored.
+# polygon, path, text, use) in document order and records them into dl.  Every
+# component in the package now dual-records instead (SpreadLinesP was the last
+# holdout, instrumented 2026-08-06), so this is a universal fallback for markup
+# that arrives as a finished string -- keep it for that, not as a shortcut for a
+# new component.  The document's root viewBox is honored (coordinates, lengths,
+# and font sizes are mapped into canvas pixels), so viewBox-scaled views convert
+# at the correct size.  <defs> blocks are skipped; <use href="#cloud"> (the
+# linkp/spreadlines cloud icon) approximates as a rounded rect.
+# Gradients/clip-paths are ignored -- a component needing a clip should record a
+# per-op scissor instead.
 #
 def svgToDisplayList(svg_str, dl, p2s):
     import html as _html_
@@ -240,6 +308,10 @@ def svgToDisplayList(svg_str, dl, p2s):
             _dv_ = [float(x) for x in a['stroke-dasharray'].replace(',', ' ').split()]
             _dash_ = _TDASH_((_dv_[0], _dv_[1] if len(_dv_) > 1 else _dv_[0]))
 
+        def _strokePolyline_(pts):
+            strokePolylineDL(dl, pts, _stroke_, width=_stroke_w_,
+                             opacity=_stroke_op_, dash=_dash_)
+
         if tag == 'rect':
             x, y, w_, h_ = _f_('x'), _f_('y'), _f_('width'), _f_('height')
             if _fill_ is not None and _fill_ != 'none':
@@ -266,24 +338,16 @@ def svgToDisplayList(svg_str, dl, p2s):
             if len(_pts_) >= 3 and _fill_ is not None and _fill_ != 'none':
                 dl.polygon(_pts_, _fill_, opacity=_fill_op_)
             if len(_pts_) >= 2 and _stroke_ is not None and _stroke_ != 'none':
-                _closed_ = _pts_ + [_pts_[0]]
-                for j in range(len(_closed_) - 1):
-                    dl.line(_closed_[j][0], _closed_[j][1], _closed_[j+1][0], _closed_[j+1][1],
-                            _stroke_, width=_stroke_w_, opacity=_stroke_op_, dash=_dash_)
+                _strokePolyline_(_pts_ + [_pts_[0]])
         elif tag == 'path':
-            for _pts_, _closed_ in flattenPathD(a.get('d', '')):
-                _pts_ = [(_TX_(px), _TY_(py)) for px, py in _pts_]
-                if _fill_ is not None and _fill_ != 'none' and _closed_ and len(_pts_) >= 3:
-                    dl.polygon(_pts_, _fill_, opacity=_fill_op_)
-                if _stroke_ is not None and _stroke_ != 'none':
-                    _seq_ = _pts_ + [_pts_[0]] if _closed_ else _pts_
-                    for j in range(len(_seq_) - 1):
-                        dl.line(_seq_[j][0], _seq_[j][1], _seq_[j+1][0], _seq_[j+1][1],
-                                _stroke_, width=_stroke_w_, opacity=_stroke_op_, dash=_dash_)
+            pathToDL(dl, a.get('d', ''), fill=_fill_, stroke=_stroke_, width=_stroke_w_,
+                     fill_opacity=_fill_op_, stroke_opacity=_stroke_op_, dash=_dash_,
+                     xform=lambda px, py: (_TX_(px), _TY_(py)))
         elif tag == 'use':
             # cloud icon approximation: rounded rect centered on (x, y)
-            dl.rect(_TX_(_f_('x') - 14), _TY_(_f_('y') - 7), _TL_(28), _TL_(14),
-                    _fill_ or '#ffffff', rx=_TL_(6), opacity=_opacity_)
+            dl.rect(_TX_(_f_('x') - CLOUD_ICON_W / 2.0), _TY_(_f_('y') - CLOUD_ICON_H / 2.0),
+                    _TL_(CLOUD_ICON_W), _TL_(CLOUD_ICON_H),
+                    _fill_ or '#ffffff', rx=_TL_(CLOUD_ICON_RX), opacity=_opacity_)
         elif tag == 'text' and close == '>':
             _end_ = _s_.find('</text>', pos)
             if _end_ < 0: continue
@@ -334,15 +398,28 @@ class DisplayList:
         r, g, b, a = hexToRGBA(fill, opacity)
         return self._record_('rect', [x, y, w, h, rx, r, g, b, a], svg, scissor)
 
-    def circle(self, cx, cy, r, fill, stroke=None, stroke_w=0.0, opacity=1.0, svg=None, scissor=None):
+    # stroke_opacity defaults to opacity; pass it when SVG's fill-opacity and
+    # stroke-opacity differ on the same element (the instance carries both alphas)
+    def circle(self, cx, cy, r, fill, stroke=None, stroke_w=0.0, opacity=1.0,
+               stroke_opacity=None, svg=None, scissor=None):
+        _so_ = opacity if stroke_opacity is None else stroke_opacity
         fr, fg, fb, fa = hexToRGBA(fill, opacity)
-        sr, sg, sb, sa = hexToRGBA(stroke, opacity) if stroke is not None else (0.0, 0.0, 0.0, 0.0)
+        sr, sg, sb, sa = hexToRGBA(stroke, _so_) if stroke is not None else (0.0, 0.0, 0.0, 0.0)
         return self._record_('circle', [cx, cy, r, stroke_w, fr, fg, fb, fa, sr, sg, sb, sa], svg, scissor)
 
-    def line(self, x0, y0, x1, y1, color, width=1.0, dash=None, opacity=1.0, svg=None, scissor=None):
+    #
+    # line() - one straight segment
+    # - dash_phase is the arc length already travelled along the logical stroke this
+    #   segment belongs to.  SVG runs a dash pattern continuously along a whole path, so
+    #   a caller flattening a polyline or a curve must pass the running total; leaving it
+    #   at 0 restarts the pattern at every vertex.  Ignored when dash is None.
+    #
+    def line(self, x0, y0, x1, y1, color, width=1.0, dash=None, opacity=1.0, dash_phase=0.0,
+             svg=None, scissor=None):
         r, g, b, a = hexToRGBA(color, opacity)
         _don_, _doff_ = (float(dash[0]), float(dash[1])) if dash is not None else (0.0, 0.0)
-        return self._record_('line', [x0, y0, x1, y1, width, r, g, b, a, _don_, _doff_], svg, scissor)
+        return self._record_('line', [x0, y0, x1, y1, width, r, g, b, a, _don_, _doff_,
+                                      float(dash_phase)], svg, scissor)
 
     #
     # tris() - filled triangle geometry
@@ -439,16 +516,72 @@ class DisplayList:
                    self._colexpr_(_sr_), self._colexpr_(_sg_), self._colexpr_(_sb_), self._colexpr_(_sa_)]
         return self._df_to_op_('circle', df, _exprs_, svg_col, scissor)
 
+    # dash_phase: see line() -- a column name (per-segment running arc length) or a constant
     def lines_table(self, df, x0, y0, x1, y1, rgba, width=1.0, opacity=1.0, dash=None,
-                    svg_col='__svg__', scissor=None):
+                    dash_phase=0.0, svg_col='__svg__', scissor=None):
         _r_, _g_, _b_ = rgba
         _don_, _doff_ = (float(dash[0]), float(dash[1])) if dash is not None else (0.0, 0.0)
         _exprs_ = [self._colexpr_(x0), self._colexpr_(y0), self._colexpr_(x1), self._colexpr_(y1),
                    self._colexpr_(width), self._colexpr_(_r_), self._colexpr_(_g_), self._colexpr_(_b_),
-                   self._colexpr_(opacity), self._colexpr_(_don_), self._colexpr_(_doff_)]
+                   self._colexpr_(opacity), self._colexpr_(_don_), self._colexpr_(_doff_),
+                   self._colexpr_(dash_phase)]
         return self._df_to_op_('line', df, _exprs_, svg_col, scissor)
 
     # ── composition ──────────────────────────────────────────────────────
+    #
+    # applyTransform() - map every recorded op from world coordinates into canvas
+    # pixels, in place
+    #
+    # For components that lay out in their own coordinate space and only learn the
+    # viewBox after the whole body is rendered (SpreadLinesP sizes its viewBox from
+    # the bins it just placed): record in world units, then call this once at the end.
+    # (scale, tx, ty) has the same meaning as the triple svgToDisplayList() derives
+    # from the root viewBox, so an instrumented component and a parsed one land in the
+    # same place.  Screen-space pieces -- a legend positioned in canvas pixels -- are
+    # kept in their own DisplayList and extend()ed in *after* this call.
+    #
+    # Points move, pure lengths (radii, widths, dash periods, font heights) scale, and
+    # scissor rectangles do both.  Colors and text are untouched.
+    #
+    _XFORM_LAYOUT_ = {                  # kind -> ((x, y) index pairs, length indices)
+        'rect':   ([(0, 1)],         [2, 3, 4]),
+        'circle': ([(0, 1)],         [2, 3]),
+        'line':   ([(0, 1), (2, 3)], [4, 9, 10, 11]),
+    }
+
+    def applyTransform(self, scale, tx, ty):
+        s, tx, ty = float(scale), float(tx), float(ty)
+        _ops_ = []
+        for kind, payload, scissor in self._ops_:
+            if scissor is not None:
+                scissor = (scissor[0] * s + tx, scissor[1] * s + ty, scissor[2] * s, scissor[3] * s)
+            if kind == 'tri':
+                verts, idx = payload
+                verts = verts.copy()
+                verts[:, 0] = verts[:, 0] * s + tx
+                verts[:, 1] = verts[:, 1] * s + ty
+                payload = (verts, idx)
+            elif kind == 'text':
+                txt, x, y, txt_h, anchor, rotation, rgba, bshift = payload
+                payload = (txt, x * s + tx, y * s + ty, txt_h * s, anchor, rotation, rgba, bshift * s)
+            else:
+                _pts_, _lens_ = self._XFORM_LAYOUT_[kind]
+                if isinstance(payload, np.ndarray):
+                    payload = payload.copy()
+                    for xi, yi in _pts_:
+                        payload[:, xi] = payload[:, xi] * s + tx
+                        payload[:, yi] = payload[:, yi] * s + ty
+                    for li in _lens_: payload[:, li] *= s
+                else:
+                    payload = list(payload)
+                    for xi, yi in _pts_:
+                        payload[xi] = payload[xi] * s + tx
+                        payload[yi] = payload[yi] * s + ty
+                    for li in _lens_: payload[li] *= s
+            _ops_.append((kind, payload, scissor))
+        self._ops_ = _ops_
+        return self
+
     #
     # extend() - splice another DisplayList's recorded primitives into this one
     # - offset translates coordinates; scissor (x, y, w, h) overrides per-op scissors

@@ -140,6 +140,7 @@ struct LineIn {
   @location(1) wd   : f32,
   @location(2) col  : vec4<f32>,
   @location(3) dash : vec2<f32>,  // on, off (0 = solid)
+  @location(4) phase : f32,       // arc length already travelled along the parent stroke
 };
 struct LineOut {
   @builtin(position) pos : vec4<f32>,
@@ -159,7 +160,9 @@ struct LineOut {
   let p   = mix(p0, p1, c.x) + n * (c.y * 2.0 - 1.0);
   o.pos   = to_ndc(p);
   o.col   = inst.col;
-  o.along = c.x * len;
+  // phase carries the dash pattern across a flattened polyline / curve, the way SVG
+  // runs stroke-dasharray continuously along a whole path instead of per segment
+  o.along = inst.phase + c.x * len;
   o.dash  = inst.dash;
   return o;
 }
@@ -248,11 +251,12 @@ struct GlyphOut {
         { shaderLocation: 0, offset: 0,  format: f4 },
         { shaderLocation: 1, offset: 16, format: f4 },
         { shaderLocation: 2, offset: 32, format: f4 }] }, 'instance'),
-      line: mk('line_vs', 'line_fs', { stride: 44, attrs: [
+      line: mk('line_vs', 'line_fs', { stride: 48, attrs: [
         { shaderLocation: 0, offset: 0,  format: f4 },
         { shaderLocation: 1, offset: 16, format: f1 },
         { shaderLocation: 2, offset: 20, format: f4 },
-        { shaderLocation: 3, offset: 36, format: f2 }] }, 'instance'),
+        { shaderLocation: 3, offset: 36, format: f2 },
+        { shaderLocation: 4, offset: 44, format: f1 }] }, 'instance'),
       tri: mk('tri_vs', 'tri_fs', { stride: 24, attrs: [
         { shaderLocation: 0, offset: 0, format: f2 },
         { shaderLocation: 1, offset: 8, format: f4 }] }, 'vertex'),

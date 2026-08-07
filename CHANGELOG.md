@@ -320,6 +320,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `draw_context=` were retired from the component. The interactive setter
   `LinkP.drawLabels()` becomes `drawNodeLabels()`, joined by `drawLinkLabels()`.
 
+- **Coordinates are rounded where they are generated**, shrinking SVG output with
+  no visible change. Three emitters interpolated raw floats and serialized 13-16
+  fractional digits:
+  - **`linkp` curve/flowmap control points** — the endpoints of every `<path>`
+    were already whole pixels (screen coordinates are `Int32`), so the control
+    points steering them carried precision that could not mean anything. Rounded
+    to 2 decimals at the point of string assembly; the underlying columns keep
+    full precision for arrowhead geometry, link labels and the GPU display list.
+    A 120-node/600-edge curve render drops **233,863 → 215,805 bytes (-7.7%)**.
+  - **`xyp`'s `r=` and `fill-opacity=`** — both come from a normalization ratio.
+    Radius rounds to 2 decimals (1/100 px), opacity to 3 (alpha renders at 8
+    bits, so 2 would quantize a ramp more coarsely than the renderer does).
+    `dot_size='sz'` on 4,000 rows drops **254,754 → 201,199 bytes (-21.0%)**.
+    These round the column itself, so the SVG string, the `group_by` keys and the
+    GPU instance buffer all stay derived from one value.
+  - **`xyp`'s supersampled raster coordinates** — a `dot_size/dot_size_supersample`
+    step is rarely representable (4/3 → 1.333…). `dot_size=4,
+    dot_size_supersample=3` drops **193,096 → 165,751 bytes (-14.2%)**. The
+    `dot_size_supersample=1` path is untouched and remains byte-identical.
+
+  Maximum coordinate movement is half a quantum (0.005 px). Note for anyone
+  reading `df_pixels` directly: `__radius__` and `__fill_opacity__` are now
+  quantized in the dataframe, not only in the emitted string.
+
 ## [0.1.2] — 2026-07-25
 
 ### Added

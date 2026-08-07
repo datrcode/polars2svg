@@ -1440,9 +1440,18 @@ class XYp(P2SBackgroundMixin, ExportMixin):
             _step_  = self.dot_size_orig / _ss_
             _xsnap_ = ((_xnorm_ / _step_).floor() * _step_).clip(0, self.plot_size[0] - self.dot_size_orig)
             _ysnap_ = ((_ynorm_ / _step_).floor() * _step_).clip(0, self.plot_size[1] - self.dot_size_orig)
+        # PLANNING.md S1: a supersample step of dot_size/ss is rarely representable
+        # (4/3 -> 1.333...), so the snapped coordinate carries 13-16 fractional digits into
+        # every rect.  Round at the column, but only *after* the plot_origin offset -- adding
+        # an integer to an already-rounded binary float re-grows the tail (126 + 1.33 ->
+        # 127.33000000000001), so this has to be the last operation.  0.005px is far below the
+        # raster this path exists to produce, and __xpx__/__ypx__ are the group_by keys, so the
+        # SVG string, the grouping and the GPU rects stay derived from one value.  ss <= 1 is
+        # left untouched: it is Int32 and byte-identical to the original raster path.
+        _snap_round_ = (lambda _e_: _e_.round(2)) if _ss_ > 1 else (lambda _e_: _e_)
         self.df_flat = self.df_flat.with_columns(
-            (self.plot_origin[0] +                      _xsnap_).alias('__xpx__'),
-            (self.plot_origin[1] - self.dot_size_orig - _ysnap_).alias('__ypx__')
+            _snap_round_(self.plot_origin[0] +                      _xsnap_).alias('__xpx__'),
+            _snap_round_(self.plot_origin[1] - self.dot_size_orig - _ysnap_).alias('__ypx__')
         )
         # Compute both the forward & backward transforms (same format as __toPixelCoordinates_float__)
         self.x_transform_vars = (self.plot_origin[0], _xmin_, _dx_, self.plot_size[0])
@@ -3172,9 +3181,14 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     # - mutates _agg_ops_, _norm_ops_, _shape_template_ in place
     #
     def __buildSizeAndOpacityOps__(self, _agg_ops_, _norm_ops_, _shape_template_):
-        for _tuple_ in [(self.dot_size, '__dot_size__', '__dot_size_sum__', '__radius__',       'r',            self.dot_size_range, self.dot_size_enums),
-                        (self.opacity,  '__opacity__',  '__opacity_sum__',  '__fill_opacity__', 'fill-opacity', self.opacity_range,  self.opacity_enums)]:
-            _var_, _flat_column_, _sum_column_, _final_column_, _svg_attribute_, _range_, _enums_ = _tuple_
+        # PLANNING.md S1: the normalization below is a raw float ratio, so r= and
+        # fill-opacity= serialize 13-16 fractional digits.  Rounded at the column (the last
+        # element of each tuple) rather than on the finished string.  Radius is pixels, so 2
+        # digits is 1/100 px; opacity gets 3 because alpha renders at 8 bits (256 levels) and
+        # 2 digits would quantize a continuous ramp more coarsely than the renderer does.
+        for _tuple_ in [(self.dot_size, '__dot_size__', '__dot_size_sum__', '__radius__',       'r',            self.dot_size_range, self.dot_size_enums, 2),
+                        (self.opacity,  '__opacity__',  '__opacity_sum__',  '__fill_opacity__', 'fill-opacity', self.opacity_range,  self.opacity_enums,  3)]:
+            _var_, _flat_column_, _sum_column_, _final_column_, _svg_attribute_, _range_, _enums_, _digits_ = _tuple_
 
             if _sum_column_ == '__dot_size_sum__' and self.dot_size_global_min is not None:
                 _norm_min_ = pl.lit(float(self.dot_size_global_min))
@@ -3185,7 +3199,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
             _normalize_ = pl.when(_norm_min_ == _norm_max_) \
                             .then(pl.lit(_range_[0])) \
                             .otherwise(_range_[0] + (_range_[1]-_range_[0])*(pl.col(_sum_column_) - _norm_min_) /
-                                                                             (_norm_max_           - _norm_min_)).alias(_final_column_)
+                                                                             (_norm_max_           - _norm_min_)).round(_digits_).alias(_final_column_)
             if self.p2s.ROW_COUNTp in _enums_:
                 _agg_ops_.append(pl.len().alias(_sum_column_))
                 _norm_ops_.append(_normalize_)
@@ -3197,7 +3211,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
                 _norm_ops_.append(_normalize_)
                 _shape_template_.append(f'{_svg_attribute_}="{{{_final_column_}}}"')
             elif _final_column_ in self.df_flat.columns:
-                _agg_ops_.append(pl.col(_final_column_).mean())
+                _agg_ops_.append(pl.col(_final_column_).mean().round(_digits_))
                 _shape_template_.append(f'{_svg_attribute_}="{{{_final_column_}}}"')
 
     #

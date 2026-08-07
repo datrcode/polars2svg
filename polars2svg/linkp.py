@@ -1347,19 +1347,30 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
             if   self.link_shape == 'curve':   _df_link_ = self.__curveControlPointColumns__(_df_link_, i)
             elif self.link_shape == 'flowmap': _df_link_ = self.__flowmapControlPointColumns__(_df_link_, i)
 
+            # PLANNING.md S1: round where the number becomes a string, never on the finished
+            # SVG (see the TODO on Polars2SVG.roundSvgFloats for why the string pass was a
+            # mistake).  Rounding is applied to the *emitted* expression only -- the
+            # underlying control-point / stroke-width columns keep full precision for
+            # __arrowColumns__, __renderLinkLabels__ and the GPU display list, so the
+            # numeric mirror those paths verify against is unchanged.
+            _r2_ = lambda c: pl.col(c).round(2)
+
             if self.link_size == 'vary':
                 _lc_min_, _lc_max_ = self.__countMinMax__(_df_link_['__count__'])
                 _stroke_w_    = self.__interpolatedSizeExpr__(self.link_size_range, _lc_min_, _lc_max_)
-                _sw_attr_ops_ = [pl.lit('" stroke-width="'), _stroke_w_]
+                _sw_attr_ops_ = [pl.lit('" stroke-width="'), _stroke_w_.round(2)]
             else:
                 _stroke_w_    = pl.lit(float(_sz_))
                 _sw_attr_ops_ = []   # fixed width comes from the group attribute
 
             if self.link_shape in ('curve', 'flowmap'):
+                # The endpoints are already Int32 (__calculateScreenCoordinates__); the
+                # interpolated control points were the only unrounded floats in the path,
+                # emitting 13-16 fractional digits against whole-pixel endpoints.
                 _str_ops_ = [
                     pl.lit('<path d="M '), pl.col(_fm_sx_), pl.lit(' '), pl.col(_fm_sy_),
-                    pl.lit(' C '), pl.col(_xo0_), pl.lit(' '), pl.col(_yo0_),
-                    pl.lit(' '), pl.col(_xo1_), pl.lit(' '), pl.col(_yo1_), pl.lit(' '),
+                    pl.lit(' C '), _r2_(_xo0_), pl.lit(' '), _r2_(_yo0_),
+                    pl.lit(' '), _r2_(_xo1_), pl.lit(' '), _r2_(_yo1_), pl.lit(' '),
                     pl.col(_to_sx_), pl.lit(' '), pl.col(_to_sy_),
                     pl.lit('" stroke="'), pl.col('__lc_hex__'),
                     *_sw_attr_ops_,

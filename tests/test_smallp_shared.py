@@ -175,13 +175,17 @@ class TestSmallpShared(unittest.TestCase):
         rlu   = tmpl.renderSmallMultiples(self.df_cnt, self.df_lu_cnt, '__all__')
         r_min, r_max = tmpl.dot_size_range   # (0.5, 4.0) default
 
+        # __radius__ is rounded to 2 decimals at generation (PLANNING.md S1), so the tolerance
+        # is one quantum rather than 0.001.  It still separates global normalization from
+        # per-instance normalization by a wide margin -- the per-instance values are the range
+        # endpoints 0.5 / 4.0 (see test_sm_count_no_sharing_each_sm_reaches_max_radius).
         # lo val=3 → global norm = (3-1)/(9-1) = 0.25 → radius = 0.5 + 3.5*0.25 = 1.375
         lo_r = rlu['lo'].df_pixels.filter(pl.col('__dot_size_sum__') == 3.0)['__radius__'][0]
-        assert abs(lo_r - 1.375) < 0.001, f'lo val=3: expected radius≈1.375, got {lo_r}'
+        assert abs(lo_r - 1.375) < 0.01, f'lo val=3: expected radius≈1.375, got {lo_r}'
 
         # hi val=7 → global norm = (7-1)/(9-1) = 0.75 → radius = 0.5 + 3.5*0.75 = 3.125
         hi_r = rlu['hi'].df_pixels.filter(pl.col('__dot_size_sum__') == 7.0)['__radius__'][0]
-        assert abs(hi_r - 3.125) < 0.001, f'hi val=7: expected radius≈3.125, got {hi_r}'
+        assert abs(hi_r - 3.125) < 0.01, f'hi val=7: expected radius≈3.125, got {hi_r}'
 
     def test_sm_count_no_sharing_each_sm_reaches_max_radius(self):
         """Without SM_COUNT, each SM normalizes independently → max radius in both."""

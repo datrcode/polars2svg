@@ -1,9 +1,12 @@
 # Build the mkdocs site and deploy it to GitHub Pages.
 #
 # The site builds from static, committed content (the example SVGs are
-# generated locally by docs/gen_examples.py), so this job does not need
-# polars2svg installed. Once the package source is mirrored into this repo /
-# published to PyPI, add an install step here and an mkdocstrings API page.
+# generated locally by docs/gen_examples.py) plus the mkdocstrings API page
+# (docs/api.md), so this job does not need polars2svg installed. mkdocstrings'
+# python handler reads the source with griffe — static analysis, no import — and
+# finds polars2svg/ because it sits beside mkdocs.yml. That is why the install
+# below is the two doc tools and nothing else: adding the package or its runtime
+# dependencies here would change nothing about the output.
 #
 # Requires: repo Settings → Pages → Source = "GitHub Actions".
 name: docs
@@ -30,8 +33,8 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.13'
-      - name: Install mkdocs-material
-        run: pip install --no-cache-dir mkdocs-material
+      - name: Install docs tooling
+        run: pip install --no-cache-dir mkdocs-material "mkdocstrings[python]"
       - name: Build site
         run: mkdocs build --strict
       - uses: actions/configure-pages@v6

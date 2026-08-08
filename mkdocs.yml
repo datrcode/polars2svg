@@ -28,6 +28,27 @@ theme:
     - content.code.copy
     - toc.integrate
 
+# `search` has to be listed explicitly: declaring `plugins:` at all replaces the
+# default plugin list, so omitting it silently removes site search.
+#
+# mkdocstrings' python handler reads the source with griffe (static analysis) — it
+# never imports polars2svg, so this build needs neither the package installed nor any
+# of its runtime dependencies, and the docs.yml job installs only the two doc tools.
+# The source is found because polars2svg/ sits beside this file, which is griffe's
+# default search path; no `paths:` entry is needed. A consequence worth knowing: the
+# API page documents the conditionally-imported layout classes even though a core
+# install doesn't provide them at runtime — docs/api.md says so under Layouts.
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            show_source: false
+            members_order: source
+            show_root_heading: true
+            heading_level: 2
+
 markdown_extensions:
   - admonition
   - attr_list
@@ -50,6 +71,7 @@ nav:
       - chordp — chord diagram: components/chordp.md
       - spreadlinesp — spread lines: components/spreadlinesp.md
       - smallp — small multiples: components/smallp.md
+  - API reference: api.md
   - Guides:
       - count= and color=: guides/count-color.md
       - Time fields (t-fields): guides/t-fields.md

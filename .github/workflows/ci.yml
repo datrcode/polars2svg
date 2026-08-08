@@ -129,9 +129,19 @@ jobs:
         # renderPM backend on Linux (macOS has its own); without it svglib
         # rasterization errors out. The PNG-RMS golden tests skip off macOS
         # regardless, but the backend is needed for any that force-run.
+        #
+        # fonttools is hand-listed for the same reason it isn't in an extra: it
+        # is build-time-only (it backs tools/gen_font_metrics.py), so there is no
+        # runtime extra to resolve it through, and [dependency-groups] dev —
+        # where it is declared — isn't published to wheel METADATA, which is what
+        # this job installs from. Without it the five tests in
+        # test_font_metrics_consistency.py's TestGeneratedTableMatchesTheFont
+        # skip silently, and the check that re-derives ADVANCES/INK_EXTENTS from
+        # the bundled TTF never runs — so "regenerate the metrics after changing
+        # the font" goes back to being remembered rather than enforced.
         run: |
           pip install --no-cache-dir "$(echo dist/*.whl)[interactive,layouts,export]"
-          pip install --no-cache-dir pytest kagglehub
+          pip install --no-cache-dir pytest kagglehub fonttools
 
       - name: Run the test suite
         # test_performance.py needs a machine-local baseline (gitignored);

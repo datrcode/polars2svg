@@ -771,6 +771,63 @@ class ChP(P2SComponentColorMixin, ExportMixin):
                 self.order += [n for n in sorted(self.nodes_all) if n not in _pos_set_]
             else:
                 self.order = leafWalkFromEdges(self.df_edge_weights)
+        else:
+            # Caller supplied order= -- reconcile it against the nodes actually present
+            self.__resolveOrder__()
+
+    #
+    # __resolveOrder__() - reconcile a caller-supplied order= against the data's nodes.
+    #
+    # A partial order= used to hide every unlisted node (df_node is built from
+    # self.order, so the node's arc *and* its ribbons vanished with no warning).
+    # Two ways to say what should happen instead, matching xyp's x_order=/y_order=:
+    #
+    # - default: unlisted nodes are appended in sorted order and keep their own arcs,
+    #   which is what the pos= path above already does.
+    # - p2s.REMAINDERp placed anywhere in order=: unlisted nodes merge into one bucket
+    #   arc at the sentinel's position.  Edges are rewritten onto the bucket and
+    #   re-aggregated, so edges wholly inside the remainder become self-loops on it.
+    #
+    # Merging needs one name to stand for many nodes, so the bucket forces the node
+    # columns to String; with a non-String node column (integer ids) the listed values
+    # are str()-cast to match, and any node_labels=/label_only= keys must be strings too.
+    #
+    def __resolveOrder__(self):
+        _label_    = self.p2s.REMAINDER_LABEL
+        _sentinel_ = self.p2s.REMAINDERp
+        _listed_   = [_o_ for _o_ in self.order if _o_ is not _sentinel_]
+        _unlisted_ = sorted(self.nodes_all - set(_listed_), key=str)
+
+        # No sentinel: append the unlisted nodes so nothing is hidden
+        if len(_listed_) == len(self.order):
+            self.order = _listed_ + _unlisted_
+            return
+
+        if _label_ in _listed_:
+            raise ValueError(f'ChP: order= lists a node named "{_label_}", which collides with the '
+                             f'p2s.REMAINDERp bucket label -- rename that node or drop the sentinel')
+
+        # Nothing to merge: drop the sentinel and leave the order as given
+        if len(_unlisted_) == 0:
+            self.order = _listed_
+            return
+
+        _cast_ = (lambda _v_: _v_)
+        if self.df_edge_weights['__fm__'].dtype != pl.String:
+            self.df_edge_weights = self.df_edge_weights.with_columns(pl.col('__fm__').cast(pl.String),
+                                                                     pl.col('__to__').cast(pl.String))
+            _cast_, _unlisted_ = str, [str(_u_) for _u_ in _unlisted_]
+
+        # Re-aggregate: the rewrite collapses several (fm,to) pairs onto one
+        self.df_edge_weights = (self.df_edge_weights
+                                .with_columns(pl.when(pl.col('__fm__').is_in(_unlisted_)).then(pl.lit(_label_))
+                                                .otherwise(pl.col('__fm__')).alias('__fm__'),
+                                              pl.when(pl.col('__to__').is_in(_unlisted_)).then(pl.lit(_label_))
+                                                .otherwise(pl.col('__to__')).alias('__to__'))
+                                .group_by(['__fm__', '__to__']).agg(pl.col('__count__').sum()))
+        # _cast_ keeps the order aligned with __fm__/__to__ when they were cast to String
+        self.order     = [(_label_ if _o_ is _sentinel_ else _cast_(_o_)) for _o_ in self.order]
+        self.nodes_all = set(self.order)
 
     #
     # __calculateGeometry_NONPOLARS__()
@@ -971,7 +1028,11 @@ class ChP(P2SComponentColorMixin, ExportMixin):
 
         # ── 2. Scalar geometry constants ──────────────────────────────────────
         _node_gap_          = self.node_gap
-        _nodes_len_         = len(self.nodes_all)
+        # Gap allocation has to count the arcs actually drawn (df_node is built from
+        # self.order); nodes_all can differ from it -- a REMAINDERp bucket collapses
+        # many nodes into one arc, and SM_X drops panel nodes absent from the shared
+        # order -- and using it there over-reserved gap and shrank every arc.
+        _nodes_len_         = len(self.df_node)
         _node_h_            = self.node_size_range[1]
         _node_w_min_        = self.node_size_range[0]
         _node_space_needed_ = self.df_node['__count__'].sum()

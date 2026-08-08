@@ -193,6 +193,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A partial `order=` silently misrepresented the data, in two different ways.**
+  Both components took a caller's incomplete ordering and quietly disposed of
+  whatever it left out (PLANNING.md **C1**, **C2**).
+  - **`chordp` dropped every unlisted node** — its arc *and* its ribbons. `df_node`
+    is built from `self.order`, so a 5-node graph rendered with `order=['a','b','c']`
+    lost two arcs and five of eleven chords with no warning. (The audit note blamed
+    an inner join in `__calculateGeometry_NONPOLARS__`; that method has no call site
+    and never runs. The live path drops the nodes in *both* the `node_size='vary'`
+    and fixed-size branches.)
+  - **`xyp` collapsed every unlisted value onto one shared row/column** — the list
+    form via `fill_null(len(order))` and the dict form via `fill_null(max+1)`. The
+    categories overplotted each other on a single slot, and because an axis label is
+    read from the `__x__`/`__y__` value at `arg_min()`/`arg_max()` of the index, that
+    slot was then labelled with whichever collided value happened to sort first. The
+    audit note recorded only the dict form; both were affected.
+
+  Unlisted values are now **appended in sorted order, each keeping its own arc or
+  slot**, so nothing is hidden and nothing collides — matching what `chordp`'s `pos=`
+  path already did. To merge them deliberately, place **`p2s.REMAINDERp`** anywhere in
+  the order: everything unlisted collapses into one bucket at the sentinel's position,
+  named `remainder`.
+
+  ```python
+  p2s.chordp(df, [('fm','to')], order=['a','b','c'])                 # a b c d e …
+  p2s.chordp(df, [('fm','to')], order=['a','b','c', p2s.REMAINDERp]) # a b c [remainder]
+  p2s.xyp(df, x='k', y='v', x_order=[p2s.REMAINDERp, 'a','b'])       # [remainder] a b
+  ```
+
+  The bucket is a data operation, not just a relabelling: `chordp` rewrites the edge
+  endpoints and re-aggregates (so edges wholly inside the remainder become self-loops
+  on it, and total edge weight is conserved), and `xyp` rewrites the source value so
+  the axis label, coloring and brushing all read `remainder`. Merging needs one name to
+  stand for many values, so a non-String node/axis column is cast to String and the
+  listed keys with it. A listed value literally named `remainder` collides with the
+  bucket and raises `ValueError`; `p2s.REMAINDERp` against a struct/tuple `x_order=`
+  raises `NotImplementedError` (no single struct value can name the bucket) — the
+  append behaviour still applies there.
+
+- **`chordp` allocated arc gaps against the wrong node count.** `_nodes_len_` came from
+  `nodes_all` while the arcs are drawn from `df_node`. The two diverge whenever `order=`
+  names a node absent from the data (and now whenever a `REMAINDERp` bucket collapses
+  several nodes into one arc), so the circle was divided into too few slices and the
+  arcs ran past 360° — `order=['a','zz','b']` on a 5-node graph tiled to 432°. Gap
+  allocation now counts the arcs actually drawn.
+
 - **Text was measured in one font and rendered in another.** Every text-derived
   coordinate the package emits — where a label is cropped, how wide a legend is,
   how far a link label sits off its edge — is computed from the bundled

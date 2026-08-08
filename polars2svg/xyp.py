@@ -1147,6 +1147,75 @@ class XYp(P2SBackgroundMixin, ExportMixin):
             _ordered_ = [tuple(_d_.values()) for _d_ in _ordered_]
         return _ordered_
 
+    #
+    # __resolveOrder__() - reconcile a caller-supplied x_order=/y_order= against the
+    # values actually present, returning the completed order and (possibly rewritten) frame.
+    #
+    # Both the list and the dict form used to send every unlisted value to one shared
+    # fallback slot (fill_null(len(order)) / fill_null(max(values)+1)), so unlisted
+    # categories silently overplotted each other on a single row/column -- and since the
+    # axis label is read from the __x__/__y__ value at arg_min()/arg_max() of the index,
+    # that slot got labelled with whichever collided value happened to come first.
+    # Two ways to say what should happen instead, matching chordp's order=:
+    #
+    # - default: unlisted values are appended in sorted order, each keeping its own slot.
+    # - p2s.REMAINDERp placed anywhere in the order: unlisted values merge into one bucket
+    #   row/column at the sentinel's position.  The bucket rewrites the source value (not
+    #   just the index) so the axis label, coloring and brushing all read 'remainder'.
+    #
+    # After this runs the join below finds no unmatched rows, so its fill_null() is only
+    # a safety net.
+    #
+    def __resolveOrder__(self, _df_, _src_, _order_):
+        _sentinel_ = self.p2s.REMAINDERp
+        _label_    = self.p2s.REMAINDER_LABEL
+        _is_dict_  = isinstance(_order_, dict)
+        _keys_     = list(_order_.keys()) if _is_dict_ else list(_order_)
+        _listed_   = [_k_ for _k_ in _keys_ if _k_ is not _sentinel_]
+        _has_rem_  = len(_listed_) != len(_keys_)
+        if len(_listed_) == 0 and not _has_rem_: return _order_, _df_
+        _struct_   = isinstance(_listed_[0], tuple) if len(_listed_) > 0 else False
+
+        # Distinct values actually present, so the unlisted set can be computed
+        _vals_ = _df_.select(pl.col(_src_)).unique()
+        if self.use_lazy_execution: _vals_ = _vals_.collect()
+        _present_ = _vals_[_src_].to_list()
+        if _struct_: _present_ = [tuple(_v_.values()) for _v_ in _present_ if _v_ is not None]
+        _listed_set_ = set(_listed_)
+        _unlisted_   = sorted([_v_ for _v_ in _present_ if _v_ not in _listed_set_], key=str)
+
+        # Append -- every value keeps its own slot (nothing collides)
+        if not _has_rem_ or len(_unlisted_) == 0:
+            if _is_dict_:
+                _order_ = dict((_k_, _v_) for _k_, _v_ in _order_.items() if _k_ is not _sentinel_)
+                _next_  = (max(_order_.values()) + 1) if len(_order_) > 0 else 0
+                for _v_ in _unlisted_: _order_[_v_], _next_ = _next_, _next_ + 1
+            else:
+                _order_ = _listed_ + _unlisted_
+            return _order_, _df_
+
+        # Remainder bucket
+        if _struct_:
+            raise NotImplementedError(f'XYp.__resolveOrder__(): p2s.REMAINDERp is not supported for a '
+                                      f'struct/tuple order on "{_src_}" -- there is no single struct value '
+                                      f'to name the bucket; list the values instead (they are appended, '
+                                      f'not collapsed)')
+        if _label_ in _listed_:
+            raise ValueError(f'XYp.__resolveOrder__(): the order for "{_src_}" lists a value named '
+                             f'"{_label_}", which collides with the p2s.REMAINDERp bucket label -- '
+                             f'rename that value or drop the sentinel')
+        # Merging needs one name to stand for many values, so a non-String axis column
+        # (integer categories via p2s.SETp) is cast to String and the listed keys with it
+        _cast_ = (lambda _v_: _v_)
+        if _vals_[_src_].dtype != pl.String:
+            _df_, _cast_ = _df_.with_columns(pl.col(_src_).cast(pl.String)), str
+            _unlisted_   = [str(_u_) for _u_ in _unlisted_]
+        _df_ = _df_.with_columns(pl.when(pl.col(_src_).cast(pl.String).is_in(_unlisted_))
+                                   .then(pl.lit(_label_)).otherwise(pl.col(_src_).cast(pl.String)).alias(_src_))
+        if _is_dict_: _order_ = dict(((_label_ if _k_ is _sentinel_ else _cast_(_k_)), _v_) for _k_, _v_ in _order_.items())
+        else:         _order_ = [(_label_ if _k_ is _sentinel_ else _cast_(_k_)) for _k_ in _order_]
+        return _order_, _df_
+
     def __indexXandY_join__(self):
         if self.df_flat is not None:
 
@@ -1180,11 +1249,15 @@ class XYp(P2SBackgroundMixin, ExportMixin):
                         _dfi_ = _df_.select([_src_]).unique().sort(_src_).with_row_index(_dst_)
                         if self.use_lazy_execution: _dfi_ = _dfi_.lazy()
                         _df_  = _df_.join(_dfi_, on=_src_, how='left')
-                    
+
                     #
                     # Order is specified as a list -- make that a one up
                     #
                     elif isinstance(_order_, list):
+                        # A partial order is completed first: unlisted values are appended, or
+                        # merged into the p2s.REMAINDERp bucket.  Either way the branches below
+                        # then see an order covering every value present.
+                        _order_, _df_ = self.__resolveOrder__(_df_, _src_, _order_)
                         if isinstance(_order_[0], tuple):
                             # Create the order dataframe / the fields must match how they were constructed in the struct (see __flattenDataFrame__())
                             _fields_ = len(_order_[0])
@@ -1210,6 +1283,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
                     # Order is specified as a dictionary -- the key is the value, the value is the index
                     #
                     elif isinstance(_order_, dict):
+                        _order_, _df_ = self.__resolveOrder__(_df_, _src_, _order_)
                         _key_ = list(_order_.keys())[0]
                         if isinstance(_key_, tuple):
                             # Create the order dataframe / the fields must match how they were constructed in the struct (see __flattenDataFrame__())

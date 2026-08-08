@@ -421,6 +421,10 @@ class Polars2SVG(P2SColorsMixin,
         # piechart small-multiple shared modes (piep)
         SM_SLICE_ORDERp                     = 40 # keep the same slice order & colors across panels
         SM_PARTOFWHOLEp                     = 41 # fade the "all rows" chart behind, fill each slice's share
+        # partial order= bucket (chordp order=, xyp x_order=/y_order=)
+        REMAINDERp                          = 42 # placeholder in order= -- values absent from order= merge into
+                                                 # one bucket at the sentinel's position.  Without it, unlisted
+                                                 # values are appended in sorted order and keep their identity.
 
     def __init__(self) -> None:
         # __new__ caches the singleton but Python still calls __init__ on every
@@ -440,6 +444,11 @@ class Polars2SVG(P2SColorsMixin,
         for _m_ in self.TimeLinearTypeP:   setattr(self, _m_.name, _m_)
         for _m_ in self.TimePeriodicTypeP: setattr(self, _m_.name, _m_)
         for _m_ in self.RenderEnumsP:      setattr(self, _m_.name, _m_)
+
+        # Label rendered for the REMAINDERp bucket (arc name / axis tick).  A listed
+        # order= value equal to this string collides with the bucket and raises --
+        # see ChP.__resolveOrder__() / XYp.__resolveOrder__().
+        self.REMAINDER_LABEL     = 'remainder'
 
         self.statistic_types     = set(self.StatisticP)
         self.color_types         = set(self.ColorTypeP)

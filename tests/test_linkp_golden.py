@@ -71,5 +71,33 @@ class TestLinkPNodeColorGolden(unittest.TestCase):
         assert_image_matches_golden(lp.svg, 'linkp_node_color_dict_unknown_key')
 
 
+class TestLinkPBackgroundGolden(unittest.TestCase):
+    '''Golden-file regression test for background records (PLANNING.md §9.1).
+
+    Mixes a bare descriptor (inherits every background_* parameter) with records that
+    say things the parameters cannot: fill off, a translucent dashed stroke, and a
+    drawn label that differs from the dict key.
+    '''
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.p2s = Polars2SVG()
+
+    def test_background_records(self):
+        lp = self.p2s.linkp(**_params(
+            background={
+                'zone':        [(0.1, 0.1), (0.9, 0.1), (0.9, 0.9), (0.1, 0.9)],
+                'flow 1':      self.p2s.bgShape('M 0.1 0.9 L 0.5 0.3 L 0.9 0.9',
+                                                fill=None, stroke='#204080',
+                                                stroke_opacity=0.35, stroke_width=3.0, dash='4 2'),
+                'flow 1 head': self.p2s.bgShape('<circle cx="0.9" cy="0.9" r="0.06" />',
+                                                fill='#204080', fill_opacity=0.6,
+                                                stroke=None, label='head'),
+            },
+            background_fill='#aabbcc', background_opacity=0.35,
+            background_label_color='#303030'))
+        assert_svg_matches_golden(lp.svg, 'linkp_background_records')
+        assert_image_matches_golden(lp.svg, 'linkp_background_records')
+
+
 if __name__ == '__main__':
     unittest.main()

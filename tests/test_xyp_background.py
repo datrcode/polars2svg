@@ -74,10 +74,27 @@ class Testxyp_background(unittest.TestCase):
         self.assertIn('fill="#ddeeff"', chart.svg)
 
     def test_polygon_no_fill(self):
+        # An unfilled shape emits fill="none".  It used to emit fill-opacity="0.0" with no
+        # fill attribute at all, which renders the same but only because SVG's initial fill
+        # (black) was being drawn at zero alpha; "no fill" is now said directly, from both
+        # the background_fill=None parameter and a record's fill=None.
         chart = self.p2s.xyp(df=self.df, x='x', y='y',
                              background=self.bg,
                              background_fill=None)
-        self.assertIn('fill-opacity="0.0"', chart.svg)
+        self.assertIn('fill="none"', chart.svg_background)
+        self.assertNotIn('fill-opacity', chart.svg_background)
+
+    def test_stroke_w_dict_missing_name_does_not_emit_the_dict(self):
+        # A name absent from a background_stroke_w dict used to fall through to the dict
+        # OBJECT, emitting stroke-width="{'region_a': 2.0}" -- invalid SVG, and a ValueError
+        # when the GPU path float()'d it.
+        chart = self.p2s.xyp(df=self.df, x='x', y='y',
+                             background=self.bg,
+                             background_stroke_w={'region_a': 2.0})
+        self.assertIn('stroke-width="2.0"', chart.svg_background)
+        self.assertIn('stroke-width="1.0"', chart.svg_background)
+        self.assertNotIn('{', chart.svg_background)
+        chart.webgpu()   # would raise before the fix
 
     # -------------------------------------------------------------------------
     # MultiPolygon

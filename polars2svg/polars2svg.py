@@ -17,6 +17,7 @@ from .p2s_text_mixin        import P2STextMixin
 from .p2s_time_mixin        import P2STimeMixin
 from .p2s_interactive_mixin import P2SInteractiveMixin
 from .p2s_legend_mixin      import P2SLegendMixin
+from .p2s_background_mixin  import BackgroundShape, INHERIT
 from .xyp                import XYp
 from .smallp             import Smallp
 from .timep              import Timep
@@ -928,31 +929,60 @@ class Polars2SVG(P2SColorsMixin,
         draw_context   = True (default) | False  # if the plot is too small, the context won't be drawn
         draw_border    = True (default) | False  # draw a rectangular border around the SVG
         txt_h          = label text height
-        background             = {key: shapely_object, ...}
-                               | {key: [(x,y), ...], ...}        # list of (x,y) coordinate pairs
-                               | {key: '<circle cx=... />', ...} # SVG circle string
-                               | {key: 'M x y L x y ...', ...}  # SVG path description string
-        background_fill        = None                  # no fill (transparent)
-                               = '#RRGGBB'             # fixed hex colour for all shapes
-                               = 'vary'                # auto-assign a unique colour per key
-                               = {key: '#RRGGBB', ...} # per-shape colour lookup
-        background_opacity     = 1.0                   # default fill opacity (number)
-                               = None                  # equivalent to 0.0 (no fill)
-                               = {key: float, ...}     # per-shape opacity lookup
-        background_stroke      = 'default'             # axis-inner colour (default)
-                               = None                  # no outline stroke
-                               = '#RRGGBB'             # fixed hex colour
-                               = 'vary'                # auto-assign a unique colour per key
-                               = {key: '#RRGGBB', ...} # per-shape stroke lookup
-        background_stroke_w    = 1.0                   # stroke width (number)
-                               = {key: float, ...}     # per-shape stroke-width lookup
-        background_label_color = None                  # no label (default)
-                               = '#RRGGBB'             # fixed label colour
-                               = 'vary'                # auto-assign a unique colour per key
-                               = {key: '#RRGGBB', ...} # per-shape label colour lookup
+        background             = None                       # no background (default)
+                               = {key: shape_desc, ...}     # bare descriptor; inherits every background_* below
+                               = {key: record, ...}         # record; carries its own appearance
+                                                            # the two forms mix freely in one dict
+
+          shape_desc           = shapely Polygon | MultiPolygon | LineString | MultiLineString
+                               = [(x,y), ...]               # list of world-coordinate pairs
+                               = '<circle cx=... r=... />'  # SVG circle string
+                               = 'M x y L x y C ... Z'      # SVG path description (M/L/C/Z)
+
+          record               = p2s.bgShape(shape_desc, fill=..., stroke=..., ...)
+                               = {'shape': shape_desc, 'fill': ..., ...}   # same fields, plain dict
+
+            shape              = shape_desc                 # required
+            fill               = p2s.INHERIT (default)      # take background_fill
+                               = None                       # explicitly UNFILLED -- emits fill="none"
+                               = '#RRGGBB' | 'vary'
+            fill_opacity       = p2s.INHERIT | None | float
+            stroke             = p2s.INHERIT | None | '#RRGGBB' | 'vary'
+            stroke_opacity     = p2s.INHERIT | None | float # NEW -- no sidecar equivalent
+            stroke_width       = p2s.INHERIT | None | float
+            dash               = p2s.INHERIT | None | '4 2' # NEW -- stroke-dasharray
+            stroke_linecap     = p2s.INHERIT | None | 'butt' | 'round' | 'square'   # NEW, SVG only
+            stroke_linejoin    = p2s.INHERIT | None | 'miter' | 'round' | 'bevel'   # NEW, SVG only
+            label              = p2s.INHERIT                # the dict key (default)
+                               = None                       # no label, even when background_label_color is set
+                               = 'text'                     # any string; decouples the label from the key
+            label_color        = p2s.INHERIT | None | '#RRGGBB' | 'vary'
+
+        background_fill        = None                       # no fill (transparent)
+                               = '#RRGGBB'                  # fixed hex colour for all shapes
+                               = 'vary'                     # auto-assign a unique colour per key
+                               = {key: '#RRGGBB', ...}      # per-shape colour lookup
+        background_opacity     = 1.0 | None | {key: float, ...}
+        background_stroke      = 'default' | None | '#RRGGBB' | 'vary' | {key: '#RRGGBB', ...}
+        background_stroke_w    = 1.0 | {key: float, ...}
+        background_label_color = None | '#RRGGBB' | 'vary' | {key: '#RRGGBB', ...}
+
+        p2s.INHERIT vs None on a record: INHERIT defers to the background_* parameter
+        above; None means explicitly off / omit the attribute. A bare shape_desc is a
+        record whose every field is INHERIT, which is why the two forms mix.
+        Note stroke_width=None on a RECORD omits the attribute (SVG's default applies);
+        background_stroke_w=None as a PARAMETER still means "no stroke at all". Say
+        stroke=None on the record for that.
+
+        Shapes are drawn in dict insertion order -- all shapes, then all labels -- so a
+        later entry lands on top of an earlier one. This is contract, not incidental.
+        stroke_linecap / stroke_linejoin apply to the SVG only; the GPU display list
+        has no cap/join (see PLANNING.md §8).
 
         Supported shapely types: Polygon, MultiPolygon, LineString, MultiLineString.
-        LineString / MultiLineString shapes are rendered with fill forced to 'none'.
+        LineString / MultiLineString shapes are unfilled (an open subpath has no interior
+        worth painting -- SVG would close it implicitly in order to fill it) unless the
+        record sets fill= explicitly, in which case the caller outranks the coercion.
         Both x and y axes must be scalars for background shapes to be transformed correctly.
 
         sm_shared      = {p2s.SM_X | p2s.SM_Y | p2s.SM_COLOR | p2s.SM_COUNT} # shared attributes w/in small multiples
@@ -1322,12 +1352,55 @@ class Polars2SVG(P2SColorsMixin,
         convex_hull_labels       = False
         convex_hull_stroke_width = None
 
-        background             = None                      # {key: shapely_object | [(x,y),...] | svg_str}
-        background_label_color = None
-        background_opacity     = 1.0
-        background_fill        = None
-        background_stroke_w    = 1.0
-        background_stroke      = 'default'
+        background             = None                       # no background (default)
+                               = {key: shape_desc, ...}     # bare descriptor; inherits every background_* below
+                               = {key: record, ...}         # record; carries its own appearance
+                                                            # the two forms mix freely in one dict
+
+          shape_desc           = shapely Polygon | MultiPolygon | LineString | MultiLineString
+                               = [(x,y), ...]               # list of world-coordinate pairs
+                               = '<circle cx=... r=... />'  # SVG circle string
+                               = 'M x y L x y C ... Z'      # SVG path description (M/L/C/Z)
+
+          record               = p2s.bgShape(shape_desc, fill=..., stroke=..., ...)
+                               = {'shape': shape_desc, 'fill': ..., ...}   # same fields, plain dict
+
+            shape              = shape_desc                 # required
+            fill               = p2s.INHERIT (default)      # take background_fill
+                               = None                       # explicitly UNFILLED -- emits fill="none"
+                               = '#RRGGBB' | 'vary'
+            fill_opacity       = p2s.INHERIT | None | float
+            stroke             = p2s.INHERIT | None | '#RRGGBB' | 'vary'
+            stroke_opacity     = p2s.INHERIT | None | float # NEW -- no sidecar equivalent
+            stroke_width       = p2s.INHERIT | None | float
+            dash               = p2s.INHERIT | None | '4 2' # NEW -- stroke-dasharray
+            stroke_linecap     = p2s.INHERIT | None | 'butt' | 'round' | 'square'   # NEW, SVG only
+            stroke_linejoin    = p2s.INHERIT | None | 'miter' | 'round' | 'bevel'   # NEW, SVG only
+            label              = p2s.INHERIT                # the dict key (default)
+                               = None                       # no label, even when background_label_color is set
+                               = 'text'                     # any string; decouples the label from the key
+            label_color        = p2s.INHERIT | None | '#RRGGBB' | 'vary'
+
+        background_fill        = None                       # no fill (transparent)
+                               = '#RRGGBB'                  # fixed hex colour for all shapes
+                               = 'vary'                     # auto-assign a unique colour per key
+                               = {key: '#RRGGBB', ...}      # per-shape colour lookup
+        background_opacity     = 1.0 | None | {key: float, ...}
+        background_stroke      = 'default' | None | '#RRGGBB' | 'vary' | {key: '#RRGGBB', ...}
+        background_stroke_w    = 1.0 | {key: float, ...}
+        background_label_color = None | '#RRGGBB' | 'vary' | {key: '#RRGGBB', ...}
+
+        p2s.INHERIT vs None on a record: INHERIT defers to the background_* parameter
+        above; None means explicitly off / omit the attribute. A bare shape_desc is a
+        record whose every field is INHERIT, which is why the two forms mix.
+        Note stroke_width=None on a RECORD omits the attribute (SVG's default applies);
+        background_stroke_w=None as a PARAMETER still means "no stroke at all". Say
+        stroke=None on the record for that.
+
+        Shapes are drawn in dict insertion order -- all shapes, then all labels -- so a
+        later entry lands on top of an earlier one. This is contract, not incidental.
+        stroke_linecap / stroke_linejoin apply to the SVG only; the GPU display list
+        has no cap/join (see PLANNING.md §8).
 
         sm_shared      = set()                             # shared attributes within small multiples
                        = {p2s.SM_X}                        # share X world-coordinate range across panels**
@@ -1938,6 +2011,38 @@ class Polars2SVG(P2SColorsMixin,
 
     def nullNodeDisplay(self, value):
         return '(null)' if self.isNullNode(value) else value
+
+    #
+    # bgShape() - create a background record
+    #
+    def bgShape(self, shape, **fields) -> BackgroundShape:
+        '''Build a background entry that carries its own appearance.
+
+        ``shape`` is any descriptor ``background=`` already accepts (a shapely geometry,
+        a list of ``(x, y)`` world coordinates, an ``'<circle .../>'`` string, or an
+        ``M/L/C/Z`` path string). Every appearance field defaults to ``p2s.INHERIT``,
+        meaning "take the component's ``background_*`` parameter", so a bare descriptor
+        and a record mix freely inside one ``background=`` dict::
+
+            p2s.linkp(df, rels, pos=pos, background={
+                'dmz':    subnet_polygon,                                  # bare -- inherits
+                'flow 1': p2s.bgShape(curves, fill=None, stroke='#4060a0',
+                                      stroke_opacity=0.35, label=None),
+            })
+
+        ``None`` on a field means *explicitly off*, which the ``background_*``
+        parameters cannot express: ``fill=None`` leaves the shape unfilled (rather than
+        filling it with the axis colour), ``stroke=None`` leaves it unstroked, and
+        ``label=None`` suppresses the drawn label. ``stroke_opacity=``, ``dash=``,
+        ``stroke_linecap=``, ``stroke_linejoin=`` and ``label=`` have no ``background_*``
+        equivalent at all.
+
+        Fields: ``fill``, ``fill_opacity``, ``stroke``, ``stroke_opacity``,
+        ``stroke_width``, ``dash``, ``stroke_linecap``, ``stroke_linejoin``, ``label``,
+        ``label_color``. Colour fields take ``'#rrggbb'`` or ``'vary'`` (hash the entry's
+        key). The returned record is immutable.
+        '''
+        return BackgroundShape(shape, **fields)
 
     #
     # tField() - create a transformation field

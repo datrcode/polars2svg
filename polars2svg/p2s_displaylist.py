@@ -187,6 +187,20 @@ def strokePolylineDL(dl, pts, color, width=1.0, opacity=1.0, dash=None, scissor=
 
 
 #
+# dashArrayToTuple() - SVG stroke-dasharray string -> the (on, off) pair the line
+# primitive carries (FLOATS_PER_INSTANCE['line'] has dash_on / dash_off slots).
+# A one-value dasharray means equal on/off, matching SVG's own rule.  Shared so the
+# svgToDisplayList() parser and components that compose a dasharray directly (the
+# background records) cannot disagree about how a pattern string is read.
+#
+def dashArrayToTuple(dasharray):
+    if dasharray is None or dasharray in ('', 'none'): return None
+    _dv_ = [float(_x_) for _x_ in str(dasharray).replace(',', ' ').split()]
+    if len(_dv_) == 0: return None
+    return (_dv_[0], _dv_[1] if len(_dv_) > 1 else _dv_[0])
+
+
+#
 # pathToDL() - record an SVG path 'd' string as GPU primitives
 #
 # Curves and arcs are flattened by flattenPathD(); closed subpaths fill as triangles
@@ -303,10 +317,7 @@ def svgToDisplayList(svg_str, dl, p2s):
         _stroke_       = a.get('stroke')
         _stroke_op_    = _f_('stroke-opacity', 1.0) * _opacity_
         _stroke_w_     = _TL_(_f_('stroke-width', 1.0))
-        _dash_ = None
-        if 'stroke-dasharray' in a and a['stroke-dasharray'] not in ('', 'none'):
-            _dv_ = [float(x) for x in a['stroke-dasharray'].replace(',', ' ').split()]
-            _dash_ = _TDASH_((_dv_[0], _dv_[1] if len(_dv_) > 1 else _dv_[0]))
+        _dash_ = _TDASH_(dashArrayToTuple(a.get('stroke-dasharray')))
 
         def _strokePolyline_(pts):
             strokePolylineDL(dl, pts, _stroke_, width=_stroke_w_,

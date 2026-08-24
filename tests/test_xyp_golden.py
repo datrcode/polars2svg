@@ -115,5 +115,31 @@ class Testxyp_golden(unittest.TestCase):
         assert_svg_matches_golden(_xyp_.svg, 'no_context')
         assert_image_matches_golden(_xyp_.svg, 'no_context')
 
+    # ------------------------------------------------------------------
+    # Background records (PLANNING.md §9.1): a bare descriptor inheriting the
+    # background_* parameters, a record that turns its fill off and strokes
+    # translucently with a dash, and a record whose drawn label differs from its key
+    # ------------------------------------------------------------------
+    def test_background_records(self):
+        df = pl.DataFrame({
+            'x': [1, 2, 3, 4, 5],
+            'y': [2, 4, 1, 3, 5],
+        })
+        _xyp_ = self.p2s.xyp(df, 'x', 'y', wxh=(200, 200),
+                              background={
+                                  'bare':        [(1.2, 1.2), (2.8, 1.2), (2.8, 2.8), (1.2, 2.8)],
+                                  'flow 1':      self.p2s.bgShape('M 1.5 4.5 L 3.0 2.0 L 4.5 4.5',
+                                                                  fill=None, stroke='#204080',
+                                                                  stroke_opacity=0.35, stroke_width=3.0,
+                                                                  dash='4 2'),
+                                  'flow 1 head': self.p2s.bgShape('<circle cx="4.5" cy="4.5" r="0.4" />',
+                                                                  fill='#204080', fill_opacity=0.6,
+                                                                  stroke=None, label='head'),
+                              },
+                              background_fill='#aabbcc', background_opacity=0.35,
+                              background_label_color='#303030')
+        assert_svg_matches_golden(_xyp_.svg, 'xyp_background_records')
+        assert_image_matches_golden(_xyp_.svg, 'xyp_background_records')
+
 if __name__ == '__main__':
     unittest.main()

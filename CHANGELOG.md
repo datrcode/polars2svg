@@ -9,6 +9,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Background records — `background=` entries can carry their own appearance**
+  (PLANNING.md **§9.1 / B1–B3**). An entry in `background=` is still a bare shape
+  descriptor (shapely geometry, `[(x, y), ...]`, `'<circle .../>'`, or an `M/L/C/Z`
+  path string), but it may now instead be a **record** built with
+  `p2s.bgShape(shape, **fields)` — or written as a plain `{'shape': ..., 'fill': ...}`
+  dict — that carries `fill`, `fill_opacity`, `stroke`, `stroke_opacity`,
+  `stroke_width`, `dash`, `stroke_linecap`, `stroke_linejoin`, `label` and
+  `label_color`. Both forms mix freely in one dict. Shared by `xyp` and `linkp`
+  through `P2SBackgroundMixin`; `polars2svg.BackgroundShape` and
+  `polars2svg.INHERIT` are exported.
+  - **Style was keyed by name alongside the geometry rather than attached to it.**
+    Appearance lived in five parallel `background_*` dicts, so every new capability
+    cost a new top-level parameter × its scalar/dict forms × a fallback chain. The
+    five parameters remain and are unchanged — they are now what a record's
+    `p2s.INHERIT` fields defer to — but **new appearance goes on the record**:
+    `stroke_opacity=`, `dash=`, `stroke_linecap=`, `stroke_linejoin=` and `label=`
+    arrived without a sixth, seventh or eighth parameter.
+  - **`INHERIT` vs `None` is the load-bearing distinction.** Every field defaults to
+    `p2s.INHERIT` ("use the component's `background_*` parameter"), so a bare
+    descriptor is exactly a record with every field `INHERIT` — back-compatibility by
+    construction rather than by maintenance. `None` means *explicitly off*, which the
+    parameters could not express: a name missing from a `background_fill` dict was
+    filled with the axis colour at full opacity, so callers had to smuggle
+    suppression through values (`fill-opacity` 0 for shapes that must not be filled,
+    `stroke-width` 0 for shapes that must not be stroked).
+  - **`stroke-opacity` is emitted for the first time.** A stroked background could not
+    be made translucent, so it competed with the links it sat under; the workaround
+    was pre-lightening the stroke colour toward the background. `dash` →
+    `stroke-dasharray` is new for the same reason. Cap and join reach the SVG only —
+    the GPU line primitive carries no cap/join field.
+  - **`label=` decouples the drawn label from the dict key**, and `label=None`
+    suppresses one entirely. `background_label_color` still governs whether labels are
+    drawn at all (it is what the interactive `b` cycle drives), so a record supplies
+    its own `label_color` to force one on.
+  - **Draw order is now documented contract**: dict insertion order, all shapes then
+    all labels, so a later entry lands over an earlier one. Previously true, but
+    incidental; a producer emitting several layers depends on it.
+  - `p2s.bgShape()` records are immutable — template cloning shares non-container
+    leaves by reference, so a mutable record would leak edits from a clone back into
+    its template and every sibling.
+
 - **`draw_link_labels=` on `linkp`** — label each drawn edge with the third element
   of its relationship tuple (`[('fm','to','predicate')]`), or, for a two-part tuple,
   with the field driving `color=` (rtsvg `rt_linknode_mixin.py:1413-1425`
@@ -191,7 +232,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `svgToDisplayList()` stays as the universal fallback for markup that arrives as a
     finished string — it is no longer any component's primary route.
 
+### Changed
+
+- **An unfilled background shape emits `fill="none"`** instead of `fill-opacity="0.0"`
+  with no `fill` attribute. Both render the same, but only because SVG's initial fill
+  (black) was being drawn at zero alpha; background shapes sit directly under `<svg>`
+  with no ancestor carrying a fill, so "no fill" now says so. Applies to
+  `background_fill=None` / `background_opacity=None` as well as a record's
+  `fill=None`. String-matching that attribute in an emitted SVG is the only thing
+  affected.
+
 ### Fixed
+
+- **A shapely `LineString` / `MultiLineString` background was filled with the axis
+  colour** despite the documented "fill forced to `'none'`". The coercion assigned the
+  string `'none'` to the fill parameter, which then fell past every branch of the
+  colour ladder to the axis-inner fallback — so an open path was painted with the
+  interior SVG implies when it closes a subpath in order to fill it. Now genuinely
+  unfilled, unless the entry's record sets `fill=` explicitly.
+- **A name missing from a `background_stroke_w` dict emitted the dict itself** —
+  `stroke-width="{'flow 1': 1.0, ...}"`, invalid SVG, and a `ValueError` when the GPU
+  path parsed it back. It falls back to `1.0`.
+- **The GPU display-list path re-parsed the SVG the writer had just produced.**
+  `__backgroundShapeToDL__` regexed `fill`, `fill-opacity`, `stroke` and
+  `stroke-width` back out of the emitted string, and `__backgroundLabelToDL__` did the
+  same to the `<text>` element — the same class of defect as the `svgToDisplayList()`
+  re-parse route removed from `spreadlinesp` in 0.1.2. Both writers now read the same
+  resolved record, which is what lets `stroke-opacity` and `dash` reach the GPU path
+  at all. Both methods also moved to `P2SBackgroundMixin`: they were duplicated in
+  `xyp` and `linkp`, differing by one dead local.
 
 - **A partial `order=` silently misrepresented the data, in two different ways.**
   Both components took a caller's incomplete ordering and quietly disposed of

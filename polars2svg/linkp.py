@@ -1936,104 +1936,10 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
         else:
             raise DataError(f'LinkP.__shapelyToSVGPath__() - unsupported type: {type(shape)}')
 
-    #
-    # __renderBackground__() - render background shapes into self.svg_background and self._dl_background_
-    #
-    def __renderBackground__(self):
-        self.svg_background  = ''
-        self._dl_background_ = DisplayList(self.wxh[0], self.wxh[1])
-        if self.background is None:
-            return
-        _shapes_, _labels_ = [], []
-        for name, shape_desc in self.background.items():
-            _s, _l = self.__transformBackgroundShapes__(
-                name, shape_desc,
-                self.background_label_color,
-                self.background_opacity,
-                self.background_fill,
-                self.background_stroke_w,
-                self.background_stroke)
-            _shapes_.append(_s)
-            _labels_.append(_l)
-            self.__backgroundShapeToDL__(_s, self._dl_background_)
-        for _l in _labels_:
-            self.__backgroundLabelToDL__(_l, self._dl_background_)
-        self.svg_background = ''.join(_shapes_) + ''.join(_labels_)
+    # __renderBackground__() / __backgroundShapeToDL__() / __backgroundLabelToDL__()
+    # live in P2SBackgroundMixin -- the three were duplicated here and in the other
+    # coordinate-plane component, differing by one dead local.
 
-    #
-    # __backgroundShapeToDL__() - GPU geometry for a generated background shape string
-    # (ellipse or M/L/C/Z path in screen coordinates); fills are polygon-filled,
-    # strokes become line segments, cubic beziers are flattened
-    #
-    def __backgroundShapeToDL__(self, _s_, dl):
-        import re
-        if not _s_: return
-        def _attr_(name, default=None):
-            _m_ = re.search(f'{name}="([^"]*)"', _s_)
-            return _m_.group(1) if _m_ else default
-        _fill_         = _attr_('fill')
-        _fill_opacity_ = float(_attr_('fill-opacity', '1.0'))
-        _stroke_       = _attr_('stroke')
-        _stroke_w_     = float(_attr_('stroke-width', '1.0'))
-        if _s_.startswith('<ellipse'):
-            cx, cy = float(_attr_('cx')), float(_attr_('cy'))
-            rx, ry = float(_attr_('rx')), float(_attr_('ry'))
-            import math as _math_
-            _pts_ = [(cx + rx*_math_.cos(2*_math_.pi*i/48), cy + ry*_math_.sin(2*_math_.pi*i/48)) for i in range(48)]
-            _subpaths_ = [(_pts_, True)]
-        elif _s_.startswith('<path'):
-            _d_ = _attr_('d', '')
-            _tokens_ = _d_.split()
-            _subpaths_, _cur_ = [], []
-            i = 0
-            while i < len(_tokens_):
-                _t_ = _tokens_[i]
-                if _t_ == 'M':
-                    if len(_cur_) > 1: _subpaths_.append((_cur_, False))
-                    _cur_ = [(float(_tokens_[i+1]), float(_tokens_[i+2]))]
-                    i += 3
-                elif _t_ == 'L':
-                    _cur_.append((float(_tokens_[i+1]), float(_tokens_[i+2])))
-                    i += 3
-                elif _t_ == 'C':
-                    if len(_cur_) > 0:
-                        _p0_ = _cur_[-1]
-                        _p1_ = (float(_tokens_[i+1]), float(_tokens_[i+2]))
-                        _p2_ = (float(_tokens_[i+3]), float(_tokens_[i+4]))
-                        _p3_ = (float(_tokens_[i+5]), float(_tokens_[i+6]))
-                        for k in range(1, 17):
-                            t = k / 16.0
-                            mt = 1.0 - t
-                            _cur_.append((mt*mt*mt*_p0_[0] + 3*mt*mt*t*_p1_[0] + 3*mt*t*t*_p2_[0] + t*t*t*_p3_[0],
-                                          mt*mt*mt*_p0_[1] + 3*mt*mt*t*_p1_[1] + 3*mt*t*t*_p2_[1] + t*t*t*_p3_[1]))
-                    i += 7
-                elif _t_ == 'Z':
-                    if len(_cur_) > 1: _subpaths_.append((_cur_, True))
-                    _cur_ = []
-                    i += 1
-                else:
-                    i += 1  # unknown token -- skip (svg path stays authoritative)
-            if len(_cur_) > 1: _subpaths_.append((_cur_, False))
-        else:
-            return
-        for _pts_, _closed_ in _subpaths_:
-            if _fill_ is not None and _fill_ != 'none' and _fill_opacity_ > 0.0 and _closed_ and len(_pts_) >= 3:
-                dl.polygon(_pts_, _fill_, opacity=_fill_opacity_)
-            if _stroke_ is not None and _stroke_ != 'none':
-                _seq_ = _pts_ + [_pts_[0]] if _closed_ else _pts_
-                for j in range(len(_seq_) - 1):
-                    dl.line(_seq_[j][0], _seq_[j][1], _seq_[j+1][0], _seq_[j+1][1], _stroke_, width=_stroke_w_)
-
-    #
-    # __backgroundLabelToDL__() - GPU glyphs for a generated background label string
-    #
-    def __backgroundLabelToDL__(self, _l_, dl):
-        import re
-        if not _l_: return
-        _m_ = re.search(r'<text x="([^"]*)" y="([^"]*)" text-anchor="middle"[^>]*fill="([^"]*)" font-size="([^"]*)px">([^<]*)</text>', _l_)
-        if _m_ is None: return
-        _x_, _y_, _co_, _th_, _txt_ = float(_m_.group(1)), float(_m_.group(2)), _m_.group(3), float(_m_.group(4)), _m_.group(5)
-        dl.text(self.p2s, _txt_, _x_, _y_, txt_h=_th_, anchor='middle', color=_co_, svg='')
 
     #
     # __renderSVG__()

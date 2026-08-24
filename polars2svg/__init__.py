@@ -7,6 +7,7 @@ except PackageNotFoundError:
 from .exceptions                   import Polars2SVGError, InvalidSpecError, DataError
 from .polars2svg                   import Polars2SVG
 from .p2s_legend_mixin             import LegendInfo
+from .p2s_background_mixin         import BackgroundShape, INHERIT
 TField = Polars2SVG.TField
 from .layout_protocol              import LayoutAlgorithm
 from .laguerre_voronoi             import laguerre_voronoi, QuadTree

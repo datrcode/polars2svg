@@ -203,4 +203,5 @@ exclude = [
   "pypi_instructions.txt",
   "CLAUDE.md",
   "PLANNING.md",
+  "20260824_background_record_contract.md",
 ]

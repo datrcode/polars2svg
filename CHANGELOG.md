@@ -17,8 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dict — that carries `fill`, `fill_opacity`, `stroke`, `stroke_opacity`,
   `stroke_width`, `dash`, `stroke_linecap`, `stroke_linejoin`, `label` and
   `label_color`. Both forms mix freely in one dict. Shared by `xyp` and `linkp`
-  through `P2SBackgroundMixin`; `polars2svg.BackgroundShape` and
-  `polars2svg.INHERIT` are exported.
+  through `P2SBackgroundMixin`. Reachable both ways: `p2s.bgShape(...)`,
+  `p2s.INHERIT` and `p2s.BackgroundShape` on the instance, and
+  `from polars2svg import BackgroundShape, INHERIT` at module level.
   - **Style was keyed by name alongside the geometry rather than attached to it.**
     Appearance lived in five parallel `background_*` dicts, so every new capability
     cost a new top-level parameter × its scalar/dict forms × a fallback chain. The

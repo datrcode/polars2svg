@@ -17,7 +17,7 @@ from .p2s_text_mixin        import P2STextMixin
 from .p2s_time_mixin        import P2STimeMixin
 from .p2s_interactive_mixin import P2SInteractiveMixin
 from .p2s_legend_mixin      import P2SLegendMixin
-from .p2s_background_mixin  import BackgroundShape, INHERIT
+from .p2s_background_mixin  import BackgroundShape as _BackgroundShape_, INHERIT as _INHERIT_
 from .xyp                import XYp
 from .smallp             import Smallp
 from .timep              import Timep
@@ -321,6 +321,17 @@ class Polars2SVG(P2SColorsMixin,
         if _v_ in _SUFFIX_TO_ENUM_: raise Polars2SVGError(f'polars2svg.Polars2SVG() - Collision between enum {_k_} and {_SUFFIX_TO_ENUM_[_v_]}')
         _SUFFIX_TO_ENUM_[_v_] = _k_
     del _k_, _v_
+
+    #
+    # Background records (see bgShape() below).  Exposed on the class so the p2s.INHERIT /
+    # p2s.BackgroundShape spelling the docstrings use is real -- matching how HexColorString
+    # and the render enums are reached -- and re-exported from polars2svg/__init__.py for
+    # `from polars2svg import INHERIT`.  Imported under private aliases because binding the
+    # public names here shadows them for the rest of the class body, and mypy will not accept
+    # a class variable as the return annotation on bgShape().
+    #
+    INHERIT         = _INHERIT_
+    BackgroundShape = _BackgroundShape_
 
     #
     # TField - typed replacement for the magic 'column|suffix' t-field string.
@@ -2015,7 +2026,7 @@ class Polars2SVG(P2SColorsMixin,
     #
     # bgShape() - create a background record
     #
-    def bgShape(self, shape, **fields) -> BackgroundShape:
+    def bgShape(self, shape, **fields) -> _BackgroundShape_:
         '''Build a background entry that carries its own appearance.
 
         ``shape`` is any descriptor ``background=`` already accepts (a shapely geometry,
@@ -2042,7 +2053,7 @@ class Polars2SVG(P2SColorsMixin,
         ``label_color``. Colour fields take ``'#rrggbb'`` or ``'vary'`` (hash the entry's
         key). The returned record is immutable.
         '''
-        return BackgroundShape(shape, **fields)
+        return _BackgroundShape_(shape, **fields)
 
     #
     # tField() - create a transformation field

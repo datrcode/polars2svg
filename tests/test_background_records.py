@@ -73,6 +73,14 @@ class TestBackgroundShapeType(_BackgroundCase_):
         self.assertNotEqual(INHERIT, None)
         self.assertEqual(repr(INHERIT), 'INHERIT')
 
+    def test_the_documented_p2s_spelling_resolves(self):
+        # The docstrings and parameter_conventions.md say p2s.INHERIT / p2s.bgShape(...);
+        # INHERIT was importable from the package but not reachable on the instance, which
+        # ruff caught as an unused import in polars2svg.py rather than as a broken doc.
+        self.assertIs(self.p2s.INHERIT, INHERIT)
+        self.assertIs(self.p2s.BackgroundShape, BackgroundShape)
+        self.assertIsInstance(self.p2s.bgShape(self.tri), self.p2s.BackgroundShape)
+
     def test_record_is_immutable(self):
         # _copy_mutable_containers_() shares non-container leaves by reference across
         # template clones, so a mutable record would leak edits into its template.

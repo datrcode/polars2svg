@@ -1,4 +1,3 @@
-import math
 import random
 import unittest
 
@@ -7,8 +6,8 @@ import polars as pl
 
 from polars2svg import (BackgroundShape, INHERIT, LayoutAlgorithm, Polars2SVG,
                         FlowFieldBackground)
-from polars2svg.flow_field_background import (cellNames, headNames, layerAppearance,
-                                              layerNames, _estimated_support, _Grid)
+from polars2svg.flow_field_background import (cellNames, layerAppearance, layerNames,
+                                              _estimated_support)
 
 
 # ---------------------------------------------------------------------------

@@ -44,7 +44,6 @@ import math
 
 import numpy as np
 
-from polars2svg.exceptions           import DataError
 from polars2svg.p2s_background_mixin import BackgroundShape, INHERIT
 
 EPS = 1e-12
@@ -684,6 +683,12 @@ def layerAppearance(k_layers, prefix='flow', colors=None, glyph='arrow',
         ``label=None`` because ``'flow 1 heads'`` is an implementation artifact
         that has no business being drawn on the canvas.
 
+    Layer cells state ``label=INHERIT`` explicitly rather than relying on the
+    field default: it is the same value, but next to a head cell saying
+    ``label=None`` the difference is the whole point -- INHERIT leaves the
+    interactive ``b`` cycle in charge of whether layer names are drawn, None
+    takes the decision away.
+
     ``opacity_falloff`` is 0 by default: for arrows the width ramp
     (``arrow_width_falloff``) already encodes the front-to-back ordering, and
     fading on top of it makes the topmost layer disappear.
@@ -695,13 +700,14 @@ def layerAppearance(k_layers, prefix='flow', colors=None, glyph='arrow',
     out = {}
     if glyph == 'arrow':
         for name, color, alpha in zip(names, colors, fade):
-            out[name] = dict(fill=color, fill_opacity=alpha, stroke=None)
+            out[name] = dict(fill=color, fill_opacity=alpha, stroke=None, label=INHERIT)
         return out
 
     for name, head, color, alpha in zip(names, headNames(k_layers, prefix), colors, fade):
         out[name] = dict(fill=None, stroke=color, stroke_opacity=alpha,
                          stroke_width=stroke_w,
-                         stroke_linecap='round', stroke_linejoin='round')
+                         stroke_linecap='round', stroke_linejoin='round',
+                         label=INHERIT)
         out[head] = dict(fill=color, fill_opacity=alpha, stroke=None, label=None)
     return out
 

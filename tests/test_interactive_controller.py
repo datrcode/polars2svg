@@ -487,20 +487,35 @@ class TestP2SInteractiveMethods(unittest.TestCase):
 
     # ── neighborhood layout operations ────────────────────────────────────────
 
-    def test_neighborhood_layouts_registered(self):
+    def test_neighborhood_graph_layout_registered(self):
+        # 'graph' mode repositions nodes, so its cells ARE its output and it stays a
+        # layout operation.  'spatial' mode moves nothing and is a background
+        # operation instead -- see test_neighborhood_spatial_is_a_background_op.
         ctrl = self.p2s.linkpi(self.linkp_obj)
-        for op in (ctrl.NEIGHBORHOOD_SPATIAL, ctrl.NEIGHBORHOOD_GRAPH):
-            self.assertIn(op, ctrl.layout_operations)
-            self.assertIn(op, ctrl._layout_registry)
+        self.assertIn(ctrl.NEIGHBORHOOD_GRAPH, ctrl.layout_operations)
+        self.assertIn(ctrl.NEIGHBORHOOD_GRAPH, ctrl._layout_registry)
 
-    def test_neighborhood_spatial_op_applies_and_sets_background(self):
+    def test_neighborhood_spatial_is_a_background_op_not_a_layout(self):
         ctrl = self.p2s.linkpi(self.linkp_obj)
-        ln   = ctrl.dfs_layout[ctrl.df_level]
-        g    = ctrl.graphs[ctrl.df_level]
-        ok   = ctrl.__layoutOperation__(ctrl.NEIGHBORHOOD_SPATIAL, ln, g, set())
-        self.assertTrue(ok)
+        self.assertNotIn(ctrl.NEIGHBORHOOD_SPATIAL, ctrl.layout_operations)
+        self.assertNotIn(ctrl.NEIGHBORHOOD_SPATIAL, ctrl._layout_registry)
+        self.assertIn(ctrl.NEIGHBORHOOD_SPATIAL, ctrl.background_operations)
+        self.assertIn(ctrl.NEIGHBORHOOD_SPATIAL, ctrl._background_registry)
+
+    def test_neighborhood_spatial_sets_a_contextual_background(self):
+        ctrl   = self.p2s.linkpi(self.linkp_obj)
+        ln     = ctrl.dfs_layout[ctrl.df_level]
+        before = {k: tuple(v) for k, v in ln.pos.items()}
+        undo   = len(ctrl.previous_layouts)
+        self.assertTrue(ctrl.applyBackgroundOperation(ctrl.NEIGHBORHOOD_SPATIAL))
         # Background is either a {label: shape} dict, or None when no clusters form.
         self.assertTrue(ctrl.layout_background is None or isinstance(ctrl.layout_background, dict))
+        if ctrl.layout_background is not None:
+            self.assertEqual(ctrl.background_provenance, 'context')
+        # It clusters the layout already on screen: nothing moves, so it is not an
+        # undo step either.
+        self.assertEqual({k: tuple(v) for k, v in ln.pos.items()}, before)
+        self.assertEqual(len(ctrl.previous_layouts), undo)
 
     def test_neighborhood_graph_op_repositions_all_nodes(self):
         ctrl = self.p2s.linkpi(self.linkp_obj)
@@ -511,13 +526,16 @@ class TestP2SInteractiveMethods(unittest.TestCase):
         for n in g.nodes():
             self.assertIn(n, ln.pos)
 
-    def test_neighborhood_ops_skip_when_selection_present(self):
-        # Both neighborhood layouts are global re-layouts -> no-op with a selection.
+    def test_neighborhood_graph_op_skips_when_selection_present(self):
+        # 'graph' mode is a global re-layout -> no-op with a selection.  'spatial' is
+        # no longer a layout op at all, and as a background it describes the whole
+        # embedding, so it runs regardless of the selection.
         ctrl = self.p2s.linkpi(self.linkp_obj)
         ln   = ctrl.dfs_layout[ctrl.df_level]
         g    = ctrl.graphs[ctrl.df_level]
-        self.assertFalse(ctrl.__layoutOperation__(ctrl.NEIGHBORHOOD_SPATIAL, ln, g, {'a'}))
         self.assertFalse(ctrl.__layoutOperation__(ctrl.NEIGHBORHOOD_GRAPH, ln, g, {'a'}))
+        ctrl.selected_entities = {'a'}
+        self.assertTrue(ctrl.applyBackgroundOperation(ctrl.NEIGHBORHOOD_SPATIAL))
 
     # ── collapsed-node contraction (exact xy match -> one representative) ──────
 

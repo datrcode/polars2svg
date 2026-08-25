@@ -99,5 +99,31 @@ class TestLinkPBackgroundGolden(unittest.TestCase):
         assert_image_matches_golden(lp.svg, 'linkp_background_records')
 
 
+class TestLinkPFlowFieldBackgroundGolden(unittest.TestCase):
+    '''Golden-file regression test for FlowFieldBackground cells.
+
+    The producer's records reach linkp with no background_* arguments at all, so
+    this pins the whole path: layer decomposition -> world-coordinate glyph paths
+    -> record appearance -> rendered SVG.
+    '''
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.p2s = Polars2SVG()
+
+    def _cells(self, **kw):
+        from polars2svg import FlowFieldBackground
+        return FlowFieldBackground(_DF_, _REL_, pos=_POS_, grid_res=12, **kw).cells()
+
+    def test_flow_field_arrows(self):
+        lp = self.p2s.linkp(**_params(background=self._cells(k_layers=2)))
+        assert_svg_matches_golden(lp.svg, 'linkp_flow_field_arrows')
+        assert_image_matches_golden(lp.svg, 'linkp_flow_field_arrows')
+
+    def test_flow_field_streamlines(self):
+        lp = self.p2s.linkp(**_params(background=self._cells(k_layers=2, glyph='streamline')))
+        assert_svg_matches_golden(lp.svg, 'linkp_flow_field_streamlines')
+        assert_image_matches_golden(lp.svg, 'linkp_flow_field_streamlines')
+
+
 if __name__ == '__main__':
     unittest.main()

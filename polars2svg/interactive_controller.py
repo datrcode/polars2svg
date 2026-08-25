@@ -55,6 +55,9 @@ except ImportError:
     _NCPLayout = None
     _NCP_AVAILABLE = False
 
+# Background producers need no guard: FlowFieldBackground is numpy + polars only.
+from .flow_field_background import FlowFieldBackground as _FlowFieldBackground
+
 # (mnemonic, label) — single source of truth for the shift-G / shift-W picker
 # menus, the Python layout_modes/layout_operations lists, and the JS menu
 # arrays. Mnemonics are case-sensitive, must be unique within a menu, and must
@@ -79,7 +82,6 @@ _LAYOUT_OP_MENU_ = [
     ('p', 'pivot mds'),
     ('c', 'connected components'),
     ('C', 'circle pack'),
-    ('n', 'neighborhood (spatial)'),
     ('N', 'neighborhood (graph)'),
     ('e', 'even distribution'),
 ]
@@ -87,6 +89,19 @@ if _TFDP_AVAILABLE:
     _LAYOUT_OP_MENU_.append(('t', 't-fdp'))
 if _NCP_AVAILABLE:
     _LAYOUT_OP_MENU_.append(('P', 'ncp pack'))
+
+# (mnemonic, label) for the shift-b background picker.  A background OPERATION
+# is not a layout operation: it moves no nodes, so it does not go through
+# apply_layout_operation() and therefore costs no undo slot and does not reset
+# the view window.  Committing an entry runs it immediately -- these are
+# one-shot actions, not a mode the way layout_operation is.
+_BACKGROUND_OP_MENU_ = [
+    ('f', 'flow field (2 layers)'),
+    ('F', 'flow field (3 layers)'),
+    ('s', 'flow field (streamlines)'),
+    ('n', 'neighborhood (spatial)'),
+    ('x', 'clear background'),
+]
 
 
 class _ContractedLayoutView_:
@@ -1597,6 +1612,16 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
         self.background_state  = 0
         self.layout_background = None
         self._bg_label_color_  = '#000000'
+        # Provenance decides the lifetime (PLANNING.md B4).  'layout' means the
+        # background IS the layout's own output (donut cells, circle-pack hulls)
+        # and dies with it -- a later layout that produces none clears it.
+        # 'context' means it was produced FOR a layout, to inform the user about
+        # the embedding: it survives node drags and later layouts, because
+        # repositioning nodes in response to it is the point.  Only an explicit
+        # clear or another background supersedes it.
+        self.background_provenance = None
+        self.background_operations = [label for _, label in _BACKGROUND_OP_MENU_]
+        self._bg_op_label_         = None
 
         # Community detection (the 'd' key): the LinkP's node_color spec as authored,
         # so that shift-d can restore it after community colors have been pushed over
@@ -1628,7 +1653,9 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
         self.selectionpath   = 'M -100 -100 l 10 0 l 0 10 l -10 0 l 0 -10 Z'
         self.info_str        = f'0 Selected | {self.label_mode} | {self.layout_mode} | {self.layout_operation} | {self.__backgroundStateLabel__()}'
 
-        self._layout_registry = self.__buildLayoutRegistry__()
+        self._layout_registry     = self.__buildLayoutRegistry__()
+        self._background_registry = self.__buildBackgroundRegistry__()
+        self._last_background_    = None   # the producer instance, for summary()/tests
 
         self.param.watch(self.applyDragOp,            'drag_op_finished')
         self.param.watch(self.applyMoveOp,            'move_op_finished')
@@ -1641,6 +1668,7 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
         self.param.watch(self.unselectedMoveOp,       'unselected_move_op_finished')
         self.param.watch(self.applySearchOp,          'search_op_finished')
         self.param.watch(self.applyLayoutChoice,      ['layout_mode', 'layout_operation'])
+        self.param.watch(self.applyBackgroundChoice,  'background_op_seq')
         self.param.watch(self.applySizeChoice,        ['link_size_choice', 'node_size_choice', 'link_opacity_choice', 'link_shape_choice', 'timing_spacing_choice'])
         if use_webgpu:
             self.param.watch(self.applyGpuError,      'gpu_error')
@@ -2066,12 +2094,10 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
             self.HYPERTREE_DONUT:      lambda ln, g, sel: rt.hyperTreeDonutLayout(g, roots=sel, return_cells=True),
             self.CONNECTED_COMPONENTS: lambda ln, g, sel: rt.treeMapLayout(g, ln.pos) if len(sel) == 0 else None,
             self.CIRCLE_PACK:          _circle_pack_,
-            # Neighborhood layouts (return (pos, cells) -> cells become the background).
-            # 'spatial' clusters the current layout (positions unchanged); 'graph'
-            # detects weighted communities and repositions them apart.
-            self.NEIGHBORHOOD_SPATIAL: lambda ln, g, sel: (
-                rt.neighborhoodLayout(g, pos=ln.pos, mode='spatial', return_cells=True) if len(sel) == 0 else None
-            ),
+            # 'graph' mode detects weighted communities and repositions them apart, so
+            # its cells ARE its output and die with it.  'spatial' mode moves nothing --
+            # it clusters the layout already on screen -- so it is a background
+            # operation instead (__buildBackgroundRegistry__), not a layout at all.
             self.NEIGHBORHOOD_GRAPH:   lambda ln, g, sel: (
                 rt.neighborhoodLayout(g, mode='graph', return_cells=True) if len(sel) == 0 else None
             ),
@@ -2103,10 +2129,96 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
         return registry
 
     #
+    # __buildBackgroundRegistry__() - {label: handler} for the shift-b picker.
+    #
+    # A handler is (ln, g, sel) -> {name: BackgroundShape} | None, and that is the
+    # WHOLE contract: no positions, so nothing downstream has to guess whether the
+    # layout moved.  `g` is undirected (createNetworkXGraph without use_digraph), which
+    # is no use to a flow field, so those producers read ln.df / ln.relationships and
+    # aggregate the directed edge records themselves -- the same frame linkp is drawing.
+    # Producers that only need proximity (neighborhood) use `g` and ln.pos directly.
+    #
+    def __buildBackgroundRegistry__(self):
+        def _flow_(k, glyph='arrow'):
+            def _handler_(ln, g, sel):
+                _ffb_ = _FlowFieldBackground(ln.df, ln.relationships, pos=ln.pos,
+                                             k_layers=k, count=ln.count, glyph=glyph,
+                                             selection=set(sel) if sel else None)
+                self._last_background_ = _ffb_
+                return _ffb_.cells()
+            return _handler_
+        def _neighborhood_spatial_(ln, g, sel):
+            # Clusters the layout already on screen and outlines each neighbourhood
+            # with a Voronoi cell; node positions come back untouched, so the pos half
+            # of its (pos, cells) return is discarded.  The selection is not forwarded:
+            # the clustering describes the whole embedding, and neighborhoodLayout has
+            # no way to scope it.
+            _pos_, _cells_ = self.rt_self.neighborhoodLayout(
+                g, pos=ln.pos, mode='spatial', return_cells=True)
+            return _cells_
+
+        return {
+            'flow field (2 layers)':      _flow_(2),
+            'flow field (3 layers)':      _flow_(3),
+            'flow field (streamlines)':   _flow_(2, glyph='streamline'),
+            'neighborhood (spatial)':     _neighborhood_spatial_,
+            'clear background':           lambda ln, g, sel: None,
+        }
+
+    #
+    # applyBackgroundOperation() - run a background producer and adopt its cells.
+    #
+    # Deliberately NOT apply_layout_operation(): no __cacheNodePositions__ (a
+    # background is not an undo step -- undo restores positions, and none moved),
+    # no `view_window = None` (throwing away the user's pan/zoom to show them a
+    # description of what they were looking at is backwards), and no
+    # __contractCollapsedGraph__ (that exists to stop layouts tripping over
+    # coincident sites; a producer that moves nothing has no use for it, and its
+    # _ContractedLayoutView_ would hand the producer a .pos that disagrees with
+    # .df).
+    #
+    def applyBackgroundOperation(self, label=None):
+        _label_ = self.background_operation if label is None else label
+        handler = self._background_registry.get(_label_)
+        if handler is None:
+            return False
+        _ln_ = self.dfs_layout[self.df_level]
+        self._last_background_ = None
+        try:
+            _cells_ = handler(_ln_, self.graphs[self.df_level], self.selected_entities)
+        except Exception:
+            self.rt_self.logger.exception('linkpi: background operation "%s" failed', _label_)
+            return False
+
+        self.layout_background     = _cells_ if _cells_ else None
+        self.background_provenance = 'context' if _cells_ else None
+        self._bg_op_label_         = _label_ if _cells_ else None
+        # Asking for a background implies wanting to see it; a hidden cycle state
+        # would otherwise swallow the result silently.
+        if _cells_ and self.background_state == 0:
+            self.background_state = 1
+        self.__applyBackgroundState__()
+        return True
+
+    #
+    # applyBackgroundChoice() - the shift-b picker committed. Unlike the layout
+    # picker (which selects a mode that a later key applies), a background
+    # operation is a one-shot action, so committing runs it.  The watched param
+    # is the sequence counter, not the label: re-running the SAME producer is the
+    # documented way to refresh a background after moving nodes, and a label that
+    # did not change would not fire a watcher.
+    #
+    def applyBackgroundChoice(self, *events):
+        self.applyBackgroundOperation()
+
+    #
     # __backgroundStateLabel__() - human-readable label for the current background state
     #
     def __backgroundStateLabel__(self):
-        return ('no background', 'background', 'background + labels')[self.background_state]
+        _state_ = ('no background', 'background', 'background + labels')[self.background_state]
+        if self.layout_background is None or self._bg_op_label_ is None:
+            return _state_
+        return f'{_state_} ({self._bg_op_label_})'
 
     #
     # __applyBackgroundState__() - project the current background-cycle state onto
@@ -2224,8 +2336,19 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
         else:                           _pos_, _cells_ = _result_, None
         if _pos_ is not None:
             for _node_ in _pos_: _ln_.pos[_node_] = (float(_pos_[_node_][0]), float(_pos_[_node_][1]))
-            # Capture the layout's background (or clear a stale one from a prior layout).
-            self.layout_background = _cells_ if _cells_ else None
+            # A layout's own background supersedes whatever is showing.  With
+            # none of its own it clears only a background that BELONGED to a
+            # layout; a contextual one (shift-b) survives, since the user asked
+            # for it against these positions and may be re-laying them out
+            # precisely because of what it showed them.
+            if _cells_:
+                self.layout_background     = _cells_
+                self.background_provenance = 'layout'
+                self._bg_op_label_         = _layout_op_
+            elif self.background_provenance != 'context':
+                self.layout_background     = None
+                self.background_provenance = None
+                self._bg_op_label_         = None
             return True
         return False
 
@@ -2464,7 +2587,7 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
             #
             # "B" - Cycle the background display (none -> background -> background + labels)
             #
-            elif self.key_op_finished == 'b' or self.key_op_finished == 'B':
+            elif self.key_op_finished == 'b':
                 self.background_state = (self.background_state + 1) % 3
                 self.__applyBackgroundState__()
 
@@ -3113,6 +3236,7 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
 a . | cycle link arrows / timing marks (arrows-only when no time field)
  .. | shift-a ........ | open timing-mark spacing picker (px); ctrl-a reverses
 b . | cycle background (none | background | background + labels)
+ .. | shift-b ........ | open background picker (flow field / neighborhood / clear); committing runs it
 c . | reset view or focus view on selected
  .. | shift-c ........ | focus view on selected + neighbors
  .. | ctrl-c ......... | copy selected nodes to clipboard (ctrl-shift-c uses node labels)
@@ -3236,6 +3360,7 @@ z . | select node under mouse by color (shift, ctrl, and ctrl-shift apply)
         "            state.menu_items = " + json.dumps({
             'operation':    [[m, l] for m, l in _LAYOUT_OP_MENU_],
             'mode':         [[m, l] for m, l in _LAYOUT_MODE_MENU_],
+            'background':   [[m, l] for m, l in _BACKGROUND_OP_MENU_],
             'link_size':    _link_size_items_,
             'link_opacity': _link_opacity_items_,
             'node_size':    _node_size_items_,
@@ -3313,6 +3438,9 @@ z . | select node under mouse by color (shift, ctrl, and ctrl-shift apply)
         'unselectedMoveOp':                   unselectedMoveOp,
         'applySearchOp':                      applySearchOp,
         'applyLayoutChoice':                  applyLayoutChoice,
+        '__buildBackgroundRegistry__':        __buildBackgroundRegistry__,
+        'applyBackgroundOperation':           applyBackgroundOperation,
+        'applyBackgroundChoice':              applyBackgroundChoice,
         'applySizeChoice':                    applySizeChoice,
         '__sizeLabelToValue__':               __sizeLabelToValue__,
         #
@@ -3326,6 +3454,8 @@ z . | select node under mouse by color (shift, ctrl, and ctrl-shift apply)
     'info_str'                    : param.String(default=" | | grid"),
     'layout_mode'                 : param.String(default="grid"),
     'layout_operation'            : param.String(default="spring nx"),
+    'background_operation'        : param.String(default=_BACKGROUND_OP_MENU_[0][1]),
+    'background_op_seq'           : param.Integer(default=0),
     'link_size_choice'            : param.String(default=_link_size_cur_),
     'node_size_choice'            : param.String(default=_node_size_cur_),
     'link_opacity_choice'         : param.String(default=_link_opacity_cur_),
@@ -3461,7 +3591,8 @@ z . | select node under mouse by color (shift, ctrl, and ctrl-shift apply)
         # still apply the choice).
         'menuOpen':"""
             var _items_   = state.menu_items[state.menu_kind];
-            var _current_ = (state.menu_kind == 'operation')    ? data.layout_operation
+            var _current_ = (state.menu_kind == 'background')   ? data.background_operation
+                          : (state.menu_kind == 'operation')    ? data.layout_operation
                           : (state.menu_kind == 'mode')         ? data.layout_mode
                           : (state.menu_kind == 'link_size')    ? data.link_size_choice
                           : (state.menu_kind == 'link_opacity') ? data.link_opacity_choice
@@ -3479,7 +3610,8 @@ z . | select node under mouse by color (shift, ctrl, and ctrl-shift apply)
         'menuRender':"""
             if (!state.menu_open) { return; }
             var _items_  = state.menu_items[state.menu_kind];
-            var _header_ = (state.menu_kind == 'operation')    ? 'layout operation:'
+            var _header_ = (state.menu_kind == 'background')   ? 'background:'
+                         : (state.menu_kind == 'operation')    ? 'layout operation:'
                          : (state.menu_kind == 'mode')         ? 'layout mode:'
                          : (state.menu_kind == 'link_size')    ? 'link size:'
                          : (state.menu_kind == 'link_opacity') ? 'link opacity:'
@@ -3506,7 +3638,9 @@ z . | select node under mouse by color (shift, ctrl, and ctrl-shift apply)
         """,
         'menuCommit':"""
             var _lbl_ = state.menu_items[state.menu_kind][state.menu_index][1];
-            if      (state.menu_kind == 'operation')    { data.layout_operation   = _lbl_; }
+            if      (state.menu_kind == 'background')   { data.background_operation = _lbl_;
+                                                          data.background_op_seq   = data.background_op_seq + 1; }
+            else if (state.menu_kind == 'operation')    { data.layout_operation   = _lbl_; }
             else if (state.menu_kind == 'mode')         { data.layout_mode        = _lbl_; }
             else if (state.menu_kind == 'link_size')    { data.link_size_choice    = _lbl_; }
             else if (state.menu_kind == 'link_opacity') { data.link_opacity_choice = _lbl_; }
@@ -3592,8 +3726,8 @@ z . | select node under mouse by color (shift, ctrl, and ctrl-shift apply)
 
             if      (event.key == "a" && !event.ctrlKey) { data.key_op_finished = 'a'; } // Toggle link arrows (on | off)
             else if (event.key == "A" || (event.key == "a" && event.ctrlKey)) { if (event.ctrlKey) event.preventDefault(); state.menu_kind = 'timing_spacing'; self.menuOpen(); } // Open timing-mark spacing picker (shift-a forward, ctrl-a reverses)
-            else if (event.key == "b" ||                                // Cycle background (none | background | background + labels)
-                     event.key == "B") { data.key_op_finished = 'b';  }
+            else if (event.key == "b") { data.key_op_finished = 'b';  }  // Cycle background (none | background | background + labels)
+            else if (event.key == "B") { state.menu_kind = 'background'; self.menuOpen(); } // Open the background producer picker (committing runs it)
             else if (event.key == "c") { if (event.ctrlKey) event.preventDefault(); data.key_op_finished = 'c';  } // (if selected) zoom to selected, else zoom to entire view; ctrl-c copies (suppress native copy so it can't clobber our clipboard write)
             else if (event.key == "C") { if (event.ctrlKey) event.preventDefault(); data.key_op_finished = 'C';  } // Zoom to selected + neighbors; ctrl-shift-c copies labels
             else if (event.key == "d") { data.key_op_finished = 'd';  } // Detect communities (louvain) & color nodes by community

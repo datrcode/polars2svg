@@ -10,6 +10,9 @@ from .p2s_legend_mixin             import LegendInfo
 from .p2s_background_mixin         import BackgroundShape, INHERIT
 TField = Polars2SVG.TField
 from .layout_protocol              import LayoutAlgorithm
+# Background producer, not a layout -- numpy + polars only, so unlike the graph
+# layouts below it carries no optional-extra guard.
+from .flow_field_background        import FlowFieldBackground
 from .laguerre_voronoi             import laguerre_voronoi, QuadTree
 
 # These standalone layout classes need networkx (and, for the MDS pair,

@@ -9,6 +9,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`FlowFieldBackground` — a layered flow-field background for an existing layout**
+  (PLANNING.md **§9.2 / B4**). Given the positions a `linkp` is already drawing and the
+  individual edge records behind it, it returns `{name: BackgroundShape}` cells that
+  linkp draws under the links to show which way traffic is moving. A vector field holds
+  one vector per point, so opposing and crossing flows cancel where they overlap; the
+  edges are split into `k_layers` internally coherent layers instead, each drawn as its
+  own field. `k_layers=1` is the plain (cancelling) net field, `2` is the dominant flow
+  plus what fights it, `3+` peels a further crossing stream. Every edge lands in exactly
+  one layer, so K is a hard count rather than a cap. `glyph='arrow'` draws filled darts
+  anchored on the grid; `glyph='streamline'` draws evenly-spaced integral curves with
+  filled head markers. NumPy and Polars only — unlike the graph layouts it needs no
+  optional extra. Exported as `p2s.FlowFieldBackground` and
+  `from polars2svg import FlowFieldBackground`.
+  - **Not a layout.** It moves no nodes and has no `results()`, so it does not satisfy
+    `LayoutAlgorithm` and cannot be mistaken for one. Its cells carry their own
+    appearance, so `background=` is the only argument a caller passes.
+  - **Cost is bounded by two limits, because there are two costs.** The kernel footprint
+    is memory and grows with edge *length* (`support_budget=`, default 6M grid cells);
+    the layer assignment is time and grows with edge *count* (`max_edges=`, default
+    25 000). Over budget, the grid is coarsened toward `min_grid_res` first — every edge
+    kept, spatial detail lost — and only then are the lightest edges dropped.
+    `summary()` reports whatever happened. A 5 000-node graph of 400 000 canvas-spanning
+    edges went from exhausting memory to 1.9 s.
+- **Background operations in `linkpi` (shift-b)** — a picker of background *producers*,
+  separate from the layout-operation picker. Committing an entry runs it immediately
+  (these are one-shot actions, not a mode). Ships `flow field (2 layers)`,
+  `flow field (3 layers)`, `flow field (streamlines)` and `clear background`; `b` still
+  cycles background visibility. A background operation deliberately does **not** go
+  through `apply_layout_operation()`: it costs no undo slot (undo restores positions, and
+  none moved), does not reset the view window, and skips `__contractCollapsedGraph__`.
+
+### Changed
+
+- **`neighborhood (spatial)` moved from the layout picker to the background picker**
+  (shift-G → shift-b, mnemonic `n` in both). It never was a layout: it clusters the
+  positions already on screen and outlines each neighbourhood, leaving every node
+  exactly where it was (measured: 0 of 40 moved, against 40 of 40 for `hyper tree
+  donut`, `circle pack` and `neighborhood (graph)`). As a layout operation it cost an
+  undo slot and reset the view window for a change it never made, ran through
+  `__contractCollapsedGraph__` (which hands a non-moving producer a `.pos` that
+  disagrees with its `.df`), and its cells were treated as layout-owned — so any later
+  layout wiped neighbourhoods that still described the unchanged positions. As a
+  background operation it does none of that and its cells are contextual. It is
+  **removed from the layout picker**, not listed in both. `neighborhood (graph)` stays a
+  layout operation: it repositions communities, so its cells really are its own output.
+  Its selection guard is also gone — a background describes the whole embedding, and
+  `neighborhoodLayout` has no way to scope the clustering anyway.
+
+- **A background now has a lifetime determined by its provenance** (PLANNING.md **B4**).
+  A background that *is* a layout's own output (`hyper tree donut`, `circle pack`, the
+  `neighborhood` pair) still dies when a later layout produces none. A background
+  produced *for* a layout — anything from the shift-b picker — is contextual: it survives
+  node drags and later layouts, and is replaced only by another background or an explicit
+  clear. Moving nodes in response to what a background showed is the intended workflow,
+  so doing it no longer erases the background. Previously any layout operation without a
+  background of its own cleared whatever was showing.
+
 - **Background records — `background=` entries can carry their own appearance**
   (PLANNING.md **§9.1 / B1–B3**). An entry in `background=` is still a bare shape
   descriptor (shapely geometry, `[(x, y), ...]`, `'<circle .../>'`, or an `M/L/C/Z`

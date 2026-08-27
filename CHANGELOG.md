@@ -67,6 +67,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   because that is what stays readable. Every link is still drawn either way; decimation
   changes how a flow is drawn, never whether it is.
 
+- **`backend=` on `ODFlowLayout` and `flowmap_backend=` on `linkp`** — `'auto'` (default,
+  unchanged behaviour), `'numpy'` or `'mlx'`. The two are not numerically identical: MLX
+  computes the force kernels in float32 where NumPy uses float64, and the force iteration
+  compounds that into control points differing by pixels rather than by rounding. Pin it
+  when a flow map is going to be compared against a stored expectation, so the comparison
+  stays a property of the code rather than of whichever extras happen to be installed.
+
 - **`linkpi`'s picker menus say which choices will stop to ask, and stop committing those
   by accident.** An operation that will ask a question at a large enough graph now reads
   `spring nx  (asks >8,000 nodes)` in the picker, and `flowmap  (asks >200 edges)` in the
@@ -164,6 +171,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the same size.
 
 ### Fixed
+
+- **A missing golden-image reference was silently created instead of failing the test.**
+  The helper wrote the file whenever it did not exist, which is a convenient default
+  exactly once — on the very first run — and a trap afterwards: any checkout without the
+  reference files re-baselined the whole suite against whatever that machine produced and
+  reported green. Writing now requires `UPDATE_GOLDEN=1`; a missing golden fails and says
+  so. (Test-suite only; no effect on the published package.)
 
 - **A `linkpi` layout operation that declined to run still consumed an undo level.** Any
   operation that returned without moving anything — a global layout asked for with a

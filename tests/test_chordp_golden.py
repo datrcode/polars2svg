@@ -20,7 +20,8 @@ def _params(**extra):
 class TestChordPGolden(unittest.TestCase):
     '''Golden-file regression tests for ChP SVG output.
 
-    First run (or UPDATE_GOLDEN=1): golden files are written, tests pass.
+    UPDATE_GOLDEN=1: golden files are written, tests pass.  A missing golden fails --
+    it is never minted implicitly (see tests/svg_test_utils.py).
     Subsequent runs: SVG must match the golden exactly.
     To regenerate after an intentional visual change: UPDATE_GOLDEN=1 pytest
     '''

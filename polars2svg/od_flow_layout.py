@@ -96,6 +96,10 @@ class ODFlowLayout(object):
     canvas : (x0, y0, x1, y1), optional
         Rectangle control points are constrained to; defaults to the flow
         bounding box enlarged to twice its width and height (paper default).
+    backend : {'auto', 'numpy', 'mlx'}
+        Force-kernel backend.  'auto' uses the MLX GPU when it is installed and usable.
+        The two are not numerically identical (MLX computes in float32), so pin this when
+        a result is going to be compared against a stored expectation.
     iterations : int
         Force iterations (paper default 100).
     samples_per_flow : int
@@ -119,7 +123,7 @@ class ODFlowLayout(object):
                  w_flows=1.0, w_nodes=0.5, w_antitorsion=0.8, w_spring=1.0, w_angres=3.75,
                  alpha=4.0, beta=4.0, k_short=0.5, k_long=0.05, c_p=2.5,
                  k_angres=4.0, c_angres=4.0, rect_pct=0.5, min_obstacle_dist=4.0,
-                 arrows=False, arrow_radius=0.0, budget=None):
+                 arrows=False, arrow_radius=0.0, budget=None, backend='auto'):
         self.flows             = [(float(a), float(b), float(c), float(d)) for a, b, c, d in flows]
         # Optional stop condition (layout_budget.Budget).  None -> run every iteration,
         # which is what keeps this layout's determinism test meaningful.
@@ -173,9 +177,30 @@ class ODFlowLayout(object):
 
         self._pinned_ = set()  # flows moved off obstacles; immovable afterwards (3.2.3)
 
-        # Pick the force-kernel backend: MLX GPU when installed and usable, else
-        # NumPy.  On mx.cpu NumPy is faster, so only take MLX for a real GPU.
-        self._use_mlx_ = (mx is not None) and (_default_device() == mx.gpu)
+        # Pick the force-kernel backend.  'auto' (the default, and what callers get) takes
+        # the MLX GPU when installed and usable and NumPy otherwise -- on mx.cpu NumPy is
+        # faster, so only a real GPU wins.
+        #
+        # 'numpy' and 'mlx' force the choice, and exist because the two are NOT numerically
+        # equivalent: MLX runs the kernels in float32 against NumPy's float64, and the force
+        # iteration compounds the difference into control points that differ by pixels, not
+        # by rounding.  Left to ambient state, whichever backend happens to be installed
+        # becomes the only one a test suite ever exercises, and any stored expectation
+        # silently becomes a property of the machine that produced it.  Pinning the backend
+        # is what lets one environment check both paths -- and lets a comparison against a
+        # stored value mean the same thing everywhere.
+        self._backend_ = backend
+        if backend == 'auto':
+            self._use_mlx_ = (mx is not None) and (_default_device() == mx.gpu)
+        elif backend == 'mlx':
+            if mx is None:
+                raise ValueError("backend='mlx' requested but mlx is not installed "
+                                 "(pip install polars2svg[mlx])")
+            self._use_mlx_ = True
+        elif backend == 'numpy':
+            self._use_mlx_ = False
+        else:
+            raise ValueError(f"backend must be 'auto', 'numpy' or 'mlx'; got {backend!r}")
         self._xp_      = mx if self._use_mlx_ else np
         self._dev_     = _default_device() if self._use_mlx_ else None
 

@@ -25,6 +25,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
         'label_line_width', 'label_max_lines', 'label_ellipsis',
         'link_size', 'link_shape', 'link_opacity', 'link_size_range', 'link_arrows',
         'flowmap_max_flows', 'flowmap_iterations', 'flowmap_samples', 'flowmap_time_budget',
+        'flowmap_backend',
         'draw_link_labels', 'link_labels',
         'time', 'timing_marks_length', 'timing_marks_spacing',
         'wxh', 'insets', 'bounds_percent', 'use_pos_for_bounds',
@@ -277,6 +278,13 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
             #     force layout gives a less-relaxed flow map, not a broken one.  None (the
             #     default) means run every iteration, which is what keeps the render
             #     reproducible -- a wall-clock limit cannot be.
+            #   flowmap_backend -- 'auto' | 'numpy' | 'mlx'.  The force kernels run on the
+            #     MLX GPU when it is installed and usable, and MLX computes in float32 where
+            #     NumPy uses float64; the force iteration compounds that into control points
+            #     that differ by pixels.  'auto' is what a caller wants; pin it when a render
+            #     is going to be compared against a stored expectation, or the comparison
+            #     becomes a property of whichever extras happen to be installed.
+            'flowmap_backend':        'auto',
             'flowmap_time_budget':    None,
             'flowmap_max_flows':      None,
             'flowmap_iterations':     100,
@@ -1286,7 +1294,8 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
         # __renderLinks__ has no way to know which of its inputs moved.
         _key_ = (hash(tuple(_flows_df_.hash_rows().to_list())), len(_flows_df_),
                  _node_r_, _canvas_, bool(self.link_arrows), _arrow_r_,
-                 int(self.flowmap_iterations), int(self.flowmap_samples))
+                 int(self.flowmap_iterations), int(self.flowmap_samples),
+                 self.flowmap_backend)
         _cached_ = getattr(self, '_flowmap_cache_', None)
         if _cached_ is not None and _cached_[0] == _key_:
             return _cached_[1]
@@ -1314,7 +1323,8 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
         _layout_ = ODFlowLayout(_flows_, node_radius=_node_r_, canvas=_canvas_,
                                 arrows=bool(self.link_arrows), arrow_radius=_arrow_r_,
                                 iterations=int(self.flowmap_iterations),
-                                samples_per_flow=int(self.flowmap_samples), budget=_budget_)
+                                samples_per_flow=int(self.flowmap_samples), budget=_budget_,
+                                backend=self.flowmap_backend)
         _cps_ = _layout_.results()
         if _layout_.budget_note is not None:
             self._flowmap_note_ = ((self._flowmap_note_ + '; ') if self._flowmap_note_ else '') \

@@ -4,7 +4,8 @@ import unittest
 import polars2svg.od_flow_layout as odmod
 from polars2svg.od_flow_layout import ODFlowLayout
 
-_HAS_MLX_GPU = (odmod.mx is not None) and (odmod._default_device() == odmod.mx.gpu)
+_HAS_MLX     = odmod.mx is not None
+_HAS_MLX_GPU = _HAS_MLX and (odmod._default_device() == odmod.mx.gpu)
 
 
 def _mid(f):
@@ -119,14 +120,10 @@ class TestODFlowLayoutBehavior(unittest.TestCase):
 class TestODFlowLayoutBackends(unittest.TestCase):
 
     def _run_forced(self, use_mlx, flows, **kw):
-        # Force the backend by toggling the module-level mlx handle
-        _saved_ = odmod.mx
-        if not use_mlx:
-            odmod.mx = None
-        try:
-            return ODFlowLayout(flows, **kw).results()
-        finally:
-            odmod.mx = _saved_
+        # backend= is the supported way to pin this; it used to need a monkeypatch of the
+        # module-level mlx handle, which meant the thing under test was the patch rather
+        # than the contract callers actually have.
+        return ODFlowLayout(flows, backend='mlx' if use_mlx else 'numpy', **kw).results()
 
     def test_numpy_fallback_when_mlx_absent(self):
         # With mlx forced absent the module still lays out correctly on NumPy
@@ -135,6 +132,28 @@ class TestODFlowLayoutBackends(unittest.TestCase):
         self.assertEqual(len(cps), len(flows))
         for cx, cy in cps:
             self.assertTrue(math.isfinite(cx) and math.isfinite(cy))
+
+    def test_backend_numpy_is_available_everywhere(self):
+        # The point of pinning: this runs identically whether or not mlx is installed, so
+        # a stored expectation stays a property of the code rather than of the machine.
+        _a_ = ODFlowLayout(_hub_flows(), iterations=15, backend='numpy').results()
+        _b_ = ODFlowLayout(_hub_flows(), iterations=15, backend='numpy').results()
+        self.assertEqual(_a_, _b_)
+
+    def test_backend_rejects_an_unknown_name(self):
+        with self.assertRaises(ValueError):
+            ODFlowLayout(_hub_flows(), iterations=3, backend='cuda')
+
+    @unittest.skipUnless(not _HAS_MLX, 'only meaningful when mlx is absent')
+    def test_backend_mlx_raises_when_mlx_is_absent(self):
+        # A clear error beats silently falling back: a caller who asked for the GPU path
+        # and got the CPU one would draw the wrong conclusion from the timings.
+        with self.assertRaises(ValueError):
+            ODFlowLayout(_hub_flows(), iterations=3, backend='mlx')
+
+    @unittest.skipUnless(_HAS_MLX_GPU, 'requires mlx with a usable GPU')
+    def test_backend_auto_takes_mlx_when_a_gpu_is_present(self):
+        self.assertTrue(ODFlowLayout(_hub_flows(), iterations=3)._use_mlx_)
 
     @unittest.skipUnless(_HAS_MLX_GPU, 'requires mlx with a usable GPU')
     def test_mlx_numpy_parity(self):

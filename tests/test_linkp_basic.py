@@ -593,6 +593,20 @@ class TestFlowmapLevers(unittest.TestCase):
     def test_no_time_budget_leaves_the_render_reproducible(self):
         self.assertEqual(self._linkp().svg, self._linkp().svg)
 
+    def test_backend_can_be_pinned(self):
+        # Without pinning, a flow-map render is a property of whichever extras are
+        # installed: MLX computes the force kernels in float32 where NumPy uses float64.
+        _a_ = self._linkp(flowmap_backend='numpy').svg
+        _b_ = self._linkp(flowmap_backend='numpy').svg
+        self.assertEqual(_a_, _b_)
+
+    def test_backend_is_part_of_the_cache_key(self):
+        # Two backends give different control points, so one must not be served from a
+        # cache filled by the other.
+        _lp_ = self._linkp(flowmap_backend='numpy')
+        _key_ = _lp_._flowmap_cache_[0]
+        self.assertIn('numpy', _key_)
+
     def test_unknown_flowmap_kwarg_still_raises(self):
         with self.assertRaises(TypeError):
             self.p2s.linkp(self._df(), relationships=[('fm', 'to')], pos=self._pos(),

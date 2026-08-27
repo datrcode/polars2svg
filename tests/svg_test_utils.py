@@ -86,17 +86,31 @@ def assert_svg_matches_golden(svg, name):
     subsequent runs the normalized SVG must match the golden file exactly.
 
     Workflow:
-      - First run  : golden files are created automatically; test passes.
       - Normal run : SVG is compared to the golden; test fails on any diff.
-      - Intentional change : set UPDATE_GOLDEN=1 to regenerate the goldens.
+      - Missing golden : the test FAILS.  It is not created for you -- see below.
+      - New or intentionally changed golden : set UPDATE_GOLDEN=1 to write it.
+
+    A missing golden used to be written silently and the test passed.  That is a
+    comfortable default exactly once (the very first run) and a trap every time after:
+    any checkout without the golden files re-baselines the whole suite against whatever
+    that machine happens to produce, and reports green.  It bit a working copy whose
+    goldens were absent, minting all 68 from a machine whose numeric backend differs from
+    the one the goldens were built on.  Writing now takes the explicit flag.
     '''
     normalized = normalize_svg(svg)
     path = os.path.join(GOLDEN_DIR, name + '.svg')
-    if os.environ.get('UPDATE_GOLDEN') or not os.path.exists(path):
+    if os.environ.get('UPDATE_GOLDEN'):
         os.makedirs(GOLDEN_DIR, exist_ok=True)
         with open(path, 'w') as f:
             f.write(normalized)
         return
+    assert os.path.exists(path), (
+        f'No golden file for {name!r}: {path}\n'
+        f'If this is a new case, create it with UPDATE_GOLDEN=1 and commit the file. '
+        f'If it should already exist, your checkout is missing it -- do NOT regenerate, '
+        f'because a fresh baseline records whatever this machine produces rather than '
+        f'what the golden was meant to capture.'
+    )
     with open(path) as f:
         golden = f.read()
     assert normalized == golden, (
@@ -147,10 +161,15 @@ def assert_image_matches_golden(svg, name, tolerance=5.0):
     from PIL import ImageChops
     img = rasterize_svg(svg)
     path = os.path.join(GOLDEN_PNG_DIR, name + '.png')
-    if os.environ.get('UPDATE_GOLDEN') or not os.path.exists(path):
+    if os.environ.get('UPDATE_GOLDEN'):
         os.makedirs(GOLDEN_PNG_DIR, exist_ok=True)
         img.save(path)
         return
+    assert os.path.exists(path), (
+        f'No golden PNG for {name!r}: {path}\n'
+        f'If this is a new case, create it with UPDATE_GOLDEN=1 and commit the file. '
+        f'If it should already exist, your checkout is missing it -- do NOT regenerate.'
+    )
     from PIL import Image
     ref = Image.open(path).convert('RGB')
     diff = ImageChops.difference(img, ref)

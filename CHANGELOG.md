@@ -7,6 +7,180 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- **`linkp`'s `force directed` and `convey proximity` interactive layout operations.** Both
+  were unbounded at interactive sizes and neither was the best available implementation of
+  what it did. Measured on `barabasi_albert_graph(n, 3)`: `force directed` took 4.28 s /
+  36.34 s / 114.59 s / **784.20 s** at n=500/1000/2000/4000 — at n=4000 that is ~75x the
+  next-slowest layout operation and ~7,800x the median one. `convey proximity` took
+  **12.03 s** at n=2000 with a 2.77 GB peak RSS, scaling as n^2.
+
+  `spring nx` now covers both jobs (see Changed). The classes themselves remain importable
+  this release under a deprecation warning — see Deprecated.
+
+### Deprecated
+
+- **`PolarsForceDirectedLayout` and `ConveyProximityLayout`** — both emit a one-time
+  deprecation warning on instantiation and will be **removed in 0.3.0**. They are two
+  implementations of the same paper (Cohen, ACM ToCHI 1997), and after their removal the
+  framework does not implement that method.
+
+  Migration:
+
+  | Was | Use |
+  |---|---|
+  | `PolarsForceDirectedLayout(g).results()` | `networkx.spring_layout(g)` |
+  | `PolarsForceDirectedLayout(g, pos=pos, static_nodes=fixed)` | `networkx.spring_layout(g, pos=pos, fixed=list(fixed))` |
+  | `ConveyProximityLayout(g)` — for a distance-preserving layout | `LandmarkMDSLayout(g)` or `PivotMDSLayout(g)` |
+
+  Two caveats worth stating plainly. `networkx.spring_layout` is Fruchterman-Reingold and is
+  **not** distance-preserving, so layouts will differ from Cohen's stress majorization — if
+  screen distance tracking graph distance is what you wanted, the MDS pair is the
+  replacement, not spring. And **resistive (effective-resistance) distances have no
+  replacement**: `ConveyProximityLayout(use_resistive_distances=True)` was their only source
+  in the framework.
+
+### Added
+
+- **`flowmap_max_flows=`, `flowmap_iterations=` and `flowmap_samples=` on `linkp`** — the
+  quality-for-time knobs for `link_shape='flowmap'`. `ODFlowLayout` has always accepted the
+  latter two; `linkp` hardwired the paper's defaults, so the only way to make an expensive
+  flow map cheaper was not to draw one.
+
+  `flowmap_max_flows` is the new one, and the one with real leverage: it lays out only that
+  many flows, largest count first, and draws the rest as plain curves. Because the layout's
+  cost grows faster than the square of the flow count, decimating the input beats trimming
+  the iteration budget by a wide margin. On a 560-flow render measuring **65.2 s** at the
+  defaults:
+
+  | | time | speedup |
+  |---|---:|---:|
+  | defaults (all flows, 100 iterations, 15 samples) | 65.2 s | — |
+  | `flowmap_samples=8` | 32.6 s | 2.0x |
+  | `flowmap_iterations=30` | 19.7 s | 3.3x |
+  | `flowmap_max_flows=100` | 4.2 s | **15.7x** |
+  | `flowmap_max_flows=100, flowmap_samples=8` | 3.0 s | **21.9x** |
+
+  The flows that get dropped are the ones carrying least, which are also the ones a reader
+  is least likely to be tracing — and the paper's method targets ~100 flows precisely
+  because that is what stays readable. Every link is still drawn either way; decimation
+  changes how a flow is drawn, never whether it is.
+
+- **`linkpi`'s picker menus say which choices will stop to ask, and stop committing those
+  by accident.** An operation that will ask a question at a large enough graph now reads
+  `spring nx  (asks >8,000 nodes)` in the picker, and `flowmap  (asks >200 edges)` in the
+  shape picker, so the cost is visible at the moment of choosing rather than after
+  committing. The annotation comes from the operation's declaration, so it stays true
+  whatever is on screen.
+
+  Those items are also exempt from the two ways these menus used to commit without an
+  Enter: the single-character mnemonic, and the 2.5-second inactivity timeout. Pressing
+  `l` then `3` previously started the force layout in two keystrokes with nothing in
+  between, and walking away from an open menu could commit whatever happened to be
+  highlighted. Cheap operations are unchanged — annotating everything would make the
+  annotation worth nothing.
+
+- **Escape cancels a running layout in `linkpi`, keeping its best-so-far result**, and
+  `flowmap_time_budget=` on `linkp` gives the same treatment a wall clock. The iterative
+  layouts polars2svg owns — `ODFlowLayout`, `NCPLayout`, `TFDPLayout` — now accept a
+  `layout_budget.Budget`, checked once per iteration, which stops on a time limit or on a
+  caller-supplied signal and returns what it has. Force layouts truncate gracefully: fewer
+  iterations is a less-relaxed layout, not a broken one, and every node or flow still comes
+  back with a finite position. What it cost is reported in the interactive info line.
+
+  Opt-in by design — with no budget these layouts behave exactly as before, which is what
+  keeps their determinism meaningful, since a wall-clock limit cannot be reproducible. For
+  the same reason a truncated flow map is **not** cached: it reflects how fast the machine
+  happened to be at that moment, and caching it would make one slow instant permanent for
+  the rest of the session.
+
+  This is the treatment that only works on loops polars2svg owns. `spring nx` and louvain
+  are imported and expose no per-iteration hook, so they keep the confirmation gate and the
+  before-the-call levers instead.
+
+- **`linkpi` keeps working while a slow operation runs.** Layout operations, community
+  detection, background producers and the switch to `link_shape='flowmap'` now run on a
+  worker thread instead of on the event loop, so the widget keeps repainting, the status
+  line stays visible, and a long operation looks like a long operation rather than like a
+  hang. A short note naming the running operation is painted before the work starts.
+
+  Being plain about what this is not: it does **not** make anything interruptible. Python
+  cannot stop a thread parked inside numpy or networkx, so the confirmation gate and the
+  quality-for-time levers remain the things that bound the cost. What this changes is
+  whether the browser is alive while you wait.
+
+  A user action that arrives while an operation is running is now **dropped rather than
+  queued**, with a brief `busy` notice. Queueing them meant a burst of stale operations
+  replaying against a view that had since moved — for a widget driven by held-down keys,
+  worse than losing the keystrokes. Updates arriving from *linked views* are not dropped:
+  those are peer-driven, and skipping one would leave this view showing something the
+  others are not.
+
+- **`linkpi` asks before running an operation that is declared to need asking at the
+  current graph size.** Each layout and background operation now carries a declaration of
+  what can be done about it if it runs long — whether it has a loop that could take a
+  deadline, whether it is pure enough to move to a subprocess, which parameters trade
+  quality for time, and the node count above which it should ask first. Over that count
+  the operation refuses once and says so on the canvas; repeating the same operation runs
+  it, and asking for anything else in between cancels the pending confirmation. Switching
+  `link_shape` to `'flowmap'` is gated the same way.
+
+  The declarations are deliberately *not* a cost model. Measured growth is too unstable to
+  fit: the same algorithm on the same graph family produced per-doubling exponents of 3.1,
+  1.7 and 2.8, and the flow-map layout varies 12x in runtime at a *fixed* flow count
+  depending only on how clustered the flows are. So the registry records properties of the
+  code — readable and checkable — and the confirmation message names the size and the
+  threshold, never a predicted duration.
+
+### Changed
+
+- **`linkpi`'s `spring nx` spends fewer iterations on large graphs.** networkx's default of
+  50 costs 10.4 s at 4,000 nodes and 43.2 s at 8,000. Above 2,000 nodes the count now scales
+  down proportionally (floored at 10), which brings 8,000 nodes to 10.6 s — a 4.1x saving.
+  networkx exposes no per-iteration hook, so unlike the layouts polars2svg owns, the choice
+  has to be made before the call rather than by interrupting it. What was spent is reported
+  in the interactive info line. Note this bounds the growth without flattening it: the
+  per-iteration cost still rises with the graph.
+
+- **`linkp`'s `spring nx` layout operation now runs with a selection**, laying out the
+  selected nodes while pinning the rest through `networkx.spring_layout`'s `fixed=`. It
+  previously declined outright when anything was selected, which is why a second
+  force-directed implementation existed. Measured 3–13x faster than the implementation it
+  replaces on the selection path (0.180 s vs 2.30 s at n=500; 1.799 s vs 7.31 s at n=2000),
+  holding pinned nodes to within float32 rounding. `fixed=` also suppresses networkx's
+  rescale, so pinned nodes keep their exact coordinates.
+
+- **`linkp` caches the `link_shape='flowmap'` force layout** instead of recomputing it on
+  every render. The layout depends only on the flow endpoints and the obstacle geometry, so
+  renders that change neither — a label toggle, a selection, a brush, a stack step — now
+  reuse the previous result. Pan and zoom still recompute: the layout runs in screen
+  coordinates, so they genuinely change its input.
+
+- **`linkp`'s flowmap warning is more accurate.** It described the layout as quadratic in the
+  flow count; measured growth is faster than that (exponent 3.0–4.0 on both the NumPy and MLX
+  paths), and the count is not the whole story — the intersection-reduction pass works on
+  flows sharing a node, so a dispersed set of flows costs far more than a hub-heavy set of
+  the same size.
+
+### Fixed
+
+- **A `linkpi` layout operation that declined to run still consumed an undo level.** Any
+  operation that returned without moving anything — a global layout asked for with a
+  selection in place, or one that raised — left a no-change snapshot on the undo stack, so
+  the next `u` was a silent no-op the user had to press twice.
+
+- **A `linkpi` layout operation or community detection that ran out of memory looked like a
+  key press that did nothing.** Both call sites caught bare `Exception`, which swallowed
+  `MemoryError` (and `KeyboardInterrupt`) and left the view untouched with no message. Those
+  two now propagate, and every other failure is logged through the package logger rather
+  than discarded.
+
+- **`LandmarkMDSLayout` computed √n full-graph Dijkstras and discarded the result.** The
+  block recomputed the adjacency matrix and landmark distance array after the coordinates
+  were already assigned, and nothing read it. Removing it cuts 18–27% off every call
+  (0.04 s → 0.024 s at n=2000).
+
 ### Added
 
 - **`FlowFieldBackground` — a layered flow-field background for an existing layout**

@@ -2,6 +2,7 @@
 # Original author: David Trimm — Apache License 2.0
 # Removed: import rtsvg (unused), svgOfVertexAdditions() (requires external RACETrack instance)
 
+import logging
 import polars as pl
 import networkx as nx
 import random
@@ -47,6 +48,17 @@ class PolarsForceDirectedLayout(object):
         p2s.linkp(df, [('src', 'dst')], pos)
     '''
     def __init__(self, g_connected, pos=None, static_nodes=None, k=0, iterations=None, stress_threshold=1e-2, distances=None) -> None:
+        # Deprecated in 0.2.0, removed in 0.3.0.  Warned here rather than at module level:
+        # __init__.py imports this module eagerly, so a module-level warning would fire on
+        # every `import polars2svg` including for users who never touch the class.  The
+        # shared logger's OnceFilter (see Polars2SVG.__init__) dedupes it per process.
+        logging.getLogger('polars2svg_logger').warning(
+            'polars2svg: PolarsForceDirectedLayout is deprecated and will be removed in '
+            '0.3.0; use networkx.spring_layout(g), or spring_layout(g, pos=pos, '
+            'fixed=[...]) to lay out a subset with the rest pinned. Note that spring_layout '
+            'is Fruchterman-Reingold and is not distance-preserving -- if that is what you '
+            'wanted, use LandmarkMDSLayout / PivotMDSLayout instead.'
+        )
         self.g_connected  = g_connected
         self.pos          = pos
         self.static_nodes = static_nodes

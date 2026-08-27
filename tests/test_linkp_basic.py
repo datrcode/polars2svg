@@ -439,5 +439,165 @@ class TestLinkPBasic(unittest.TestCase):
             self.p2s.linkp(_make_df(), _rels(), 'not_a_valid_arg')
 
 
+class TestFlowmapControlPointCache(unittest.TestCase):
+    """The flowmap force layout is cached across renders that cannot have changed it.
+
+    It used to run inside __renderLinks__ on every invalidated render, so in linkpi a label
+    toggle or a selection re-paid a layout whose cost grows faster than quadratically.
+    """
+
+    def setUp(self):
+        self.p2s = Polars2SVG()
+
+    def _counting_linkp(self):
+        """A flowmap linkp plus a counter of how many times the force layout actually ran."""
+        import polars2svg.linkp as _linkp_mod_
+        _calls_ = []
+        _orig_  = _linkp_mod_.ODFlowLayout
+
+        class _Counting_(_orig_):
+            def __init__(self, *a, **k):
+                _calls_.append(1)
+                super().__init__(*a, **k)
+
+        _linkp_mod_.ODFlowLayout = _Counting_
+        self.addCleanup(setattr, _linkp_mod_, 'ODFlowLayout', _orig_)
+        _lp_ = self.p2s.linkp(_make_df(), _rels(), _make_pos(), link_shape='flowmap')
+        return _lp_, _calls_
+
+    def test_layout_runs_once_on_first_render(self):
+        _lp_, _calls_ = self._counting_linkp()
+        _lp_.renderSVG()
+        self.assertEqual(len(_calls_), 1)
+
+    def test_rerender_with_no_change_reuses_the_layout(self):
+        _lp_, _calls_ = self._counting_linkp()
+        _lp_.renderSVG()
+        _lp_.invalidateRender()
+        _lp_.renderSVG()
+        self.assertEqual(len(_calls_), 1)
+
+    def test_label_toggle_reuses_the_layout(self):
+        # Labels do not move flow endpoints, so the control points still hold.
+        _lp_, _calls_ = self._counting_linkp()
+        _lp_.renderSVG()
+        _lp_.drawNodeLabels(True)
+        _lp_.renderSVG()
+        self.assertEqual(len(_calls_), 1)
+
+    def test_zoom_recomputes_the_layout(self):
+        # A legitimate miss: the layout runs in screen coordinates, so zooming genuinely
+        # changes its input.  Asserted so the cache key is never quietly widened to
+        # swallow this case.
+        _lp_, _calls_ = self._counting_linkp()
+        _lp_.renderSVG()
+        _lp_.applyScrollEvent(120, (100, 100))
+        _lp_.renderSVG()
+        self.assertEqual(len(_calls_), 2)
+
+    def test_cached_render_is_byte_identical(self):
+        _lp_, _ = self._counting_linkp()
+        _first_ = _lp_.renderSVG()
+        _lp_.invalidateRender()
+        self.assertEqual(_first_, _lp_.renderSVG())
+
+
+class TestFlowmapLevers(unittest.TestCase):
+    """T2: the quality-for-time knobs on link_shape='flowmap'.
+
+    ODFlowLayout always took iterations= and samples_per_flow=; linkp hardwired the paper
+    defaults, so the only way to make an expensive flow map cheaper was not to draw one.
+    flowmap_max_flows is the new one, and the one with real leverage -- cost grows faster
+    than the square of the flow count, so halving the flows beats halving the iterations.
+    """
+
+    def setUp(self):
+        self.p2s = Polars2SVG()
+
+    def _df(self, n=40, nodes=12):
+        import random
+        random.seed(5)
+        return pl.DataFrame({'fm': [f'n{random.randrange(nodes)}' for _ in range(n)],
+                             'to': [f'n{random.randrange(nodes)}' for _ in range(n)]})
+
+    def _pos(self, nodes=12):
+        import random
+        random.seed(6)
+        return {f'n{i}': (random.random(), random.random()) for i in range(nodes)}
+
+    def _linkp(self, **kw):
+        return self.p2s.linkp(self._df(), relationships=[('fm', 'to')], pos=self._pos(),
+                              link_shape='flowmap', **kw)
+
+    def test_defaults_lay_out_every_flow(self):
+        _lp_ = self._linkp()
+        self.assertIsNone(_lp_._flowmap_note_)
+
+    def test_max_flows_decimates_and_says_so(self):
+        _lp_ = self._linkp(flowmap_max_flows=5)
+        self.assertEqual(len(_lp_._flowmap_cp_), 5)
+        self.assertIn('largest of', _lp_._flowmap_note_)
+
+    def test_max_flows_above_the_flow_count_is_a_no_op(self):
+        _lp_ = self._linkp(flowmap_max_flows=10_000)
+        self.assertIsNone(_lp_._flowmap_note_)
+
+    def test_decimated_flows_fall_back_to_curves_not_null_geometry(self):
+        # The join that fetches flowmap control points misses for every decimated flow.
+        # Without the curve fallback those become null control points and an unrenderable
+        # path, which is why this asserts on the emitted SVG rather than on the frame.
+        _lp_ = self._linkp(flowmap_max_flows=3)
+        _svg_ = _lp_.svg
+        self.assertIn('<svg', _svg_)
+        for _bad_ in ('NaN', 'null', 'None'):
+            self.assertNotIn(_bad_, _svg_)
+
+    def test_every_link_is_still_drawn_when_decimated(self):
+        # Decimation changes how a flow is drawn, never whether it is drawn.
+        _full_ = self._linkp()
+        _cut_  = self._linkp(flowmap_max_flows=3)
+        self.assertEqual(_full_.svg.count('<path'), _cut_.svg.count('<path'))
+
+    def test_iterations_and_samples_reach_the_layout(self):
+        # Both are cache-key components, so a change in either must produce a new layout
+        # rather than silently reusing the previous control points.
+        _a_ = self._linkp(flowmap_iterations=100).svg
+        _b_ = self._linkp(flowmap_iterations=10).svg
+        self.assertNotEqual(_a_, _b_)
+        _c_ = self._linkp(flowmap_samples=15).svg
+        _d_ = self._linkp(flowmap_samples=5).svg
+        self.assertNotEqual(_c_, _d_)
+
+    def test_levers_are_deterministic(self):
+        self.assertEqual(self._linkp(flowmap_max_flows=5, flowmap_iterations=20).svg,
+                         self._linkp(flowmap_max_flows=5, flowmap_iterations=20).svg)
+
+    def test_time_budget_truncates_and_says_so(self):
+        _lp_ = self._linkp(flowmap_time_budget=0)
+        self.assertIn('iterations', _lp_._flowmap_note_)
+
+    def test_a_truncated_layout_is_not_cached(self):
+        # A truncated result depends on how fast the machine happened to be at that
+        # moment; caching it would make one slow instant permanent for the session.
+        _lp_ = self._linkp(flowmap_time_budget=0)
+        self.assertIsNone(_lp_._flowmap_cache_)
+
+    def test_a_complete_layout_is_cached(self):
+        _lp_ = self._linkp()
+        self.assertIsNotNone(_lp_._flowmap_cache_)
+
+    def test_a_truncated_layout_still_renders_every_link(self):
+        self.assertEqual(self._linkp().svg.count('<path'),
+                         self._linkp(flowmap_time_budget=0).svg.count('<path'))
+
+    def test_no_time_budget_leaves_the_render_reproducible(self):
+        self.assertEqual(self._linkp().svg, self._linkp().svg)
+
+    def test_unknown_flowmap_kwarg_still_raises(self):
+        with self.assertRaises(TypeError):
+            self.p2s.linkp(self._df(), relationships=[('fm', 'to')], pos=self._pos(),
+                           flowmap_not_a_param=1)
+
+
 if __name__ == '__main__':
     unittest.main()

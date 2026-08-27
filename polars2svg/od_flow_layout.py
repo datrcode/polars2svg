@@ -119,8 +119,12 @@ class ODFlowLayout(object):
                  w_flows=1.0, w_nodes=0.5, w_antitorsion=0.8, w_spring=1.0, w_angres=3.75,
                  alpha=4.0, beta=4.0, k_short=0.5, k_long=0.05, c_p=2.5,
                  k_angres=4.0, c_angres=4.0, rect_pct=0.5, min_obstacle_dist=4.0,
-                 arrows=False, arrow_radius=0.0):
+                 arrows=False, arrow_radius=0.0, budget=None):
         self.flows             = [(float(a), float(b), float(c), float(d)) for a, b, c, d in flows]
+        # Optional stop condition (layout_budget.Budget).  None -> run every iteration,
+        # which is what keeps this layout's determinism test meaningful.
+        self.budget            = budget
+        self.budget_note       = None
         self.node_radius       = node_radius
         self.iterations        = iterations
         self.samples_per_flow  = samples_per_flow
@@ -276,7 +280,14 @@ class ODFlowLayout(object):
     #
     def _iterate_(self):
         _j_ = 0
+        if self.budget is not None: self.budget.start(self.iterations)
         for _i_ in range(self.iterations):
+            # Checked at the top of the outer loop: the control points are a consistent
+            # layout at every iteration boundary, so stopping here returns a usable (just
+            # less relaxed) flow map rather than a half-applied one.
+            if self.budget is not None and self.budget.expired():
+                self.budget_note = self.budget.note
+                return
             _w_ = 1.0 - _i_ / self.iterations
             _ffx_a_, _ffy_a_, _periph_a_, _fnx_a_, _fny_a_ = self._forces_()
             _new_cps_ = {}

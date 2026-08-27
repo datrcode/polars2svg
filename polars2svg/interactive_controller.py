@@ -14,9 +14,11 @@ import pyperclip
 from panel.reactive import ReactiveHTML
 from shapely.geometry import Polygon
 
-from .polars_force_directed_layout import PolarsForceDirectedLayout
-from .convey_proximity_layout       import ConveyProximityLayout
 from .mds_at_scale                  import LandmarkMDSLayout, PivotMDSLayout
+from .layout_budget                 import Budget
+from .interactive_treatments        import (Treatment, RegistryEntry, CHEAP, ASSUMED_CHEAP,
+                                            COMMUNITY_DETECTION, FLOWMAP,
+                                            treatment_for, menu_annotation)
 from .p2s_webgpu_runtime            import P2S_GPU_JS
 
 #
@@ -73,10 +75,8 @@ _LAYOUT_MODE_MENU_ = [
 ]
 _LAYOUT_OP_MENU_ = [
     ('s', 'spring nx'),
-    ('f', 'force directed'),
     ('h', 'hyper tree'),
     ('d', 'hyper tree donut'),
-    ('v', 'convey proximity'),
     ('l', 'landmark mds'),
     ('L', 'landmark mds pos'),
     ('p', 'pivot mds'),
@@ -1574,10 +1574,8 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
         self.layout_modes         = [label for _, label in _LAYOUT_MODE_MENU_]
 
         self.SPRING_NX            = 'spring nx'
-        self.FORCE_DIRECTED       = 'force directed'
         self.HYPERTREE            = 'hyper tree'
         self.HYPERTREE_DONUT      = 'hyper tree donut'
-        self.CONVEY_PROXIMITY     = 'convey proximity'
         self.LANDMARK_MDS         = 'landmark mds'
         self.LANDMARK_MDS_POS     = 'landmark mds pos'
         self.PIVOT_MDS            = 'pivot mds'
@@ -1602,6 +1600,20 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
 
         self.previous_layouts = []
         self.max_undo_levels  = 20
+        # T4c state.  _confirm_armed_ holds the key of the one operation whose next
+        # identical request runs without asking again; _last_cost_note_ is what the gate
+        # last did, surfaced in info_str the way FlowFieldBackground surfaces budget_note.
+        self._confirm_armed_   = None
+        self._last_cost_note_  = None
+        # Guards the link_shape picker reset in applySizeChoice against re-entering its
+        # own watcher; see the comment there.
+        self._suppress_shape_watcher_ = False
+        # >0 while a helper is running on a worker thread; see _run_offloop_/setAnimation.
+        self._offloop_depth_     = 0
+        self._pending_animation_ = None
+        # T1a cancel.  Set from the browser (Escape) and polled by whichever layout is
+        # running; a thread cannot be interrupted, so the loop has to be asked to look.
+        self._cancel_requested_  = False
         self.lock             = asyncio.Lock()
 
         # Background cycling (the 'b' key): 0 = none, 1 = background, 2 = background + labels.
@@ -1662,6 +1674,7 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
         self.param.watch(self.applyWheelOp,           'wheel_op_finished')
         self.param.watch(self.applyMiddleOp,          'middle_op_finished')
         self.param.watch(self.applyKeyOp,             'key_op_finished')
+        self.param.watch(self.applyCancel,            'cancel_seq')
         self.param.watch(self.applyBrushOp,           'brush_changed')
         self.param.watch(self.applyBrushLeave,        'brush_leave_done')
         self.param.watch(self.applyLayoutInteraction, 'layout_shape')
@@ -1962,6 +1975,13 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
     # self.dfs_layout[self.df_level] is a stack-consistency bug (the labels and
     # background handlers used to do exactly that).
     def updateLinkNodeParam(self, name, value):
+        self.__setLinkNodeParam__(name, value)
+        self.__refreshView__(comp=True)
+
+    # The assignment half, without the refresh, so an async caller can push the value down
+    # and then refresh off-loop instead.  updateLinkNodeParam keeps its exact old shape --
+    # the sync interaction helpers and their tests go through it unchanged (D2).
+    def __setLinkNodeParam__(self, name, value):
         for i in range(len(self.dfs_layout)):
             setattr(self.dfs_layout[i], name, value)
             # time= is only the raw spec; the render path reads the resolved
@@ -1971,7 +1991,6 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
             if name == 'time':
                 self.dfs_layout[i].__resolveTimeField__()
             self.dfs_layout[i].invalidateRender()
-        self.__refreshView__(comp=True)
 
     #
     # _applyLabelStateAcrossStack_() - project the controller's label_mode +
@@ -2061,6 +2080,42 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
             lm_pos = {n: ln.pos[n] for n in sel}
             return LandmarkMDSLayout(g, landmark_pos=lm_pos, rt_self=rt).results()
 
+        # T2 lever for spring nx.  networkx's default of 50 iterations costs 10.4 s at
+        # n=4000 and grows ~1.7x per doubling (measured 2026-08-27).  Past the size where
+        # that stops being interactive, spend proportionally fewer of them.  A less-relaxed
+        # layout is a real cost, but it is the smaller one: the alternative at these sizes
+        # is a wait nobody sits through, and unlike the layouts we own there is no loop
+        # here to interrupt, so the choice has to be made before the call.
+        _SPRING_FULL_ITERS_, _SPRING_FREE_N_, _SPRING_MIN_ITERS_ = 50, 2000, 10
+
+        def _spring_iterations_(n):
+            if n <= _SPRING_FREE_N_:
+                # Clear only our own stale note; another operation's is not ours to drop.
+                if (self._last_cost_note_ or '').startswith('spring nx:'):
+                    self._last_cost_note_ = None
+                return _SPRING_FULL_ITERS_
+            _iters_ = max(_SPRING_MIN_ITERS_, int(_SPRING_FULL_ITERS_ * _SPRING_FREE_N_ / n))
+            # Said out loud, the way FlowFieldBackground says what its budget cost it.
+            self._last_cost_note_ = (f'spring nx: {_iters_} of {_SPRING_FULL_ITERS_} '
+                                     f'iterations at {n:,} nodes')
+            return _iters_
+
+        def _spring_nx_(ln, g, sel):
+            _iters_ = _spring_iterations_(g.number_of_nodes())
+            # No selection: lay out the whole graph, as before.
+            if len(sel) == 0:
+                return nx.spring_layout(g, iterations=_iters_)
+            # With a selection, pin everything else.  A selection can carry edge entities
+            # and nodes belonging to other stack levels, so the pinned set is derived from
+            # the graph's own nodes rather than by subtracting from it.
+            _fixed_ = [_n_ for _n_ in g.nodes() if _n_ not in sel]
+            # Nothing in the selection is in this graph -- decline, as the other handlers do
+            # when their preconditions are not met, rather than laying out everything.
+            if len(_fixed_) == g.number_of_nodes():
+                return None
+            _pos_ = {_n_: tuple(ln.pos[_n_]) for _n_ in g.nodes() if _n_ in ln.pos}
+            return nx.spring_layout(g, pos=_pos_, fixed=_fixed_, iterations=_iters_)
+
         def _circle_pack_(ln, g, sel):
             if len(sel) > 0:
                 return None
@@ -2084,37 +2139,53 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
             _res_ = rt.uniformSampleDistributionInScatterplotsViaSectorBasedTransformation(_df_, 'x', 'y', 'w')
             return {_res_['e'][i]: (_res_['x'][i], _res_['y'][i]) for i in range(len(_res_))}
 
+        # Declarations live in interactive_treatments.LAYOUT_TREATMENTS so the picker menus
+        # can read them too; see menu_annotation() for why that matters.
+        _SPRING_NX_TREATMENT_ = treatment_for(self.SPRING_NX)
+        _NCP_TREATMENT_       = treatment_for(self.NCP_PACK)
+        _TFDP_TREATMENT_      = treatment_for(self.TFDP_LAYOUT)
+
         registry = {
-            self.SPRING_NX:            lambda ln, g, sel: nx.spring_layout(g) if len(sel) == 0 else None,
-            self.FORCE_DIRECTED:       lambda ln, g, sel: (
-                PolarsForceDirectedLayout(g).results() if len(sel) == 0
-                else PolarsForceDirectedLayout(g, pos=ln.pos, static_nodes=set(g.nodes()) - set(sel)).results()
-            ),
-            self.HYPERTREE:            lambda ln, g, sel: rt.hyperTreeLayout(g, roots=sel),
-            self.HYPERTREE_DONUT:      lambda ln, g, sel: rt.hyperTreeDonutLayout(g, roots=sel, return_cells=True),
-            self.CONNECTED_COMPONENTS: lambda ln, g, sel: rt.treeMapLayout(g, ln.pos) if len(sel) == 0 else None,
-            self.CIRCLE_PACK:          _circle_pack_,
+            # With no selection this lays out the whole graph.  With one, it moves only the
+            # selected nodes and pins the rest through networkx's fixed= -- the job the
+            # removed PolarsForceDirectedLayout existed to do, 3-13x faster (CHANGELOG 0.2.0).
+            # fixed= also suppresses networkx's rescale, so the pinned nodes keep their exact
+            # coordinates rather than being renormalized to [-1, 1].
+            self.SPRING_NX:            RegistryEntry(_spring_nx_, _SPRING_NX_TREATMENT_),
+            self.HYPERTREE:            RegistryEntry(
+                lambda ln, g, sel: rt.hyperTreeLayout(g, roots=sel), CHEAP),
+            self.HYPERTREE_DONUT:      RegistryEntry(
+                lambda ln, g, sel: rt.hyperTreeDonutLayout(g, roots=sel, return_cells=True), CHEAP),
+            self.CONNECTED_COMPONENTS: RegistryEntry(
+                lambda ln, g, sel: rt.treeMapLayout(g, ln.pos) if len(sel) == 0 else None, CHEAP),
+            self.CIRCLE_PACK:          RegistryEntry(_circle_pack_, CHEAP),
             # 'graph' mode detects weighted communities and repositions them apart, so
             # its cells ARE its output and die with it.  'spatial' mode moves nothing --
             # it clusters the layout already on screen -- so it is a background
             # operation instead (__buildBackgroundRegistry__), not a layout at all.
-            self.NEIGHBORHOOD_GRAPH:   lambda ln, g, sel: (
+            self.NEIGHBORHOOD_GRAPH:   RegistryEntry(lambda ln, g, sel: (
                 rt.neighborhoodLayout(g, mode='graph', return_cells=True) if len(sel) == 0 else None
-            ),
-            self.CONVEY_PROXIMITY:     lambda ln, g, sel: ConveyProximityLayout(g, use_resistive_distances=True).results() if len(sel) == 0 else None,
-            self.LANDMARK_MDS:         lambda ln, g, sel: (
+            ), CHEAP),
+            self.LANDMARK_MDS:         RegistryEntry(lambda ln, g, sel: (
                 LandmarkMDSLayout(g, rt_self=rt).results() if len(sel) == 0
                 else LandmarkMDSLayout(g, landmarks=sel, rt_self=rt).results()
-            ),
-            self.LANDMARK_MDS_POS:     _landmark_mds_pos_,
-            self.PIVOT_MDS:            lambda ln, g, sel: PivotMDSLayout(g, rt_self=rt).results() if len(sel) == 0 else None,
-            self.EVEN_DISTRIBUTION:    _even_distribution_,
+            ), CHEAP),
+            self.LANDMARK_MDS_POS:     RegistryEntry(_landmark_mds_pos_, CHEAP),
+            self.PIVOT_MDS:            RegistryEntry(
+                lambda ln, g, sel: PivotMDSLayout(g, rt_self=rt).results() if len(sel) == 0 else None,
+                CHEAP),
+            self.EVEN_DISTRIBUTION:    RegistryEntry(_even_distribution_, ASSUMED_CHEAP),
         }
         if _TFDP_AVAILABLE:
-            registry[self.TFDP_LAYOUT] = lambda ln, g, sel: (
-                _TFDPLayout(g).results() if len(sel) == 0
-                else _TFDPLayout(g, pos=ln.pos, selection=set(sel), pin_background=True).results()
-            )
+            def _tfdp_(ln, g, sel):
+                _b_ = Budget(should_stop=self._cancelRequested_)
+                _l_ = (_TFDPLayout(g, budget=_b_) if len(sel) == 0
+                       else _TFDPLayout(g, pos=ln.pos, selection=set(sel),
+                                        pin_background=True, budget=_b_))
+                if _l_.budget_note is not None:
+                    self._last_cost_note_ = f't-fdp: {_l_.budget_note}'
+                return _l_.results()
+            registry[self.TFDP_LAYOUT] = RegistryEntry(_tfdp_, _TFDP_TREATMENT_)
         if _NCP_AVAILABLE:
             # Neighbourhood-preserving circle packing (Li et al. 2026): compacts
             # the *current* layout, so it always reads ln.pos. Radii come from
@@ -2122,10 +2193,14 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
             # unweighted). With a selection, only those nodes are packed; the
             # exact-coincident-node contraction is applied upstream by
             # __layoutOperation__, so this handler always sees distinct sites.
-            registry[self.NCP_PACK] = lambda ln, g, sel: (
-                _NCPLayout(g, pos=ln.pos).results() if len(sel) == 0
-                else _NCPLayout(g, pos=ln.pos, selection=set(sel)).results()
-            )
+            def _ncp_pack_(ln, g, sel):
+                _b_ = Budget(should_stop=self._cancelRequested_)
+                _l_ = (_NCPLayout(g, pos=ln.pos, budget=_b_) if len(sel) == 0
+                       else _NCPLayout(g, pos=ln.pos, selection=set(sel), budget=_b_))
+                if _l_.budget_note is not None:
+                    self._last_cost_note_ = f'ncp pack: {_l_.budget_note}'
+                return _l_.results()
+            registry[self.NCP_PACK] = RegistryEntry(_ncp_pack_, _NCP_TREATMENT_)
         return registry
 
     #
@@ -2157,12 +2232,19 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
                 g, pos=ln.pos, mode='spatial', return_cells=True)
             return _cells_
 
+        # The flow producers keep their instance on the controller for summary()/tests, so
+        # they are NOT pure functions of their arguments and must never be moved to a
+        # subprocess -- that state would not survive the hop.  They are already bounded by
+        # FlowFieldBackground's own support_budget (_fit_to_budget), which is the one real
+        # cost budget in the codebase and the model the rest of this work follows.
+        _FLOW_TREATMENT_ = Treatment(truncatable=False, killable=False,
+                                     levers=('support_budget', 'min_grid_res'))
         return {
-            'flow field (2 layers)':      _flow_(2),
-            'flow field (3 layers)':      _flow_(3),
-            'flow field (streamlines)':   _flow_(2, glyph='streamline'),
-            'neighborhood (spatial)':     _neighborhood_spatial_,
-            'clear background':           lambda ln, g, sel: None,
+            'flow field (2 layers)':      RegistryEntry(_flow_(2), _FLOW_TREATMENT_),
+            'flow field (3 layers)':      RegistryEntry(_flow_(3), _FLOW_TREATMENT_),
+            'flow field (streamlines)':   RegistryEntry(_flow_(2, glyph='streamline'), _FLOW_TREATMENT_),
+            'neighborhood (spatial)':     RegistryEntry(_neighborhood_spatial_, CHEAP),
+            'clear background':           RegistryEntry(lambda ln, g, sel: None, CHEAP),
         }
 
     #
@@ -2179,9 +2261,10 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
     #
     def applyBackgroundOperation(self, label=None):
         _label_ = self.background_operation if label is None else label
-        handler = self._background_registry.get(_label_)
-        if handler is None:
+        _entry_ = self._background_registry.get(_label_)
+        if _entry_ is None:
             return False
+        handler = _entry_.handler
         _ln_ = self.dfs_layout[self.df_level]
         self._last_background_ = None
         try:
@@ -2208,8 +2291,11 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
     # documented way to refresh a background after moving nodes, and a label that
     # did not change would not fire a watcher.
     #
-    def applyBackgroundChoice(self, *events):
-        self.applyBackgroundOperation()
+    async def applyBackgroundChoice(self, *events):
+        # Off-loop for the same reason as the layout ops: a flow field over a netflow-scale
+        # frame is not a fast operation, and it is one picker commit away.
+        await self._run_offloop_(self.applyBackgroundOperation,
+                                 note=f'{self.background_operation}...')
 
     #
     # __backgroundStateLabel__() - human-readable label for the current background state
@@ -2318,10 +2404,49 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
     #
     # __layoutOperation__() - apply a layout operation via the registry.
     #
+    #
+    # __confirmGate__() - T4c.  Ask before running an operation whose declaration says it
+    # should be asked about at this size; let the next identical request through.
+    #
+    # Returns True to proceed, False to refuse this time.  A refusal arms a one-shot
+    # confirmation for THIS key only -- repeating the same operation runs it, and asking
+    # for anything else in between disarms, so a confirmation can never be spent on an
+    # operation the user did not mean to confirm.
+    #
+    # The message names the size and the threshold, never a predicted duration.  There is
+    # no honest duration to quote: the same algorithm on the same graph family measured
+    # per-doubling exponents of 3.1, 1.7 and 2.8, and the flow map varies 12x at a fixed
+    # flow count on topology alone.  A number here would be invented, and an invented
+    # number is worse than none -- it would be believed.
+    #
+    def __confirmGate__(self, key, treatment, size, unit='nodes'):
+        _limit_ = treatment.confirm_above
+        if _limit_ is None or size <= _limit_:
+            # Asking for something else spends nothing but disarms, so a confirmation
+            # armed for one operation cannot be redeemed by another.
+            if self._confirm_armed_ is not None and self._confirm_armed_ != key:
+                self._confirm_armed_ = None
+            return True
+        if self._confirm_armed_ == key:
+            self._confirm_armed_  = None
+            self._last_cost_note_ = f'{key}: confirmed at {size:,} {unit}'
+            return True
+        self._confirm_armed_  = key
+        self._last_cost_note_ = f'{key}: {size:,} {unit}, awaiting confirm'
+        self.setAnimation(
+            f'<text x="5" y="15" fill="black"> {key}: {size:,} {unit} is over the '
+            f'{_limit_:,} this operation asks about -- repeat to run </text>'
+        )
+        return False
+
     def __layoutOperation__(self, _layout_op_, _ln_, _g_, _sel_):
-        handler = self._layout_registry.get(_layout_op_)
-        if handler is None:
+        _entry_ = self._layout_registry.get(_layout_op_)
+        if _entry_ is None:
             return False
+        if not self.__confirmGate__(_layout_op_, _entry_.treatment,
+                                    _g_.number_of_nodes() if _g_ is not None else 0):
+            return False
+        handler = _entry_.handler
         # Collapse exactly-coincident nodes into representatives so the
         # algorithm treats each stacked group as a single node (with its edges).
         _contracted_ = self.__contractCollapsedGraph__(_ln_, _g_, _sel_)
@@ -2368,6 +2493,9 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
     # applyMiddleOp() - apply middle operation -- either pan view or reset view
     #
     async def applyMiddleOp(self,event):
+        if self._busy_():
+            self.middle_op_finished = False
+            return
         async with self.lock:
             try:
                 if self.middle_op_finished:
@@ -2388,6 +2516,9 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
     # applyWheelOp() - apply mouse wheel operation (zoom in & out)
     #
     async def applyWheelOp(self,event):
+        if self._busy_():
+            self.wheel_op_finished, self.wheel_rots = False, 0
+            return
         async with self.lock:
             try:
                 if self.wheel_op_finished:
@@ -2406,10 +2537,124 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
     # setAnimation() - set the animation string (and thus the SVG view)
     #
     def setAnimation(self, animation):
+        # Called from a worker thread (D3: params are written only on the event loop), the
+        # write is queued instead and _run_offloop_ flushes it when the await resolves.
+        # Without this the confirm gate's message -- reached from inside a helper that now
+        # runs off-loop -- would be a param write from the wrong thread.
+        if self._offloop_depth_ > 0:
+            self._pending_animation_ = animation
+            return
         time.sleep(0.001) 
         self.animation_inner = ''
         time.sleep(0.001) 
         self.animation_inner = animation
+
+    #
+    # _busy_() - D4.  While an operation is running, a further user action is DROPPED
+    # rather than queued, and the caller clears its own trigger param.
+    #
+    # The lock is now held across an await that can last minutes, so without this every
+    # key pressed during a long layout would bank and then replay all at once when it
+    # finished.  For a widget driven by held-down keys that is worse than losing them: the
+    # user gets a burst of operations they no longer want, against a view that has moved.
+    #
+    # Deliberately NOT used by the MVC callbacks (display / receiveSelection /
+    # replaceBaseDataframe).  Those come from peer views rather than from this user's
+    # hands, and dropping one would leave this view showing something the others are not.
+    #
+    def _busy_(self):
+        if not self.lock.locked():
+            return False
+        self.setAnimation('<text x="5" y="15" fill="black"> busy -- ignored </text>')
+        return True
+
+    #
+    # applyCancel() - Escape.  Deliberately NOT gated by _busy_: the whole point is to
+    # arrive while an operation is running and the lock is held.  It touches only the flag
+    # the worker polls, so there is nothing here that needs the lock.
+    #
+    async def applyCancel(self, event):
+        if self._offloop_depth_ == 0:
+            return                      # nothing running; do not arm a cancel for later
+        self._cancel_requested_ = True
+        await self.setAnimationAsync('<text x="5" y="15" fill="black"> cancelling... </text>')
+
+    #
+    # _cancelRequested_() / _armCancel_() - T1a's cancel signal.
+    #
+    # Polled from the worker thread by whichever layout is running.  Reading a bool across
+    # threads needs no lock: the worker only ever reads, the loop only ever writes, and a
+    # check that lands one iteration late is harmless -- the next one catches it.
+    #
+    # _armCancel_ clears the flag at the START of an operation rather than at the end, so
+    # an Escape pressed while nothing was running cannot silently cancel the next thing
+    # the user asks for.
+    #
+    def _cancelRequested_(self):
+        return self._cancel_requested_
+
+    def _armCancel_(self):
+        self._cancel_requested_ = False
+
+    #
+    # setAnimationAsync() - setAnimation without blocking the event loop.
+    #
+    # The blank-then-write is what makes the same message re-trigger the browser-side
+    # animation; the sync version spaces the two writes with time.sleep, which on the
+    # event loop stalls every other callback.  Yielding does the same job and lets Panel
+    # actually flush the first write.
+    #
+    async def setAnimationAsync(self, animation):
+        self.animation_inner = ''
+        await asyncio.sleep(0)
+        self.animation_inner = animation
+        await asyncio.sleep(0)
+
+    #
+    # _run_offloop_() - run a synchronous helper on a worker thread so the widget keeps
+    # repainting while it works.
+    #
+    # This is the piece that makes an expensive operation survivable rather than
+    # indistinguishable from a hang.  It does NOT make it interruptible: Python cannot
+    # kill a thread parked in numpy or networkx, so the deadline work and the confirm gate
+    # remain the things that bound the cost.  What this buys is that the browser stays
+    # alive, the status line is visible, and the user can see that something is happening.
+    #
+    # The lock is still held across the await by the calling callback, so no second
+    # operation can interleave and there is nothing to synchronise inside `fn`.  `fn`
+    # writes no params -- see setAnimation above for the one path that used to.
+    #
+    async def _run_offloop_(self, fn, *args, note=None):
+        self._armCancel_()
+        for _lp_ in self.dfs_layout:
+            _lp_._flowmap_should_stop_ = self._cancelRequested_
+        if note is not None:
+            # Written and flushed BEFORE the work starts, or the indicator would only
+            # appear once the thing it describes had already finished.
+            await self.setAnimationAsync(f'<text x="5" y="15" fill="black"> {note} </text>')
+        self._offloop_depth_ += 1
+        try:
+            return await asyncio.to_thread(fn, *args)
+        finally:
+            self._offloop_depth_ -= 1
+            if self._pending_animation_ is not None:
+                _queued_, self._pending_animation_ = self._pending_animation_, None
+                self.setAnimation(_queued_)
+
+    #
+    # _refreshViewOffloop_() - __refreshView__ with the render moved off the event loop.
+    #
+    # The render is the other half of the problem: with link_shape='flowmap' it runs the
+    # force layout, so a comp refresh can be the most expensive thing in the widget.  The
+    # SVG is built on a worker and only assigned to the param here, on the loop.
+    #
+    async def _refreshViewOffloop_(self, note=None, **kwargs):
+        if kwargs.get('comp', True) and not use_webgpu:
+            _ln_ = self.dfs_layout[self.df_level]
+            self.mod_inner = await self._run_offloop_(_ln_.renderSVG, note=note)
+            self.mvc.positionsUpdate(self, _ln_.pos)
+            kwargs['comp'] = False
+        self.__refreshView__(**kwargs)
 
     #
     # __refreshView__() - refresh the view
@@ -2424,7 +2669,10 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
             # may have moved nodes (drag-moves, layout ops, undo, load); notify
             # 'positions'-linked views (they diff & skip when nothing moved).
             self.mvc.positionsUpdate(self, _ln_.pos)
-        if (info):     self.info_str         = f'{len(self.selected_entities)} Selected | {self.label_mode} | {self.layout_mode} | {self.layout_operation} | {self.__backgroundStateLabel__()}'
+        if (info):
+            self.info_str = f'{len(self.selected_entities)} Selected | {self.label_mode} | {self.layout_mode} | {self.layout_operation} | {self.__backgroundStateLabel__()}'
+            if self._last_cost_note_ is not None:
+                self.info_str += f' | {self._last_cost_note_}'
         if (all_ents): self.allentitiespath  = self.dfs_layout[self.df_level].__createPathDescriptionForAllEntities__()
         if (sel_ents): self.selectionpath    = self.dfs_layout[self.df_level].__createPathDescriptionOfSelectedEntities__(my_selection=self.selected_entities)
 
@@ -2500,6 +2748,9 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
     # applyKeyOp() - apply specified key operation
     #
     async def applyKeyOp(self, event):
+        if self._busy_():
+            self.key_op_finished = ''
+            return
         _mvc_stack_action_ = None
         async with self.lock:
             _ln_ = self.dfs_layout[self.df_level]
@@ -2603,8 +2854,14 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
                 else:
                     # Mirrors the 'w' layout branch: an algorithm failure leaves the
                     # view untouched rather than killing the callback.
-                    try:              _node_color_ = self.apply_community_detection()
-                    except Exception: _node_color_ = None
+                    try:
+                        _node_color_ = await self._run_offloop_(self.apply_community_detection,
+                                                                note='detecting communities...')
+                    except (MemoryError, KeyboardInterrupt):
+                        raise
+                    except Exception:
+                        self.rt_self.logger.exception('linkpi: community detection failed')
+                        _node_color_ = None
                     if _node_color_ is not None:
                         self.updateLinkNodeParam('node_color', _node_color_)
                         _communities_found_ = len(set(_node_color_.values()))
@@ -2755,11 +3012,14 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
             elif self.key_op_finished == 'w':
                 # apply_layout_operation() recenters and pushes the new positions &
                 # view window across every stack level (it invalidates them all too).
-                if self.apply_layout_operation():
+                # Off-loop so the widget keeps repainting: this is the single most
+                # expensive keystroke in the component.
+                if await self._run_offloop_(self.apply_layout_operation,
+                                            note=f'{self.layout_operation}...'):
                     # Sync the (possibly new) layout background onto the active view
                     # without an extra refresh; the refresh below repaints it.
                     self.__applyBackgroundState__(refresh=False)
-                    self.__refreshView__(info=True)
+                    await self._refreshViewOffloop_(info=True)
 
             self.key_op_finished = ''
         if _mvc_stack_action_ is not None:
@@ -2914,6 +3174,12 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
         {node: '#rrggbb'} map, or None when there is nothing to color."""
         _ln_, _g_ = self.dfs_layout[self.df_level], self.graphs[self.df_level]
         if _g_ is None or _g_.number_of_nodes() == 0: return None
+        # Louvain is cheap at every size measured, so this never refuses today.  It is
+        # wired anyway so community detection is covered by the same gate as the layout
+        # operations rather than being the one keystroke nothing can see.
+        if not self.__confirmGate__('community detection', COMMUNITY_DETECTION,
+                                    _g_.number_of_nodes()):
+            return None
 
         _contracted_ = self.__contractCollapsedGraph__(_ln_, _g_, set())
         if _contracted_ is None: _g_c_, _members_ = _g_, {_n_: [_n_] for _n_ in _g_.nodes()}
@@ -3042,13 +3308,25 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
         (empty when the operation declined to run or raised)."""
         _op_ = self.layout_operation if layout_operation is None else layout_operation
         _ln_ = self.dfs_layout[self.df_level]
+        # Snapshot the undo stack itself (a list of references -- the deep copies are
+        # already made), so an operation that declines, is refused by the gate, or raises
+        # can leave it exactly as it found it.  Without this every such attempt pushed a
+        # no-change level, and the next 'u' was a silent no-op the user had to press twice.
+        _undo_before_ = list(self.previous_layouts)
         self.__cacheNodePositions__()
         # Writes new positions to _ln_.pos[_node_] = (x, y)
         try:
             _pos_modified_ = self.__layoutOperation__(_op_, _ln_, self.graphs[self.df_level], self.selected_entities)
+        # A layout that exhausts memory or is interrupted is not a layout that "declined to
+        # run" -- swallowing those made an OOM look like a key press that did nothing.
+        except (MemoryError, KeyboardInterrupt):
+            raise
         except Exception:
+            self.rt_self.logger.exception('linkpi: layout operation "%s" failed', _op_)
             _pos_modified_ = False
-        if not _pos_modified_: return {}
+        if not _pos_modified_:
+            self.previous_layouts = _undo_before_
+            return {}
         _ln_.view_window = None  # clear so __calculateGeometry__ recomputes from new positions
         _ln_.__calculateGeometry__()
         # A layout re-arranges the shared world, so the other stack levels need both
@@ -3114,6 +3392,9 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
     # applyBrushLeave() - fires when the mouse leaves the component while brush is active.
     #
     async def applyBrushLeave(self, event):
+        if self._busy_():
+            self.brush_leave_done = False
+            return
         async with self.lock:
             if not self.brush_leave_done: return
             if self.brush_state == 0:
@@ -3126,6 +3407,9 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
     # applyDragOp() - select the nodes within the drag operations bounding box.
     #
     async def applyDragOp(self, event):
+        if self._busy_():
+            self.drag_op_finished = False
+            return
         async with self.lock:
             if self.drag_op_finished:
                 self.apply_drag_select(
@@ -3140,6 +3424,9 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
     # - may also be used to de-select a selected node when the op string is "Subtract" and no drag occurs
     #
     async def applyMoveOp(self, event):
+        if self._busy_():
+            self.move_op_finished = False
+            return
         async with self.lock:
             try:
                 if self.move_op_finished:
@@ -3158,6 +3445,9 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
     # unselectedMoveOp() - occurs when user clicks directly on an unselected node.
     #
     async def unselectedMoveOp(self, event):
+        if self._busy_():
+            self.unselected_move_op_finished = False
+            return
         async with self.lock:
             if self.unselected_move_op_finished:
                 _x_, _y_ = self.allentities_x0, self.allentities_y0
@@ -3179,6 +3469,9 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
             self.unselected_move_op_finished = False
 
     async def applySearchOp(self, event):
+        if self._busy_():
+            self.search_op_finished = False
+            return
         async with self.lock:
             if self.search_str:
                 _s_ = self.search_str
@@ -3197,7 +3490,7 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
     # applyLayoutChoice() - a picker-menu commit in JS set layout_mode /
     # layout_operation; only the info line needs to reflect the new choice.
     #
-    def applyLayoutChoice(self, *events):
+    async def applyLayoutChoice(self, *events):
         self.__refreshView__(comp=False, all_ents=False, sel_ents=False)
 
     #
@@ -3215,7 +3508,7 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
     # applySizeChoice() - a size/opacity/shape picker-menu commit in JS set one
     # of the *_choice params; push the new value onto the LinkP(s) and re-render.
     #
-    def applySizeChoice(self, event):
+    async def applySizeChoice(self, event):
         if   event.name == 'link_opacity_choice':
             try:                            _op_ = int(event.new) / 100.0
             except (TypeError, ValueError): return
@@ -3225,7 +3518,34 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
         elif event.name == 'node_size_choice':
             self.updateLinkNodeParam('node_size', self.__sizeLabelToValue__(event.new))
         elif event.name == 'link_shape_choice':
-            self.updateLinkNodeParam('link_shape', event.new)
+            # The gate belongs here rather than in linkp: a refusal needs someone to ask,
+            # and linkp renders for non-interactive callers too, where refusing would just
+            # break the API.  linkp keeps its warning (T4a); this is the confirmation.
+            #
+            # Size is the graph's edge count -- distinct node pairs, which is what the
+            # layout aggregates flows down to.  It is undirected, so a two-way pair counts
+            # once where the layout would see two flows; the count is a lower bound on the
+            # real flow count, never an over-estimate that would refuse spuriously.
+            if event.new == 'flowmap' and self._suppress_shape_watcher_ is False:  # noqa: E501
+                _g_ = self.graphs[self.df_level]
+                _edges_ = _g_.number_of_edges() if _g_ is not None else 0
+                if not self.__confirmGate__("link_shape='flowmap'", FLOWMAP,
+                                            _edges_, unit='edges'):
+                    # Put the picker back, or the repeat-to-confirm gesture cannot happen:
+                    # param watchers fire on CHANGE, so re-picking 'flowmap' while the
+                    # param already reads 'flowmap' would be silent.  The flag stops the
+                    # reset from re-entering this branch.
+                    self._suppress_shape_watcher_ = True
+                    try:    self.link_shape_choice = str(getattr(
+                                self.dfs_layout[self.df_level], 'link_shape', 'line') or 'line')
+                    finally: self._suppress_shape_watcher_ = False
+                    return
+            # Off-loop: switching TO flowmap is the one picker commit that can start the
+            # force layout, which is the most expensive thing this component does.
+            self.__setLinkNodeParam__('link_shape', event.new)
+            await self._refreshViewOffloop_(
+                note=('laying out flow map...' if event.new == 'flowmap' else None))
+            return
         elif event.name == 'timing_spacing_choice':
             try:                            _sp_ = float(event.new)
             except (TypeError, ValueError): return
@@ -3238,6 +3558,7 @@ a . | cycle link arrows / timing marks (arrows-only when no time field)
 b . | cycle background (none | background | background + labels)
  .. | shift-b ........ | open background picker (flow field / neighborhood / clear); committing runs it
 c . | reset view or focus view on selected
+esc | cancel the running layout (keeps its best-so-far result)
  .. | shift-c ........ | focus view on selected + neighbors
  .. | ctrl-c ......... | copy selected nodes to clipboard (ctrl-shift-c uses node labels)
 d . | detect communities (louvain) & color nodes by community
@@ -3356,15 +3677,43 @@ z . | select node under mouse by color (shift, ctrl, and ctrl-shift apply)
 
     # Picker-menu data + state, prepended to the render script. Built separately
     # because the render script is a plain (non-f) string with JS brace literals.
+    #
+    # Menu items are [mnemonic, value, display, guarded].
+    #
+    #   value    -- what menuCommit sends back to Python; never annotated, or the label
+    #               would stop matching the registry key it selects.
+    #   display  -- what the user reads.  An operation that will stop to ask a question
+    #               says so here, so the cost is visible at the moment of choosing rather
+    #               than only after committing.
+    #   guarded  -- true for exactly those items, and it exempts them from the two ways
+    #               this menu commits without an explicit Enter: the single-character
+    #               mnemonic, and the 2.5 s inactivity timeout.  Pressing 'l' then '3'
+    #               used to start the force layout in two keystrokes with no confirmation
+    #               step at all.
+    #
+    def _annotate_(items, treatment_of, unit='nodes'):
+        _out_ = []
+        for _m_, _label_ in items:
+            _note_ = menu_annotation(treatment_of(_label_), unit)
+            _out_.append([_m_, _label_,
+                          f'{_label_}  ({_note_})' if _note_ else _label_,
+                          bool(_note_)])
+        return _out_
+
+    _operation_items_  = _annotate_(_LAYOUT_OP_MENU_, treatment_for)
+    _link_shape_menu_  = _annotate_([(m, l) for m, l in _link_shape_items_],
+                                    lambda lbl: FLOWMAP if lbl == 'flowmap' else None,
+                                    unit='edges')
+
     _menu_init_js_ = (
         "            state.menu_items = " + json.dumps({
-            'operation':    [[m, l] for m, l in _LAYOUT_OP_MENU_],
+            'operation':    _operation_items_,
             'mode':         [[m, l] for m, l in _LAYOUT_MODE_MENU_],
             'background':   [[m, l] for m, l in _BACKGROUND_OP_MENU_],
             'link_size':    _link_size_items_,
             'link_opacity': _link_opacity_items_,
             'node_size':    _node_size_items_,
-            'link_shape':   _link_shape_items_,
+            'link_shape':   _link_shape_menu_,
             'timing_spacing': _timing_spacing_items_,
         }) + ";\n"
         "            state.menu_open  = false; state.menu_kind = ''; state.menu_index = 0; state.menu_timer = null;\n"
@@ -3405,11 +3754,20 @@ z . | select node under mouse by color (shift, ctrl, and ctrl-shift apply)
         '__applyBackgroundState__':           __applyBackgroundState__,
         '__contractCollapsedGraph__':         __contractCollapsedGraph__,
         '__expandContractedResult__':         __expandContractedResult__,
+        '__confirmGate__':                    __confirmGate__,
         '__layoutOperation__':                __layoutOperation__,
         'applyLayoutInteraction':             applyLayoutInteraction,
         'applyMiddleOp':                      applyMiddleOp,
         'applyWheelOp':                       applyWheelOp,
+        '_cancelRequested_':                   _cancelRequested_,
+        '_armCancel_':                         _armCancel_,
+        'applyCancel':                        applyCancel,
+        '_busy_':                             _busy_,
         'setAnimation':                       setAnimation,
+        'setAnimationAsync':                  setAnimationAsync,
+        '_run_offloop_':                      _run_offloop_,
+        '_refreshViewOffloop_':               _refreshViewOffloop_,
+        '__setLinkNodeParam__':               __setLinkNodeParam__,
         'popStack':                           popStack,
         'setStackPostion':                    setStackPostion,
         'pushStack':                          pushStack,
@@ -3485,6 +3843,7 @@ z . | select node under mouse by color (shift, ctrl, and ctrl-shift apply)
     'ctrlkey'                     : param.Boolean(default=False),
     'last_key'                    : param.String(default=''),
     'key_op_finished'             : param.String(default=''),
+    'cancel_seq'                  : param.Integer(default=0),
     'x_mouse'                     : param.Integer(default=0),
     'y_mouse'                     : param.Integer(default=0),
     'has_focus'                   : param.Boolean(default=False),
@@ -3620,7 +3979,7 @@ z . | select node under mouse by color (shift, ctrl, and ctrl-shift apply)
                          :                                       'node size:';
             var _maxlen_ = _header_.length;
             for (var _i_ = 0; _i_ < _items_.length; _i_++) {
-                _maxlen_ = Math.max(_maxlen_, _items_[_i_][1].length + 4);
+                _maxlen_ = Math.max(_maxlen_, (_items_[_i_][2] || _items_[_i_][1]).length + 4);
             }
             var _w_menu_ = _maxlen_ * 7 + 20,
                 _h_menu_ = (_items_.length + 1) * 14 + 12,
@@ -3632,7 +3991,7 @@ z . | select node under mouse by color (shift, ctrl, and ctrl-shift apply)
                        + '<text x="18" y="' + (8 + 12) + '" style="' + _style_ + ' font-weight: bold;">' + _header_ + '</text>';
             for (var _i_ = 0; _i_ < _items_.length; _i_++) {
                 _html_ += '<text x="18" y="' + (8 + 12 + (_i_ + 1) * 14) + '" style="' + _style_ + '">'
-                        + '[' + _items_[_i_][0] + '] ' + _items_[_i_][1] + '</text>';
+                        + '[' + _items_[_i_][0] + '] ' + (_items_[_i_][2] || _items_[_i_][1]) + '</text>';
             }
             pickermenu.innerHTML = _html_;
         """,
@@ -3659,7 +4018,14 @@ z . | select node under mouse by color (shift, ctrl, and ctrl-shift apply)
         'menuArmTimer':"""
             if (state.menu_timer != null) { clearTimeout(state.menu_timer); }
             var _self_ = self;
-            state.menu_timer = setTimeout(function() { if (state.menu_open) { _self_.menuCommit(); } }, 2500);
+            state.menu_timer = setTimeout(function() {
+                if (!state.menu_open) { return; }
+                var _sel_ = state.menu_items[state.menu_kind][state.menu_index];
+                // Walking away from the menu must not start an expensive operation.  For a
+                // guarded item the timeout closes without committing; everything else commits
+                // as before.
+                if (_sel_ && _sel_[3]) { _self_.menuClose(); } else { _self_.menuCommit(); }
+            }, 2500);
         """,
 
         'myOnKeyDown':"""
@@ -3714,7 +4080,15 @@ z . | select node under mouse by color (shift, ctrl, and ctrl-shift apply)
                 }
                 else if (event.key.length === 1) {
                     for (var _i_ = 0; _i_ < _items_.length; _i_++) {
-                        if (_items_[_i_][0] === event.key) { state.menu_index = _i_; self.menuCommit(); break; }
+                        if (_items_[_i_][0] === event.key) {
+                            state.menu_index = _i_;
+                            // A guarded item is only SELECTED by its mnemonic; committing it
+                            // takes a deliberate Enter.  'l' then '3' used to start the force
+                            // layout in two keystrokes with nothing in between.
+                            if (_items_[_i_][3]) { self.menuRender(); self.menuArmTimer(); }
+                            else                 { self.menuCommit(); }
+                            break;
+                        }
                     }
                 }
                 return;
@@ -3736,6 +4110,7 @@ z . | select node under mouse by color (shift, ctrl, and ctrl-shift apply)
             else if (event.key == "E") { data.key_op_finished = 'E';  } // Expand (w/ digraph, forward)
             else if (event.key == "f") { data.key_op_finished = 'f';  } // Edge unfilter: re-add base rows on the currently-visible edges
             else if (event.key == "F") { data.key_op_finished = 'F';  } // Node expansion: re-add base rows incident to the currently-visible nodes
+            else if (event.key == "Escape") { data.cancel_seq = data.cancel_seq + 1; } // Ask the running layout to stop and keep its best-so-far result
             else if (event.key == "g") { state.layout_op        = true; // Mouse press is layout shape
                                          state.layout_line_flag = false; } 
             else if (event.key == "G") { state.menu_kind = 'mode';      self.menuOpen(); } // Open the layout-mode picker menu

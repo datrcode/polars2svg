@@ -122,21 +122,6 @@ class LandmarkMDSLayout(object):
         else:
             coords = np.array([landmark_pos[_nodes_as_list_[landmark]] for landmark in landmarks])
 
-        if isinstance(g, nx.Graph):
-            adj_matrix = nx.to_scipy_sparse_array(g, weight='weight', format='csr')
-        elif isinstance(g, csr_matrix):
-            adj_matrix = g
-        else:
-            adj_matrix = csr_matrix(g)
-
-        n = adj_matrix.shape[0]
-        distances = np.zeros((n, len(landmarks)))
-        for i, landmark in enumerate(landmarks):
-            dist = dijkstra(adj_matrix, directed=False, indices=landmark)
-            distances[:, i] = dist
-        max_finite_dist = np.max(distances[np.isfinite(distances)])
-        distances[np.isinf(distances)] = 2 * max_finite_dist
-
         self.coords, self.landmarks, self.node_mapping = coords, landmarks, node_mapping
 
         self.resulting_positions = {}

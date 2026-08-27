@@ -492,7 +492,7 @@ def _stage2_repair_targets(pos, radii, target_edges):
 
 
 def _stage2_optimize(positions, weights, edges, alpha=0.2, iterations=60,
-                     move_frac=0.35, min_frac=1e-3, repair=True, tol=1e-6):
+                     move_frac=0.35, min_frac=1e-3, repair=True, tol=1e-6, budget=None):
     """Run Stage 2 (compactness + neighbourhood repair). Returns (pos, s, report)."""
     pos = np.array(positions, dtype=float, copy=True)
     w = np.asarray(weights, dtype=float)
@@ -507,6 +507,10 @@ def _stage2_optimize(positions, weights, edges, alpha=0.2, iterations=60,
     prev = _stage2_energy(pos, w, edges, alpha, hint=s)
 
     for it in range(iterations):
+        # Positions are a consistent packing at every iteration boundary, so stopping
+        # here yields a less-compacted layout rather than a broken one.
+        if budget is not None and budget.expired():
+            break
         moved = False
 
         target = _stage2_centroid_targets(pos, w * s)
@@ -597,7 +601,8 @@ def _resolve_overlaps(pos, radii, passes=6, tol=1e-7, cache=None):
 
 
 def _stage3_refine(positions, weights, edges, alpha=0.2, beta=1.0, iterations=1250,
-                   step_frac=0.05, pocket_every=25, overlap_passes=6, seed_scale=None):
+                   step_frac=0.05, pocket_every=25, overlap_passes=6, seed_scale=None,
+                   budget=None):
     """Run Stage 3 (adds convexity). Returns (pos, s, report).
 
     ``s`` may only grow, never shrink: recomputing it fresh from the projection
@@ -613,6 +618,10 @@ def _stage3_refine(positions, weights, edges, alpha=0.2, beta=1.0, iterations=12
     report = {'iterations': iterations, 'start_scale': s}
 
     for it in range(iterations):
+        # Positions are a consistent packing at every iteration boundary, so stopping
+        # here yields a less-compacted layout rather than a broken one.
+        if budget is not None and budget.expired():
+            break
         radii = w * s
         if it % pocket_every == 0 and beta:
             pockets = _safe_pockets(pos, radii)
@@ -666,7 +675,8 @@ class NeighborhoodPreservingPacking(object):
                  power_iterations=60, force_iterations=1250,
                  move_frac=0.35, step_frac=0.05, pocket_every=25,
                  overlap_passes=6,
-                 repair=True, fit_mode='preserve_radii', bounds=None, padding=0.0):
+                 repair=True, fit_mode='preserve_radii', bounds=None, padding=0.0,
+                 budget=None):
         self.positions_in = np.asarray(positions, dtype=float).reshape(-1, 2)
         n = len(self.positions_in)
         if n == 0:
@@ -694,20 +704,27 @@ class NeighborhoodPreservingPacking(object):
             self.positions_raw = self.positions_in.copy()
             self.scale = _max_scale(self.positions_in, self.w)
             self.report = {'skipped': True, 'power': {}, 'forces': {}}
+            self.budget_note = None
         else:
             # Stage 2 -- power-diagram compaction
+            # One budget spans both stages: the caller asked for a total, not a per-stage
+            # allowance, and started once it is spent stage 3 stops on its first check.
+            if budget is not None:
+                budget.start(power_iterations + force_iterations)
             pos, s, rep_power = _stage2_optimize(
                 self.positions_in, self.w, self.edges, alpha=self.alpha,
-                iterations=power_iterations, move_frac=move_frac, repair=repair)
+                iterations=power_iterations, move_frac=move_frac, repair=repair,
+                budget=budget)
             # Stage 3 -- force-directed refinement (adds convexity)
             pos, s, rep_force = _stage3_refine(
                 pos, self.w, self.edges, alpha=self.alpha, beta=self.beta,
                 iterations=force_iterations, step_frac=step_frac,
                 pocket_every=pocket_every, overlap_passes=overlap_passes,
-                seed_scale=s)
+                seed_scale=s, budget=budget)
             self.positions_raw = pos
             self.scale = s
             self.report = {'skipped': False, 'power': rep_power, 'forces': rep_force}
+        self.budget_note = None if budget is None else budget.note
 
         self.radii_raw = self.w * self.scale
         self.positions, self.radii = self._fit()
@@ -817,6 +834,9 @@ class NCPLayout(object):
         nodes = [n for n in _candidates_ if n in pos]
 
         self.resulting_positions = {}
+        # budget= reaches NeighborhoodPreservingPacking through **kwargs; surfaced here so
+        # callers do not have to reach into .packing to find out what it cost them.
+        self.budget_note = None
         if len(nodes) == 0:
             return
         if len(nodes) < 3:
@@ -832,7 +852,8 @@ class NCPLayout(object):
             power_iterations=power_iterations, force_iterations=force_iterations,
             fit_mode=fit_mode, **kwargs)
         out = packing.positions
-        self.packing = packing
+        self.packing     = packing
+        self.budget_note = packing.budget_note
         self.resulting_positions = {
             n: (float(out[i, 0]), float(out[i, 1])) for i, n in enumerate(nodes)
         }

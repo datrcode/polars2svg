@@ -1235,13 +1235,15 @@ class Polars2SVG(P2SColorsMixin,
 
         Example::
 
-            pos = p2s.PolarsForceDirectedLayout(g).results()
+            pos = networkx.spring_layout(g)
             p2s.linkp(df, [('src', 'dst')], pos, color='dept', node_size='vary')
 
-        Layout provenance: ``PolarsForceDirectedLayout`` and ``ConveyProximityLayout``
-        implement Cohen (1997) "Drawing Graphs to Convey Proximity"; ``LandmarkMDSLayout``
-        implements de Silva & Tenenbaum (2003) Landmark MDS; ``TFDPLayout`` implements
-        Zhong et al. (2023) t-FDP. See each class's module header for the full citation.
+        Layout provenance: ``LandmarkMDSLayout`` implements de Silva & Tenenbaum (2003)
+        Landmark MDS; ``PivotMDSLayout`` implements Brandes & Pich (2007) Pivot MDS;
+        ``TFDPLayout`` implements Zhong et al. (2023) t-FDP. See each class's module header
+        for the full citation. (``PolarsForceDirectedLayout`` and ``ConveyProximityLayout``,
+        which implemented Cohen (1997) "Drawing Graphs to Convey Proximity", are deprecated
+        in 0.2.0 and removed in 0.3.0 — see the CHANGELOG for replacements.)
 
         relationships and pos may be passed as positional arguments (in any order after df) or
         as keyword arguments — but not both ways for the same parameter.

@@ -9,6 +9,7 @@
 # J.D. Cohen
 # ACM Transactions on Computer-Human Interaction, Vol. 4, No. 3, September 1997, Pages 197–229.
 
+import logging
 import polars as pl
 import networkx as nx
 from math import ceil
@@ -57,6 +58,13 @@ class ConveyProximityLayout(object):
     # Table V of paper (algorithm that includes multiple trials)
     #
     def __init__(self, g_connected, use_resistive_distances=True, k=0.0, iterations_min=32, iterations_multiplier=2, distances=None, cleanup=False, cleanup_min_ratio=0.05) -> None:
+        # Deprecated in 0.2.0, removed in 0.3.0.  See the note in
+        # polars_force_directed_layout.py for why this warns here and not at module level.
+        logging.getLogger('polars2svg_logger').warning(
+            'polars2svg: ConveyProximityLayout is deprecated and will be removed in 0.3.0; '
+            'use LandmarkMDSLayout / PivotMDSLayout for a distance-preserving layout. '
+            'Resistive (effective-resistance) distances have no replacement.'
+        )
         self.g_connected             = g_connected
         self.k                       = k
         self.V                       = set(self.g_connected.nodes)

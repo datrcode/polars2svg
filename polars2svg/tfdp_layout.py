@@ -191,6 +191,7 @@ def _tfdp_layout_core(
     seed: Optional[int] = None,
     verbose: bool = False,
     device: mx.Device | None = None,
+    budget=None,
     selection: set | None = None,
     focal_attraction_scale: float = 5.0,
     bg_repulsion_scale: float = 3.0,
@@ -254,7 +255,12 @@ def _tfdp_layout_core(
             mx.eval(pin_mask, init_pos)
 
     t0 = time.perf_counter()
+    if budget is not None: budget.start(max_iter)
     for step in range(max_iter):
+        # Positions are a consistent layout at every step boundary, so stopping here
+        # returns a less-converged embedding rather than a broken one.
+        if budget is not None and budget.expired():
+            break
         step_lr = _cooling_schedule(step, max_iter, lr)
         with mx.stream(device):
             if algo == "exact":
@@ -302,7 +308,7 @@ class TFDPLayout(object):
     g : NetworkX graph
     pos : dict {node: (x, y)}, optional
         Warm-start positions. If None, Pivot-MDS initialisation is used.
-        Mirrors the `pos=` convention of PolarsForceDirectedLayout.
+        Mirrors the `pos=` convention of the other layout classes.
     selection : set of node IDs, optional
         Focal nodes for local refinement. Attractive forces on edges
         touching these nodes are boosted; repulsion between non-focal
@@ -334,7 +340,7 @@ class TFDPLayout(object):
                  algo='exact', alpha=0.1, beta=8.0, gamma=2.0,
                  max_iter=300, combine=True, rvs_k=64, lr=0.1,
                  focal_attraction_scale=5.0, bg_repulsion_scale=3.0,
-                 seed=None, verbose=False, device=None) -> None:
+                 seed=None, verbose=False, device=None, budget=None) -> None:
 
         # Determine connectivity (handle directed and undirected graphs)
         if isinstance(g, nx.DiGraph):
@@ -363,11 +369,12 @@ class TFDPLayout(object):
                     combine=combine, rvs_k=rvs_k, lr=lr,
                     focal_attraction_scale=focal_attraction_scale,
                     bg_repulsion_scale=bg_repulsion_scale,
-                    seed=seed, verbose=verbose, device=device)
+                    seed=seed, verbose=verbose, device=device, budget=budget)
                 merged_pos |= sub_layout.results()
                 total_elapsed += sub_layout.elapsed
             self.resulting_positions = _tileSideBySide_(g_und, merged_pos)
-            self.elapsed = total_elapsed
+            self.budget_note = None if budget is None else budget.note
+            self.elapsed     = total_elapsed
             return
 
         # Build node ordering and scipy sparse adjacency matrix
@@ -400,7 +407,7 @@ class TFDPLayout(object):
             adj, init=init, algo=algo, alpha=alpha, beta=beta,
             gamma=gamma, max_iter=max_iter, combine=combine,
             rvs_k=rvs_k, lr=lr, seed=seed, verbose=verbose,
-            device=device, selection=sel_indices,
+            device=device, budget=budget, selection=sel_indices,
             focal_attraction_scale=focal_attraction_scale,
             bg_repulsion_scale=bg_repulsion_scale,
             pin_background=pin_background,
@@ -410,7 +417,8 @@ class TFDPLayout(object):
             nodes[i]: (float(pos_arr[i, 0]), float(pos_arr[i, 1]))
             for i in range(n)
         }
-        self.elapsed = elapsed
+        self.elapsed     = elapsed
+        self.budget_note = None if budget is None else budget.note
 
     def results(self) -> dict:
         """Return {node: (x, y)} position dict."""

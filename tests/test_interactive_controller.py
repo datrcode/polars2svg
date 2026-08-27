@@ -896,9 +896,54 @@ class TestLINKPILayoutRegistry(unittest.TestCase):
     def test_layout_registry_is_dict(self):
         self.assertIsInstance(self.linkpi_instance._layout_registry, dict)
 
-    def test_registry_entries_are_callable(self):
-        for key, handler in self.linkpi_instance._layout_registry.items():
-            self.assertTrue(callable(handler), f'handler for {key!r} is not callable')
+    def test_registry_entries_are_records_with_a_callable_handler(self):
+        from polars2svg.interactive_treatments import RegistryEntry
+        for key, entry in self.linkpi_instance._layout_registry.items():
+            self.assertIsInstance(entry, RegistryEntry, f'{key!r} is not a RegistryEntry')
+            self.assertTrue(callable(entry.handler), f'handler for {key!r} is not callable')
+
+    def test_every_layout_entry_declares_a_treatment(self):
+        # The point of the record: a layout added later cannot be silently unguarded.
+        # Whoever adds it has to say whether it can be interrupted, whether it is safe to
+        # move to a subprocess, and what its quality-for-time knobs are.
+        from polars2svg.interactive_treatments import Treatment
+        for key, entry in self.linkpi_instance._layout_registry.items():
+            self.assertIsInstance(entry.treatment, Treatment, f'{key!r} declares no treatment')
+            self.assertIsInstance(entry.treatment.truncatable, bool)
+            self.assertIsInstance(entry.treatment.killable,    bool)
+            self.assertIsInstance(entry.treatment.levers,      tuple)
+
+    def test_every_background_entry_declares_a_treatment(self):
+        from polars2svg.interactive_treatments import RegistryEntry, Treatment
+        for key, entry in self.linkpi_instance._background_registry.items():
+            self.assertIsInstance(entry, RegistryEntry, f'{key!r} is not a RegistryEntry')
+            self.assertIsInstance(entry.treatment, Treatment, f'{key!r} declares no treatment')
+
+    def test_flow_field_backgrounds_are_not_declared_killable(self):
+        # They stash the producer instance on the controller for summary()/tests, which
+        # would not survive a process hop -- so they must never be declared safe to move
+        # into one.  Asserted rather than left to a comment because the failure would be
+        # silent state loss rather than a crash.
+        for _label_, _entry_ in self.linkpi_instance._background_registry.items():
+            if _label_.startswith('flow field'):
+                self.assertFalse(_entry_.treatment.killable,
+                                 f'{_label_} stashes controller state; it is not killable')
+
+    def test_declared_levers_name_real_parameters(self):
+        # A lever that is not actually a parameter of the underlying callable is a lie the
+        # T2 work would later trip over.
+        import inspect, networkx as nx
+        _known_ = {
+            'spring nx': nx.spring_layout,
+        }
+        for _label_, _fn_ in _known_.items():
+            _entry_ = self.linkpi_instance._layout_registry.get(_label_)
+            if _entry_ is None:
+                continue
+            _params_ = set(inspect.signature(_fn_).parameters)
+            for _lever_ in _entry_.treatment.levers:
+                self.assertIn(_lever_, _params_,
+                              f'{_label_} declares lever {_lever_!r}, not a parameter of {_fn_}')
 
     def test_registry_covers_all_layout_operations(self):
         registry_keys = set(self.linkpi_instance._layout_registry.keys())
@@ -934,7 +979,7 @@ class TestLINKPILayoutRegistry(unittest.TestCase):
             self.skipTest('ncp_layout not importable')
         ln      = self.linkpi_instance.dfs_layout[0]
         g       = self.linkpi_instance.graphs[0]
-        handler = self.linkpi_instance._layout_registry[self.linkpi_instance.NCP_PACK]
+        handler = self.linkpi_instance._layout_registry[self.linkpi_instance.NCP_PACK].handler
         result  = handler(ln, g, set())
         self.assertIsInstance(result, dict)
         # every positioned node in the visible graph is packed
@@ -945,16 +990,439 @@ class TestLINKPILayoutRegistry(unittest.TestCase):
         import networkx as nx
         ln      = self.linkpi_instance.dfs_layout[0]
         g       = self.linkpi_instance.graphs[0]
-        handler = self.linkpi_instance._layout_registry[self.linkpi_instance.SPRING_NX]
+        handler = self.linkpi_instance._layout_registry[self.linkpi_instance.SPRING_NX].handler
         result  = handler(ln, g, set())
         self.assertIsInstance(result, dict)
 
-    def test_spring_nx_handler_returns_none_with_selection(self):
+    def test_spring_nx_handler_moves_selection_and_pins_the_rest(self):
+        # 0.2.0: spring nx absorbed the job the removed PolarsForceDirectedLayout existed
+        # for -- with a selection it lays out those nodes and pins the rest via networkx's
+        # fixed=, which also suppresses the rescale that would otherwise move them.
         ln      = self.linkpi_instance.dfs_layout[0]
         g       = self.linkpi_instance.graphs[0]
-        handler = self.linkpi_instance._layout_registry[self.linkpi_instance.SPRING_NX]
+        handler = self.linkpi_instance._layout_registry[self.linkpi_instance.SPRING_NX].handler
+        before  = {_n_: tuple(ln.pos[_n_]) for _n_ in g.nodes()}
         result  = handler(ln, g, {'a'})
-        self.assertIsNone(result)
+        self.assertIsInstance(result, dict)
+        for _n_ in g.nodes():
+            if _n_ == 'a':
+                continue
+            self.assertAlmostEqual(result[_n_][0], before[_n_][0], places=6,
+                                   msg=f'{_n_} should have been pinned')
+            self.assertAlmostEqual(result[_n_][1], before[_n_][1], places=6,
+                                   msg=f'{_n_} should have been pinned')
+
+    def test_spring_nx_handler_declines_when_selection_is_not_in_this_graph(self):
+        # A selection can carry edge entities and nodes from other stack levels; when none
+        # of it is in this graph there is nothing to move, and laying everything out would
+        # be a surprise.
+        ln      = self.linkpi_instance.dfs_layout[0]
+        g       = self.linkpi_instance.graphs[0]
+        handler = self.linkpi_instance._layout_registry[self.linkpi_instance.SPRING_NX].handler
+        self.assertIsNone(handler(ln, g, {'not-a-node-in-this-graph'}))
+
+    def test_removed_layout_operations_are_absent(self):
+        # 0.2.0 removed both from linkpi (CHANGELOG). They were the two slowest operations
+        # in the registry and neither was the best implementation of what it did.
+        from polars2svg.interactive_controller import _LAYOUT_OP_MENU_
+        _labels_ = [_l_ for _, _l_ in _LAYOUT_OP_MENU_]
+        for _gone_ in ('force directed', 'convey proximity'):
+            self.assertNotIn(_gone_, self.linkpi_instance._layout_registry)
+            self.assertNotIn(_gone_, _labels_)
+            self.assertNotIn(_gone_, self.linkpi_instance.layout_operations)
+
+
+@unittest.skipUnless(PANEL_AVAILABLE, 'panel not installed')
+class TestLINKPIConfirmGate(unittest.TestCase):
+    """T4c: an operation declared to need asking about at this size asks once, then runs.
+
+    The thresholds that ship are far above anything a test graph reaches, so these lower
+    them on the entry under test rather than building a six-thousand-node graph.  That is
+    also the honest shape of the feature: the threshold is a declaration, so a test that
+    declares a different one is exercising the mechanism, not faking it.
+    """
+
+    def _ctrl(self):
+        from polars2svg import Polars2SVG
+        from polars2svg.interactive_controller import linkpi
+        p2s = Polars2SVG()
+        return linkpi(p2s.linkp(_make_link_df(), relationships=[('fm', 'to')], pos=_make_pos()))
+
+    def _lower_threshold(self, ctrl, op, limit=1):
+        from polars2svg.interactive_treatments import RegistryEntry, Treatment
+        _h_ = ctrl._layout_registry[op].handler
+        ctrl._layout_registry[op] = RegistryEntry(_h_, Treatment(confirm_above=limit))
+        return ctrl
+
+    def test_below_threshold_runs_without_asking(self):
+        ctrl = self._ctrl()
+        self.assertTrue(ctrl.apply_layout_operation(ctrl.SPRING_NX))
+        self.assertIsNone(ctrl._confirm_armed_)
+
+    def test_over_threshold_refuses_the_first_time(self):
+        ctrl = self._lower_threshold(self._ctrl(), 'spring nx')
+        before = dict(ctrl.dfs_layout[0].pos)
+        self.assertEqual(ctrl.apply_layout_operation(ctrl.SPRING_NX), {})
+        self.assertEqual(dict(ctrl.dfs_layout[0].pos), before)
+        self.assertEqual(ctrl._confirm_armed_, 'spring nx')
+
+    def test_repeating_the_same_operation_runs_it(self):
+        ctrl = self._lower_threshold(self._ctrl(), 'spring nx')
+        ctrl.apply_layout_operation(ctrl.SPRING_NX)
+        self.assertTrue(ctrl.apply_layout_operation(ctrl.SPRING_NX))
+        self.assertIsNone(ctrl._confirm_armed_, 'the confirmation should be spent')
+
+    def test_a_different_operation_disarms(self):
+        # A confirmation armed for one operation must never be redeemable by another.
+        ctrl = self._lower_threshold(self._ctrl(), 'spring nx')
+        ctrl.apply_layout_operation(ctrl.SPRING_NX)
+        self.assertEqual(ctrl._confirm_armed_, 'spring nx')
+        ctrl.apply_layout_operation(ctrl.HYPERTREE)
+        self.assertIsNone(ctrl._confirm_armed_)
+
+    def test_a_refused_operation_is_not_an_undo_step(self):
+        ctrl = self._lower_threshold(self._ctrl(), 'spring nx')
+        ctrl.apply_layout_operation(ctrl.SPRING_NX)
+        self.assertEqual(len(ctrl.previous_layouts), 0)
+
+    def test_a_declined_operation_is_not_an_undo_step(self):
+        # Same hygiene for the older path: pivot mds declines outright with a selection.
+        ctrl = self._ctrl()
+        ctrl.selected_entities = {'a'}
+        ctrl.apply_layout_operation(ctrl.PIVOT_MDS)
+        self.assertEqual(len(ctrl.previous_layouts), 0)
+
+    def test_a_real_layout_is_still_an_undo_step(self):
+        ctrl = self._ctrl()
+        ctrl.apply_layout_operation(ctrl.SPRING_NX)
+        self.assertEqual(len(ctrl.previous_layouts), 1)
+
+    def test_the_message_names_the_size_and_never_a_duration(self):
+        # D6: the gate has no honest seconds estimate to quote, so it must not invent one.
+        ctrl = self._lower_threshold(self._ctrl(), 'spring nx')
+        ctrl.apply_layout_operation(ctrl.SPRING_NX)
+        _msg_ = ctrl.animation_inner + ' ' + (ctrl._last_cost_note_ or '')
+        self.assertIn('nodes', _msg_)
+        for _duration_word_ in ('second', 'minute', 'hour', 'estimated', '~'):
+            self.assertNotIn(_duration_word_, _msg_)
+
+    def test_the_note_reaches_info_str(self):
+        ctrl = self._lower_threshold(self._ctrl(), 'spring nx')
+        ctrl.apply_layout_operation(ctrl.SPRING_NX)
+        ctrl.__refreshView__(comp=False, all_ents=False, sel_ents=False)
+        self.assertIn('awaiting confirm', ctrl.info_str)
+
+    def test_spring_nx_spends_full_iterations_on_a_small_graph(self):
+        import networkx as nx, unittest.mock as mock
+        ctrl = self._ctrl()
+        with mock.patch.object(nx, 'spring_layout', wraps=nx.spring_layout) as _sl_:
+            ctrl.apply_layout_operation(ctrl.SPRING_NX)
+        self.assertEqual(_sl_.call_args.kwargs['iterations'], 50)
+        self.assertIsNone(ctrl._last_cost_note_)
+
+    def test_spring_nx_spends_fewer_iterations_on_a_large_graph_and_says_so(self):
+        # T2: networkx exposes no per-iteration hook, so the only lever is chosen before
+        # the call.  Faked via the node count rather than by building a real 4000-node
+        # graph -- the handler reads g.number_of_nodes() and nothing else about size.
+        import networkx as nx, unittest.mock as mock
+        ctrl = self._ctrl()
+        _g_  = ctrl.graphs[ctrl.df_level]
+        with mock.patch.object(_g_, 'number_of_nodes', return_value=4000), \
+             mock.patch.object(nx, 'spring_layout', wraps=nx.spring_layout) as _sl_:
+            ctrl.apply_layout_operation(ctrl.SPRING_NX)
+        self.assertEqual(_sl_.call_args.kwargs['iterations'], 25)
+        self.assertIn('25 of 50 iterations', ctrl._last_cost_note_)
+
+    def test_spring_nx_iterations_never_fall_below_the_floor(self):
+        # Also documents how T4c and T2 compose: at this size the gate asks first, so the
+        # lever is only reached on the confirming repeat.  Squeezing iterations is not a
+        # substitute for asking -- it is what happens once the user has said yes.
+        import networkx as nx, unittest.mock as mock
+        ctrl = self._ctrl()
+        _g_  = ctrl.graphs[ctrl.df_level]
+        with mock.patch.object(_g_, 'number_of_nodes', return_value=10_000_000), \
+             mock.patch.object(nx, 'spring_layout', wraps=nx.spring_layout) as _sl_:
+            ctrl.apply_layout_operation(ctrl.SPRING_NX)
+            self.assertIsNone(_sl_.call_args, 'the gate should have refused the first time')
+            ctrl.apply_layout_operation(ctrl.SPRING_NX)
+        self.assertEqual(_sl_.call_args.kwargs['iterations'], 10)
+
+    def test_spring_nx_note_does_not_clear_another_operations_note(self):
+        ctrl = self._ctrl()
+        ctrl._last_cost_note_ = "link_shape='flowmap': 500 edges, awaiting confirm"
+        ctrl.apply_layout_operation(ctrl.SPRING_NX)
+        self.assertIn('flowmap', ctrl._last_cost_note_)
+
+    def test_community_detection_passes_the_gate_at_test_sizes(self):
+        # Wired to the gate but declared cheap, so it must not start asking.
+        ctrl = self._ctrl()
+        self.assertIsNotNone(ctrl.apply_community_detection())
+        self.assertIsNone(ctrl._confirm_armed_)
+
+
+@unittest.skipUnless(PANEL_AVAILABLE, 'panel not installed')
+class TestLINKPIOffLoopExecution(unittest.TestCase):
+    """T5a: heavy work runs on a worker thread so the widget keeps repainting.
+
+    This does not make anything interruptible -- Python cannot kill a thread parked in
+    numpy or networkx.  What it buys is that a long operation looks like a long operation
+    rather than like a hang, which is a different property and worth its own tests.
+    """
+
+    def _ctrl(self):
+        from polars2svg import Polars2SVG
+        from polars2svg.interactive_controller import linkpi
+        p2s = Polars2SVG()
+        return linkpi(p2s.linkp(_make_link_df(), relationships=[('fm', 'to')], pos=_make_pos()))
+
+    def test_the_event_loop_keeps_running_during_a_slow_operation(self):
+        import time
+        ctrl  = self._ctrl()
+        ticks = []
+
+        def _slow_():
+            time.sleep(0.35)
+            return {'a': (9.0, 9.0)}
+
+        async def _drive_():
+            async def _ticker_():
+                _end_ = time.time() + 0.35
+                while time.time() < _end_:
+                    ticks.append(1)
+                    await asyncio.sleep(0.005)
+            ctrl.apply_layout_operation = _slow_
+            ctrl.key_op_finished = 'w'
+            await asyncio.gather(ctrl.applyKeyOp(None), _ticker_())
+
+        asyncio.run(_drive_())
+        # Run inline on the loop this would be 0; the exact count is machine-dependent, so
+        # the assertion is only that the loop was not starved.
+        self.assertGreater(len(ticks), 10, 'the event loop was blocked by the operation')
+
+    def test_setAnimation_from_a_worker_thread_is_deferred_then_flushed(self):
+        # D3: params are written only on the loop.  The confirm gate calls setAnimation
+        # from inside a helper that now runs off-loop, so the queue is what keeps that
+        # from being a cross-thread param write.
+        ctrl = self._ctrl()
+        _seen_ = {}
+
+        def _work_():
+            ctrl.setAnimation('<text>from the worker</text>')
+            _seen_['during'] = ctrl.animation_inner
+            return True
+
+        asyncio.run(ctrl._run_offloop_(_work_))
+        self.assertNotIn('from the worker', _seen_['during'], 'should not write mid-flight')
+        self.assertIn('from the worker', ctrl.animation_inner, 'should flush afterwards')
+
+    def test_offloop_depth_returns_to_zero_even_when_the_work_raises(self):
+        ctrl = self._ctrl()
+
+        def _boom_():
+            raise ValueError('boom')
+
+        with self.assertRaises(ValueError):
+            asyncio.run(ctrl._run_offloop_(_boom_))
+        self.assertEqual(ctrl._offloop_depth_, 0,
+                         'a leaked depth would silently swallow every later setAnimation')
+
+    def test_a_note_is_painted_before_the_work_starts(self):
+        ctrl = self._ctrl()
+        _seen_ = {}
+
+        def _work_():
+            _seen_['during'] = ctrl.animation_inner
+            return True
+
+        asyncio.run(ctrl._run_offloop_(_work_, note='working...'))
+        self.assertIn('working...', _seen_['during'],
+                      'the indicator must be up before the thing it describes runs')
+
+    def test_escape_while_nothing_is_running_does_not_arm_a_cancel(self):
+        # Otherwise an idle Escape would silently cancel whatever the user asked for next.
+        ctrl = self._ctrl()
+        asyncio.run(ctrl.applyCancel(None))
+        self.assertFalse(ctrl._cancel_requested_)
+
+    def test_escape_during_an_operation_sets_the_flag_the_worker_polls(self):
+        ctrl  = self._ctrl()
+        _seen_ = {}
+
+        def _work_():
+            for _ in range(200):
+                if ctrl._cancelRequested_():
+                    _seen_['stopped'] = True
+                    return True
+                time.sleep(0.005)
+            return False
+
+        async def _drive_():
+            async def _cancel_():
+                await asyncio.sleep(0.05)
+                await ctrl.applyCancel(None)
+            _res_, _ = await asyncio.gather(ctrl._run_offloop_(_work_), _cancel_())
+            return _res_
+
+        import time
+        self.assertTrue(asyncio.run(_drive_()))
+        self.assertTrue(_seen_.get('stopped'), 'the worker never saw the cancel')
+
+    def test_each_operation_starts_with_the_cancel_flag_clear(self):
+        # Armed at the start rather than cleared at the end, so a stale cancel cannot
+        # carry into the next operation.
+        ctrl = self._ctrl()
+        ctrl._cancel_requested_ = True
+        asyncio.run(ctrl._run_offloop_(lambda: None))
+        self.assertFalse(ctrl._cancel_requested_)
+
+    def test_refresh_offloop_still_updates_the_view(self):
+        ctrl = self._ctrl()
+        ctrl.mod_inner = ''
+        asyncio.run(ctrl._refreshViewOffloop_())
+        self.assertIn('<svg', ctrl.mod_inner)
+
+
+@unittest.skipUnless(PANEL_AVAILABLE, 'panel not installed')
+class TestLINKPIRejectWhileBusy(unittest.TestCase):
+    """D4: a user action arriving mid-operation is dropped, not banked.
+
+    The lock is held across an await that can last minutes; queueing would replay a burst
+    of stale operations against a view that has since moved.
+    """
+
+    def _ctrl(self):
+        from polars2svg import Polars2SVG
+        from polars2svg.interactive_controller import linkpi
+        p2s = Polars2SVG()
+        return linkpi(p2s.linkp(_make_link_df(), relationships=[('fm', 'to')], pos=_make_pos()))
+
+    def _while_locked(self, ctrl, coro_fn):
+        async def _drive_():
+            async def _hold_():
+                async with ctrl.lock:
+                    await asyncio.sleep(0.15)
+            async def _act_():
+                await asyncio.sleep(0.02)
+                await coro_fn()
+            await asyncio.gather(_hold_(), _act_())
+        asyncio.run(_drive_())
+
+    def test_a_key_press_while_busy_is_dropped(self):
+        # Counted through a spy rather than by watching positions: assigning a trigger
+        # param fires its watcher immediately, so the operation would already have run
+        # once before the lock was ever taken.  The question here is only whether the
+        # call made while the lock IS held gets through.
+        ctrl   = self._ctrl()
+        _calls_ = []
+        ctrl.apply_layout_operation = lambda *a, **k: (_calls_.append(1), {})[1]
+        ctrl.key_op_finished = 'w'
+        _baseline_ = len(_calls_)
+        self._while_locked(ctrl, lambda: ctrl.applyKeyOp(None))
+        self.assertEqual(len(_calls_), _baseline_, 'the busy guard let the operation run')
+        self.assertIn('busy', ctrl.animation_inner)
+
+    def test_every_dropped_callback_clears_its_own_trigger(self):
+        # The trigger params fire on CHANGE.  A dropped event that left its trigger set
+        # would make the NEXT press of the same key silent -- the failure would look like
+        # a broken keyboard, long after the operation that caused it.
+        for _trigger_, _value_, _call_ in (
+            ('key_op_finished',             'q',   'applyKeyOp'),
+            ('drag_op_finished',            True,  'applyDragOp'),
+            ('move_op_finished',            True,  'applyMoveOp'),
+            ('wheel_op_finished',           True,  'applyWheelOp'),
+            ('middle_op_finished',          True,  'applyMiddleOp'),
+            ('unselected_move_op_finished', True,  'unselectedMoveOp'),
+            ('search_op_finished',          True,  'applySearchOp'),
+            ('brush_leave_done',            True,  'applyBrushLeave'),
+        ):
+            with self.subTest(callback=_call_):
+                ctrl = self._ctrl()
+                setattr(ctrl, _trigger_, _value_)
+                self._while_locked(ctrl, lambda c=ctrl, n=_call_: getattr(c, n)(None))
+                _left_ = getattr(ctrl, _trigger_)
+                self.assertIn(_left_, ('', False, 0),
+                              f'{_call_} dropped the event but left {_trigger_}={_left_!r}')
+
+    def test_the_mvc_path_is_not_dropped_while_busy(self):
+        # Peer-driven, not user-driven: dropping one would leave this view showing
+        # something the other views are not.
+        ctrl = self._ctrl()
+        _df2_ = _make_link_df()
+        async def _drive_():
+            async def _hold_():
+                async with ctrl.lock:
+                    await asyncio.sleep(0.1)
+            async def _peer_():
+                await asyncio.sleep(0.02)
+                await ctrl.display(_df2_, [_df2_], 0)
+            await asyncio.gather(_hold_(), _peer_())
+        asyncio.run(_drive_())
+        self.assertNotIn('busy', ctrl.animation_inner)
+
+
+@unittest.skipUnless(PANEL_AVAILABLE, 'panel not installed')
+class TestLINKPIFlowmapConfirm(unittest.TestCase):
+    """Switching link_shape to 'flowmap' asks first once the graph is big enough."""
+
+    def _ctrl(self, confirm_above=1):
+        from polars2svg import Polars2SVG
+        from polars2svg.interactive_controller import linkpi
+        import polars2svg.interactive_controller as _ic_
+        from polars2svg.interactive_treatments import Treatment
+        p2s  = Polars2SVG()
+        ctrl = linkpi(p2s.linkp(_make_link_df(), relationships=[('fm', 'to')], pos=_make_pos()))
+        _orig_ = _ic_.FLOWMAP
+        _ic_.FLOWMAP = Treatment(truncatable=True, killable=True, confirm_above=confirm_above)
+        self.addCleanup(setattr, _ic_, 'FLOWMAP', _orig_)
+        return ctrl
+
+    def _shape(self, ctrl):
+        return ctrl.dfs_layout[ctrl.df_level].link_shape
+
+    def _commit(self, ctrl, value):
+        """Drive the picker watcher directly instead of assigning the param.
+
+        applySizeChoice became a coroutine in the off-loop work, so assigning
+        ``link_shape_choice`` now goes through param's async executor -- which runs the
+        coroutine inline when no event loop is active but *defers* it to a task when one
+        is.  Whether one is active depends on what else the suite has already done, so
+        assigning the param made these tests pass alone and fail in a full run.  Calling
+        the watcher explicitly is deterministic either way.
+        """
+        from types import SimpleNamespace
+        asyncio.run(ctrl.applySizeChoice(
+            SimpleNamespace(name='link_shape_choice', new=value)))
+
+    def test_switching_to_flowmap_asks_first(self):
+        ctrl = self._ctrl()
+        self._commit(ctrl, 'flowmap')
+        self.assertNotEqual(self._shape(ctrl), 'flowmap', 'should not have applied yet')
+        self.assertEqual(ctrl._confirm_armed_, "link_shape='flowmap'")
+
+    def test_the_picker_is_put_back_so_a_repeat_can_fire(self):
+        # param watchers fire on change; leaving the picker reading 'flowmap' would make
+        # re-picking it silent and the confirmation unreachable.
+        ctrl = self._ctrl()
+        self._commit(ctrl, 'flowmap')
+        self.assertNotEqual(ctrl.link_shape_choice, 'flowmap')
+
+    def test_repeating_applies_flowmap(self):
+        ctrl = self._ctrl()
+        self._commit(ctrl, 'flowmap')
+        self._commit(ctrl, 'flowmap')
+        self.assertEqual(self._shape(ctrl), 'flowmap')
+
+    def test_below_threshold_applies_immediately(self):
+        ctrl = self._ctrl(confirm_above=10_000)
+        self._commit(ctrl, 'flowmap')
+        self.assertEqual(self._shape(ctrl), 'flowmap')
+        self.assertIsNone(ctrl._confirm_armed_)
+
+    def test_other_shapes_are_never_gated(self):
+        ctrl = self._ctrl()
+        self._commit(ctrl, 'curve')
+        self.assertEqual(self._shape(ctrl), 'curve')
+        self.assertIsNone(ctrl._confirm_armed_)
 
 
 @unittest.skipUnless(PANEL_AVAILABLE, 'panel not installed')
@@ -1002,7 +1470,7 @@ class TestLINKPIBackgroundCycling(unittest.TestCase):
     def test_circle_pack_handler_returns_pos_and_background(self):
         ctrl = self._make_ctrl()
         ln, g = ctrl.dfs_layout[0], ctrl.graphs[0]
-        result = ctrl._layout_registry[ctrl.CIRCLE_PACK](ln, g, set())
+        result = ctrl._layout_registry[ctrl.CIRCLE_PACK].handler(ln, g, set())
         self.assertIsInstance(result, tuple)
         pos, shapes = result
         self.assertIsInstance(pos, dict)
@@ -1012,7 +1480,7 @@ class TestLINKPIBackgroundCycling(unittest.TestCase):
     def test_donut_handler_returns_pos_and_cells(self):
         ctrl = self._make_donut_ctrl()
         ln, g = ctrl.dfs_layout[0], ctrl.graphs[0]
-        result = ctrl._layout_registry[ctrl.HYPERTREE_DONUT](ln, g, set())
+        result = ctrl._layout_registry[ctrl.HYPERTREE_DONUT].handler(ln, g, set())
         self.assertIsInstance(result, tuple)
         pos, cells = result
         self.assertIsInstance(pos, dict)
@@ -1185,11 +1653,13 @@ class TestLINKPILayoutStackPropagation(unittest.TestCase):
         self.assertNotIn('c', ctrl.dfs_layout[0].pos)
 
     def test_declined_layout_leaves_every_level_untouched(self):
-        # spring_layout is a global re-layout -> a no-op with a selection in place.
+        # pivot mds is a global re-layout -> a no-op with a selection in place.  (This used
+        # spring nx until 0.2.0, when spring nx gained a selection branch and stopped
+        # declining -- see test_spring_nx_handler_moves_selection_and_pins_the_rest.)
         ctrl   = self._make_ctrl_with_stack()
         ctrl.selected_entities = {'a'}
         before = [dict(ln.pos) for ln in ctrl.dfs_layout]
-        self.assertEqual(ctrl.apply_layout_operation(ctrl.SPRING_NX), {})
+        self.assertEqual(ctrl.apply_layout_operation(ctrl.PIVOT_MDS), {})
         self.assertEqual([dict(ln.pos) for ln in ctrl.dfs_layout], before)
 
     def test_w_key_propagates_across_the_stack(self):
@@ -1501,13 +1971,56 @@ class TestLINKPISizeCycleMenus(unittest.TestCase):
         ctrl = self._make_ctrl(link_shape='curve')
         self.assertEqual(ctrl.link_shape_choice, 'curve')
 
-    def test_link_shape_menu_lists_all_shapes(self):
+    def _menu_items(self, ctrl):
         import json, re
-        ctrl   = self._make_ctrl()
         render = type(ctrl)._scripts['render']
-        items  = json.loads(re.search(r'state\.menu_items = (\{.*?\});', render, re.S).group(1))
-        labels = [lbl for _, lbl in items['link_shape']]
-        self.assertEqual(labels, ['line', 'curve', 'flowmap'])
+        return json.loads(re.search(r'state\.menu_items = (\{.*?\});', render, re.S).group(1))
+
+    def test_link_shape_menu_lists_all_shapes(self):
+        # Items are [mnemonic, value, display, guarded]; the VALUE is what round-trips to
+        # Python and must stay the bare label, or it would stop matching the registry key.
+        _items_ = self._menu_items(self._make_ctrl())['link_shape']
+        self.assertEqual([_i_[1] for _i_ in _items_], ['line', 'curve', 'flowmap'])
+
+    def test_an_operation_that_will_ask_says_so_in_the_menu(self):
+        # Threshold read from the declaration rather than hardcoded: sibling tests patch
+        # these module-level Treatments, and pytest-randomly means execution order is not
+        # fixed, so a literal here would be an order-dependent failure waiting to happen.
+        from polars2svg.interactive_treatments import SPRING_NX
+        _by_value_ = {_i_[1]: _i_ for _i_ in self._menu_items(self._make_ctrl())['operation']}
+        _spring_ = _by_value_['spring nx']
+        self.assertIn(f'asks >{SPRING_NX.confirm_above:,} nodes', _spring_[2])
+        self.assertTrue(_spring_[3], 'it should be guarded against accidental commit')
+
+    def test_flowmap_says_so_in_the_shape_menu(self):
+        from polars2svg.interactive_treatments import FLOWMAP
+        _by_value_ = {_i_[1]: _i_ for _i_ in self._menu_items(self._make_ctrl())['link_shape']}
+        self.assertIn(f'asks >{FLOWMAP.confirm_above:,} edges', _by_value_['flowmap'][2])
+        self.assertTrue(_by_value_['flowmap'][3])
+
+    def test_a_cheap_operation_is_neither_annotated_nor_guarded(self):
+        # Annotating everything would make the annotation worth nothing.
+        _by_value_ = {_i_[1]: _i_ for _i_ in self._menu_items(self._make_ctrl())['operation']}
+        _hyper_ = _by_value_['hyper tree']
+        self.assertEqual(_hyper_[2], 'hyper tree')
+        self.assertFalse(_hyper_[3])
+
+    def test_line_and_curve_are_not_guarded(self):
+        _by_value_ = {_i_[1]: _i_ for _i_ in self._menu_items(self._make_ctrl())['link_shape']}
+        for _cheap_ in ('line', 'curve'):
+            self.assertFalse(_by_value_[_cheap_][3])
+
+    def test_guarded_items_are_exempt_from_both_no_enter_commit_paths(self):
+        # The two ways this menu used to commit without an Enter: the single-character
+        # mnemonic, and the 2.5s inactivity timeout.  Asserted against the emitted JS
+        # because that is where the behaviour lives.
+        _scripts_ = type(self._make_ctrl())._scripts
+        _keydown_ = _scripts_['myOnKeyDown']
+        _at_ = _keydown_.index('_items_[_i_][0] === event.key')
+        self.assertIn('_items_[_i_][3]', _keydown_[_at_:_at_ + 800],
+                      'mnemonic commit does not check the guard flag')
+        self.assertIn('_sel_[3]', _scripts_['menuArmTimer'],
+                      'the inactivity timeout does not check the guard flag')
 
     # ── 'a' toggles link arrows on and off ────────────────────────────────────
     def test_a_key_toggles_link_arrows(self):

@@ -10,6 +10,7 @@ from polars2svg.p2s_component_color_mixin import P2SComponentColorMixin
 from polars2svg.p2s_background_mixin import P2SBackgroundMixin
 from polars2svg.exceptions import DataError
 from polars2svg.od_flow_layout import ODFlowLayout
+from polars2svg.layout_budget import Budget
 
 class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
 
@@ -23,6 +24,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
         'draw_node_labels', 'node_labels', 'label_only',
         'label_line_width', 'label_max_lines', 'label_ellipsis',
         'link_size', 'link_shape', 'link_opacity', 'link_size_range', 'link_arrows',
+        'flowmap_max_flows', 'flowmap_iterations', 'flowmap_samples', 'flowmap_time_budget',
         'draw_link_labels', 'link_labels',
         'time', 'timing_marks_length', 'timing_marks_spacing',
         'wxh', 'insets', 'bounds_percent', 'use_pos_for_bounds',
@@ -259,6 +261,26 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
             # Link styling
             'link_size':              'small',
             'link_shape':             'line',
+            # link_shape='flowmap' quality-for-time knobs.  ODFlowLayout has always taken
+            # these; until now linkp hardwired the paper's defaults, so the only way to make
+            # an expensive flow map cheaper was not to draw one.
+            #   flowmap_max_flows -- lay out only this many flows, largest count first; the
+            #     rest are drawn as plain curves.  None = every flow, the previous behaviour.
+            #     Cost grows faster than quadratically in the flow count, so this is the
+            #     lever with real leverage -- and the flows it drops are the ones carrying
+            #     least, which are also the ones a reader is least likely to be tracing.
+            #   flowmap_iterations -- force iterations (paper default 100); linear in cost.
+            #   flowmap_samples -- sample points per flow (paper default 15).  Cost goes as
+            #     (flows x samples)^2, so this is a quadratic lever: 15 -> 8 is ~3.5x.
+            #   flowmap_time_budget -- seconds of wall clock; the force iteration stops when
+            #     it is spent and the control points found so far are used.  Truncating a
+            #     force layout gives a less-relaxed flow map, not a broken one.  None (the
+            #     default) means run every iteration, which is what keeps the render
+            #     reproducible -- a wall-clock limit cannot be.
+            'flowmap_time_budget':    None,
+            'flowmap_max_flows':      None,
+            'flowmap_iterations':     100,
+            'flowmap_samples':        15,
             'link_opacity':           1.0,
             'link_size_range':        (0.25, 4),
             'link_arrows':            False,
@@ -338,6 +360,8 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
             self.color_nodes_final      = {}
             self.view_window_orig       = None
             self._render_invalid_       = False
+            self._flowmap_cache_        = None   # (key, cp table) -- see __flowmapControlPoints__
+            self._flowmap_note_         = None   # what __flowmapTopK__ dropped, if anything
             # from-scratch builds only — a template clone is an exact snapshot and
             # must not re-apply session defaults (see Polars2SVG._apply_defaults)
             kwargs = self.p2s._apply_defaults('linkp', kwargs)
@@ -1194,6 +1218,36 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
     # table (__fmx__,__fmy__,__tox__,__toy__ -> __cpx__,__cpy__) of quadratic
     # Bezier control points in screen coordinates
     #
+    #
+    # __flowmapTopK__() - T2 decimation.  Keep the flowmap_max_flows largest flows by
+    # count and drop the rest, which __flowmapControlPointColumns__ then draws as plain
+    # curves rather than as nothing.
+    #
+    # Decimating the INPUT is the lever with the most leverage here, because the layout's
+    # cost grows faster than the square of the flow count -- halving the flows is much
+    # better than halving the iterations.  Ranking by count means what goes is the tail
+    # carrying least, which is also the part a reader is least likely to be tracing; the
+    # paper's method targets ~100 flows precisely because that is what stays readable.
+    #
+    # The tie-break is the sort key rather than the count alone, so which flows survive a
+    # tie does not depend on group_by row order -- the layout is order-sensitive and the
+    # rest of this path works hard to stay deterministic.
+    #
+    def __flowmapTopK__(self, flows_df):
+        self._flowmap_note_ = None
+        _k_ = self.flowmap_max_flows
+        if _k_ is None or len(flows_df) <= _k_:
+            return flows_df
+        _kept_ = (flows_df
+                  .sort(['__fmcount__', '__fmx__', '__fmy__', '__tox__', '__toy__'],
+                        descending=[True, False, False, False, False])
+                  .head(int(_k_))
+                  .sort(['__fmx__', '__fmy__', '__tox__', '__toy__']))
+        self._flowmap_note_ = (f'flowmap: laid out the {len(_kept_):,} largest of '
+                               f'{len(flows_df):,} flows; the rest are drawn as curves')
+        self.p2s.logger.info('LinkP: %s', self._flowmap_note_)
+        return _kept_
+
     def __flowmapControlPoints__(self, rel_tables):
         _parts_ = []
         for i in range(len(self.relationships)):
@@ -1202,18 +1256,17 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
             _parts_.append(rel_tables[i].select(
                 pl.col(_fm_sx_).alias('__fmx__'), pl.col(_fm_sy_).alias('__fmy__'),
                 pl.col(_to_sx_).alias('__tox__'), pl.col(_to_sy_).alias('__toy__'),
-            ).drop_nulls())
-        # sorted so the layout sees a deterministic flow order (group_by row
-        # order varies run to run and the force iteration is order-sensitive)
-        _flows_df_ = pl.concat(_parts_).unique().sort(['__fmx__', '__fmy__', '__tox__', '__toy__'])
-        if len(_flows_df_) > 200:
-            self.p2s.logger.warning(
-                f"LinkP: link_shape='flowmap' runs a force layout that is quadratic in the "
-                f"number of aggregated flows ({len(_flows_df_)}); expect long render times "
-                f"(the method targets flow maps with up to ~100 flows)"
-            )
-        _flows_ = list(zip(_flows_df_['__fmx__'], _flows_df_['__fmy__'],
-                           _flows_df_['__tox__'], _flows_df_['__toy__']))
+                pl.col('__count__').alias('__fmcount__'),
+            ).drop_nulls(subset=['__fmx__', '__fmy__', '__tox__', '__toy__']))
+        # One screen-space flow can come from several relationships; sum so the ranking in
+        # __flowmapTopK__ sees the whole flow rather than one relationship's share.
+        _flows_df_ = (pl.concat(_parts_)
+                        .group_by(['__fmx__', '__fmy__', '__tox__', '__toy__'])
+                        .agg(pl.col('__fmcount__').sum())
+                        # sorted so the layout sees a deterministic flow order (group_by row
+                        # order varies run to run and the force iteration is order-sensitive)
+                        .sort(['__fmx__', '__fmy__', '__tox__', '__toy__']))
+        _flows_df_ = self.__flowmapTopK__(_flows_df_)
         _node_r_ = self.__nodeRadiusEstimate__()
         _lg_l_, _lg_r_, _lg_t_, _lg_b_ = self._legend_reserve_
         _canvas_ = (_lg_l_, _lg_t_, self.wxh[0] - _lg_r_, self.wxh[1] - _lg_b_)
@@ -1224,12 +1277,59 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
         elif self.link_size == 'vary':                 _lk_w_ = float(self.link_size_range[1])
         else:                                          _lk_w_ = float(_lk_lu_.get(self.link_size, 1.0))
         _arrow_r_ = max(self._ARROW_LEN_FACTOR_ * _lk_w_, self._ARROW_LEN_MIN_) if self.link_arrows else 0.0
-        _cps_ = ODFlowLayout(_flows_, node_radius=_node_r_, canvas=_canvas_,
-                             arrows=bool(self.link_arrows), arrow_radius=_arrow_r_).results()
-        return _flows_df_.with_columns(
+
+        # The layout depends only on the flow endpoints and the obstacle geometry, so a
+        # re-render that changed none of them -- a label toggle, a selection, a brush, a
+        # stack step -- can reuse the previous result instead of paying for the layout
+        # again.  Pan and zoom legitimately miss: the layout runs in screen coordinates,
+        # so they genuinely change its input.  Keyed rather than invalidated because
+        # __renderLinks__ has no way to know which of its inputs moved.
+        _key_ = (hash(tuple(_flows_df_.hash_rows().to_list())), len(_flows_df_),
+                 _node_r_, _canvas_, bool(self.link_arrows), _arrow_r_,
+                 int(self.flowmap_iterations), int(self.flowmap_samples))
+        _cached_ = getattr(self, '_flowmap_cache_', None)
+        if _cached_ is not None and _cached_[0] == _key_:
+            return _cached_[1]
+
+        # Warned only when the layout actually runs, so a cache hit is silent.  Runtime is
+        # worse than quadratic in practice (measured exponent 3.0-4.0 on both the NumPy and
+        # MLX paths), and the flow *count* is not the whole story: the intersection-reduction
+        # pass works on flows sharing a node, so a dispersed set costs far more than a
+        # hub-heavy set of the same size.
+        if len(_flows_df_) > 200:
+            self.p2s.logger.warning(
+                f"LinkP: link_shape='flowmap' runs a force layout whose cost grows faster "
+                f"than the square of the aggregated flow count ({len(_flows_df_)}), and grows "
+                f"further the more spread out the flows are; expect long render times (the "
+                f"method targets flow maps with up to ~100 flows)"
+            )
+        _flows_ = list(zip(_flows_df_['__fmx__'], _flows_df_['__fmy__'],
+                           _flows_df_['__tox__'], _flows_df_['__toy__']))
+        # _flowmap_should_stop_ is set by linkpi so an interactive cancel can reach a layout
+        # already in flight; there is no way to interrupt the thread, so the loop has to be
+        # asked to look.  Absent (the plain rendering path), there is nothing to poll.
+        _stop_ = getattr(self, '_flowmap_should_stop_', None)
+        _budget_ = (Budget(time_budget=self.flowmap_time_budget, should_stop=_stop_)
+                    if (self.flowmap_time_budget is not None or _stop_ is not None) else None)
+        _layout_ = ODFlowLayout(_flows_, node_radius=_node_r_, canvas=_canvas_,
+                                arrows=bool(self.link_arrows), arrow_radius=_arrow_r_,
+                                iterations=int(self.flowmap_iterations),
+                                samples_per_flow=int(self.flowmap_samples), budget=_budget_)
+        _cps_ = _layout_.results()
+        if _layout_.budget_note is not None:
+            self._flowmap_note_ = ((self._flowmap_note_ + '; ') if self._flowmap_note_ else '') \
+                                  + f'flowmap: {_layout_.budget_note}'
+            self.p2s.logger.info('LinkP: %s', _layout_.budget_note)
+        _result_ = _flows_df_.with_columns(
             pl.Series('__cpx__', [c[0] for c in _cps_], dtype=pl.Float64),
             pl.Series('__cpy__', [c[1] for c in _cps_], dtype=pl.Float64),
-        )
+        ).drop('__fmcount__')
+        # Only a layout that ran to completion is cacheable.  A truncated one depends on
+        # how fast the machine happened to be, so serving it again from cache would make a
+        # one-off slow moment permanent for the rest of the session.
+        if _budget_ is None or _budget_.stopped_at is None:
+            self._flowmap_cache_ = (_key_, _result_)
+        return _result_
 
     #
     # __curveControlPointColumns__() - add the cubic Bezier control points __xo0{i}__..
@@ -1282,17 +1382,25 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
         _to_sx_, _to_sy_ = f'__rel{i}_to_sx__', f'__rel{i}_to_sy__'
         _xo0_, _yo0_ = f'__xo0{i}__', f'__yo0{i}__'
         _xo1_, _yo1_ = f'__xo1{i}__', f'__yo1{i}__'
+        # Curve control points first, as the fallback for any flow the layout did not
+        # place.  With flowmap_max_flows unset every flow is in the join and none of this
+        # shows; with it set, the decimated tail degrades to a plain curve instead of to
+        # null control points and an unrenderable path.
         return (
-            df
+            self.__curveControlPointColumns__(df, i)
             .join(self._flowmap_cp_,
                   left_on=[_fm_sx_, _fm_sy_, _to_sx_, _to_sy_],
                   right_on=['__fmx__', '__fmy__', '__tox__', '__toy__'],
                   how='left')
             .with_columns(
-                (pl.col(_fm_sx_) + (pl.col('__cpx__') - pl.col(_fm_sx_)) * (2.0 / 3.0)).alias(_xo0_),
-                (pl.col(_fm_sy_) + (pl.col('__cpy__') - pl.col(_fm_sy_)) * (2.0 / 3.0)).alias(_yo0_),
-                (pl.col(_to_sx_) + (pl.col('__cpx__') - pl.col(_to_sx_)) * (2.0 / 3.0)).alias(_xo1_),
-                (pl.col(_to_sy_) + (pl.col('__cpy__') - pl.col(_to_sy_)) * (2.0 / 3.0)).alias(_yo1_),
+                pl.when(pl.col('__cpx__').is_null()).then(pl.col(_xo0_))
+                  .otherwise(pl.col(_fm_sx_) + (pl.col('__cpx__') - pl.col(_fm_sx_)) * (2.0 / 3.0)).alias(_xo0_),
+                pl.when(pl.col('__cpy__').is_null()).then(pl.col(_yo0_))
+                  .otherwise(pl.col(_fm_sy_) + (pl.col('__cpy__') - pl.col(_fm_sy_)) * (2.0 / 3.0)).alias(_yo0_),
+                pl.when(pl.col('__cpx__').is_null()).then(pl.col(_xo1_))
+                  .otherwise(pl.col(_to_sx_) + (pl.col('__cpx__') - pl.col(_to_sx_)) * (2.0 / 3.0)).alias(_xo1_),
+                pl.when(pl.col('__cpy__').is_null()).then(pl.col(_yo1_))
+                  .otherwise(pl.col(_to_sy_) + (pl.col('__cpy__') - pl.col(_to_sy_)) * (2.0 / 3.0)).alias(_yo1_),
             )
             .drop(['__cpx__', '__cpy__'])
         )

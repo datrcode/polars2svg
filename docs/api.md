@@ -22,6 +22,18 @@ string.
 
 ::: polars2svg.LegendInfo
 
+## Backgrounds
+
+`linkp`'s and `xyp`'s `background=` takes a `{name: shape}` dict drawn beneath the plot in
+world coordinates. A bare shape inherits the component's `background_*` styling; a record
+built with `Polars2SVG.bgShape()` carries its own, and the two forms mix freely in one
+dict. `FlowFieldBackground` is a producer of such a dict for an existing node layout — it
+describes a layout rather than producing one, and is deliberately not a `LayoutAlgorithm`.
+Unlike the layouts below it needs no optional extra: NumPy and Polars are core
+dependencies.
+
+::: polars2svg.FlowFieldBackground
+
 ## Layouts
 
 !!! note "These require the `layouts` extra"

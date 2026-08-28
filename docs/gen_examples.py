@@ -104,7 +104,7 @@ def make_linkp():
         "tier": [tier[a] for a, _ in edges],
     })
     save(p2s.linkp(df, [("src", "dst")], node_color="tier", color="tier",
-                   node_size="medium", draw_labels=True, wxh=(400, 360),
+                   node_size="medium", draw_node_labels=True, wxh=(400, 360),
                    legend=True),
          "linkp_network.svg")
 

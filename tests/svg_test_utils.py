@@ -81,9 +81,10 @@ def assert_svg_matches_golden(svg, name):
     '''Compare a normalized SVG string to the stored golden file at
     tests/golden/<name>.svg.
 
-    On the first run (or when UPDATE_GOLDEN=1 is set in the environment) the
-    golden file is written/overwritten and the assertion is skipped.  On
-    subsequent runs the normalized SVG must match the golden file exactly.
+    With UPDATE_GOLDEN=1 set in the environment the golden file is written or
+    overwritten and the assertion is skipped.  Without it the normalized SVG must
+    match the golden file exactly, and a missing golden is a failure -- it is
+    never created for you.
 
     Workflow:
       - Normal run : SVG is compared to the golden; test fails on any diff.

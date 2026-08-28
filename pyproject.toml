@@ -56,20 +56,36 @@ classifiers=[
 # default and auto-uses the MLX GPU for its O(N^2) force kernels when present.
 #
 # `mlx` is a front-end that ships no backend library; the backend is a separate
-# distribution. On Apple silicon `mlx` pulls Metal automatically. On Linux it pulls
-# NOTHING — this extra installs there and then fails at `import mlx.core` with a missing
-# libmlx.so, so a Linux host must add `mlx[cpu]` (or use the CUDA extras below). Left
-# as-is deliberately: changing a published extra wants a release note. See PLANNING.md R6.
+# distribution selected by one of mlx's own extras. On macOS `mlx` depends on mlx-metal
+# UNCONDITIONALLY (`platform_system == "Darwin"` in its metadata), which is why plain
+# `mlx` works there and why nobody noticed. Everywhere else it pulls NOTHING: the extra
+# installs and `import mlx.core` then fails with a missing libmlx.so. So Linux picks a
+# backend explicitly — `mlx-cpu` here, or the CUDA pair below.
+#
+# Windows cannot be fixed from this file: mlx 0.32.2 publishes win_amd64/win_arm64
+# FRONT-END wheels but gates every backend distribution to Linux or Darwin, so
+# `polars2svg[mlx]` and `[all]` install there and TFDPLayout still cannot run. The
+# ImportError in tfdp_layout.py says so rather than naming an extra that won't help.
+#
+# `all` deliberately chains plain `mlx` and NEVER a backend. Every backend ships the
+# same `mlx/lib/libmlx.so`, so two in one environment is last-one-installed-wins with
+# no warning from pip or uv (measured 2026-08-28: mlx-cpu's 20MB library overwrote
+# mlx-cuda-13's 142MB one, leaving a CUDA install running on CPU). Chaining a backend
+# into `all` would make the documented `polars2svg[all,mlx-cuda13]` a coin flip;
+# chaining none keeps that combination exact. See PLANNING.md R6.
+#
 # MLX's CUDA backend is exposed here as the explicit `mlx-cuda`
 # (CUDA 12) / `mlx-cuda13` (CUDA 13) extras — explicit because the CUDA wheels are
 # Linux-only and must not be resolved on macOS. The same tfdp_layout.py code runs on
-# both backends; only the device MLX binds to changes.
+# every backend; only the device MLX binds to changes. All three Linux backend extras
+# resolve to nothing on macOS (their marker excludes it), so `mlx` stays the macOS answer.
 #
 # The CUDA backend needs: NVIDIA SM >= 7.5 (Turing+), driver >= 550.54.14 (>= 580 for
 # CUDA 13), CUDA toolkit >= 12.0, glibc >= 2.35, Linux x86_64/aarch64. There are no
 # Windows CUDA wheels. Off that envelope MLX falls back to CPU (TFDPLayout still
 # works, just slower) — see _default_device() in tfdp_layout.py.
 mlx        = ["mlx", "polars2svg[layouts]"]
+mlx-cpu    = ["mlx[cpu]; sys_platform == 'linux'", "polars2svg[layouts]"]
 mlx-cuda   = ["mlx[cuda12]; sys_platform == 'linux'", "polars2svg[layouts]"]
 mlx-cuda13 = ["mlx[cuda13]; sys_platform == 'linux'", "polars2svg[layouts]"]
 
@@ -105,8 +121,9 @@ interactive = ["panel>=1.5", "jupyter_bokeh>=4.0", "param>=2.0", "pyperclip>=1.9
 # Union of every extra — restores the pre-extras "batteries included" install.
 # Chains plain `mlx`, not `mlx-cuda`: `all` has to stay installable on macOS, and the
 # CUDA wheels are Linux-only. NVIDIA users add it explicitly: polars2svg[all,mlx-cuda]
-# Consequence of the plain-`mlx` chain: on Linux `all` installs no usable mlx backend
-# either (PLANNING.md R6) — add `mlx[cpu]` or one of the mlx-cuda* extras there.
+# Consequence of the plain-`mlx` chain, and deliberate (see the mlx comment above): on
+# Linux `all` installs no usable mlx backend by itself. Combine it with exactly one
+# backend extra — polars2svg[all,mlx-cpu] or polars2svg[all,mlx-cuda13] — never two.
 all = ["polars2svg[interactive,layouts,export,mlx]"]
 
 # Dev/test-only tooling (PEP 735). Not published to wheel METADATA.

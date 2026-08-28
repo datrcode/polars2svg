@@ -31,6 +31,7 @@ pip install polars2svg[layouts]     # linkp, chordp, and shapely-typed backgroun
 pip install polars2svg[interactive] # panelize / xypi / histopi / ... (includes layouts)
 pip install polars2svg[export]      # component.save('chart.png')
 pip install polars2svg[mlx]         # MLX-accelerated t-FDP layout (Apple silicon / Metal)
+pip install polars2svg[mlx-cpu]     # ... the same layout on Linux, CPU backend
 pip install polars2svg[mlx-cuda]    # ... the same layout on Linux + NVIDIA (CUDA 12)
 pip install polars2svg[all]         # everything above (plain [mlx]; see the Linux note below)
 ```
@@ -39,18 +40,27 @@ Calling a component that needs an extra you haven't installed (e.g. `chordp()`
 or `panelize()`) raises a clear `ImportError` naming the extra to install.
 
 **On Linux, `[mlx]` and `[all]` are not enough.** PyPI's `mlx` is a front-end that ships
-no backend library; on macOS it pulls the Metal backend automatically, on Linux it pulls
-nothing. The install succeeds and `import mlx.core` then fails with `ImportError:
+no backend library; on macOS it depends on the Metal backend unconditionally, on Linux it
+pulls nothing. The install succeeds and `import mlx.core` then fails with `ImportError:
 libmlx.so: cannot open shared object file`. Choose the backend explicitly:
 
 ```bash
+pip install polars2svg[mlx-cpu]     # Linux, no NVIDIA GPU
 pip install polars2svg[mlx-cuda13]  # Linux + NVIDIA, CUDA 13 toolkit
 pip install polars2svg[mlx-cuda]    # Linux + NVIDIA, CUDA 12 toolkit
-pip install polars2svg[mlx] 'mlx[cpu]'   # Linux, no NVIDIA GPU — CPU backend
 ```
 
-Only `TFDPLayout` is affected: `ODFlowLayout` runs on NumPy and reaches for MLX only when
-MLX works.
+Combine one of these with `[all]` if you want everything — `polars2svg[all,mlx-cuda13]`.
+**Install exactly one backend.** They all ship the same `libmlx.so`, so asking for two
+leaves you with whichever was installed last, and no warning that it happened.
+
+**On Windows there is no MLX backend at all**, so `TFDPLayout` cannot run there. `mlx`
+publishes Windows front-end wheels, which is why `[mlx]` and `[all]` still install; every
+backend distribution is Linux- or macOS-only. Everything else in polars2svg works
+normally.
+
+Only `TFDPLayout` is affected by any of this: `ODFlowLayout` runs on NumPy and reaches for
+MLX only when MLX works.
 
 `TFDPLayout` runs the same MLX code on either GPU backend — Metal on Apple silicon,
 CUDA on NVIDIA. Check which one you got with `polars2svg.gpu_backend()` (`'metal'`,

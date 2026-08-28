@@ -724,9 +724,29 @@ _Nothing yet._
   comment carried the same "CPU elsewhere" claim and now describe what Linux actually
   resolves.
 
-  **The extras themselves are unchanged**: `polars2svg[all]` still installs no working
-  mlx backend on Linux. Only `TFDPLayout` is affected — `ODFlowLayout` runs on NumPy
-  and reaches for MLX only when MLX works.
+  Only `TFDPLayout` is affected — `ODFlowLayout` runs on NumPy and reaches for MLX
+  only when MLX works. The `[mlx-cpu]` extra below is the other half of this fix.
+
+### Added
+
+- **`[mlx-cpu]` extra — an MLX install that actually works on Linux.**
+  `pip install polars2svg[mlx-cpu]` pulls the CPU backend distribution that PyPI's
+  `mlx` does not, so a Linux host without an NVIDIA GPU gets a working `TFDPLayout`
+  from one command. It completes the set: `[mlx]` (macOS/Metal), `[mlx-cpu]`,
+  `[mlx-cuda]` (CUDA 12), `[mlx-cuda13]` (CUDA 13).
+
+  **Install exactly one backend extra.** Every MLX backend ships the same
+  `mlx/lib/libmlx.so`, so two in one environment is last-one-installed-wins, with no
+  error from pip or uv — enough to leave a CUDA install running on the CPU backend
+  after downloading a gigabyte of CUDA wheels. This is also why **`[all]` still
+  chains plain `mlx` and no backend**: it keeps `polars2svg[all,mlx-cuda13]` exact
+  rather than a race. On Linux, `[all]` alone therefore still has no MLX backend —
+  pair it with one, e.g. `polars2svg[all,mlx-cpu]`.
+
+  **Windows has no MLX backend distribution at all.** `mlx` publishes Windows
+  front-end wheels, so `[mlx]` and `[all]` install there, but every backend is gated
+  to Linux or macOS and `TFDPLayout` cannot run. Nothing else in polars2svg is
+  affected.
 
 ## [0.1.2] — 2026-07-25
 

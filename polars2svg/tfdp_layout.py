@@ -27,18 +27,26 @@ except ImportError as _mlx_err:
         raise ImportError(
             "mlx is required for TFDPLayout. Install it with one of:\n"
             "  pip install polars2svg[mlx]        # macOS / Apple silicon (Metal)\n"
+            "  pip install polars2svg[mlx-cpu]    # Linux, no NVIDIA GPU\n"
             "  pip install polars2svg[mlx-cuda]   # Linux + NVIDIA (CUDA 12 toolkit)\n"
             "  pip install polars2svg[mlx-cuda13] # Linux + NVIDIA (CUDA 13 toolkit)\n"
-            "On Linux with no NVIDIA GPU, add the CPU backend: pip install 'mlx[cpu]'"
+            "Pick exactly one -- the Linux backends share a library filename, so a "
+            "second one silently replaces the first.\n"
+            "On Windows MLX publishes no backend distribution at all, so TFDPLayout "
+            "cannot run there."
         ) from _mlx_err
     raise ImportError(
         "mlx is installed but has no usable backend library, so TFDPLayout cannot "
         "import it. PyPI's `mlx` is a front-end; the backend ships as a separate "
-        "distribution, and on Linux nothing installs one by default. Add the one that "
-        "matches the host:\n"
-        "  pip install 'mlx[cpu]'     # no NVIDIA GPU\n"
-        "  pip install 'mlx[cuda12]'  # NVIDIA, CUDA 12 toolkit\n"
-        "  pip install 'mlx[cuda13]'  # NVIDIA, CUDA 13 toolkit\n"
+        "distribution that exists only for Linux and macOS, and on Linux nothing "
+        "installs one by default. On Linux, add exactly one:\n"
+        "  pip install polars2svg[mlx-cpu]     # no NVIDIA GPU\n"
+        "  pip install polars2svg[mlx-cuda]    # NVIDIA, CUDA 12 toolkit\n"
+        "  pip install polars2svg[mlx-cuda13]  # NVIDIA, CUDA 13 toolkit\n"
+        "Never two: they ship the same libmlx.so, so the last one installed wins "
+        "silently -- a CUDA install can end up running on CPU.\n"
+        "On Windows there is no backend distribution to install, so TFDPLayout "
+        "cannot run there at all.\n"
         f"Underlying error: {_mlx_err}"
     ) from _mlx_err
 

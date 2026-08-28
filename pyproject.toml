@@ -55,8 +55,12 @@ classifiers=[
 # ODFlowLayout (od_flow_layout.py) also uses this extra: it runs on NumPy by
 # default and auto-uses the MLX GPU for its O(N^2) force kernels when present.
 #
-# `mlx` picks whatever backend suits the platform: Metal on Apple silicon, CPU-only
-# elsewhere. MLX also has a CUDA backend, exposed here as the explicit `mlx-cuda`
+# `mlx` is a front-end that ships no backend library; the backend is a separate
+# distribution. On Apple silicon `mlx` pulls Metal automatically. On Linux it pulls
+# NOTHING — this extra installs there and then fails at `import mlx.core` with a missing
+# libmlx.so, so a Linux host must add `mlx[cpu]` (or use the CUDA extras below). Left
+# as-is deliberately: changing a published extra wants a release note. See PLANNING.md R6.
+# MLX's CUDA backend is exposed here as the explicit `mlx-cuda`
 # (CUDA 12) / `mlx-cuda13` (CUDA 13) extras — explicit because the CUDA wheels are
 # Linux-only and must not be resolved on macOS. The same tfdp_layout.py code runs on
 # both backends; only the device MLX binds to changes.
@@ -101,6 +105,8 @@ interactive = ["panel>=1.5", "jupyter_bokeh>=4.0", "param>=2.0", "pyperclip>=1.9
 # Union of every extra — restores the pre-extras "batteries included" install.
 # Chains plain `mlx`, not `mlx-cuda`: `all` has to stay installable on macOS, and the
 # CUDA wheels are Linux-only. NVIDIA users add it explicitly: polars2svg[all,mlx-cuda]
+# Consequence of the plain-`mlx` chain: on Linux `all` installs no usable mlx backend
+# either (PLANNING.md R6) — add `mlx[cpu]` or one of the mlx-cuda* extras there.
 all = ["polars2svg[interactive,layouts,export,mlx]"]
 
 # Dev/test-only tooling (PEP 735). Not published to wheel METADATA.

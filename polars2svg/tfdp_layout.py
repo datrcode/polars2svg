@@ -19,10 +19,27 @@ from typing import Optional
 try:
     import mlx.core as mx
 except ImportError as _mlx_err:
+    # Two different failures wear the same exception. `mlx` absent entirely is an extras
+    # problem; `mlx` importable-but-broken means the backend distribution is missing --
+    # PyPI's `mlx` ships no backend library, and on Linux nothing pulls one in.
+    from importlib.util import find_spec as _find_spec
+    if _find_spec('mlx') is None:
+        raise ImportError(
+            "mlx is required for TFDPLayout. Install it with one of:\n"
+            "  pip install polars2svg[mlx]        # macOS / Apple silicon (Metal)\n"
+            "  pip install polars2svg[mlx-cuda]   # Linux + NVIDIA (CUDA 12 toolkit)\n"
+            "  pip install polars2svg[mlx-cuda13] # Linux + NVIDIA (CUDA 13 toolkit)\n"
+            "On Linux with no NVIDIA GPU, add the CPU backend: pip install 'mlx[cpu]'"
+        ) from _mlx_err
     raise ImportError(
-        "mlx is required for TFDPLayout. Install it with one of:\n"
-        "  pip install polars2svg[mlx]       # Apple silicon (Metal), or CPU elsewhere\n"
-        "  pip install polars2svg[mlx-cuda]  # Linux + NVIDIA (CUDA 12)"
+        "mlx is installed but has no usable backend library, so TFDPLayout cannot "
+        "import it. PyPI's `mlx` is a front-end; the backend ships as a separate "
+        "distribution, and on Linux nothing installs one by default. Add the one that "
+        "matches the host:\n"
+        "  pip install 'mlx[cpu]'     # no NVIDIA GPU\n"
+        "  pip install 'mlx[cuda12]'  # NVIDIA, CUDA 12 toolkit\n"
+        "  pip install 'mlx[cuda13]'  # NVIDIA, CUDA 13 toolkit\n"
+        f"Underlying error: {_mlx_err}"
     ) from _mlx_err
 
 import numpy as np

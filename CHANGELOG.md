@@ -704,6 +704,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reading `df_pixels` directly: `__radius__` and `__fill_opacity__` are now
   quantized in the dataframe, not only in the emitted string.
 
+### Fixed
+
+- **`TFDPLayout`'s "mlx is required" error sent Linux users back to the install that
+  had just failed.** PyPI's `mlx` is a front-end that ships no backend library: on
+  macOS it pulls Metal automatically, on Linux it pulls nothing, so
+  `polars2svg[mlx]` — and `polars2svg[all]`, which chains it — installs cleanly and
+  then dies at `import mlx.core` with `ImportError: libmlx.so: cannot open shared
+  object file`. The handler answered that with `pip install polars2svg[mlx]  #
+  Apple silicon (Metal), or CPU elsewhere`, i.e. the extra already installed. It now
+  separates the two cases: mlx genuinely absent gets the extras (including
+  `[mlx-cuda13]`, previously unnamed), and mlx present-without-a-backend gets the
+  backend distribution to add — `mlx[cpu]`, `mlx[cuda12]` or `mlx[cuda13]` — plus the
+  underlying error. `README.md`, `CONTRIBUTING.md` and the `pyproject.toml` extras
+  comment carried the same "CPU elsewhere" claim and now describe what Linux actually
+  resolves.
+
+  **The extras themselves are unchanged**: `polars2svg[all]` still installs no working
+  mlx backend on Linux. Only `TFDPLayout` is affected — `ODFlowLayout` runs on NumPy
+  and reaches for MLX only when MLX works.
+
 ## [0.1.2] — 2026-07-25
 
 ### Added

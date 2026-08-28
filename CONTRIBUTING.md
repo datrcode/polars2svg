@@ -22,10 +22,15 @@ uv pip install -e . --group dev
 `linkp`/`chordp`/interactive-variant tests — runs unmodified. Use
 `.venv/bin/python`, never a system `python3`.
 
-The `mlx` extra installs MLX with whatever backend suits the platform (Metal on
-Apple silicon, CPU elsewhere). On a Linux + NVIDIA box, `uv pip install -e
-'.[mlx-cuda]'` gets the CUDA backend instead, and the `TFDPLayout` tests — which
-otherwise skip — will run against it. `tests/test_tfdp_backend.py` exercises each
+The `mlx` extra installs MLX with the Metal backend on Apple silicon. **On Linux
+it installs no backend at all** — PyPI's `mlx` ships none there, so the install
+succeeds and `import mlx.core` fails with `ImportError: libmlx.so: cannot open
+shared object file`. Pick one explicitly, and only one: `uv pip install -e
+'.[mlx-cuda13]'` (CUDA 13; `.[mlx-cuda]` for a CUDA 12 toolkit) on an NVIDIA box,
+`uv pip install -e '.[mlx-cpu]'` otherwise. Two backend extras in one environment
+overwrite each other's `libmlx.so` silently. With a working backend the
+`TFDPLayout` tests — which otherwise skip — will run against it. On Windows no
+backend distribution exists, so those tests stay skipped. `tests/test_tfdp_backend.py` exercises each
 individual MLX op the layout depends on, so a backend gap fails by name there
 rather than as a mystery result inside the layout loop.
 
@@ -45,7 +50,8 @@ uv pip install -e .
 A few test groups need extra care:
 
 - **Golden-image tests** (`test_*_golden.py`) compare a fresh render against a
-  checked-in reference file. On first run, or when a change is intentional,
+  checked-in reference file. A *missing* golden fails the test — it is never
+  written for you. When a golden is genuinely new, or a change is intentional,
   regenerate with:
 
   ```bash
@@ -54,7 +60,9 @@ A few test groups need extra care:
 
   Review the diff before committing regenerated goldens — an unreviewed
   `UPDATE_GOLDEN=1` run will silently rubber-stamp a regression as the new
-  baseline. Adding or changing a golden test also means updating
+  baseline. If a golden is missing because your checkout lacks it, restore the
+  file rather than regenerating: a fresh baseline records whatever *your*
+  machine produces, which is not necessarily what the golden was capturing. Adding or changing a golden test also means updating
   `notebooks/golden_images.ipynb` (shows every golden SVG side-by-side with a
   fresh render) so reviewers can see the visual diff without running pytest.
 

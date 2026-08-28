@@ -191,13 +191,6 @@ class Polars2SVG(P2SColorsMixin,
     # nullNodeDisplay() restores a readable '(null)' at every text-display site.
     NULL_NODE_PREFIX     = '\x1fNULL\x1f'
 
-    # roundSvgFloats() below trims verbose float tails in the final SVG. This
-    # matches a decimal number (optional leading '-', optional integer part, a
-    # dot, and a fractional part). The callback leaves short numbers untouched and
-    # only rewrites those whose fractional part is longer than the requested
-    # precision, so a number already at/under precision is returned verbatim.
-    _SVG_FLOAT_RE_       = re.compile(r'-?\d*\.\d+')
-
     def __new__(cls):
         if cls._instance_ is None: cls._instance_ = super().__new__(cls)
         return cls._instance_
@@ -1916,44 +1909,6 @@ class Polars2SVG(P2SColorsMixin,
             _y_ += 14
         _parts_.append('</svg>')
         return ''.join(_parts_)
-
-    #
-    # roundSvgFloats() - trim verbose float tails in a finished SVG string.
-    #
-    # The renderers interpolate raw Python/polars floats into coordinate,
-    # size and opacity attributes, so a single point can serialize as e.g.
-    # "123.4567890123456" -- 15+ digits of noise well below one device pixel.
-    # This shrinks every such number to at most `digits` fractional digits
-    # (default 2), stripping trailing zeros and a bare trailing dot, which
-    # meaningfully reduces output size with no perceptible visual change.
-    #
-    # It is deliberately conservative:
-    #   - numbers already at or under `digits` fractional digits are returned
-    #     byte-for-byte unchanged (so "1.0", "0.5", "12.34" never move), which
-    #     also makes the pass idempotent -- re-running it is a no-op;
-    #   - hex colors ("#aabbcc"), integers, and ids carry no matching decimal
-    #     point, so they are never touched;
-    #   - it operates purely on the final string, so no per-call-site edits (or
-    #     drift between the ~15 SVG-emitting components) are possible.
-    #
-    def roundSvgFloats(self, svg, digits=2):
-        # TODO: disabled -- the regex matches any digit-dot-digit run anywhere in the
-        # finished SVG string, including inside <text>/<tspan> element content, not just
-        # numeric attribute values. A label that merely looks like a float (an IP address,
-        # a version string, ...) gets its digits silently rounded away -- e.g. the node
-        # label "1.172.32.1" was corrupted to "1.17.32.1". Revisit this so trimming only
-        # touches attribute-value floats (e.g. by operating on parsed XML, or restricting
-        # matches to spans inside ="..."), then re-enable.
-        return svg
-        if not svg: return svg
-        def _round_(_m_):
-            _s_    = _m_.group(0)
-            _frac_ = _s_.split('.', 1)[1]
-            if len(_frac_) <= digits: return _s_          # already short enough
-            _out_ = f'{round(float(_s_), digits):.{digits}f}'.rstrip('0').rstrip('.')
-            if _out_ in ('', '-', '-0'): _out_ = '0'      # collapsed to (negative) zero
-            return _out_
-        return self._SVG_FLOAT_RE_.sub(_round_, svg)
 
     #
     # normalizeWxh() - the single, shared canvas-size validator/normalizer.

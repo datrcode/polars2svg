@@ -748,6 +748,24 @@ _Nothing yet._
   to Linux or macOS and `TFDPLayout` cannot run. Nothing else in polars2svg is
   affected.
 
+### Removed
+
+- **`Polars2SVG.roundSvgFloats()`**, along with the eight per-component calls to it.
+  The helper trimmed float tails by regex over a *finished* SVG string — a pass that
+  cannot tell a coordinate from a label, which is how the node label `1.172.32.1` came
+  to render as `1.17.32.1`, taking numeric axis ticks with it. It has been an inert
+  `return svg` since that was found, so **removing it changes no output**: every
+  component emits the same bytes it did before. Anyone still calling it was getting
+  their input back unchanged.
+
+  **Not replaced, deliberately.** Float precision belongs where the number becomes a
+  string — the rounding already applied in the emitting expressions (linkp's curve
+  control points, xyp's `r=` and `fill-opacity=`) — because that is the only place that
+  knows whether a run of digits is geometry or text. An attribute-only rewrite was
+  measured first and rejected: it saves a flat 151–213 bytes per file, does not grow
+  with row count (0.14% of a 4,000-row scatter), and would have regenerated 52 of 68
+  golden images to buy it.
+
 ## [0.1.2] — 2026-07-25
 
 ### Added

@@ -3,10 +3,7 @@ import unittest
 import polars as pl
 
 from polars2svg import Polars2SVG
-from label_fidelity_data import (
-    FIDELITY_LABELS, KNOWN_ROUNDING_VICTIMS,
-    faulty_round_svg_floats, svg_text_contents,
-)
+from label_fidelity_data import FIDELITY_LABELS, svg_text_contents
 
 # Plots are sized generously so the column-name context label never hits cropText() --
 # the longest fidelity string (a full IPv6 address, ~39 chars) fits with room to spare.
@@ -16,8 +13,8 @@ _WXH = (900, 600)
 class TestContextLabelFidelity(unittest.TestCase):
     '''draw_context axis/field labels name a DataFrame column. Whatever the column is
     called must render true to form -- the same string-fidelity contract as linkp node
-    labels, since roundSvgFloats() corrupted any digit-dot-digit run in <text> content
-    regardless of which component emitted it.'''
+    labels: whatever a caller names a column comes back byte-for-byte, however much it
+    looks like a number.'''
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -72,33 +69,6 @@ class TestContextLabelFidelity(unittest.TestCase):
             for _col_ in ('a & b', 'x < y', 'p > q', '<tag>', 'a"quoted"b'):
                 with self.subTest(case=_case_, column=_col_):
                     svg_text_contents(_render_(_col_))  # parses or raises
-
-    # ------------------------------------------------------------------
-    # Negative: re-applying the disabled rounding corrupts context labels too.
-    # ------------------------------------------------------------------
-    def test_faulty_rounding_would_corrupt_context_labels(self):
-        for _case_, _render_ in self._cases().items():
-            _svg_ = _render_('1.172.32.1')
-            self.assertIn('1.172.32.1', svg_text_contents(_svg_))  # correct as rendered
-            _after_ = svg_text_contents(faulty_round_svg_floats(_svg_))
-            with self.subTest(case=_case_):
-                self.assertNotIn('1.172.32.1', _after_)
-                self.assertIn('1.17.32.1', _after_)
-
-        # And every known-vulnerable label breaks on the x-axis path.
-        for _victim_ in KNOWN_ROUNDING_VICTIMS:
-            _after_ = svg_text_contents(faulty_round_svg_floats(self._xyp_x(_victim_)))
-            self.assertNotIn(_victim_, _after_,
-                             f'faulty rounding should have corrupted axis label {_victim_!r}')
-
-    # ------------------------------------------------------------------
-    # Guard: production rounding must stay OFF.
-    # ------------------------------------------------------------------
-    def test_production_rounding_is_disabled(self):
-        probe = '<text x="1.172">1.172.32.1</text> more="123.456789"'
-        self.assertEqual(self.p2s.roundSvgFloats(probe), probe,
-                         'roundSvgFloats() is enabled again -- it corrupts context labels; '
-                         'see the TODO on Polars2SVG.roundSvgFloats')
 
 
 if __name__ == '__main__':

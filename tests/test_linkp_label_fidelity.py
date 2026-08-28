@@ -4,10 +4,7 @@ import xml.etree.ElementTree as ET
 import polars as pl
 
 from polars2svg import Polars2SVG
-from label_fidelity_data import (
-    FIDELITY_LABELS, KNOWN_ROUNDING_VICTIMS,
-    faulty_round_svg_floats, svg_text_contents,
-)
+from label_fidelity_data import FIDELITY_LABELS, svg_text_contents
 
 
 def _build_linkp(p2s, labels, node_labels=None):
@@ -84,42 +81,6 @@ class TestLinkPLabelFidelity(unittest.TestCase):
         self.assertIn('a &amp; b', lp.svg)
         self.assertIn('x &lt; y', lp.svg)
         self.assertIn('p &gt; q', lp.svg)
-
-    # ------------------------------------------------------------------
-    # Negative: re-applying the disabled rounding provably corrupts labels
-    # from both the node name and the node_labels dict.
-    # ------------------------------------------------------------------
-    def test_faulty_rounding_would_corrupt_node_name_labels(self):
-        lp = _build_linkp(self.p2s, FIDELITY_LABELS)
-        self.assertIn('1.172.32.1', svg_text_contents(lp.svg))  # correct as rendered
-
-        rendered_after = svg_text_contents(faulty_round_svg_floats(lp.svg))
-        # The exact bug from the field report: 1.172.32.1 -> 1.17.32.1.
-        self.assertNotIn('1.172.32.1', rendered_after)
-        self.assertIn('1.17.32.1', rendered_after)
-        for _victim_ in KNOWN_ROUNDING_VICTIMS:
-            self.assertNotIn(_victim_, rendered_after,
-                             f'faulty rounding should have corrupted {_victim_!r}')
-
-    def test_faulty_rounding_would_corrupt_node_labels_dict(self):
-        _nodes_ = [f'n{i}' for i in range(len(FIDELITY_LABELS))]
-        _node_labels_ = {_n_: FIDELITY_LABELS[_i_] for _i_, _n_ in enumerate(_nodes_)}
-        lp = _build_linkp(self.p2s, _nodes_, node_labels=_node_labels_)
-
-        rendered_after = svg_text_contents(faulty_round_svg_floats(lp.svg))
-        for _victim_ in KNOWN_ROUNDING_VICTIMS:
-            self.assertNotIn(_victim_, rendered_after,
-                             f'faulty rounding should have corrupted dict display {_victim_!r}')
-
-    # ------------------------------------------------------------------
-    # Guard: the production rounding helper must stay OFF (a no-op). If it is
-    # ever re-enabled without a text-content-safe rewrite, this fails loudly.
-    # ------------------------------------------------------------------
-    def test_production_rounding_is_disabled(self):
-        probe = '<text x="1.172">1.172.32.1</text> more="123.456789"'
-        self.assertEqual(self.p2s.roundSvgFloats(probe), probe,
-                         'roundSvgFloats() is enabled again -- it corrupts labels; '
-                         'see the TODO on Polars2SVG.roundSvgFloats')
 
 
 if __name__ == '__main__':

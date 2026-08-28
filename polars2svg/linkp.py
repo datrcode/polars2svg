@@ -1466,8 +1466,8 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
             elif self.link_shape == 'flowmap': _df_link_ = self.__flowmapControlPointColumns__(_df_link_, i)
 
             # PLANNING.md S1: round where the number becomes a string, never on the finished
-            # SVG (see the TODO on Polars2SVG.roundSvgFloats for why the string pass was a
-            # mistake).  Rounding is applied to the *emitted* expression only -- the
+            # SVG -- a string pass cannot tell a coordinate from a label that merely looks
+            # like one (PLANNING.md S4).  Rounding is applied to the *emitted* expression only -- the
             # underlying control-point / stroke-width columns keep full precision for
             # __arrowColumns__, __renderLinkLabels__ and the GPU display list, so the
             # numeric mirror those paths verify against is unchanged.
@@ -2142,10 +2142,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
             svg.append(f'<rect x="0" y="0" width="{w-1}" height="{h-1}" fill="none" stroke="{_border_co_}" stroke-width="1" />')
 
         svg.append('</svg>')
-        # trim verbose float tails from the finished SVG (idempotent) -- rounded here
-        # rather than in __init__ so the interactive renderSVG() re-render path is
-        # covered too. See Polars2SVG.roundSvgFloats
-        self.svg = self.p2s.roundSvgFloats(''.join(svg))
+        self.svg = ''.join(svg)
 
     #
     # renderSmallMultiples() - smallp integration

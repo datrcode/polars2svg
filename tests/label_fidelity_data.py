@@ -3,16 +3,16 @@
 A single hostile corpus of strings (FIDELITY_LABELS) is reused by every component's
 fidelity test so they all exercise the same edge cases: integers, floats, scientific
 notation, IPv4/IPv6, names, mixed/upper/lower case, and XML-escape-required symbols.
-These strings regressed when roundSvgFloats() rounded any digit-dot-digit run anywhere in
-the finished SVG -- inside <text>/<tspan> content, not just numeric attributes -- e.g. a
-node label "1.172.32.1" was corrupted to "1.17.32.1". See the TODO on
-Polars2SVG.roundSvgFloats.
+They exist because a string pass over finished SVG cannot tell a coordinate from a label
+that merely looks like one: the float-trimming helper that used to run over every rendered
+SVG corrupted the node label "1.172.32.1" into "1.17.32.1", and axis tick labels with it.
+That helper was deleted in 0.2.0 (PLANNING.md S4); this corpus is what keeps any successor
+honest.
 
 Any string that appears as user-supplied text in a component's output -- a linkp node
 label, a linkp node_labels dict value, or a draw_context axis/field label naming a column
 -- must come back byte-for-byte after the SVG is parsed and its XML entities decoded.
 """
-import re
 import xml.etree.ElementTree as ET
 
 SVG_NS = '{http://www.w3.org/2000/svg}'
@@ -39,33 +39,6 @@ FIDELITY_LABELS = [
     'foo@bar.com', 'path/to/file', 'key=value', "it's", '#hashtag', 'c++',
     '$price', 'back\\slash', 'a"quoted"b',
 ]
-
-# Labels the (disabled) rounding logic provably corrupts. Negative tests assert these
-# break so a guard test can never silently pass with rounding re-enabled.
-KNOWN_ROUNDING_VICTIMS = [
-    '3.14159', '123.456789', '-0.00042', '2.71828', '6.022e23',
-    '10.160.170.21', '1.172.32.1', '192.168.100.200', '255.255.255.0',
-]
-
-
-# Faithful copy of the ORIGINAL Polars2SVG.roundSvgFloats body (now disabled in the
-# source). Kept here so negative tests can prove that re-enabling that logic corrupts
-# rendered text WITHOUT flipping the production source. If the real helper is ever
-# rewritten to be text-content-safe, this reproduction -- and the negative tests -- go.
-_FAULTY_FLOAT_RE = re.compile(r'-?\d*\.\d+')
-
-
-def faulty_round_svg_floats(svg, digits=2):
-    def _round(_m_):
-        _s_ = _m_.group(0)
-        _frac_ = _s_.split('.', 1)[1]
-        if len(_frac_) <= digits:
-            return _s_
-        _out_ = f'{round(float(_s_), digits):.{digits}f}'.rstrip('0').rstrip('.')
-        if _out_ in ('', '-', '-0'):
-            _out_ = '0'
-        return _out_
-    return _FAULTY_FLOAT_RE.sub(_round, svg)
 
 
 def svg_text_contents(svg):

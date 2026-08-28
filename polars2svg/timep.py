@@ -32,9 +32,6 @@ class Timep(P2SBinComponentMixin, ExportMixin):
             self.gatherMetrics(self.__computeAggregates2__)
             self.gatherMetrics(self.__constructGeometry__)
             self.gatherMetrics(self.__renderSVG__, rand_id)
-        # trim verbose float tails from the finished SVG (idempotent; no-op on the
-        # dataless placeholder) -- see Polars2SVG.roundSvgFloats
-        self.svg = self.p2s.roundSvgFloats(self.svg)
         self.t_end     = time.time()
         self.t_overall = self.t_end - self.t_start
 

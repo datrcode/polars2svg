@@ -30,11 +30,6 @@ class Smallp(ExportMixin):
             self.gatherMetrics(self.__constructGeometry__)
             if not self.sketch_only:
                 self.gatherMetrics(self.__renderSVG__, rand_id)
-        # trim verbose float tails from the finished SVG (idempotent; no-op on the
-        # dataless placeholder) -- see Polars2SVG.roundSvgFloats. Child panels are
-        # already rounded (each component rounds in its own __init__); the outer
-        # <g transform> coordinates are rounded here.
-        self.svg = self.p2s.roundSvgFloats(self.svg)
         self.t_end     = time.time()
         self.t_overall = self.t_end - self.t_start
 

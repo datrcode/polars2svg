@@ -192,7 +192,8 @@ def _write_baseline(platform_id, metadata, medians):
         'timings':   medians,
     }
     BASELINE_PATH.write_text(json.dumps(
-        {'schema': SCHEMA_VERSION, 'platforms': _entries_}, indent=2, sort_keys=False) + "\n")
+        {'schema': SCHEMA_VERSION,
+         'platforms': {_k_: _entries_[_k_] for _k_ in sorted(_entries_)}}, indent=2) + "\n")
 
 
 def _make_frames():

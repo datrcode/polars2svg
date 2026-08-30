@@ -7,8 +7,6 @@ from pathlib import Path
 import polars2svg
 from polars2svg import (
     Polars2SVG,
-    PolarsForceDirectedLayout,
-    ConveyProximityLayout,
     LandmarkMDSLayout,
     PivotMDSLayout,
 )
@@ -75,8 +73,7 @@ class TestPublicSurfaceAnnotations(unittest.TestCase):
         self.assertIsNot(sig.parameters['stack'].annotation, inspect.Parameter.empty)
 
     def test_exported_layouts_results_return_dict(self):
-        for cls in (PolarsForceDirectedLayout, ConveyProximityLayout,
-                    LandmarkMDSLayout, PivotMDSLayout):
+        for cls in (LandmarkMDSLayout, PivotMDSLayout):
             with self.subTest(cls=cls.__name__):
                 ann = inspect.signature(cls.results).return_annotation
                 self.assertIs(ann, dict,

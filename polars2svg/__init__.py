@@ -20,16 +20,6 @@ from .laguerre_voronoi             import laguerre_voronoi, QuadTree
 # Guarded the same way TFDPLayout already was, so `import polars2svg` succeeds
 # without them installed; the names are simply absent when they're missing.
 try:
-    from .polars_force_directed_layout import PolarsForceDirectedLayout
-except ImportError:
-    pass
-
-try:
-    from .convey_proximity_layout import ConveyProximityLayout
-except ImportError:
-    pass
-
-try:
     from .mds_at_scale import LandmarkMDSLayout, PivotMDSLayout
 except ImportError:
     pass

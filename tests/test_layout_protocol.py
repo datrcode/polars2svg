@@ -1,10 +1,8 @@
 import unittest
 import networkx as nx
 
-from polars2svg.layout_protocol              import LayoutAlgorithm
-from polars2svg.polars_force_directed_layout import PolarsForceDirectedLayout
-from polars2svg.convey_proximity_layout      import ConveyProximityLayout
-from polars2svg.mds_at_scale                 import LandmarkMDSLayout, PivotMDSLayout
+from polars2svg.layout_protocol import LayoutAlgorithm
+from polars2svg.mds_at_scale    import LandmarkMDSLayout, PivotMDSLayout
 
 try:
     from polars2svg.tfdp_layout import TFDPLayout
@@ -24,14 +22,6 @@ def _g():
 
 
 class TestLayoutAlgorithmProtocol(unittest.TestCase):
-
-    def test_polars_force_directed_satisfies_protocol(self):
-        layout = PolarsForceDirectedLayout(_g(), iterations=3)
-        self.assertIsInstance(layout, LayoutAlgorithm)
-
-    def test_convey_proximity_satisfies_protocol(self):
-        layout = ConveyProximityLayout(_g(), iterations_min=2)
-        self.assertIsInstance(layout, LayoutAlgorithm)
 
     def test_landmark_mds_satisfies_protocol(self):
         layout = LandmarkMDSLayout(_g())
@@ -65,12 +55,12 @@ class TestLayoutAlgorithmProtocol(unittest.TestCase):
         self.assertIsInstance(HasResults(), LayoutAlgorithm)
 
     def test_results_returns_dict(self):
-        layout = PolarsForceDirectedLayout(_g(), iterations=3)
+        layout = LandmarkMDSLayout(_g())
         self.assertIsInstance(layout.results(), dict)
 
     def test_results_keys_are_all_nodes(self):
         g = _g()
-        layout = PolarsForceDirectedLayout(g, iterations=3)
+        layout = LandmarkMDSLayout(g)
         self.assertEqual(set(layout.results().keys()), set(g.nodes()))
 
 

@@ -7,7 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_Nothing yet._
+### Removed
+
+- **`PolarsForceDirectedLayout` and `ConveyProximityLayout`** — deprecated in 0.2.0 with a
+  warning naming this release, and now deleted along with their modules
+  (`polars_force_directed_layout.py`, `convey_proximity_layout.py`). Importing either name
+  from `polars2svg` now raises `ImportError`.
+
+  The migrations are unchanged from the 0.2.0 deprecation notice:
+
+  | Was | Use |
+  |---|---|
+  | `PolarsForceDirectedLayout(g).results()` | `networkx.spring_layout(g)` |
+  | `PolarsForceDirectedLayout(g, pos=pos, static_nodes=fixed)` | `networkx.spring_layout(g, pos=pos, fixed=list(fixed))` |
+  | `ConveyProximityLayout(g)` — for a distance-preserving layout | `LandmarkMDSLayout(g)` or `PivotMDSLayout(g)` |
+
+  Both caveats from that notice still apply. `networkx.spring_layout` is
+  Fruchterman-Reingold and is **not** distance-preserving — if screen distance tracking
+  graph distance is what you wanted, the MDS pair is the replacement, not spring. And
+  **resistive (effective-resistance) distances have no replacement**:
+  `ConveyProximityLayout(use_resistive_distances=True)` was their only source in the
+  framework.
+
+  With both gone, the framework no longer implements Cohen (ACM ToCHI 1997), "Drawing
+  Graphs to Convey Proximity"; its entry has been dropped from the README's references.
+  The `layouts` extra is unaffected — both modules used only networkx and numpy, which
+  many other layouts still need.
 
 ## [0.2.0] — 2026-08-28
 

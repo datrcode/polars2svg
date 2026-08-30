@@ -4,8 +4,6 @@ import polars2svg
 from polars2svg import (
     Polars2SVG,
     LayoutAlgorithm,
-    PolarsForceDirectedLayout,
-    ConveyProximityLayout,
     LandmarkMDSLayout,
     PivotMDSLayout,
 )
@@ -18,12 +16,6 @@ class TestPackageExports(unittest.TestCase):
 
     def test_layout_algorithm_protocol_exported(self):
         self.assertIs(polars2svg.LayoutAlgorithm, LayoutAlgorithm)
-
-    def test_polars_force_directed_exported(self):
-        self.assertIs(polars2svg.PolarsForceDirectedLayout, PolarsForceDirectedLayout)
-
-    def test_convey_proximity_exported(self):
-        self.assertIs(polars2svg.ConveyProximityLayout, ConveyProximityLayout)
 
     def test_landmark_mds_exported(self):
         self.assertIs(polars2svg.LandmarkMDSLayout, LandmarkMDSLayout)

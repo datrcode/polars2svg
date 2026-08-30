@@ -1235,7 +1235,7 @@ class Polars2SVG(P2SColorsMixin,
         Landmark MDS; ``PivotMDSLayout`` implements Brandes & Pich (2007) Pivot MDS;
         ``TFDPLayout`` implements Zhong et al. (2023) t-FDP. See each class's module header
         for the full citation. (``PolarsForceDirectedLayout`` and ``ConveyProximityLayout``,
-        which implemented Cohen (1997) "Drawing Graphs to Convey Proximity", are deprecated
+        which implemented Cohen (1997) "Drawing Graphs to Convey Proximity", were deprecated
         in 0.2.0 and removed in 0.3.0 — see the CHANGELOG for replacements.)
 
         relationships and pos may be passed as positional arguments (in any order after df) or

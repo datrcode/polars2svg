@@ -216,12 +216,6 @@ implementation file carries the full citation in its module header.
   "Force-Directed Graph Layouts Revisited: A New Force Based on the
   t-Distribution," *IEEE Transactions on Visualization and Computer Graphics*,
   2023. arXiv:[2303.03964](https://arxiv.org/abs/2303.03964)
-- **Force-directed / incremental proximity layouts** (`PolarsForceDirectedLayout`,
-  `ConveyProximityLayout` — [polars_force_directed_layout.py](polars2svg/polars_force_directed_layout.py),
-  [convey_proximity_layout.py](polars2svg/convey_proximity_layout.py)):
-  J. D. Cohen, "Drawing Graphs to Convey Proximity: An Incremental Arrangement
-  Method," *ACM Transactions on Computer-Human Interaction*, vol. 4, no. 3,
-  pp. 197–229, 1997. doi:[10.1145/264645.264657](https://doi.org/10.1145/264645.264657)
 - **Landmark MDS** (`LandmarkMDSLayout` — [mds_at_scale.py](polars2svg/mds_at_scale.py)):
   V. de Silva and J. B. Tenenbaum, "Global versus local methods in nonlinear
   dimensionality reduction," *Proc. NIPS*, 2003, pp. 721–728.

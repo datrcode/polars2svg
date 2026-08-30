@@ -77,8 +77,7 @@ class TestOptionalDependencyExtras(unittest.TestCase):
     def test_layout_algorithm_classes_absent_without_layouts_extra(self):
         # __init__.py guards these the same way it already guarded TFDPLayout;
         # they simply shouldn't exist rather than raising at import time.
-        for _name_ in ('PolarsForceDirectedLayout', 'ConveyProximityLayout',
-                       'LandmarkMDSLayout', 'PivotMDSLayout', 'TFDPLayout'):
+        for _name_ in ('LandmarkMDSLayout', 'PivotMDSLayout', 'TFDPLayout'):
             self.assertFalse(hasattr(self.p2s_module, _name_),
                               f'{_name_} should be absent without the layouts extra')
 

@@ -88,9 +88,13 @@ def _gpu_name():
     _exe_ = shutil.which('nvidia-smi')
     if _exe_ is not None:
         try:
-            _out_ = subprocess.run([_exe_, '--query-gpu=name', '--format=csv,noheader'],
-                                   capture_output=True, text=True, timeout=10).stdout.strip()
-            if _out_:
+            _proc_ = subprocess.run([_exe_, '--query-gpu=name', '--format=csv,noheader'],
+                                    capture_output=True, text=True, timeout=10)
+            # nvidia-smi reports "couldn't communicate with the NVIDIA driver" on
+            # stdout and exits non-zero, so without the returncode check that
+            # message gets recorded as the GPU name.
+            _out_ = _proc_.stdout.strip()
+            if _proc_.returncode == 0 and _out_:
                 return _out_.splitlines()[0].strip()
         except Exception:   # noqa: BLE001
             pass

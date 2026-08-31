@@ -2,6 +2,7 @@ import polars as pl
 import polars.selectors as cs
 import numpy as np
 from   decimal import Decimal
+from   math    import cos, radians
 import datetime as dt
 from   datetime import timedelta, datetime, date
 import typing
@@ -53,7 +54,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
         'background', 'background_label_color', 'background_opacity',
         'background_fill', 'background_stroke_w', 'background_stroke',
         'draw_context', 'draw_border', 'insets', 'wxh', 'txt_h', 'sm_shared',
-        'use_lazy_execution', 'legend', 'x_time_expand_perc',
+        'use_lazy_execution', 'legend', 'x_time_expand_perc', 'aspect',
     })
 
     #
@@ -217,6 +218,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
             'txt_h':                 12,
             'x_range':               None,
             'y_range':               None,
+            'aspect':                None,      # None / 'equal' / 'geo' / positive number -- see __resolveRanges__()
             'x_shared_label_range':  None,
             'y_shared_label_range':  None,
             'dot_size_range':        (0.5, 4.0),
@@ -872,6 +874,8 @@ class XYp(P2SBackgroundMixin, ExportMixin):
         self.opacity_clean,       self.opacity_is_lits,       self.opacity_enums       = None, False, set()
         self.line_order_by_clean, self.line_order_by_is_lits, self.line_order_by_enums = None, False, set()
         self.line_clean                                                                = None
+        # resolved by __resolveRanges__() at pixel-coordinate time; the window the render uses
+        self.x_effective_range,   self.y_effective_range                       = None, None
 
         #
         # Pull out any enums and ensure everything is a list
@@ -954,6 +958,24 @@ class XYp(P2SBackgroundMixin, ExportMixin):
                 raise ValueError('XYp.__validateInput__(): background shapes require numeric (scalar) x and y axes')
 
         #
+        # aspect= -- lock the ratio between the two axis scales (see __resolveRanges__()).
+        # Value check always; the axis-type check needs a dataframe.  Restricted to
+        # purely numeric axes: a categorical axis draws its gridlines from the category
+        # count rather than the range (__renderContext_set__), and the temporal context
+        # renderers take world-unit datetimes, so an expanded range would move the dots
+        # without moving the gridlines on either.
+        #
+        if self.aspect is not None:
+            if isinstance(self.aspect, str):
+                if self.aspect not in ('equal', 'geo'):
+                    raise ValueError(f"XYp.__validateInput__(): aspect string must be 'equal' or 'geo', got {self.aspect!r}")
+            elif isinstance(self.aspect, bool) or not isinstance(self.aspect, (int, float)):
+                raise ValueError(f"XYp.__validateInput__(): aspect must be None, 'equal', 'geo', or a positive "
+                                 f"number, got {type(self.aspect).__name__} {self.aspect!r}")
+            elif self.aspect <= 0 or self.aspect != self.aspect or self.aspect == float('inf'):
+                raise ValueError(f'XYp.__validateInput__(): aspect must be a positive finite number, got {self.aspect!r}')
+
+        #
         # Handle the distributions (if set)
         #
         self.__validateDistributions__()
@@ -964,6 +986,26 @@ class XYp(P2SBackgroundMixin, ExportMixin):
         if self.df is not None:
             self.__applyTimeFieldTransforms__()
             self.__validateColumnTypes__()
+
+        #
+        # aspect= axis-type check -- deferred to here so a missing/mistyped x/y column
+        # reports itself through __validateColumnTypes__() first.
+        #
+        if self.aspect is not None and self.df is not None:
+            def _axis_is_numeric_(clean, enums):
+                if clean is None:          return False  # enum-only axis
+                if self.p2s.SETp in enums: return False  # explicitly categorical
+                if len(enums & (self.p2s.time_linear_types | self.p2s.time_periodic_types)) > 0: return False
+                for field in clean:
+                    if isinstance(field, tuple):                   return False  # multi-field -> struct/categorical
+                    if not self.p2s.numericColumn(self.df, field): return False
+                return True
+            _bad_ = [_w_ for _w_, _c_, _e_ in [('x', self.x_clean, self.x_enums),
+                                               ('y', self.y_clean, self.y_enums)]
+                     if not _axis_is_numeric_(_c_, _e_)]
+            if _bad_:
+                raise ValueError(f'XYp.__validateInput__(): aspect= requires numeric x and y axes; '
+                                 f'{" and ".join(_bad_)} is categorical or temporal')
 
         #
         # The attributes need to be None, length one, or length max_len
@@ -1466,15 +1508,60 @@ class XYp(P2SBackgroundMixin, ExportMixin):
         self.__context_geom__ = (w_context, x_ins, h_context, y_ins) # saved to avoid recalculation (and code redundancy)
 
     #
-    # __toPixelCoordinates_int__() - compute the x and y pixel coordinates
+    # __aspectTargetRatio__() - resolve aspect= to a numeric scale ratio
     #
-    def __toPixelCoordinates_int__(self):
-        # Pull the mins/maxes from the dataframe (or the user-specified parameter)
+    # The ratio returned is scale_x / scale_y in world-units-per-pixel, which is the
+    # same thing as pixels-per-y-unit / pixels-per-x-unit -- matplotlib's set_aspect()
+    # convention.  'equal' (1.0) makes a square in data units render square.  'geo'
+    # treats x as degrees longitude and y as degrees latitude: a degree of longitude
+    # covers cos(latitude) as much ground as a degree of latitude, so it gets cos(lat)
+    # as many pixels.  That is a plate carree centered on the data, which is the usual
+    # good-enough correction for a regional extent; it does not reproject, so it does
+    # not stay true across a range of latitudes wide enough for the curvature to matter.
+    #
+    def __aspectTargetRatio__(self, _ymin_, _ymax_):
+        if self.aspect == 'equal': return 1.0
+        if self.aspect == 'geo':
+            _lat_ = (_ymin_ + _ymax_)/2.0
+            if _lat_ < -90.0 or _lat_ > 90.0:
+                self.p2s.logger.warning(f"XYp: aspect='geo' expects a y axis in degrees latitude, but the "
+                                        f"resolved y range centers on {_lat_:.4f} (outside [-90, 90])")
+            _lat_ = max(-89.9, min(89.9, _lat_))  # cos() -> 0 at the poles would blow the ratio up
+            return 1.0 / cos(radians(_lat_))
+        return float(self.aspect)
+
+    #
+    # __resolveRanges__() - resolve the world-coordinate window the render actually uses
+    #
+    # Single source of truth for that window.  The dot transforms below, the axis
+    # labels and grid lines (__renderContext__), and everything downstream of
+    # x_transform_vars / y_transform_vars -- wxToSx()/wyToSy(), background shapes,
+    # filterByRectangle(), recordsAt() -- all read what this sets, so they cannot
+    # disagree about where the plot edges are.
+    #
+    #   1. resolve from x_range / y_range, else the extent of __xi__ / __yi__
+    #   2. convert date/datetime bounds to seconds since the epoch (__xi__/__yi__ are
+    #      already in those units -- see __indexXandY_join__())
+    #   3. apply aspect= by widening the over-magnified axis about its center
+    #   4. drop rows outside the resolved window
+    #
+    # Step 4 is what keeps the integer path honest: without it out-of-range points are
+    # only .clip()ed, which smears them onto the plot edges instead of removing them.
+    # It runs against the *resolved* window rather than the requested one, so a widened
+    # axis shows the data the widening brought into view instead of leaving a band that
+    # is inside the frame but empty by construction.  With aspect=None the resolved and
+    # requested windows are identical and this is exactly the historical behaviour.
+    #
+    # Returns (xmin, dx, ymin, dy); the window maxima are xmin+dx / ymin+dy, which is
+    # not always the resolved max -- a degenerate (zero-width) axis is given dx = 1.
+    #
+    def __resolveRanges__(self):
+        # 1) resolve
         if self.x_range is None: _xmin_, _xmax_ = self.df_flat['__xi__'].min(), self.df_flat['__xi__'].max()
         else:                    _xmin_, _xmax_ = self.x_range
         if self.y_range is None: _ymin_, _ymax_ = self.df_flat['__yi__'].min(), self.df_flat['__yi__'].max()
         else:                    _ymin_, _ymax_ = self.y_range
-        # Handle any time conversions here
+        # 2) time conversions
         if isinstance(_xmin_, datetime) or isinstance(_xmin_, date):
             _xmin_, _xmax_ = (_xmin_ - datetime(1970, 1, 1)).total_seconds(), (_xmax_ - datetime(1970, 1, 1)).total_seconds()
         if isinstance(_ymin_, datetime) or isinstance(_ymin_, date):
@@ -1483,13 +1570,40 @@ class XYp(P2SBackgroundMixin, ExportMixin):
         _dy_ = 1 if _ymax_ is None or _ymin_ is None else _ymax_ - _ymin_
         if abs(_dx_) < 0.0001: _dx_ = 1
         if abs(_dy_) < 0.0001: _dy_ = 1
-        # Filter out-of-range rows when a range is set -- mirrors __toPixelCoordinates_float__().
-        # Without this the integer path would only .clip() out-of-range points, smearing them
-        # onto the plot edges instead of removing them.
-        if   self.x_range is not None and self.y_range is not None: self.df_flat = self.df_flat.filter((pl.col('__xi__') >= _xmin_) & (pl.col('__xi__') <= _xmax_) &
-                                                                                                       (pl.col('__yi__') >= _ymin_) & (pl.col('__yi__') <= _ymax_))
-        elif self.x_range is None     and self.y_range is not None: self.df_flat = self.df_flat.filter((pl.col('__yi__') >= _ymin_) & (pl.col('__yi__') <= _ymax_))
-        elif self.x_range is not None and self.y_range is None:     self.df_flat = self.df_flat.filter((pl.col('__xi__') >= _xmin_) & (pl.col('__xi__') <= _xmax_))
+        # 3) aspect -- widen only, so every point that was visible stays visible
+        if self.aspect is not None and _xmin_ is not None and _ymin_ is not None:
+            _w_px_, _h_px_ = self.plot_size
+            _target_       = self.__aspectTargetRatio__(_ymin_, _ymin_ + _dy_)
+            if _w_px_ > 0 and _h_px_ > 0:
+                _ratio_ = (abs(_dx_)/_w_px_) / (abs(_dy_)/_h_px_)   # world units per pixel, x relative to y
+                if   _ratio_ > _target_:                            # y over-magnified -> widen y
+                    _cy_   = _ymin_ + _dy_/2.0
+                    _dy_   = _dy_ * (_ratio_/_target_)
+                    _ymin_ = _cy_ - _dy_/2.0
+                elif _ratio_ < _target_:                            # x over-magnified -> widen x
+                    _cx_   = _xmin_ + _dx_/2.0
+                    _dx_   = _dx_ * (_target_/_ratio_)
+                    _xmin_ = _cx_ - _dx_/2.0
+        # The window the rest of the render works in
+        self.x_effective_range = None if _xmin_ is None else (_xmin_, _xmin_ + _dx_)
+        self.y_effective_range = None if _ymin_ is None else (_ymin_, _ymin_ + _dy_)
+        # 4) filter -- only the constrained axes need one.  An unconstrained axis took
+        #    its window from the data extent and aspect only ever widens, so nothing
+        #    can fall outside it and its filter would be a no-op.
+        _clauses_ = []
+        if self.x_range is not None: _clauses_.append((pl.col('__xi__') >= _xmin_) & (pl.col('__xi__') <= _xmin_ + _dx_))
+        if self.y_range is not None: _clauses_.append((pl.col('__yi__') >= _ymin_) & (pl.col('__yi__') <= _ymin_ + _dy_))
+        if len(_clauses_) > 0:
+            _predicate_ = _clauses_[0]
+            for _clause_ in _clauses_[1:]: _predicate_ = _predicate_ & _clause_
+            self.df_flat = self.df_flat.filter(_predicate_)
+        return _xmin_, _dx_, _ymin_, _dy_
+
+    #
+    # __toPixelCoordinates_int__() - compute the x and y pixel coordinates
+    #
+    def __toPixelCoordinates_int__(self):
+        _xmin_, _dx_, _ymin_, _dy_ = self.__resolveRanges__()
         # Clamp normalized values to [0, 0.9999999...] before scaling, then snap to
         # the raster grid.  Without supersampling the snap step is the whole dot_size
         # (points land on integer multiples: 0, N, 2N, ...).  With dot_size_supersample=s
@@ -1532,25 +1646,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     # __toPixelCoordinates_float__() - compute the x and y pixel coordinates
     #
     def __toPixelCoordinates_float__(self):
-        # Pull the mins/maxes from the dataframe (or the user-specified parameter)
-        if self.x_range is None: _xmin_, _xmax_ = self.df_flat['__xi__'].min(), self.df_flat['__xi__'].max()
-        else:                    _xmin_, _xmax_ = self.x_range
-        if self.y_range is None: _ymin_, _ymax_ = self.df_flat['__yi__'].min(), self.df_flat['__yi__'].max()
-        else:                    _ymin_, _ymax_ = self.y_range
-        # Handle any time conversions here
-        if isinstance(_xmin_, datetime) or isinstance(_xmin_, date):
-            _xmin_, _xmax_ = (_xmin_ - datetime(1970, 1, 1)).total_seconds(), (_xmax_ - datetime(1970, 1, 1)).total_seconds()
-        if isinstance(_ymin_, datetime) or isinstance(_ymin_, date):
-            _ymin_, _ymax_ = (_ymin_ - datetime(1970, 1, 1)).total_seconds(), (_ymax_ - datetime(1970, 1, 1)).total_seconds()
-        # Ensure that the range is at least 1
-        _dx_, _dy_ = _xmax_ - _xmin_, _ymax_ - _ymin_
-        if abs(_dx_) < 0.0001: _dx_ = 1
-        if abs(_dy_) < 0.0001: _dy_ = 1
-        # Filter if one or both of the range values are set
-        if   self.x_range is not None and self.y_range is not None: self.df_flat = self.df_flat.filter((pl.col('__xi__') >= _xmin_) & (pl.col('__xi__') <= _xmax_) & 
-                                                                                                       (pl.col('__yi__') >= _ymin_) & (pl.col('__yi__') <= _ymax_))
-        elif self.x_range is None     and self.y_range is not None: self.df_flat = self.df_flat.filter((pl.col('__yi__') >= _ymin_) & (pl.col('__yi__') <= _ymax_))
-        elif self.x_range is not None and self.y_range is None:     self.df_flat = self.df_flat.filter((pl.col('__xi__') >= _xmin_) & (pl.col('__xi__') <= _xmax_))
+        _xmin_, _dx_, _ymin_, _dy_ = self.__resolveRanges__()
         # Clamp normalized values to [0, 0.9999999...] before scaling
         self.df_flat = self.df_flat.with_columns(
             (self.plot_origin[0] + (((pl.col('__xi__') - _xmin_)/_dx_).clip(0, 0.99999999) * self.plot_size[0]).round().cast(pl.Int32)).alias('__xpx__'),
@@ -1656,10 +1752,15 @@ class XYp(P2SBackgroundMixin, ExportMixin):
             if _clean_ is None: continue
             if len(self.df_flat) == 0: continue # occurs when user-specified range does not include any of the data
 
-            # Do the binning
-            if   _axis_ == 'x' and self.x_range is not None: _min_, _max_ = self.x_range
-            elif _axis_ == 'y' and self.y_range is not None: _min_, _max_ = self.y_range
-            else:                                            _min_, _max_ = self.df_flat[_field_].min(), self.df_flat[_field_].max()
+            # Do the binning -- against the same window the dots were transformed with
+            # (__resolveRanges__()).  The bars are emitted as 0..1 fractions and stretched
+            # across the full plot extent by __renderDistributions__(), so binning over any
+            # other range slides them out from under the dots they are summarizing.  It is
+            # also already in __xi__/__yi__ units, which the raw x_range/y_range are not for
+            # a temporal axis.
+            _eff_range_ = self.x_effective_range if _axis_ == 'x' else self.y_effective_range
+            if _eff_range_ is not None: _min_, _max_ = _eff_range_
+            else:                       _min_, _max_ = self.df_flat[_field_].min(), self.df_flat[_field_].max()
 
             # A periodic time transform (month-of-year, hour-of-day, day-of-week, ...) plots
             # as discrete integers, so -- like Timep's periodic bins (one bar per period unit,
@@ -2530,11 +2631,19 @@ class XYp(P2SBackgroundMixin, ExportMixin):
                 if len(self.df_flat) > 0: _min_cell_label_ = self.df_flat[f'__{_axis_}__'][self.df_flat[f'__{_axis_}i__'].arg_min()]
                 else:                     _min_cell_label_ = None
                 if isinstance(_min_cell_label_, dict): _min_cell_label_ = '|'.join([str(_) for _ in list(_min_cell_label_.values())])
-                if   _axis_ == 'x' and self.x_range is not None and \
-                     (self.p2s.numericColumn(self.df_flat, '__x__') or self.p2s.dateColumn(self.df_flat, '__x__') or self.p2s.dateTimeColumn(self.df_flat, '__x__')):
+                # A numeric axis labels its plot edges, and those are the resolved window
+                # (__resolveRanges__()) -- with aspect= that is wider than the data and
+                # wider than any x_range/y_range the caller asked for.  Temporal axes keep
+                # the world-unit datetime labels handled below.
+                _eff_ = self.x_effective_range if _axis_ == 'x' else self.y_effective_range
+                _numeric_axis_ = self.p2s.numericColumn(self.df_flat, f'__{_axis_}__')
+                if   _eff_ is not None and _numeric_axis_:
+                    _min_cell_label_ = _eff_[0]
+                elif _axis_ == 'x' and self.x_range is not None and \
+                     (self.p2s.dateColumn(self.df_flat, '__x__') or self.p2s.dateTimeColumn(self.df_flat, '__x__')):
                     _min_cell_label_ = self.x_range[0]
                 elif _axis_ == 'y' and self.y_range is not None and \
-                     (self.p2s.numericColumn(self.df_flat, '__y__') or self.p2s.dateColumn(self.df_flat, '__y__') or self.p2s.dateTimeColumn(self.df_flat, '__y__')):
+                     (self.p2s.dateColumn(self.df_flat, '__y__') or self.p2s.dateTimeColumn(self.df_flat, '__y__')):
                     _min_cell_label_ = self.y_range[0]
                 if   _axis_ == 'x' and self.x_shared_label_range is not None: _min_cell_label_ = self.x_shared_label_range[0]
                 elif _axis_ == 'y' and self.y_shared_label_range is not None: _min_cell_label_ = self.y_shared_label_range[0]
@@ -2542,11 +2651,13 @@ class XYp(P2SBackgroundMixin, ExportMixin):
                 if len(self.df_flat) > 0: _max_cell_label_ = self.df_flat[f'__{_axis_}__'][self.df_flat[f'__{_axis_}i__'].arg_max()]
                 else:                     _max_cell_label_ = None
                 if isinstance(_max_cell_label_, dict): _max_cell_label_ = '|'.join([str(_) for _ in list(_max_cell_label_.values())])
-                if   _axis_ == 'x' and self.x_range is not None and \
-                     (self.p2s.numericColumn(self.df_flat, '__x__') or self.p2s.dateColumn(self.df_flat, '__x__') or self.p2s.dateTimeColumn(self.df_flat, '__x__')):
+                if   _eff_ is not None and _numeric_axis_:
+                    _max_cell_label_ = _eff_[1]
+                elif _axis_ == 'x' and self.x_range is not None and \
+                     (self.p2s.dateColumn(self.df_flat, '__x__') or self.p2s.dateTimeColumn(self.df_flat, '__x__')):
                     _max_cell_label_ = self.x_range[1]
                 elif _axis_ == 'y' and self.y_range is not None and \
-                     (self.p2s.numericColumn(self.df_flat, '__y__') or self.p2s.dateColumn(self.df_flat, '__y__') or self.p2s.dateTimeColumn(self.df_flat, '__y__')):
+                     (self.p2s.dateColumn(self.df_flat, '__y__') or self.p2s.dateTimeColumn(self.df_flat, '__y__')):
                     _max_cell_label_ = self.y_range[1]
                 if   _axis_ == 'x' and self.x_shared_label_range is not None: _max_cell_label_ = self.x_shared_label_range[1]
                 elif _axis_ == 'y' and self.y_shared_label_range is not None: _max_cell_label_ = self.y_shared_label_range[1]
@@ -2584,6 +2695,16 @@ class XYp(P2SBackgroundMixin, ExportMixin):
                     if self.y_range is not None: return self.y_range[1]
                     return self.df_flat['__y__'].max()
                 raise ValueError(f'XYp.__renderContext__().__max__(): Unrecognized axis {col} (shouldn\'t be possible)')
+            # Numeric grid lines have to come from the same window the dots were
+            # transformed with (__resolveRanges__()) rather than a fresh min/max of the
+            # data: with aspect= that window is deliberately wider than the data, and
+            # even without it a y_range filter can shrink the x extent after the x
+            # window was already fixed.  The temporal branches keep their world-unit
+            # datetimes, which __min__/__max__ still supply.
+            def __numericRange__(col):
+                _eff_ = self.x_effective_range if col == 'x' else self.y_effective_range
+                if _eff_ is not None: return _eff_
+                return (__min__(col), __max__(col))
             # - x axis
             if   self.p2s.dateColumn(self.df_flat, '__x__') or self.p2s.dateTimeColumn(self.df_flat, '__x__'):
                 _dt_context_ = self.__renderContext_linearTime__(__min__('x'), __max__('x'), xyo, (_w_, _h_), x_axis=True, dl=_dl_)
@@ -2592,7 +2713,8 @@ class XYp(P2SBackgroundMixin, ExportMixin):
                 _periodic_context_ = self.__renderContext_periodicTime__(self.x_clean, __min__('x'), __max__('x'), xyo, (_w_, _h_), x_axis=True, dl=_dl_)
                 _svg_.extend(_periodic_context_)
             elif self.p2s.numericColumn(self.df_flat, '__x__'):
-                _numeric_context_ = self.__renderContext_numeric__(__min__('x'), __max__('x'), xyo, (_w_, _h_), x_axis=True, dl=_dl_)
+                _x_lo_, _x_hi_    = __numericRange__('x')
+                _numeric_context_ = self.__renderContext_numeric__(_x_lo_, _x_hi_, xyo, (_w_, _h_), x_axis=True, dl=_dl_)
                 _svg_.extend(_numeric_context_)
             else:
                 _set_context_ = self.__renderContext_set__(xyo, (_w_, _h_), x_axis=True, dl=_dl_)
@@ -2605,7 +2727,8 @@ class XYp(P2SBackgroundMixin, ExportMixin):
                 _periodic_context_ = self.__renderContext_periodicTime__(self.y_clean, __min__('y'), __max__('y'), xyo, (_w_, _h_), x_axis=False, dl=_dl_)
                 _svg_.extend(_periodic_context_)
             elif self.p2s.numericColumn(self.df_flat, '__y__'):
-                _numeric_context_ = self.__renderContext_numeric__(__min__('y'), __max__('y'), xyo, (_w_, _h_), x_axis=False, dl=_dl_)
+                _y_lo_, _y_hi_    = __numericRange__('y')
+                _numeric_context_ = self.__renderContext_numeric__(_y_lo_, _y_hi_, xyo, (_w_, _h_), x_axis=False, dl=_dl_)
                 _svg_.extend(_numeric_context_)
             else:
                 _set_context_ = self.__renderContext_set__(xyo, (_w_, _h_), x_axis=False, dl=_dl_)
@@ -3335,18 +3458,22 @@ class XYp(P2SBackgroundMixin, ExportMixin):
                     _ymin_ = _ref_.y_transform_vars[1]
                     _kwargs_shared_['y_range'] = (_ymin_, _ymin_ + _ref_.y_transform_vars[2])
             # Pass global boundary labels so all sub-instances show the same axis min/max text.
+            # A numeric axis labels its plot edges, and _ref_ already resolved where those
+            # are (__resolveRanges__()) -- which aspect= widens past the data extent.  For a
+            # categorical or temporal axis the label is the extreme *value*, so it still
+            # comes from the reference's data.
+            def _shared_labels_(_axis_):
+                _eff_ = _ref_.x_effective_range if _axis_ == 'x' else _ref_.y_effective_range
+                if _eff_ is not None and self.p2s.numericColumn(_ref_.df_flat, f'__{_axis_}__'): return _eff_
+                _lo_ = _ref_.df_flat[f'__{_axis_}__'][_ref_.df_flat[f'__{_axis_}i__'].arg_min()]
+                _hi_ = _ref_.df_flat[f'__{_axis_}__'][_ref_.df_flat[f'__{_axis_}i__'].arg_max()]
+                if isinstance(_lo_, dict): _lo_ = '|'.join([str(_) for _ in list(_lo_.values())])
+                if isinstance(_hi_, dict): _hi_ = '|'.join([str(_) for _ in list(_hi_.values())])
+                return (_lo_, _hi_)
             if self.p2s.SM_X in self.sm_shared and len(_ref_.df_flat) > 0:
-                _xmin_lbl_ = _ref_.df_flat['__x__'][_ref_.df_flat['__xi__'].arg_min()]
-                _xmax_lbl_ = _ref_.df_flat['__x__'][_ref_.df_flat['__xi__'].arg_max()]
-                if isinstance(_xmin_lbl_, dict): _xmin_lbl_ = '|'.join([str(_) for _ in list(_xmin_lbl_.values())])
-                if isinstance(_xmax_lbl_, dict): _xmax_lbl_ = '|'.join([str(_) for _ in list(_xmax_lbl_.values())])
-                _kwargs_shared_['x_shared_label_range'] = (_xmin_lbl_, _xmax_lbl_)
+                _kwargs_shared_['x_shared_label_range'] = _shared_labels_('x')
             if self.p2s.SM_Y in self.sm_shared and len(_ref_.df_flat) > 0:
-                _ymin_lbl_ = _ref_.df_flat['__y__'][_ref_.df_flat['__yi__'].arg_min()]
-                _ymax_lbl_ = _ref_.df_flat['__y__'][_ref_.df_flat['__yi__'].arg_max()]
-                if isinstance(_ymin_lbl_, dict): _ymin_lbl_ = '|'.join([str(_) for _ in list(_ymin_lbl_.values())])
-                if isinstance(_ymax_lbl_, dict): _ymax_lbl_ = '|'.join([str(_) for _ in list(_ymax_lbl_.values())])
-                _kwargs_shared_['y_shared_label_range'] = (_ymin_lbl_, _ymax_lbl_)
+                _kwargs_shared_['y_shared_label_range'] = _shared_labels_('y')
 
             # Spectral order on a SHARED axis must be computed once globally, not
             # per tile -- otherwise each tile seriates its own category subset into

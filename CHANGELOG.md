@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`xyp(aspect=...)`** — locks the ratio between the two axis scales, for data whose shape
+  does not match the width/height ratio of the component. Geospatial (longitude/latitude)
+  scatters were the motivating case: with each axis independently stretched to fill its own
+  pixel extent, a map on a component that is not shaped like its extent comes out distorted.
+
+  | Value | Meaning |
+  |---|---|
+  | `None` (default) | unchanged — each axis independently fills its own pixel extent |
+  | `'equal'` | one world unit is the same length on both axes |
+  | `'geo'` | x is degrees longitude, y is degrees latitude — a degree of longitude is given `cos(latitude)` as many pixels |
+  | *number* | pixels-per-y-unit / pixels-per-x-unit, matching matplotlib's `set_aspect()` |
+
+  The ratio is pinned by **widening** the over-magnified axis about its center, so the plot
+  gains empty margin rather than losing data. `x_range`/`y_range` become a floor for the
+  visible window rather than a ceiling, and rows that the widening brings into view are
+  drawn instead of leaving a band that is inside the frame but empty by construction.
+
+  `'geo'` is a plate carrée centered on the data, not a reprojection: it is the usual
+  good-enough correction for a regional extent and will not stay true across a latitude span
+  wide enough for the curvature to matter.
+
+  Requires numeric x and y axes — a categorical axis draws its grid lines from the category
+  count and the temporal renderers work in world-unit datetimes, so neither would follow a
+  widened window; both raise rather than render a plot whose dots and grid lines disagree.
+
+### Changed
+
+- **`XYp` resolves the visible world window in one place** (`__resolveRanges__`), which the dot
+  transforms, the numeric grid lines, the axis end labels, and everything downstream of
+  `x_transform_vars`/`y_transform_vars` (`wxToSx`, background shapes, `filterByRectangle`,
+  `recordsAt`) now all read. `__renderContext__` previously recomputed the axis minima and
+  maxima from the post-filter dataframe, independently of the window the dots were
+  transformed with; the two agreed for every shipped configuration, so this is a no-op for
+  existing plots, but it is what lets `aspect=` move the dots and the grid lines together.
+
 ### Removed
 
 - **`PolarsForceDirectedLayout` and `ConveyProximityLayout`** — deprecated in 0.2.0 with a

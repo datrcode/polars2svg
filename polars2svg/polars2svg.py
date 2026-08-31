@@ -933,6 +933,31 @@ class Polars2SVG(P2SColorsMixin,
         draw_context   = True (default) | False  # if the plot is too small, the context won't be drawn
         draw_border    = True (default) | False  # draw a rectangular border around the SVG
         txt_h          = label text height
+        x_range        = (min, max)           # clip the x axis to this window (default: the data extent)
+        y_range        = (min, max)           # clip the y axis to this window (default: the data extent)
+        aspect         = None (default)       # each axis independently fills its own pixel extent
+                       = 'equal'              # one world unit is the same length on both axes
+                       = 'geo'                # x is degrees longitude, y is degrees latitude
+                       = number               # pixels-per-y-unit / pixels-per-x-unit (matplotlib's set_aspect)
+
+          Without aspect=, a dataset whose shape does not match the width/height ratio of
+          the component is stretched to fit it -- which distorts geospatial data.  aspect=
+          pins the ratio between the two axis scales by *widening* the over-magnified axis
+          about its center, so the plot gains empty margin rather than losing any data;
+          x_range/y_range become a floor for the visible window rather than a ceiling, and
+          rows that the widening brings into view are drawn instead of leaving an empty
+          band inside the frame.
+
+          'geo' is a plate carree centered on the data: a degree of longitude covers
+          cos(latitude) as much ground as a degree of latitude, so it is given cos(lat) as
+          many pixels.  It is the usual good-enough correction for a regional extent, not a
+          reprojection -- it will not stay true across a latitude span wide enough for the
+          curvature to matter.
+
+          Requires numeric x and y axes.  A categorical axis draws its grid lines from the
+          category count and the temporal renderers work in world-unit datetimes, so neither
+          would follow a widened window; both raise instead of rendering a plot whose dots
+          and grid lines disagree.
         background             = None                       # no background (default)
                                = {key: shape_desc, ...}     # bare descriptor; inherits every background_* below
                                = {key: record, ...}         # record; carries its own appearance

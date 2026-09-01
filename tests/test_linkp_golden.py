@@ -91,6 +91,27 @@ class TestLinkPCollapsedNodeGolden(unittest.TestCase):
         assert_image_matches_golden(lp.svg, 'linkp_collapsed_nodes')
 
 
+class TestLinkPOffCanvasCullGolden(unittest.TestCase):
+    '''Golden-file regression test for a zoomed render (PLANNING.md S2).
+
+    Every other linkp golden fits entirely on its canvas, so none of them exercises the
+    off-canvas cull.  This view_window pushes one node and two node labels out of frame
+    while the edges still cross it, so the file pins both halves of the decision -- what
+    is dropped and what is kept -- in one render.
+    '''
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.p2s = Polars2SVG()
+
+    def test_off_canvas_cull(self):
+        lp = self.p2s.linkp(**_params(view_window=(0.35, 0.15, 1.15, 0.95)))
+        # the golden is only meaningful if something was actually culled
+        self.assertLess(lp.svg.count('<circle'), len(_POS_))
+        self.assertLess(lp.svg.count('<text'),   len(_POS_))
+        assert_svg_matches_golden(lp.svg, 'linkp_off_canvas_cull')
+        assert_image_matches_golden(lp.svg, 'linkp_off_canvas_cull')
+
+
 class TestLinkPBackgroundGolden(unittest.TestCase):
     '''Golden-file regression test for background records (PLANNING.md §9.1).
 

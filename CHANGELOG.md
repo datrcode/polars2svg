@@ -76,6 +76,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`LinkP` no longer emits geometry that falls entirely outside the canvas.** Links, nodes,
+  node labels, link labels (with the `<textPath>` `<defs>` path each one needs) and timing
+  marks are rejected before string assembly when their bounding box misses the viewport.
+  A render that fits on the canvas is byte-identical to before; a zoomed one is a fraction
+  of its former size:
+
+  | fixture (1024x768, 120 nodes / 600 edges) | before | after | |
+  |---|---:|---:|---:|
+  | curve, 1x | 212,188 | 212,188 | *identical* |
+  | curve, 10x | 226,400 | 84,120 | -62.8% |
+  | curve, 100x | 236,808 | 58,475 | -75.3% |
+  | curve, 10,000x | 256,457 | 63,022 | -75.4% |
+  | line, 100x | 139,855 | 10,831 | -92.3% |
+
+  This is the size problem rounding cannot touch. Zoom moves a coordinate's bytes from the
+  fractional tail into the integer part -- the widest token in that fixture grows from
+  `1003.03` to `-4906591.73` -- so a fractional-digit rounder recovers less and less exactly
+  as the file gets worse, while the elements carrying those magnitudes are overwhelmingly
+  the ones nobody can see. Dropping the element removes the token instead of shortening it.
+
+  Only *wholly* outside is dropped. An element that straddles the boundary is emitted whole,
+  and the bounds are conservative in every direction: a cubic is bounded by the convex hull
+  of its control points (so a curve that bows back into view survives both endpoints being
+  off-canvas), a node by its radius and stroke, a collapsed node by the cloud glyph's own
+  box, and a label by its measured ink -- a node label whose *baseline* sits below the canvas
+  still has glyphs rising into it, and is kept.
+
+  Nothing about selection changes. `recordsAt()`, `entitiesAtPoint()`, `overlappingEntities()`
+  and `__moveSelectedEntities__()` hit-test the `__sx__`/`__sy__` screen columns and never the
+  emitted string, and `df`, `df_link` and `df_node` still carry every row, so an off-canvas
+  node is still selectable at its screen position and comes back the moment the view moves.
+  The GPU display list is built from those same retained tables; the two label lists it does
+  draw from (`_node_label_info_`, `_link_label_info_`) and the timing-mark mirror are culled
+  in step with the SVG, so the two renderings of a view agree.
+
+  No existing golden changes — they all fit on their canvas, and a render that fits is
+  byte-identical. `linkp_off_canvas_cull` is new, and is the one that pins a zoomed render:
+  a node culled while its edges still cross the frame, and a label whose glyphs no longer
+  reach back into view.
+
 - **`LinkP` emits the cloud `<defs>` block only when a node actually collapses** — 808 bytes
   off every ordinary linkp render, or 41% of a small one. Only collapsed nodes draw
   `<use href="#cloud">`, but the 808-byte icon definition was written into every render
@@ -93,6 +133,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   block, so the "cloud present" path stays covered.
 
 ### Fixed
+
+- **`LinkP` curve geometry no longer overflows Int32 at high zoom.** Screen coordinates are
+  `Int32`, and `__curveControlPointColumns__` squared the endpoint deltas in that dtype to
+  get the chord length. Past ~46,341 pixels of separation -- routine once a `view_window`
+  magnifies the layout -- the square wraps: negative, and `sqrt()` returns NaN that rides
+  into the Bezier control points and out into `d="M ... C NaN NaN NaN NaN ..."`, which no
+  renderer draws; or positive, and the curve is silently bowed to a wrong length. On the
+  §3 fixture at 100x, 196 of 587 edges had NaN control points, and a 557,200px chord
+  measured 35,133px. `__arrowColumns__` had the same defect on the `line` branch, where
+  both terms are `Int32`. Both now lift to `Float64` before squaring, exactly as
+  `__segmentDistSqExpr__` already did deliberately. No effect on an unzoomed render --
+  every golden is unchanged -- and found while verifying the off-canvas cull above.
 
 - **A genuinely broken `spreadlinepi` import is no longer swallowed.** `interactive_controller`
   registers the `SpreadLinesP` wrapper behind `except ImportError: pass`, which is right for the

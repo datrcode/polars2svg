@@ -911,9 +911,11 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
         if self.link_shape in ('curve', 'flowmap'):
             _sx_ex_, _sy_ex_ = pl.col(f'__xo1{i}__'), pl.col(f'__yo1{i}__')
         else:
-            _sx_ex_, _sy_ex_ = pl.col(_fm_sx_), pl.col(_fm_sy_)
-        _adx_  = pl.col(_to_sx_) - _sx_ex_
-        _ady_  = pl.col(_to_sy_) - _sy_ex_
+            _sx_ex_, _sy_ex_ = pl.col(_fm_sx_).cast(pl.Float64), pl.col(_fm_sy_).cast(pl.Float64)
+        # Float64 before the square, for the overflow reason spelled out in
+        # __curveControlPointColumns__ -- on the 'line' branch both terms are Int32.
+        _adx_  = pl.col(_to_sx_).cast(pl.Float64) - _sx_ex_
+        _ady_  = pl.col(_to_sy_).cast(pl.Float64) - _sy_ex_
         _mag_  = f'__arr{i}_mag__'
         _nx_, _ny_   = f'__arr{i}_nx__', f'__arr{i}_ny__'
         _len_        = f'__arr{i}_len__'
@@ -1192,6 +1194,23 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
             _cx_ = float(_row_['__ll_mx__']) + _side_ * float(_row_['__ll_px__']) * _k_
             _cy_ = float(_row_['__ll_my__']) + _side_ * float(_row_['__ll_py__']) * _k_
 
+            # PLANNING.md S2: drop a label the canvas cannot show -- and with it the
+            # <textPath> path it would have needed, which is the pairing S2 calls out: a
+            # <defs> entry with no <text> referencing it is exactly the dead weight the
+            # cull exists to remove.  Both are appended below, so one `continue` covers it.
+            # 'curve' rides its own path, whose control polygon bounds where the glyphs can
+            # land; 'line' is a rotated run about (cx,cy), bounded by half its length plus
+            # a line's ink either way.
+            if _curve_:
+                _qx_ = [float(_row_[f'__ll_q{_j_}x__']) for _j_ in range(4)]
+                _qy_ = [float(_row_[f'__ll_q{_j_}y__']) for _j_ in range(4)]
+                _m_  = self.txt_h + abs(_k_)
+                _box_ = (min(_qx_) - _m_, min(_qy_) - _m_, max(_qx_) + _m_, max(_qy_) + _m_)
+            else:
+                _m_   = self.p2s.textLength(_esc_, self.txt_h) / 2.0 + self.txt_h
+                _box_ = (_cx_ - _m_, _cy_ - _m_, _cx_ + _m_, _cy_ + _m_)
+            if not self.__onCanvas__(*_box_): continue
+
             if _curve_:
                 _pd_ = (f'M {_r2_(_row_["__ll_q0x__"])} {_r2_(_row_["__ll_q0y__"])} '
                         f'C {_r2_(_row_["__ll_q1x__"])} {_r2_(_row_["__ll_q1y__"])} '
@@ -1358,9 +1377,13 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
         _pu_, _pv_   = f'__pu{i}__', f'__pv{i}__'
         return (
             df
+            # Screen columns are Int32, and dx**2 overflows it past ~46,341px of separation
+            # -- reachable at zoom, where it wrapped negative and made mag NaN, which then
+            # propagated into the control points and emitted d="... C NaN NaN NaN NaN ...".
+            # Lifted to Float64 before squaring, the same reason __segmentDistSqExpr__ does.
             .with_columns(
-                (pl.col(_to_sx_) - pl.col(_fm_sx_)).alias(_dx_),
-                (pl.col(_to_sy_) - pl.col(_fm_sy_)).alias(_dy_),
+                (pl.col(_to_sx_).cast(pl.Float64) - pl.col(_fm_sx_).cast(pl.Float64)).alias(_dx_),
+                (pl.col(_to_sy_).cast(pl.Float64) - pl.col(_fm_sy_).cast(pl.Float64)).alias(_dy_),
             )
             .with_columns(
                 ((pl.col(_dx_)**2 + pl.col(_dy_)**2).sqrt()).alias(_mag_)
@@ -1414,6 +1437,56 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
             )
             .drop(['__cpx__', '__cpy__'])
         )
+
+    # -------------------------------------------------------------------------
+    # Off-canvas culling (PLANNING.md S2)
+    #
+    # An element whose bounding box misses the canvas entirely costs bytes and draws
+    # nothing, and under zoom that is most of the render -- the S2 table measured ~50% of
+    # the elements wholly outside the viewport at 10,000x, and those are the elements
+    # carrying the file's widest tokens.  This is the half of "too many digits" that no
+    # rounder can reach: magnitude grows with zoom while a fractional-digit rounder's
+    # saving shrinks (10.0% at 1x, 1.2% at 10,000x).  Dropping the element removes the
+    # token instead of shortening it.
+    #
+    # Only *wholly* outside is rejected.  An element that straddles the boundary is kept
+    # whole; trimming it to the viewport rect is a separate item (S3) and has to be a real
+    # clip, never a per-coordinate clamp -- clamping an endpoint changes the line's slope
+    # and so moves the part that is still visible.
+    #
+    # This filters emission only.  df, df_link and df_node keep every row, so recordsAt(),
+    # entitiesAtPoint(), overlappingEntities() and __moveSelectedEntities__() -- all of
+    # which hit-test the __sx__/__sy__ screen columns rather than the emitted string --
+    # still see off-canvas nodes and edges.  The cull is invisible to them by construction.
+    #
+    # Bounds are conservative.  A cubic lies inside the convex hull of its control points,
+    # so the endpoints plus the two control points bound the drawn curve; strokes,
+    # arrowheads, node radii, the cloud glyph's box and a label's measured ink are added
+    # as padding.  Anything that survives the box was going to be visible.
+    # -------------------------------------------------------------------------
+    def __onCanvasExpr__(self, xs, ys, pad=0.0, pad_y=None):
+        _w_, _h_ = self.wxh
+        _f64_ = lambda c: (pl.col(c) if isinstance(c, str) else c).cast(pl.Float64)
+        # A pad may be an expression (a 'vary' radius or stroke width).  Degrade an absent
+        # one to zero rather than letting it decide the test: a null/NaN pad would make
+        # every comparison false and cull the whole layer, which is a far worse failure
+        # than a box that is one stroke width too tight.
+        _f_pad_ = lambda v: ((v if isinstance(v, pl.Expr) else pl.lit(float(v)))
+                             .cast(pl.Float64).fill_null(0.0).fill_nan(0.0))
+        _px_  = _f_pad_(pad)
+        _py_  = _px_ if pad_y is None else _f_pad_(pad_y)
+        _xs_, _ys_ = [_f64_(c) for c in xs], [_f64_(c) for c in ys]
+        return (((pl.max_horizontal(*_xs_) + _px_) >= 0.0) &
+                ((pl.min_horizontal(*_xs_) - _px_) <= float(_w_)) &
+                ((pl.max_horizontal(*_ys_) + _py_) >= 0.0) &
+                ((pl.min_horizontal(*_ys_) - _py_) <= float(_h_)))
+
+    # __onCanvas__() - the scalar form of the same test, for the two label emitters, which
+    # already run a Python row loop (a label's extent depends on its cropped string, so it
+    # is not known until the loop has one).
+    def __onCanvas__(self, x0, y0, x1, y1):
+        _w_, _h_ = self.wxh
+        return not (x1 < 0.0 or x0 > float(_w_) or y1 < 0.0 or y0 > float(_h_))
 
     #
     # __renderLinks__()
@@ -1521,7 +1594,20 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
             self.df_link = _df_link_ if self.df_link is None else pl.concat([self.df_link, _df_link_], how='diagonal')
 
             if self.link_size is not None:
-                _all_svg_ |= set(_df_link_.drop_nulls(subset=[_link_col_])[_link_col_].unique())
+                # PLANNING.md S2: reject links that miss the canvas entirely.  The cull is
+                # applied to the emitted set, not to df_link -- the retained table still
+                # feeds the GPU display list and the interactive hit-tests.
+                _cull_x_, _cull_y_ = [_fm_sx_, _to_sx_], [_fm_sy_, _to_sy_]
+                if self.link_shape in ('curve', 'flowmap'):
+                    _cull_x_ += [_xo0_, _xo1_]      # convex hull of the control polygon
+                    _cull_y_ += [_yo0_, _yo1_]      # bounds the drawn cubic
+                if f'__arr{i}_tx__' in _df_link_.columns:
+                    _cull_x_ += [f'__arr{i}_tx__', f'__arr{i}_lx__', f'__arr{i}_rx__']
+                    _cull_y_ += [f'__arr{i}_ty__', f'__arr{i}_ly__', f'__arr{i}_ry__']
+                _visible_ = _df_link_.filter(
+                    self.__onCanvasExpr__(_cull_x_, _cull_y_, pad=_stroke_w_ / 2.0)
+                )
+                _all_svg_ |= set(_visible_.drop_nulls(subset=[_link_col_])[_link_col_].unique())
 
         _sorted_links_        = sorted(_all_svg_)
         self._link_svg_list_  = ([_link_group_open_] + _sorted_links_ + ['</g>']
@@ -1696,6 +1782,11 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
                 ]).alias('__tm_svg__')
             )
             _d_ = _d_.drop_nulls(subset=['__tm_svg__'])
+            # PLANNING.md S2: a mark riding an edge that runs off-canvas is off-canvas too.
+            # Filtered here, ahead of both consumers, so the GPU mirror below stays exactly
+            # the segments the SVG strings encode.
+            _d_ = _d_.filter(self.__onCanvasExpr__(['__tm_px__', '__tm_xe__'],
+                                                   ['__tm_py__', '__tm_ye__'], pad=0.75))
             _all_marks_ |= set(_d_['__tm_svg__'].unique())
             # Numeric mirror for the GPU path: the same segments the SVG strings encode.
             # Coordinates are rounded exactly as the strings are and the hex rides along as
@@ -1827,7 +1918,12 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
                 pl.lit('" />'),
             ]
             self.df_node = self.df_node.with_columns(pl.concat_str(_str_op_).alias('__node_svg__'))
-            _raw_svgs_ = sorted(self.df_node.drop_nulls(subset=['__node_svg__'])['__node_svg__'].unique())
+            # PLANNING.md S2: emit only the circles the canvas can show.  df_node itself is
+            # left whole -- recordsAt() and the GPU path read it.
+            _vis_ = self.df_node.filter(
+                self.__onCanvasExpr__(['__sx__'], ['__sy__'], pad=pl.col('__sz__') + 0.5)
+            )
+            _raw_svgs_ = sorted(_vis_.drop_nulls(subset=['__node_svg__'])['__node_svg__'].unique())
             _svg_strs_ = ([f'<g stroke="#000000" stroke-width="1" opacity="{self.node_opacity}">']
                           + _raw_svgs_ + ['</g>'] if _raw_svgs_ else [])
         else:
@@ -1839,7 +1935,10 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
                 pl.lit(f'" r="{_sz_}" fill="'), pl.col('__nc_hex__'),
                 pl.lit('" />'),
             ]
-            _df_singles_ = self.df_node.filter(pl.col('__nodes__') == 1).with_columns(
+            _df_singles_ = self.df_node.filter(
+                (pl.col('__nodes__') == 1) &
+                self.__onCanvasExpr__(['__sx__'], ['__sy__'], pad=_sz_ + _sw_ / 2.0)
+            ).with_columns(
                 pl.concat_str(_str_op_).alias('__node_svg__')
             )
             _singles_svgs_ = sorted(_df_singles_.drop_nulls(subset=['__node_svg__'])['__node_svg__'].unique())
@@ -1852,7 +1951,13 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
                 pl.lit('" fill="'), pl.col('__nc_hex__'),
                 pl.lit('" />'),
             ]
-            _df_multis_ = self.df_node.filter(pl.col('__nodes__') > 1).with_columns(
+            # The cloud glyph is drawn centered on the node: <use> translates a 100x50
+            # viewport that the <g> re-centers, so its box is +/-50 x +/-25 (the 28x14 the
+            # GPU path approximates is the ink inside that box, not its extent).
+            _df_multis_ = self.df_node.filter(
+                (pl.col('__nodes__') > 1) &
+                self.__onCanvasExpr__(['__sx__'], ['__sy__'], pad=50.0, pad_y=25.0)
+            ).with_columns(
                 pl.concat_str(_str_op_multi_).alias('__node_svg__')
             )
             _multis_svgs_ = sorted(_df_multis_.drop_nulls(subset=['__node_svg__'])['__node_svg__'].unique())
@@ -1904,6 +2009,14 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
                 if not _lines_:
                     continue
                 _y0_ = _sy_ + _sz_ + self.txt_h
+                # PLANNING.md S2: measure the wrapped label's own ink box (text-anchor is
+                # middle, so it straddles __sx__; the first line rises one txt_h above the
+                # baseline and each further line drops one below).  Culled here rather than
+                # on the string, so the SVG and the GPU list drop the same labels.
+                _hw_ = max(self.p2s.textLength(_l_, self.txt_h) for _l_ in _lines_) / 2.0
+                if not self.__onCanvas__(_sx_ - _hw_, _y0_ - self.txt_h,
+                                         _sx_ + _hw_, _y0_ + len(_lines_) * self.txt_h):
+                    continue
                 self._node_label_info_.append((_sx_, _y0_, _lines_))
                 if len(_lines_) == 1:
                     _lbl_set_.add(

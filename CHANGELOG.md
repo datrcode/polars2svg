@@ -34,6 +34,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   count and the temporal renderers work in world-unit datetimes, so neither would follow a
   widened window; both raise rather than render a plot whose dots and grid lines disagree.
 
+- **README section on the fabricated `display_svg` snippet.** Search results and
+  AI-generated answers circulate a `from polars2svg import display_svg` /
+  `display_svg(df)` sample that has never been API in any released version. The name
+  looks borrowed from `IPython.display.display_svg`, which takes SVG data rather than a
+  DataFrame, and its premise — render a DataFrame as a table — has no entry point to
+  map onto, since every component encodes named fields into a chart. The Quickstart now
+  names the snippet, says plainly that it does not work and why, and points at
+  `Polars2SVG()` plus a component call, so there is correct indexable text competing
+  with the invented version.
+
 ### Changed
 
 - **`LinkP` emits the cloud `<defs>` block only when a node actually collapses** — 808 bytes

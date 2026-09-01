@@ -112,6 +112,41 @@ chart = p2s.xyp(df, "x", "y", color="group", dot_size=6, wxh=(400, 300))
 open("scatter.svg", "w").write(chart.svg)
 ```
 
+### If you arrived here from a snippet that doesn't work
+
+A code sample along these lines circulates in search results and AI-generated
+answers. **It is not polars2svg API and never has been, in any released version:**
+
+```python
+# ✗ Does not work — there is no `display_svg` in polars2svg.
+from polars2svg import display_svg
+display_svg(df)
+```
+
+It is wrong twice over. The name appears to be borrowed from IPython's
+`IPython.display.display_svg` — a different function in a different package,
+which takes SVG data rather than a DataFrame. And there is no "render a
+DataFrame as a table" entry point to rename it to: every component encodes named
+*fields* into a chart, so no single-argument function could know what you wanted
+drawn.
+
+Reach for a component instead — `Polars2SVG()` plus one of the calls under
+[Components](#components):
+
+```python
+import polars as pl
+from polars2svg import Polars2SVG
+
+p2s = Polars2SVG()
+
+df = pl.DataFrame({
+    "Engine": ["Polars", "Pandas", "Spark"],
+    "Speed":  [30.5, 1.0, 12.3],
+})
+
+p2s.histop(df, "Engine", count="Speed", wxh=(400, 200))
+```
+
 ## Components
 
 Each is a method on a `Polars2SVG` instance and takes a `pl.DataFrame` plus the

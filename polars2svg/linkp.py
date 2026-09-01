@@ -1808,6 +1808,11 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
 
         # Build node SVG strings
         _svg_strs_ = []
+        # Does this render emit <use href="#cloud">?  Decided here, every render: collapsing
+        # is a group_by on *screen* coordinates, so the same graph collapses at one zoom and
+        # not at another.  __renderSVG__ reads this to size the <defs> block (PLANNING.md S5).
+        # Only the node_size branch below emits clouds -- 'vary' draws every node as a circle.
+        self._has_cloud_ = False
         if self.node_size is None:
             pass
         elif self.node_size == 'vary':
@@ -1852,6 +1857,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
             )
             _multis_svgs_ = sorted(_df_multis_.drop_nulls(subset=['__node_svg__'])['__node_svg__'].unique())
             if _multis_svgs_:
+                self._has_cloud_ = True
                 _svg_strs_.extend([f'<g stroke-width="0.5" opacity="{self.node_opacity}">']
                                    + _multis_svgs_ + ['</g>'])
 
@@ -2082,23 +2088,29 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
         # AUTHOR: Ankush Syal
         # Modified To Remove Bottom Path (Second Path)
         #
-        svg.append(
-            '<defs>'
+        # Only collapsed nodes reference the icon, so it is emitted only when this render
+        # has one -- 657 bytes off every ordinary linkp.  __renderNodes__ decides that per
+        # render (collapsing is a group_by on screen coordinates, so it follows the zoom),
+        # which is why the flag is read here rather than resolved once in __init__.
+        _cloud_defs_ = (
             '<g id="cloud" transform="translate(-50,-25)">'
             '<svg x="0" y="0" width="100px" height="50px" viewBox="-5 -5.5 35 35" xmlns="http://www.w3.org/2000/svg">'
             '<path fill-rule="evenodd" clip-rule="evenodd" '
-            'd="M14.091 7.00151C14.9928 6.9746 15.8684 7.30725 16.5249 7.9262C17.1813 8.54515 17.5649 9.39965 '
-            '17.591 10.3015C17.5914 10.6221 17.5425 10.9408 17.446 11.2465C18.6091 11.4334 19.4729 12.4239 '
-            '19.5 13.6015C19.4586 14.9664 18.32 16.0402 16.955 16.0015H8.045C6.67999 16.0402 5.54137 14.9664 '
-            '5.5 13.6015C5.52293 12.4783 6.31258 11.5171 7.41 11.2765C7.41 11.2512 7.41 11.2262 7.41 11.2015C'
-            '7.45137 9.83659 8.58999 8.76283 9.955 8.80151C10.2738 8.80108 10.5901 8.85764 10.889 8.96851C'
-            '11.4867 7.74927 12.7333 6.98347 14.091 7.00151Z" '
+            'd="M14.09 7C14.99 6.97 15.87 7.31 16.52 7.93C17.18 8.55 17.56 9.4 17.59 10.3'
+            'C17.59 10.62 17.54 10.94 17.45 11.25C18.61 11.43 19.47 12.42 19.5 13.6'
+            'C19.46 14.97 18.32 16.04 16.95 16H8.04C6.68 16.04 5.54 14.97 5.5 13.6'
+            'C5.52 12.48 6.31 11.52 7.41 11.28C7.41 11.25 7.41 11.23 7.41 11.2'
+            'C7.45 9.84 8.59 8.76 9.96 8.8C10.27 8.8 10.59 8.86 10.89 8.97'
+            'C11.49 7.75 12.73 6.98 14.09 7Z" '
             'stroke="#000000" stroke-linecap="round" stroke-linejoin="round"/>'
             '</svg></g>'
-            # invisible per-edge paths for the 'curve' shape's <textPath> link labels
-            + ''.join(getattr(self, '_link_label_defs_', []))
-            + '</defs>'
-        )
+        ) if getattr(self, '_has_cloud_', True) else ''
+        # invisible per-edge paths for the 'curve' shape's <textPath> link labels -- an
+        # independent payload: <defs> stays for these alone, and is dropped only when both
+        # are empty (svgToDisplayList()'s <defs> strip is a no-op when there is none).
+        _label_defs_ = ''.join(getattr(self, '_link_label_defs_', []))
+        if _cloud_defs_ or _label_defs_:
+            svg.append('<defs>' + _cloud_defs_ + _label_defs_ + '</defs>')
         svg.append(f'<rect x="0" y="0" width="{w}" height="{h}" fill="{_bg_co_}" />')
 
         # Background shapes (behind hulls, links, and nodes)

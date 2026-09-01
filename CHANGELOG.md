@@ -36,6 +36,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`LinkP` emits the cloud `<defs>` block only when a node actually collapses** — 808 bytes
+  off every ordinary linkp render, or 41% of a small one. Only collapsed nodes draw
+  `<use href="#cloud">`, but the 808-byte icon definition was written into every render
+  regardless; the nine linkp goldens all carried it and none referenced it.
+
+  Whether a cloud exists is a property of the *current render*, not of the instance:
+  collapsing is decided by grouping on screen coordinates, so a graph that collapses at one
+  zoom separates at another. The condition is therefore evaluated in `__renderSVG__` on every
+  render — an interactive zoom moves the block in and out — and `<defs>` itself survives for
+  the `<textPath>` link-label paths, which are an independent payload.
+
+  The icon's `d=` constant is also pre-rounded from 5 fractional digits to 2 (a further 151
+  bytes; ~0.03px at the icon's scale), in `LinkP` and in both of `SpreadLinesP`'s copies.
+  Ten linkp goldens change; `linkp_collapsed_nodes` is new and is the one that keeps the
+  block, so the "cloud present" path stays covered.
+
+### Fixed
+
+- **`TestLabelModeCycle` no longer draws its node positions from the unseeded global RNG.**
+  The fixture passed no `pos=`, so `LinkP` placed all five nodes randomly; when two adjacent
+  nodes landed close together the edge became too short to carry its label (the text is
+  cropped to the edge length) and `test_link_states_actually_render_edge_labels` failed. The
+  test is about the label-mode cycle, not about layout, so the positions are now pinned.
+  Latent since the test was written — every `LinkP` construction and every `renderSVG()`
+  draws from `random`, so any change to how many renders precede it reshuffles the outcome.
+
 - **`XYp` resolves the visible world window in one place** (`__resolveRanges__`), which the dot
   transforms, the numeric grid lines, the axis end labels, and everything downstream of
   `x_transform_vars`/`y_transform_vars` (`wxToSx`, background shapes, `filterByRectangle`,

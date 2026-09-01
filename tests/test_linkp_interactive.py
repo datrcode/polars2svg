@@ -1056,11 +1056,18 @@ class TestLabelModeCycle(unittest.TestCase):
         'to':  ['a2', 'a3', 'a1', 'b2'],
         'dsc': ['x',  'y',  'z',  'w'],
     })
+    # Pinned so every edge is long enough to carry its label.  Without pos= linkp assigns
+    # random positions from the unseeded global RNG, and a short edge drops its label
+    # (__renderLinks__ crops the text to the edge length), which made
+    # test_link_states_actually_render_edge_labels fail at random.
+    _POS_ = {'a1': (0.05, 0.05), 'a2': (0.95, 0.05), 'a3': (0.50, 0.60),
+             'b1': (0.05, 0.95), 'b2': (0.95, 0.95)}
 
     def setUp(self):
         self.p2s = Polars2SVG()
 
     def _ctrl(self, rels, **kwargs):
+        kwargs.setdefault('pos', dict(self._POS_))
         return self.p2s.linkpi(self.p2s.linkp(self._DF_, relationships=rels, **kwargs))
 
     def _press(self, ctrl):

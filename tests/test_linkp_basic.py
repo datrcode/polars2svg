@@ -612,6 +612,86 @@ class TestFlowmapLevers(unittest.TestCase):
             self.p2s.linkp(self._df(), relationships=[('fm', 'to')], pos=self._pos(),
                            flowmap_not_a_param=1)
 
+class TestLinkPCloudDefs(unittest.TestCase):
+    '''The cloud <defs> block is emitted only when something references it (PLANNING.md S5).
+
+    It is 808 bytes, and only a collapsed node draws <use href="#cloud">, so an ordinary
+    linkp must not carry it.  The invariant that matters is that the definition and the
+    reference always agree -- a <use> pointing at an absent id renders nothing at all.
+    '''
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.p2s = Polars2SVG()
+
+    # 'b' and 'c' share a position, so they land on one pixel and collapse
+    _COLLAPSED_POS_ = {'a': [0.0, 0.0], 'b': [1.0, 0.0], 'c': [1.0, 0.0]}
+
+    def _collapsing(self, **kw):
+        df = pl.DataFrame({'fm': ['a', 'a'], 'to': ['b', 'c']})
+        return self.p2s.linkp(df, relationships=[('fm', 'to')], pos=self._COLLAPSED_POS_, **kw)
+
+    def assertCloudConsistent(self, svg, msg=None):
+        '''<use href="#cloud"> and the <g id="cloud"> definition must co-occur.'''
+        self.assertEqual('<use href="#cloud"' in svg, 'id="cloud"' in svg,
+                         msg or 'cloud definition and reference disagree')
+
+    def test_no_cloud_defs_without_a_collapsed_node(self):
+        lp = self.p2s.linkp(_make_df(), relationships=_rels(), pos=_make_pos())
+        self.assertNotIn('id="cloud"', lp.svg)
+        self.assertNotIn('<defs>', lp.svg)   # nothing else needs <defs> in this render
+        self.assertCloudConsistent(lp.svg)
+
+    def test_cloud_defs_present_with_a_collapsed_node(self):
+        lp = self._collapsing()
+        self.assertIn('id="cloud"', lp.svg)
+        self.assertCloudConsistent(lp.svg)
+
+    def test_no_cloud_defs_when_node_size_is_vary(self):
+        '''node_size='vary' draws every node as a circle, so it never emits a cloud.'''
+        lp = self._collapsing(node_size='vary')
+        self.assertNotIn('<use href="#cloud"', lp.svg)
+        self.assertNotIn('id="cloud"', lp.svg)
+
+    def test_no_cloud_defs_when_node_size_is_none(self):
+        lp = self._collapsing(node_size=None)
+        self.assertNotIn('id="cloud"', lp.svg)
+        self.assertCloudConsistent(lp.svg)
+
+    def test_link_label_defs_survive_without_the_cloud(self):
+        '''<defs> carries two independent payloads; dropping the icon must not drop the
+        <textPath> label paths that curve-shaped link labels href into.'''
+        import re
+        df = pl.DataFrame({'fm': ['a', 'b'], 'to': ['b', 'a'], 'dsc': ['calls', 'answers']})
+        lp = self.p2s.linkp(df, relationships=[('fm', 'to', 'dsc')],
+                            pos={'a': (0.0, 0.0), 'b': (1.0, 0.0)}, wxh=(400, 200),
+                            draw_link_labels=True, link_shape='curve')
+        self.assertNotIn('id="cloud"', lp.svg)          # no collapsed node here
+        self.assertIn('<defs>', lp.svg)                 # ...but <defs> still exists
+        _hrefs_ = re.findall(r'<textPath href="#([^"]+)"', lp.svg)
+        self.assertTrue(_hrefs_)
+        _defs_ = lp.svg[lp.svg.index('<defs>'):lp.svg.index('</defs>')]
+        for _h_ in _hrefs_:
+            self.assertIn(f'id="{_h_}"', _defs_)
+
+    def test_cloud_defs_track_the_view_window_across_re_renders(self):
+        '''Collapsing is a group_by on *screen* coordinates, so whether a cloud exists is a
+        property of the current zoom, not of the instance.  Deciding it once at construction
+        would leave a <use> pointing at an id that later renders no longer define.'''
+        df  = pl.DataFrame({'fm': ['a', 'b', 'c'], 'to': ['b', 'c', 'a']})
+        pos = {'a': (0.0, 0.5), 'b': (0.5, 0.0), 'c': (0.502, 0.0)}   # b,c ~1px apart at 1x
+        lp  = self.p2s.linkp(df, relationships=[('fm', 'to')], pos=pos, wxh=(96, 96))
+
+        _seen_ = set()
+        for _vw_ in ((0.0, 0.0, 1.0, 1.0), (0.45, -0.05, 0.55, 0.05),
+                     (0.0, 0.0, 1.0, 1.0), (0.45, -0.05, 0.55, 0.05)):
+            lp.setViewWindow(_vw_)
+            _svg_ = lp.renderSVG()
+            self.assertCloudConsistent(_svg_, f'view_window={_vw_}')
+            _seen_.add('id="cloud"' in _svg_)
+        # the fixture is chosen so both states actually occur -- otherwise this proves nothing
+        self.assertEqual(_seen_, {True, False},
+                         'fixture no longer exercises both collapsed and uncollapsed renders')
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -47,6 +47,7 @@ class TestPublicSurfaceAnnotations(unittest.TestCase):
         'piep':         'Piep',
         'spreadlinesp': 'SpreadLinesP',
         'smallp':       'Smallp',
+        'tile':         'Tile',
     }
 
     def test_factory_methods_have_return_annotation(self):

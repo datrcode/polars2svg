@@ -25,6 +25,7 @@ from .histop             import Histop
 from .piep               import Piep
 from .linkp              import LinkP
 from .spreadlinesp       import SpreadLinesP
+from .tile               import Tile
 
 # ChP (chordp.py) needs scipy for its core node-ordering algorithm (unlike the
 # other components, this isn't an optional feature within chordp — every chord
@@ -124,6 +125,7 @@ class Polars2SVG(P2SColorsMixin,
     ``chordp``       — chord diagram of weighted flows around a circle
     ``spreadlinesp`` — egocentric influence-over-time (SpreadLine) layout
     ``smallp``       — small multiples / trellis of one template component
+    ``tile``         — compose finished renderings into a strip or a grid (no DataFrame)
     Interactive, cross-linked variants share the same signatures via ``xypi``,
     ``histopi``, ``timepi``, ``linkpi``, ``smallpi`` and are composed into a
     dashboard with ``panelize()``.
@@ -1811,6 +1813,59 @@ class Polars2SVG(P2SColorsMixin,
 
         '''
         return SpreadLinesP(*args, **kwargs)
+
+    def tile(self, *args: Any, **kwargs: Any) -> Tile:
+        '''
+        tile(svg_list, ...)
+
+        Lay already-rendered SVGs out as one SVG.  Unlike every other method here it takes
+        renderings rather than a DataFrame: any component, any SVG string, or another
+        tile() -- mixed freely.  A single rendering may be passed on its own (it is treated
+        as a one-element list), which is the way to drop one component into a fixed-size
+        viewport.
+
+        Example::
+
+            p2s.tile([chart_a, chart_b])                            # side by side
+            p2s.tile([chart_a, chart_b], per_row=1)                 # stacked
+            p2s.tile(charts, per_row=4, spacer=(8, 24))             # 4-across grid
+            p2s.tile(charts, per_row=4, wxh=(640, 480))             # ... scaled to fit 640x480
+
+        svg_list       = [rendering, ...]                          # (can be specified as a positional list)
+                       = rendering                                 # a lone rendering == a one-element list
+                                                                   #   each element: a component, an SVG string, or a Tile
+
+        === %< === %< === %< === %< === %< === %< === %< === %< === %< === %< === %< === %< === %< === %<
+
+        per_row        = None (default)                            # a single row -- every tile side by side
+                       = <n>                                       # a grid, filled row by row, n tiles per row
+                                                                   #   (the last row may be short)
+                       = 1                                         # a single column -- every tile stacked
+                                                                   #   (rtsvg's tile(horz=False))
+
+        spacer         = 0 (default)                               # that much separation both horizontally and
+                                                                   #   vertically
+                       = (horizontal, vertical)                    # separate gaps; a layout with one row has no
+                                                                   #   vertical gaps to draw, and per_row=1 no
+                                                                   #   horizontal ones
+
+        wxh            = None (default)                            # canvas is exactly as large as the tiling
+                       = (width, height)                           # scale the whole tiling to fit this size --
+                                                                   #   uniformly, centered, so nothing is cropped or
+                                                                   #   distorted; bg_color fills what the aspect
+                                                                   #   difference leaves over
+                       = (width, None) | (None, height)            # ... the other side follows the aspect ratio
+
+        bg_color       = None (default)                            # the background color
+                       = '#RRGGBB'                                 # any SVG color; shows through the spacer gaps and
+                                                                   #   the viewport margins
+
+        Tiles are top-aligned within their row and rows are left-aligned, so a row is as
+        tall as its tallest tile and the canvas as wide as its widest row.  The rendered
+        size is .wxh_actual and the unscaled size of the tiling itself is .content_wxh.
+
+        '''
+        return Tile(*args, **kwargs)
 
     def __allhex__(self, s):
         return all(c in '0123456789abcdefABCDEF' for c in s)

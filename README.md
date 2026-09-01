@@ -167,6 +167,22 @@ Interactive, cross-linked variants share the same signatures via
 `p2s.xypi(...)`, `p2s.linkpi(...)`, etc., and are composed into a dashboard with
 `p2s.panelize(layout)`. Pass `use_webgpu=True` to render through WebGPU.
 
+Finished renderings compose into a single static SVG with `p2s.tile(...)` — the one
+method that takes renderings rather than a DataFrame:
+
+```python
+p2s.tile([chart_a, chart_b])                    # side by side
+p2s.tile([chart_a, chart_b], per_row=1)         # stacked
+p2s.tile(charts, per_row=4, spacer=(8, 24))     # a 4-across grid
+p2s.tile(charts, per_row=4, wxh=(640, 480))     # ... scaled to fit 640x480
+```
+
+Elements may be components, SVG strings, or other tiles. `per_row=` is the whole layout
+model: `None` (the default) is a single row, `<n>` fills a grid row by row, and `1` is a
+single column. `spacer=` is one gap in both directions or a `(horizontal, vertical)`
+pair, and `wxh=` scales the whole tiling — uniformly and centered — into a canvas of that
+size.
+
 ## Encoding data: `count=` and `color=`
 
 Two parameters recur across the counting/aggregating components, and they are

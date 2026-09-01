@@ -300,6 +300,15 @@ class TestPerformanceRegression(unittest.TestCase):
             "xyp_webgpu_payload": lambda: _webgpu_payload_(lambda: p2s.xyp(df_xy, 'a', 'c')),
         }
 
+        # --- composition ---------------------------------------------------------
+        # tile() places finished renderings, so its children are rendered once here and
+        # only the measure-and-compose pass is timed.
+        _tile_children_ = [p2s.histop(df_histo, 'cat', wxh=(128, 128)),
+                           p2s.piep(df_histo,   'cat', wxh=(128, 128)),
+                           p2s.xyp(df_xy, 'a',  'c',   wxh=(128, 128)),
+                           p2s.timep(df_time,   'ts',  wxh=(128, 128))] * 3
+        workloads["tile"] = lambda: p2s.tile(_tile_children_, per_row=4, spacer=(4, 8))
+
         # --- accelerated layouts -------------------------------------------------
         # The render components above are pure CPU, so they time the same on every
         # interpreter. These two are the only workloads that move when mlx/Metal/CUDA

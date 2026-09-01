@@ -10,7 +10,8 @@ import polars as pl
 from polars2svg import Polars2SVG
 from polars2svg.export import ExportMixin, svgToPNGBytes
 
-# The eight rendered component classes that should all gain save()/savePNG().
+# The eight rendered component classes that should all gain save()/savePNG(),
+# plus Tile (which composes finished renderings rather than a DataFrame).
 from polars2svg.xyp import XYp
 from polars2svg.histop import Histop
 from polars2svg.timep import Timep
@@ -19,6 +20,7 @@ from polars2svg.linkp import LinkP
 from polars2svg.chordp import ChP
 from polars2svg.smallp import Smallp
 from polars2svg.spreadlinesp import SpreadLinesP
+from polars2svg.tile import Tile
 
 
 _PNG_MAGIC_ = b'\x89PNG\r\n\x1a\n'
@@ -37,7 +39,7 @@ class TestExportInheritance(unittest.TestCase):
     '''Every rendered component must inherit the export API.'''
 
     def test_all_components_are_exportable(self):
-        for cls in (XYp, Histop, Timep, Piep, LinkP, ChP, Smallp, SpreadLinesP):
+        for cls in (XYp, Histop, Timep, Piep, LinkP, ChP, Smallp, SpreadLinesP, Tile):
             self.assertTrue(issubclass(cls, ExportMixin), f'{cls.__name__} lacks ExportMixin')
             self.assertTrue(hasattr(cls, 'save'))
             self.assertTrue(hasattr(cls, 'savePNG'))

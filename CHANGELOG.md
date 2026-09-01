@@ -9,6 +9,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`tile(svg_list, ...)`** — composes already-rendered SVGs into one document: any
+  component, any SVG string, or another `tile()`, mixed freely. It is the only method on
+  `Polars2SVG` that takes renderings rather than a DataFrame, and it is the counterpart to
+  `smallp` — small multiples faceting *one* template over a field, `tile` arranging
+  *different* components side by side. Ported from rtsvg, where the strip (`tile`), its
+  `horz=False` column and the grid (`table`) took two methods and two parameters; here
+  `per_row=` alone says which one you get.
+
+  | Parameter | Meaning |
+  |---|---|
+  | `per_row=None` *(default)* | a single row — every tile side by side |
+  | `per_row=<n>` | a grid, filled row by row, `n` tiles per row (last row may be short) |
+  | `per_row=1` | a single column — every tile stacked |
+  | `spacer=0` *(default)* | that much separation both horizontally and vertically |
+  | `spacer=(h, v)` | separate horizontal / vertical gaps; a one-row layout has no vertical gaps to draw, and `per_row=1` no horizontal ones |
+  | `wxh=None` *(default)* | the canvas is exactly as large as the tiling |
+  | `wxh=(w, h)` | scale the whole tiling to fit that canvas — uniformly and centered, so nothing is cropped or distorted; one side may be `None` to follow the aspect ratio |
+  | `bg_color=None` *(default)* | canvas color (the framework background); shows through the spacer gaps and any viewport margin |
+
+  Tiles are top-aligned within their row and rows are left-aligned, so a row is as tall as
+  its tallest tile and the canvas as wide as its widest row. Sizes are read from each
+  child's root `<svg>` tag, so a component whose rendered size differs from the `wxh` it
+  was asked for (`smallp`) still measures correctly. The rendered size is `.wxh_actual`;
+  the unscaled size of the tiling itself is `.content_wxh`.
+
+  The `wxh=` viewport is emitted as a `translate`/`scale` transform rather than a nested
+  `viewBox`: svglib — the rasterizer behind `save('.png')` — does not honor a `viewBox` on
+  a nested `<svg>`, and scaled each axis independently, so a tiling that looked right in a
+  browser exported distorted and clipped.
+
 - **`xyp(aspect=...)`** — locks the ratio between the two axis scales, for data whose shape
   does not match the width/height ratio of the component. Geospatial (longitude/latitude)
   scatters were the motivating case: with each axis independently stretched to fill its own

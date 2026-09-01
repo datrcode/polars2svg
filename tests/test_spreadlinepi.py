@@ -334,5 +334,17 @@ class TestMvcCallbacks(_SpreadLinePiBase):
         self.assertIs(view._cache_[id(df2)], _spread2_)
 
 
+class TestWrapperRegistration(unittest.TestCase):
+    """spreadlinepi lives in its own module and registers itself at both ends of a module
+    cycle with interactive_controller (whichever import wins does the registration), so the
+    registry entry is worth pinning: without it panelize() rejects a SpreadLinesP with
+    "no wrapper for component type" instead of wrapping it."""
+
+    def test_spreadlinesp_is_registered(self):
+        from polars2svg.interactive_controller import _PLOT_TYPE_TO_WRAPPER_
+        self.assertIn('SpreadLinesP', _PLOT_TYPE_TO_WRAPPER_)
+        self.assertIs(_PLOT_TYPE_TO_WRAPPER_['SpreadLinesP'], spreadlinepi)
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -4392,6 +4392,11 @@ try:
     from .spreadlinepi import spreadlinepi
     _PLOT_TYPE_TO_WRAPPER_['SpreadLinesP'] = spreadlinepi
 except ImportError:
-    # Circular import: spreadlinepi is mid-import (it imports this module first)
-    # and registers itself in _PLOT_TYPE_TO_WRAPPER_ at the end of its own body.
-    pass
+    # Expected only while spreadlinepi is mid-import (it imports this module first) and
+    # registers itself in _PLOT_TYPE_TO_WRAPPER_ at the end of its own body.  That leaves a
+    # partially initialized module in sys.modules; a genuinely broken one has been removed
+    # from it, so re-raise instead of silently dropping SpreadLinesP from the registry --
+    # otherwise panelize() reports "no wrapper for component type" and hides the real error.
+    import sys
+    if f'{__package__}.spreadlinepi' not in sys.modules:
+        raise

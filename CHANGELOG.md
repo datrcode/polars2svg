@@ -94,6 +94,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A genuinely broken `spreadlinepi` import is no longer swallowed.** `interactive_controller`
+  registers the `SpreadLinesP` wrapper behind `except ImportError: pass`, which is right for the
+  module cycle it exists for — `spreadlinepi` imports the controller first and registers itself
+  at the end of its own body, so whichever import wins completes the registry — but it also
+  caught every unrelated `ImportError`. A real failure inside `spreadlinepi` therefore dropped
+  `SpreadLinesP` from `_PLOT_TYPE_TO_WRAPPER_` silently, and `panelize()` then reported `no
+  wrapper for component type "SpreadLinesP" (register it in _PLOT_TYPE_TO_WRAPPER_ …)` —
+  instructions to do the thing the code already does — while hiding the actual error. The
+  handler now re-raises unless the module is genuinely mid-import: a partially initialized
+  module is still in `sys.modules`, a broken one has been removed from it. Latent rather than
+  live; both import orders resolved correctly before and after, and the registry entry is now
+  pinned by `test_spreadlinepi.py::TestWrapperRegistration`.
+
 - **`TestLabelModeCycle` no longer draws its node positions from the unseeded global RNG.**
   The fixture passed no `pos=`, so `LinkP` placed all five nodes randomly; when two adjacent
   nodes landed close together the edge became too short to carry its label (the text is

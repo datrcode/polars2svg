@@ -250,10 +250,18 @@ class TestSpecialCharacterLabels(_EdgeCaseBase):
         self._wellformed(self.p2s.xyp(df, 'x', 'y'))
 
     def test_linkp_labels_special_chars(self):
+        '''node_labels= is the {name: display} map; the flag that draws them is
+        draw_node_labels=.  Passed the map's name, this rendered zero <text>
+        elements and asserted nothing about labels for as long as it existed --
+        hence the count assertion below.  See tests/test_svg_escaping.py for the
+        entity-splitting bug it was meant to be watching.'''
         pos = {'A&B': [0, 0], 'C<D': [1, 1]}
         df  = pl.DataFrame({'fm': ['A&B', 'C<D'], 'to': ['C<D', 'A&B']})
-        self._wellformed(self.p2s.linkp(df, relationships=[('fm', 'to')],
-                                        pos=pos, node_labels=True))
+        svg = self._wellformed(self.p2s.linkp(df, relationships=[('fm', 'to')],
+                                              pos=pos, draw_node_labels=True))
+        _texts_ = [''.join(_el_.itertext()) for _el_ in ET.fromstring(svg).iter()
+                   if _el_.tag.endswith('text')]
+        self.assertEqual(sorted(_texts_), ['A&B', 'C<D'])
 
     def test_spreadlinesp_special_char_nodes(self):
         df = pl.DataFrame({'fm': ['A&B', 'A&B', 'C<D'], 'to': ['C<D', 'E>F', 'E>F'],

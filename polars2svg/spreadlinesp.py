@@ -1,4 +1,3 @@
-import html
 import polars as pl
 import random
 import time
@@ -946,7 +945,7 @@ class SpreadLinesP(ExportMixin):
             _txt_co_ = self.p2s.colorTyped('label', 'defaultfg')
             svg.append(
                 f'<text x="{x:.1f}" y="{y_cloud + self.txt_h * 0.38:.1f}"'
-                f' font-size="{self.txt_h}px" text-anchor="middle" fill="{_txt_co_}">{html.escape(str(n))}</text>'
+                f' font-size="{self.txt_h}px" text-anchor="middle" fill="{_txt_co_}">{self.p2s.svgEscape(str(n))}</text>'
             )
             if dl is not None:
                 dl.text(self.p2s, str(n), x, y_cloud + self.txt_h * 0.38, txt_h=self.txt_h,
@@ -1117,7 +1116,7 @@ class SpreadLinesP(ExportMixin):
                     anchor='middle', color=_txt_co_, svg='')
         return (f'<path d="{_d_}" stroke="{color}" stroke-width="{width}" fill="{color}"/>'
                 f'<text x="{xm:.1f}" y="{y + _txt_h_ * 0.38:.1f}"'
-                f' font-size="{_txt_h_}px" text-anchor="middle" fill="{_txt_co_}">{html.escape(str(txt))}</text>')
+                f' font-size="{_txt_h_}px" text-anchor="middle" fill="{_txt_co_}">{self.p2s.svgEscape(str(txt))}</text>')
 
     # -------------------------------------------------------------------------
     # _smoothedPath_() — closed polygon with rounded corners
@@ -1347,7 +1346,7 @@ class SpreadLinesP(ExportMixin):
             _txt_co_ = self.p2s.colorTyped('label', 'defaultfg')
             svg.append(
                 f'<text x="{x:.1f}" y="{y + self.txt_h * 0.38:.1f}"'
-                f' font-size="{self.txt_h}px" text-anchor="middle" fill="{_txt_co_}">{html.escape(str(_n_focal_))}</text>'
+                f' font-size="{self.txt_h}px" text-anchor="middle" fill="{_txt_co_}">{self.p2s.svgEscape(str(_n_focal_))}</text>'
             )
             if dl is not None:
                 self.__roundedRectToDL__(dl, x - 12, y - 8, 24, 16, 8,
@@ -1763,7 +1762,7 @@ class SpreadLinesP(ExportMixin):
                            dash=(6.0, 3.0), opacity=0.7, svg='')
             svg.append(
                 f'<text x="{_ax_ + 3:.1f}" y="{self.vy0 + self.txt_h:.1f}"'
-                f' font-size="{self.txt_h}px" fill="{_txt_co_}">{html.escape(str(_label_))}</text>'
+                f' font-size="{self.txt_h}px" fill="{_txt_co_}">{self.p2s.svgEscape(str(_label_))}</text>'
             )
             _dl_anno_.text(self.p2s, str(_label_), _ax_ + 3, self.vy0 + self.txt_h,
                            txt_h=self.txt_h, anchor='start', color=_txt_co_, svg='')
@@ -1779,7 +1778,10 @@ class SpreadLinesP(ExportMixin):
                 _bnd_ = self.bin_to_bounds[_b_]
                 _lx_  = (_bnd_[0] + _bnd_[2]) / 2.0
                 _ts_  = str(self.bin_to_timestamps[_b_])
-                _lbl_ = html.escape(_ts_[:self._ts_label_len_])   # untrusted timestamp data
+                # Untrusted timestamp data.  Sliced first, escaped second -- the order
+                # svgEscape()'s header requires: a cut taken after escaping can land inside
+                # an entity.
+                _lbl_ = self.p2s.svgEscape(_ts_[:self._ts_label_len_])
                 svg.append(
                     f'<text x="{_lx_:.1f}" y="{_channel_max_y_:.1f}"'
                     f' font-size="{self.txt_h}px" text-anchor="middle" fill="{_txt_co_}">'

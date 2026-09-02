@@ -1,5 +1,46 @@
 import html
 
+
+#
+# svgEscape() / svgUnescape() - the single door between text and markup.
+#
+# Escaping used to be spelled five different ways across the package: the standard library
+# call here, the same call inline in chordp and spreadlinesp, two hand-rolled .replace()
+# chains in linkp (one each way), and nothing at all in the interactive chrome, whose
+# strings are its own.  Five mechanisms is four too many -- not because any one of them was
+# wrong, but because a convention nobody can point at is a convention that breaks where two
+# of them meet.  It did: linkp escaped a label column and then cut the escaped string by
+# character count, splitting an entity across two <tspan>s and taking the whole document
+# out of well-formed XML with it.
+#
+# So there is one function, and it has one rule:
+#
+#   **Escape last.**  Everything that measures, crops, wraps, truncates or slices text works
+#   on the raw string; svgEscape() is applied to what comes out, immediately before it is
+#   interpolated into markup.  An entity is five characters that draw as one, so any cut
+#   taken after escaping is cutting the wrong string -- it can land inside the entity (bad
+#   markup) and it miscounts the width either way ('&' is not five characters wide).
+#
+# Both directions are here because both directions have callers: the GPU paths hand text to
+# the glyph atlas, which draws characters and knows nothing about entities, and
+# svgToDisplayList() parses finished markup back into a display list.  Whatever escaped the
+# text should be what un-escapes it.
+#
+# The standard library's behaviour is the contract, quotes included.  Quotes need escaping
+# in an attribute value and are merely harmless in element content, and one function that is
+# safe in both places beats two that differ by where you are allowed to use them.
+#
+# tests/test_svg_escaping.py holds both halves: that this behaves, and -- by scanning the
+# package for a sixth mechanism -- that it stays the only door.
+#
+def svgEscape(txt):
+    return html.escape('' if txt is None else str(txt))
+
+
+def svgUnescape(txt):
+    return html.unescape('' if txt is None else str(txt))
+
+
 class P2STextMixin:
     def __init__(self):
         pass
@@ -27,6 +68,17 @@ class P2STextMixin:
     def __p2s_text_mixin_init__(self):
         self.default_font = "'Noto Sans', sans-serif"
         self._glyph_atlas_ = None
+
+    #
+    # svgEscape() / svgUnescape() - method routes onto the module-level door above, for the
+    # components, which reach this package through their `self.p2s` handle rather than by
+    # importing.  Same function, same rule: escape last.
+    #
+    def svgEscape(self, txt):
+        return svgEscape(txt)
+
+    def svgUnescape(self, txt):
+        return svgUnescape(txt)
 
     #
     # glyphAtlas() - lazily constructed shared GlyphAtlas (GPU text); built from the
@@ -57,7 +109,7 @@ class P2STextMixin:
         if color is None: color = self.colorTyped('label','defaultfg')
         txt = str(txt)
 
-        _html_txt = html.escape(txt)
+        _html_txt = svgEscape(txt)
         # Spaces are deliberately NOT replaced with &nbsp; -- doing so breaks
         # JupyterLab rendering in some configurations.
 

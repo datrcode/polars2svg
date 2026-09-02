@@ -327,7 +327,7 @@ def _rootViewBoxTransform_(svg_str):
 # per-op scissor instead.
 #
 def svgToDisplayList(svg_str, dl, p2s):
-    import html as _html_
+    from polars2svg.p2s_text_mixin import svgUnescape
     import re
     _scale_, _tx_, _ty_ = _rootViewBoxTransform_(svg_str)
     def _TX_(x): return x * _scale_ + _tx_
@@ -413,11 +413,11 @@ def svgToDisplayList(svg_str, dl, p2s):
                 _ty_pen_ = _f_('y')
                 for _sm_ in re.finditer(r'<tspan x="([^"]*)" dy="([^"]*)">([^<]*)</tspan>', _content_):
                     _ty_pen_ += float(_sm_.group(2))
-                    dl.text(p2s, _html_.unescape(_sm_.group(3)), _TX_(float(_sm_.group(1))), _TY_(_ty_pen_),
+                    dl.text(p2s, svgUnescape(_sm_.group(3)), _TX_(float(_sm_.group(1))), _TY_(_ty_pen_),
                             txt_h=_th_, anchor=_anchor_, color=_co_, rotation=_rot_,
                             baseline_shift=_bshift_, svg='')
             elif '<' not in _content_:
-                dl.text(p2s, _html_.unescape(_content_), _TX_(_f_('x')), _TY_(_f_('y')),
+                dl.text(p2s, svgUnescape(_content_), _TX_(_f_('x')), _TY_(_f_('y')),
                         txt_h=_th_, anchor=_anchor_, color=_co_, rotation=_rot_,
                         baseline_shift=_bshift_, svg='')
 

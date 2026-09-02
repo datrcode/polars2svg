@@ -31,8 +31,8 @@ def _gpu_error_overlay(msg, w, h):
     # SVG content for the `mod` overlay when WebGPU rendering fails. We deliberately do
     # NOT fall back to SVG automatically: the failure is surfaced to the user, who must
     # re-create the view with use_webgpu=False to switch to SVG rendering.
-    import html as _html
-    reason = _html.escape(str(msg)) if msg else 'unknown error'
+    from polars2svg.p2s_text_mixin import svgEscape
+    reason = svgEscape(msg) if msg else 'unknown error'
     return (
         f'<rect x="0" y="0" width="{w}" height="{h}" fill="rgba(255,255,255,0.94)"/>'
         f'<foreignObject x="10" y="10" width="{max(w - 20, 40)}" height="{max(h - 20, 40)}">'

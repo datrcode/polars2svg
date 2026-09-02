@@ -186,10 +186,12 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
                                  ('__r_f__', '__g_f__', '__b_f__'), rx=CLOUD_ICON_RX,
                                  opacity=self.node_opacity, svg_col=None)
         # Node labels (info recorded during __renderNodes__)
+        # _node_label_info_ carries the label as the caller wrote it -- __renderNodes__
+        # escapes only on its way into markup (p2s_text_mixin.svgEscape), so there is no
+        # entity here to undo; the glyph atlas draws characters.
         for _sx_, _y0_, _lines_ in getattr(self, '_node_label_info_', []):
             for _li_, _line_ in enumerate(_lines_):
-                _txt_ = _line_.replace('&lt;', '<').replace('&gt;', '>').replace('&amp;', '&')
-                _dl_.text(self.p2s, _txt_, _sx_, _y0_ + _li_ * self.txt_h,
+                _dl_.text(self.p2s, _line_, _sx_, _y0_ + _li_ * self.txt_h,
                           txt_h=self.txt_h, anchor='middle', svg='')
         # Legend (recorded during __renderSVG__)
         if getattr(self, '_dl_legend_', None) is not None: _dl_.extend(self._dl_legend_)
@@ -1182,7 +1184,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
             _txt_   = self.p2s.cropText(_row_['__ll_txt__'], self.txt_h, _avail_)
             if not _txt_ or _txt_ == '...': continue   # edge too short to say anything
             _co_  = _row_['__lc_hex__'] if _follows_link_color_ else _default_co_
-            _esc_ = _txt_.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+            _esc_ = self.p2s.svgEscape(_txt_)
 
             # Baseline offset from the edge.  Glyphs rise from the baseline toward sigma, so
             # on the side that matches (sig*side > 0) only the descender hangs back toward
@@ -1208,7 +1210,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
                 _m_  = self.txt_h + abs(_k_)
                 _box_ = (min(_qx_) - _m_, min(_qy_) - _m_, max(_qx_) + _m_, max(_qy_) + _m_)
             else:
-                _m_   = self.p2s.textLength(_esc_, self.txt_h) / 2.0 + self.txt_h
+                _m_   = self.p2s.textLength(_txt_, self.txt_h) / 2.0 + self.txt_h
                 _box_ = (_cx_ - _m_, _cy_ - _m_, _cx_ + _m_, _cy_ + _m_)
             if not self.__onCanvas__(*_box_): continue
 
@@ -1995,13 +1997,17 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
                   .then(pl.lit(self.p2s.nullNodeDisplay(self.p2s.NULL_NODE_PREFIX)))
                   .otherwise(pl.col('__label__')).alias('__label__')
             )
-            _df_labels_ = _df_labels_.with_columns(
-                pl.col('__label__').str.replace_all('&', '&amp;')
-                                   .str.replace_all('<', '&lt;')
-                                   .str.replace_all('>', '&gt;')
-            )
             if '__sz__' not in _df_labels_.columns:
                 _df_labels_ = _df_labels_.with_columns(pl.lit(float(_sz_for_label_)).alias('__sz__'))
+            # p2s_text_mixin.svgEscape(), applied per line at the moment each one is
+            # interpolated into markup and not one step earlier.  __label__ is still exactly
+            # what the caller passed, because everything between here and there cuts or
+            # measures it by count: _wrap_label_() breaks at label_line_width *characters*
+            # and the ellipsis path slices the last line, so an entity in the string would
+            # be split down the middle -- '&amp;' across two <tspan>s is not well-formed XML
+            # -- and textLength() below would charge five characters for a '&' that draws as
+            # one.  Escape last; see that function's header.
+            _E_ = self.p2s.svgEscape
             _lbl_set_ = set()
             for _sx_, _sy_, _sz_, _label_ in _df_labels_.select('__sx__', '__sy__', '__sz__', '__label__').iter_rows():
                 if not _label_:
@@ -2013,7 +2019,8 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
                 # PLANNING.md S2: measure the wrapped label's own ink box (text-anchor is
                 # middle, so it straddles __sx__; the first line rises one txt_h above the
                 # baseline and each further line drops one below).  Culled here rather than
-                # on the string, so the SVG and the GPU list drop the same labels.
+                # on the string, so the SVG and the GPU list drop the same labels -- and
+                # measured on the unescaped line, which is what actually gets drawn.
                 _hw_ = max(self.p2s.textLength(_l_, self.txt_h) for _l_ in _lines_) / 2.0
                 if not self.__onCanvas__(_sx_ - _hw_, _y0_ - self.txt_h,
                                          _sx_ + _hw_, _y0_ + len(_lines_) * self.txt_h):
@@ -2021,12 +2028,12 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
                 self._node_label_info_.append((_sx_, _y0_, _lines_))
                 if len(_lines_) == 1:
                     _lbl_set_.add(
-                        f'<text x="{_sx_}" y="{_y0_}" font-size="{self.txt_h}px" text-anchor="middle">{_lines_[0]}</text>'
+                        f'<text x="{_sx_}" y="{_y0_}" font-size="{self.txt_h}px" text-anchor="middle">{_E_(_lines_[0])}</text>'
                     )
                 else:
-                    _spans_ = [f'<tspan x="{_sx_}" dy="0">{_lines_[0]}</tspan>']
+                    _spans_ = [f'<tspan x="{_sx_}" dy="0">{_E_(_lines_[0])}</tspan>']
                     for _l_ in _lines_[1:]:
-                        _spans_.append(f'<tspan x="{_sx_}" dy="{self.txt_h}">{_l_}</tspan>')
+                        _spans_.append(f'<tspan x="{_sx_}" dy="{self.txt_h}">{_E_(_l_)}</tspan>')
                     _lbl_set_.add(
                         f'<text x="{_sx_}" y="{_y0_}" font-size="{self.txt_h}px" text-anchor="middle">{"".join(_spans_)}</text>'
                     )

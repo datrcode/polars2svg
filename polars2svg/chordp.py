@@ -15,7 +15,6 @@ from scipy.sparse import csr_matrix
 from scipy.sparse.csgraph import shortest_path, laplacian as graph_laplacian, minimum_spanning_tree, depth_first_order, connected_components as _scipy_connected_components_
 from scipy.sparse.linalg import eigsh
 from math import pi, cos, sin, sqrt, atan2
-import html
 
 import random
 import time
@@ -1924,7 +1923,7 @@ class ChP(P2SComponentColorMixin, ExportMixin):
                         f'A {_ro_:.2f} {_ro_:.2f} 0 {_large_} 1 {_xe_:.2f} {_ye_:.2f}" '
                         f'fill="none" stroke="none" />'
                     )
-                    _label_ = html.escape(_label_map_.get(_nm_, _nm_))
+                    _label_ = self.p2s.svgEscape(_label_map_.get(_nm_, _nm_))
                     _text_svgs_.append(
                         f'<text font-family="{_ff_}" font-size="{self.txt_h}px" fill="{_label_co_}">'
                         f'<textPath href="#{_arc_id_}" startOffset="50%" text-anchor="middle">'
@@ -1950,7 +1949,7 @@ class ChP(P2SComponentColorMixin, ExportMixin):
                         _rot_, _anchor_ = _a_mid_ - 180.0, 'end'
                     else:
                         _rot_, _anchor_ = _a_mid_, 'start'
-                    _label_ = html.escape(_label_map_.get(_nm_, _nm_))
+                    _label_ = self.p2s.svgEscape(_label_map_.get(_nm_, _nm_))
                     self._node_label_svg_.append(
                         f'<text x="{_xt_:.2f}" y="{_yt_:.2f}" font-family="{_ff_}" '
                         f'font-size="{self.txt_h}px" text-anchor="{_anchor_}" '

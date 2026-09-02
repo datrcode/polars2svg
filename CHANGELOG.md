@@ -154,6 +154,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **XML escaping has one door, and it is the last step.** Escaping was spelled five
+  different ways -- `svgText()` in the text mixin, the same standard-library call inline in
+  `chordp` and `spreadlinesp`, two hand-rolled `.replace()` chains in `linkp` (one each
+  way), and nothing in the interactive chrome, whose strings are its own. Nothing tied them
+  together, and the convention broke where two of them met: `linkp` escaped the node-label
+  column and *then* cut the escaped string by character count. `_wrap_label_()` breaks at
+  `label_line_width` characters and the ellipsis path slices the last line, so a `&` or `<`
+  landing near a cut split its entity down the middle --
+  `<tspan ...>aaaaaaaaa&</tspan><tspan ...>amp;bbbbb</tspan>` -- which is not well-formed
+  XML. Browsers tolerate it through `innerHTML`, so it read as display corruption rather
+  than script execution, but a strict consumer rejects the whole document: `save('.png')`
+  and any `<img>` tag. At the default `label_line_width=32` it took a label longer than 32
+  characters with a special character at the wrong offset; at narrower widths, much less.
+
+  There is now one function, `p2s_text_mixin.svgEscape()` (with `svgUnescape()` for the
+  parse-back direction), reachable as a module import or as a `self.p2s` method, and one
+  rule stated in its header: **escape last**. Everything that measures, crops, wraps,
+  truncates or slices works on the raw string; the escape happens immediately before the
+  text is interpolated into markup. Every call site in the package now goes through it,
+  including `p2s_displaylist.svgToDisplayList()` and the WebGPU error overlay.
+
+  Two things fall out of the ordering fix. `linkp`'s node-label wrap now breaks at
+  `label_line_width` characters *of the label*, not of its escaped spelling, so a label
+  containing `&` wraps where a caller asking for 10 characters per line would expect rather
+  than five characters early; and off-canvas culling, which measured `textLength()` on the
+  escaped string, no longer charges five characters for a `&` that draws as one -- the same
+  correction applies to link labels. `_node_label_info_`, which feeds the glyph atlas, now
+  carries the raw label, so the GPU path no longer has to un-escape what the SVG path just
+  escaped. No golden changed.
+
+  `tests/test_svg_escaping.py` covers all of it: the door's own contract, the wrap and
+  ellipsis paths swept across every offset a special character can occupy, a round-trip
+  check through every component that puts row data into markup (`histop`, `piep`, `xyp`,
+  `chordp`, `linkp` node/link labels and legend, `spreadlinesp`, `smallp`), and a source
+  scan that fails if a sixth escaping mechanism appears. The test meant to be watching this,
+  `test_edge_case_inputs.py::test_linkp_labels_special_chars`, passed `node_labels=` (the
+  `{name: display}` map) where it meant `draw_node_labels=`, rendered zero `<text>` elements
+  and so asserted nothing about labels; it now names the flag and asserts the label text.
+
 - **`LinkP` curve geometry no longer overflows Int32 at high zoom.** Screen coordinates are
   `Int32`, and `__curveControlPointColumns__` squared the endpoint deltas in that dtype to
   get the chord length. Past ~46,341 pixels of separation -- routine once a `view_window`

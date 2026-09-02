@@ -31,6 +31,44 @@ FLOATS_PER_INSTANCE = {
 # spreadlinesp cannot drift on what a collapsed node looks like under GPU.
 CLOUD_ICON_W, CLOUD_ICON_H, CLOUD_ICON_RX = 28.0, 14.0, 6.0
 
+# The <defs> definition of that same icon, as it is written into the SVG.  linkp emits
+# one copy (#cloud) and spreadlinesp two (#cloud and #cloud_outline); those were three
+# hand-maintained literals of the same 644-byte string until they were hoisted here, so
+# the only differences between them -- the id, and whether the path carries a stroke --
+# are the two arguments below.
+#
+# Source: https://www.svgrepo.com/svg/520637/cloud
+# License: CC Attribution License
+# COLLECTION: Xnix Circular Interface Icons
+# AUTHOR: Ankush Syal
+# Modified to remove the bottom path (the second one).  The d= floats are rounded to two
+# decimals in this source string rather than by a pass over finished output (PLANNING.md
+# S4/S5) -- it is a fixed asset, so the rounding costs nothing at runtime.
+#
+_CLOUD_ICON_D_ = (
+    'M14.09 7C14.99 6.97 15.87 7.31 16.52 7.93C17.18 8.55 17.56 9.4 17.59 10.3'
+    'C17.59 10.62 17.54 10.94 17.45 11.25C18.61 11.43 19.47 12.42 19.5 13.6'
+    'C19.46 14.97 18.32 16.04 16.95 16H8.04C6.68 16.04 5.54 14.97 5.5 13.6'
+    'C5.52 12.48 6.31 11.52 7.41 11.28C7.41 11.25 7.41 11.23 7.41 11.2'
+    'C7.45 9.84 8.59 8.76 9.96 8.8C10.27 8.8 10.59 8.86 10.89 8.97'
+    'C11.49 7.75 12.73 6.98 14.09 7Z'
+)
+
+#
+# cloudIconDef() - the '<g id=...>' cloud icon definition for an SVG <defs> block
+# - id     : the symbol name a matching '<use href="#...">' will reference
+# - stroke : outline color, or None for the unstroked variant (spreadlinesp's #cloud_outline)
+#
+def cloudIconDef(id='cloud', stroke='#000000'):
+    _stroke_ = f'stroke="{stroke}" ' if stroke is not None else ''
+    return (f'<g id="{id}" transform="translate(-50,-25)">'
+            '<svg x="0" y="0" width="100px" height="50px" viewBox="-5 -5.5 35 35"'
+            ' xmlns="http://www.w3.org/2000/svg">'
+            '<path fill-rule="evenodd" clip-rule="evenodd" '
+            f'd="{_CLOUD_ICON_D_}" '
+            f'{_stroke_}stroke-linecap="round" stroke-linejoin="round"/>'
+            '</svg></g>')
+
 _NAMED_COLORS_ = {
     'black': (0.0, 0.0, 0.0), 'white': (1.0, 1.0, 1.0), 'red':  (1.0, 0.0, 0.0),
     'green': (0.0, 0.5, 0.0), 'blue':  (0.0, 0.0, 1.0), 'gray': (0.5, 0.5, 0.5),

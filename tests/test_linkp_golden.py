@@ -1,3 +1,4 @@
+import re
 import unittest
 import polars as pl
 from polars2svg import Polars2SVG
@@ -13,15 +14,19 @@ _DF_ = pl.DataFrame({
     'count':   [2.0,     5.0,     10.0,    0.1,     0.5],
 })
 _REL_ = [('fm', 'to')]
+# the third element is the link-label field; only read when draw_link_labels is on
+_REL_LABELED_ = [('fm', 'to', 'category')]
 _POS_ = {'a': (0.0, 0.5), 'b': (0.5, 0.0), 'c': (1.0, 0.5), 'd': (0.5, 1.0)}
 # 'c' and 'd' share a position, so they collapse to one screen pixel -> cloud icon
 _POS_COLLAPSED_ = {'a': (0.0, 0.5), 'b': (0.5, 0.0), 'c': (1.0, 0.5), 'd': (1.0, 0.5)}
 
 
 def _params(pos=_POS_, **extra):
+    # merged rather than **extra so a caller can override a default (relationships=,
+    # link_shape=) instead of hitting "multiple values for keyword argument"
     return dict(df=_DF_, relationships=_REL_, pos=pos,
                 wxh=(96, 96), link_shape='curve', draw_node_labels=True,
-                insets=(16, 16), **extra)
+                insets=(16, 16)) | extra
 
 
 class TestLinkPNodeColorGolden(unittest.TestCase):
@@ -110,6 +115,53 @@ class TestLinkPOffCanvasCullGolden(unittest.TestCase):
         self.assertLess(lp.svg.count('<text'),   len(_POS_))
         assert_svg_matches_golden(lp.svg, 'linkp_off_canvas_cull')
         assert_image_matches_golden(lp.svg, 'linkp_off_canvas_cull')
+
+
+class TestLinkPLinkLabelGolden(unittest.TestCase):
+    '''Golden-file regression tests for draw_link_labels= (PLANNING.md V5).
+
+    No golden covered edge labels at all, which is why regenerating every golden during
+    the 2026-08-05 font work produced a diff of exactly the added font-family attribute
+    and not one moved coordinate: the label geometry was unit-tested but never rendered
+    into a file anyone compares against.
+
+    Both shapes are here because they place labels by different mechanisms -- 'curve'
+    hands SVG a <textPath> following the drawn Bezier, 'line' rotates the text onto the
+    chord -- and both carry the bidirectional a<->b pair, whose two labels are
+    canonicalized onto one baseline and pushed to opposite sides of it rather than
+    overprinting.
+
+    Read the two PNG goldens differently.  svglib 1.6.0 implements no <textPath> at all
+    (there is no such branch in convertText), so the curve PNG shows the graph and its
+    node labels but *not* its link labels -- the SVG golden is the load-bearing check
+    there, and the bitmap only covers what surrounds them.  The line PNG does show its
+    labels, and is the one that actually rasterizes this feature.  That gap is a real
+    one in save('.png'), not merely a test artifact; see PLANNING.md V5.
+    '''
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.p2s = Polars2SVG()
+
+    def _linkp(self, **extra):
+        return self.p2s.linkp(**_params(relationships=_REL_LABELED_,
+                                        draw_link_labels=True, **extra))
+
+    def test_link_labels_curve(self):
+        lp = self._linkp()
+        # the golden is only meaningful if labels were drawn, and drawn on their paths
+        _defs_ = re.findall(r'<path id="(p2sll\d+_\d+)"', lp.svg)
+        _href_ = re.findall(r'<textPath href="#(p2sll\d+_\d+)"', lp.svg)
+        self.assertEqual(len(_href_), 5)            # one per edge, a<->b counted twice
+        self.assertEqual(set(_defs_), set(_href_))  # no orphan def, no dangling href
+        assert_svg_matches_golden(lp.svg, 'linkp_link_labels_curve')
+        assert_image_matches_golden(lp.svg, 'linkp_link_labels_curve')
+
+    def test_link_labels_line(self):
+        lp = self._linkp(link_shape='line')
+        self.assertNotIn('<textPath', lp.svg)       # 'line' rotates the text instead
+        self.assertEqual(len(re.findall(r'<text[^>]*transform="rotate\(', lp.svg)), 5)
+        assert_svg_matches_golden(lp.svg, 'linkp_link_labels_line')
+        assert_image_matches_golden(lp.svg, 'linkp_link_labels_line')
 
 
 class TestLinkPBackgroundGolden(unittest.TestCase):

@@ -6,7 +6,8 @@ import time
 import polars2svg
 from polars2svg.export import ExportMixin
 from polars2svg.p2s_displaylist import (CLOUD_ICON_H, CLOUD_ICON_RX, CLOUD_ICON_W,
-                                        pathToDL, roundedRectPoints, strokePolylineDL)
+                                        cloudIconDef, pathToDL, roundedRectPoints,
+                                        strokePolylineDL)
 
 #
 # Implementation of the following:
@@ -1822,32 +1823,11 @@ class SpreadLinesP(ExportMixin):
         svg.insert(1, (f'<rect x="{self.vx0:.1f}" y="{self.vy0:.1f}"'
                        f' width="{_vw_:.1f}" height="{_vh_:.1f}" fill="{_bg_co_}"/>'))
         if self.ego_is_set:
-            # Cloud symbol — same definition as linkp.py (CC Attribution, Ankush Syal / SVGRepo)
-            svg.insert(2,
-                '<defs>'
-                '<g id="cloud" transform="translate(-50,-25)">'
-                '<svg x="0" y="0" width="100px" height="50px" viewBox="-5 -5.5 35 35" xmlns="http://www.w3.org/2000/svg">'
-                '<path fill-rule="evenodd" clip-rule="evenodd" '
-                'd="M14.09 7C14.99 6.97 15.87 7.31 16.52 7.93C17.18 8.55 17.56 9.4 17.59 10.3'
-                'C17.59 10.62 17.54 10.94 17.45 11.25C18.61 11.43 19.47 12.42 19.5 13.6'
-                'C19.46 14.97 18.32 16.04 16.95 16H8.04C6.68 16.04 5.54 14.97 5.5 13.6'
-                'C5.52 12.48 6.31 11.52 7.41 11.28C7.41 11.25 7.41 11.23 7.41 11.2'
-                'C7.45 9.84 8.59 8.76 9.96 8.8C10.27 8.8 10.59 8.86 10.89 8.97'
-                'C11.49 7.75 12.73 6.98 14.09 7Z" '
-                'stroke="#000000" stroke-linecap="round" stroke-linejoin="round"/>'
-                '</svg></g>'
-                '<g id="cloud_outline" transform="translate(-50,-25)">'
-                '<svg x="0" y="0" width="100px" height="50px" viewBox="-5 -5.5 35 35" xmlns="http://www.w3.org/2000/svg">'
-                '<path fill-rule="evenodd" clip-rule="evenodd" '
-                'd="M14.09 7C14.99 6.97 15.87 7.31 16.52 7.93C17.18 8.55 17.56 9.4 17.59 10.3'
-                'C17.59 10.62 17.54 10.94 17.45 11.25C18.61 11.43 19.47 12.42 19.5 13.6'
-                'C19.46 14.97 18.32 16.04 16.95 16H8.04C6.68 16.04 5.54 14.97 5.5 13.6'
-                'C5.52 12.48 6.31 11.52 7.41 11.28C7.41 11.25 7.41 11.23 7.41 11.2'
-                'C7.45 9.84 8.59 8.76 9.96 8.8C10.27 8.8 10.59 8.86 10.89 8.97'
-                'C11.49 7.75 12.73 6.98 14.09 7Z" '
-                'stroke-linecap="round" stroke-linejoin="round"/>'
-                '</svg></g></defs>'
-            )
+            # Cloud symbols -- the shared definition beside CLOUD_ICON_* in
+            # p2s_displaylist, the same one linkp emits.  #cloud_outline is the
+            # unstroked variant, drawn under the ego node's own outline.
+            svg.insert(2, '<defs>' + cloudIconDef() +
+                          cloudIconDef('cloud_outline', stroke=None) + '</defs>')
         if self.draw_border:
             _bc_ = _border_co_
             svg.append(f'<rect x="{self.vx0:.1f}" y="{self.vy0:.1f}"'

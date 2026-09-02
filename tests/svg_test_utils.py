@@ -50,7 +50,10 @@ def normalize_svg(svg):
          - CSS class names : rect-group-{randid}, circle-group-{randid}
          - Clip path ID    : plotClip-{randid}
          - Gradient IDs    : lines_{randid}_...
-       These are replaced with the fixed token TESTID.
+         - LinkP <textPath> paths : p2sll{randid}_{n}
+       These are replaced with the fixed token TESTID.  Only the random half is
+       replaced in the LinkP case: the trailing _{n} is the label's emission index,
+       which distinguishes the paths within one render and must survive.
 
     2. Dot element order — __renderDots__() uses group_by() whose row order is
        non-deterministic across runs.  The individual <rect> and <circle>
@@ -58,10 +61,11 @@ def normalize_svg(svg):
        string is stable without requiring a sort in the production pipeline.
 
     LinkP renders deterministically (sorted() at source), so no element sorting
-    is needed here.
+    is needed here -- but its 'curve' link labels do carry random <textPath> ids,
+    which is why p2sll appears in the substitution above.
     '''
     # 1. Replace random IDs
-    svg = re.sub(r'(plotClip-|lines_|smallp_|xyp_|histop_|timep_|chordp_|(?:rect|circle)-group-)(\d+)', r'\1TESTID', svg)
+    svg = re.sub(r'(plotClip-|lines_|smallp_|xyp_|histop_|timep_|chordp_|p2sll|(?:rect|circle)-group-)(\d+)', r'\1TESTID', svg)
 
     # 2. Sort dot elements within the plot group
     def _sort_plot_group_(m):

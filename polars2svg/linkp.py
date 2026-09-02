@@ -4,7 +4,8 @@ import time
 
 import polars2svg
 from polars2svg.p2s_displaylist import (DisplayList, hexToRGBA, cubicBezierSegmentsTable,
-                                        CLOUD_ICON_W, CLOUD_ICON_H, CLOUD_ICON_RX)
+                                        CLOUD_ICON_W, CLOUD_ICON_H, CLOUD_ICON_RX,
+                                        cloudIconDef)
 from polars2svg.export import ExportMixin
 from polars2svg.p2s_component_color_mixin import P2SComponentColorMixin
 from polars2svg.p2s_background_mixin import P2SBackgroundMixin
@@ -2192,32 +2193,13 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
         _border_co_ = self.p2s.colorTyped('axis', 'inner')
 
         svg = [f'<svg x="0" y="0" width="{w}" height="{h}" font-family="{self.p2s.default_font}" xmlns="http://www.w3.org/2000/svg">']
-        #
-        # Cloud Icon in <defs> -- attribution is as follows:
-        #
-        # Source: https://www.svgrepo.com/svg/520637/cloud
-        # License:  CC Attribution License
-        # COLLECTION: Xnix Circular Interface Icons
-        # AUTHOR: Ankush Syal
-        # Modified To Remove Bottom Path (Second Path)
-        #
-        # Only collapsed nodes reference the icon, so it is emitted only when this render
-        # has one -- 657 bytes off every ordinary linkp.  __renderNodes__ decides that per
-        # render (collapsing is a group_by on screen coordinates, so it follows the zoom),
-        # which is why the flag is read here rather than resolved once in __init__.
-        _cloud_defs_ = (
-            '<g id="cloud" transform="translate(-50,-25)">'
-            '<svg x="0" y="0" width="100px" height="50px" viewBox="-5 -5.5 35 35" xmlns="http://www.w3.org/2000/svg">'
-            '<path fill-rule="evenodd" clip-rule="evenodd" '
-            'd="M14.09 7C14.99 6.97 15.87 7.31 16.52 7.93C17.18 8.55 17.56 9.4 17.59 10.3'
-            'C17.59 10.62 17.54 10.94 17.45 11.25C18.61 11.43 19.47 12.42 19.5 13.6'
-            'C19.46 14.97 18.32 16.04 16.95 16H8.04C6.68 16.04 5.54 14.97 5.5 13.6'
-            'C5.52 12.48 6.31 11.52 7.41 11.28C7.41 11.25 7.41 11.23 7.41 11.2'
-            'C7.45 9.84 8.59 8.76 9.96 8.8C10.27 8.8 10.59 8.86 10.89 8.97'
-            'C11.49 7.75 12.73 6.98 14.09 7Z" '
-            'stroke="#000000" stroke-linecap="round" stroke-linejoin="round"/>'
-            '</svg></g>'
-        ) if getattr(self, '_has_cloud_', True) else ''
+        # Only collapsed nodes reference the cloud icon, so it is emitted only when this
+        # render has one -- 657 bytes off every ordinary linkp.  __renderNodes__ decides
+        # that per render (collapsing is a group_by on screen coordinates, so it follows
+        # the zoom), which is why the flag is read here rather than resolved once in
+        # __init__.  The definition itself lives beside CLOUD_ICON_* in p2s_displaylist,
+        # shared with spreadlinesp's two copies.
+        _cloud_defs_ = cloudIconDef() if getattr(self, '_has_cloud_', True) else ''
         # invisible per-edge paths for the 'curve' shape's <textPath> link labels -- an
         # independent payload: <defs> stays for these alone, and is dropped only when both
         # are empty (svgToDisplayList()'s <defs> strip is a no-op when there is none).

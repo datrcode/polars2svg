@@ -76,6 +76,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Golden coverage for `draw_link_labels=`, which previously had none.** Two new goldens --
+  `linkp_link_labels_curve` (`<textPath>` along the drawn Bezier) and `linkp_link_labels_line`
+  (text rotated onto the chord) -- cover the two placement mechanisms and the bidirectional
+  pair whose labels sit on opposite sides of one shared baseline. `normalize_svg()` now
+  tokenizes the random half of LinkP's `p2sll{id}_{n}` `<textPath>` path ids, without which an
+  exact-string golden for the curve case could not be stable; no existing golden contains
+  them, so none moved.
+
+  Known limitation this surfaced: **svglib implements no `<textPath>`**, so curve-shaped link
+  labels do not appear in `save('.png')` / `savePNG()` output (the SVG is correct, and
+  `link_shape='line'` labels rasterize normally).
+
+- **Internal refactor, no behavior change: one cloud-icon definition, not three.** The
+  collapsed-node cloud `<defs>` block was three hand-maintained copies of the same 644-byte
+  literal -- one in `linkp` (`#cloud`) and two in `spreadlinesp` (`#cloud` and the unstroked
+  `#cloud_outline`). They now come from `cloudIconDef(id, stroke)` beside the existing
+  `CLOUD_ICON_*` metrics in `p2s_displaylist`, which reproduces all three byte for byte, so
+  no golden moved. The attribution (SVGRepo / Ankush Syal, CC-BY) travels with the constant
+  instead of being repeated per copy.
+
 - **`LinkP` no longer emits geometry that falls entirely outside the canvas.** Links, nodes,
   node labels, link labels (with the `<textPath>` `<defs>` path each one needs) and timing
   marks are rejected before string assembly when their bounding box misses the viewport.

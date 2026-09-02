@@ -2035,6 +2035,34 @@ class Polars2SVG(P2SColorsMixin,
         return tuple(_out_)
 
     #
+    # rejectBoolParam() - a display-name map is not an on/off flag.
+    #
+    # draw_node_labels= turns node labels on; node_labels= supplies the
+    # {name: display_str} map.  The two names differ by a prefix, so the value meant for
+    # one lands on the other -- and a bool there used to fail in whichever way the
+    # parameter happened to be consumed downstream: stored and never looked at with the
+    # draw flag off, or `object of type 'bool' has no len()` from the middle of the render
+    # with it on.  Neither names the parameter, and neither names the fix.  (It is not a
+    # hypothetical mistake: a linkp test in test_edge_case_inputs.py made it, rendered no
+    # labels at all, and sat there asserting nothing about them.)
+    #
+    # linkp had been catching exactly this for link_labels= since edge labels landed; the
+    # guard just never reached the parameters beside it.  This is that guard, in one place,
+    # for every component that has a label map or a label filter.
+    #
+    # Bool only, deliberately.  These parameters each accept several shapes (label_only=
+    # takes a set, a list, or a single name), so full type validation would be a larger and
+    # riskier change; a bool is the one wrong value that is a predictable confusion rather
+    # than a typo.  normalizeWxh() singles bools out from the other ints for the same
+    # reason.
+    #
+    def rejectBoolParam(self, value, component_name, param, shape, flag=None):
+        if not isinstance(value, bool): return
+        _use_ = f'; use {flag}= for that' if flag is not None else ''
+        raise TypeError(f'{component_name}: {param}= is {shape}, not an on/off flag'
+                        f'{_use_} (got {value!r})')
+
+    #
     # formatMultiFieldValue() - render a bin/color grouping-key value for display.
     # Multi-field keys are joined internally with the non-printable MULTI_FIELD_SEP
     # (see the constant's note) to avoid collisions; this restores the visible '|'

@@ -431,15 +431,19 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
             self.view_window              = kwargs['view_window']
             self._view_window_user_set_   = kwargs['view_window'] is not None
 
+        # A label map / label filter is not the flag that turns labels on.  Caught here,
+        # before the normalization below and long before a render, rather than left to
+        # fail on len() somewhere in the middle of one -- see rejectBoolParam().
+        self.p2s.rejectBoolParam(self.node_labels, 'LinkP', 'node_labels',
+                                 'a {node_name: display_str} dict', 'draw_node_labels')
+        self.p2s.rejectBoolParam(self.link_labels, 'LinkP', 'link_labels',
+                                 'a {label_value: display_str} dict', 'draw_link_labels')
+        self.p2s.rejectBoolParam(self.label_only, 'LinkP', 'label_only',
+                                 'a set of names (or a list, or a single name)')
+
         # Normalize label_only to a set
         if isinstance(self.label_only, list): self.label_only = set(self.label_only)
         if isinstance(self.label_only, str):  self.label_only = {self.label_only}
-
-        # link_labels is a display-name dict, not the on/off flag; catch the confusion
-        # here rather than letting it fail on len() deep inside the render.
-        if isinstance(self.link_labels, bool):
-            raise TypeError('LinkP: link_labels= is a {label_value: display_str} dict; use '
-                            'draw_link_labels= to turn edge labels on')
 
         # "No data" placeholder for early error visibility -- only ever seen when
         # no df is supplied (a successful render overwrites self.svg); makes a

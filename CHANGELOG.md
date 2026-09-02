@@ -154,6 +154,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A label map is no longer mistakable for the flag that turns labels on.** `node_labels=`
+  supplies the `{name: display_str}` map; `draw_node_labels=` turns the labels on. One prefix
+  apart, so the value meant for the flag lands on the map -- and a bool there failed in
+  whichever way the parameter happened to be consumed: stored and never read with the draw
+  flag off, or `object of type 'bool' has no len()` from the middle of the render with it on.
+  Neither names the parameter, and neither names the fix. linkp had been catching exactly
+  this for `link_labels=` since edge labels landed; the guard simply never reached the
+  parameters beside it.
+
+  That guard now lives in one place -- `Polars2SVG.rejectBoolParam()` -- and covers
+  `node_labels=`, `link_labels=` and `label_only=` on linkp and `node_labels=` /
+  `label_only=` on chordp, which had the identical defect and failed just as deep
+  (`'bool' object has no attribute 'items'`). It raises at parse time with a message naming
+  the flag to use instead. Bool only, deliberately: these parameters accept several shapes
+  each, so this catches the one wrong value that is a predictable confusion rather than a
+  typo -- the same line `normalizeWxh()` already draws between a bool and the other ints.
+
+  This is a behavior change: code passing `node_labels=True` today renders no labels and now
+  raises instead. That is the point -- it is how the mistake went unnoticed. The linkp
+  special-character test in `test_edge_case_inputs.py` made exactly it, rendered zero `<text>`
+  elements, and asserted nothing about labels for as long as it existed, hiding the entity
+  escaping bug above. `tests/test_label_param_flag_confusion.py` covers every label map and
+  filter on both components, and checks that the shapes they really accept still work.
+
+  spreadlinesp also declares `node_labels=`, and it has a *different* defect -- the parameter
+  is never read at all, bool or not -- so it is deliberately left alone here.
+
 - **XML escaping has one door, and it is the last step.** Escaping was spelled five
   different ways -- `svgText()` in the text mixin, the same standard-library call inline in
   `chordp` and `spreadlinesp`, two hand-rolled `.replace()` chains in `linkp` (one each

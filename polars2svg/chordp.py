@@ -601,6 +601,12 @@ class ChP(P2SComponentColorMixin, ExportMixin):
             self._shared_view_y_     = kwargs['_shared_view_y_']
             self._bundled_skeleton_  = self._shared_view_y_  # pre-seed cache; survives template reset
 
+        # Same guard linkp applies, for the same two shapes -- see rejectBoolParam().
+        self.p2s.rejectBoolParam(self.node_labels, 'ChP', 'node_labels',
+                                 'a {node_name: display_str} dict', 'draw_labels')
+        self.p2s.rejectBoolParam(self.label_only, 'ChP', 'label_only',
+                                 'a set of names (or a list, or a single name)')
+
         # Normalize label_only to a set
         if isinstance(self.label_only, list): self.label_only = set(self.label_only)
         if isinstance(self.label_only, str):  self.label_only = {self.label_only}

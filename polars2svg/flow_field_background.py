@@ -40,6 +40,11 @@
 
 from __future__ import annotations
 
+from typing import Any, TYPE_CHECKING
+
+if TYPE_CHECKING:                 # polars is imported lazily inside the two
+    import polars as pl           # methods that use it; this keeps that true
+
 import math
 
 import numpy as np
@@ -80,7 +85,7 @@ class _Grid(object):
     matching a ``(ny, nx)`` reshape.
     """
 
-    def __init__(self, positions, grid_res, pad):
+    def __init__(self, positions: np.ndarray, grid_res: int, pad: float) -> None:
         lo, hi = positions.min(axis=0), positions.max(axis=0)
         ext    = hi - lo
         # A degenerate axis (every node on one line) still needs a width.
@@ -110,7 +115,7 @@ class _Grid(object):
 # Sparse deposition kernels
 # ===========================================================================
 
-def _sparse_kernels(grid, A, B, sigma, cutoff):
+def _sparse_kernels(grid: Any, A: np.ndarray, B: np.ndarray, sigma: float, cutoff: float) -> tuple:
     """Per-edge Gaussian-on-distance-to-segment support.
 
     Returns ``(starts, idx, val)`` in CSR form: edge ``e`` deposits onto grid
@@ -174,7 +179,7 @@ def _sparse_kernels(grid, A, B, sigma, cutoff):
     return starts, idx, val
 
 
-def _estimated_support(grid, A, B, reach):
+def _estimated_support(grid: Any, A: np.ndarray, B: np.ndarray, reach: float) -> np.ndarray:
     """Grid cells the kernels will occupy, without building them.
 
     An edge's support is a capsule: every point within ``reach`` of the segment,
@@ -187,8 +192,8 @@ def _estimated_support(grid, A, B, reach):
     return area / (grid.cell * grid.cell)
 
 
-def _fit_to_budget(positions, A, B, weights, grid_res, pad, sigma_frac, sigma,
-                   cutoff, budget, min_grid_res):
+def _fit_to_budget(positions: np.ndarray, A: np.ndarray, B: np.ndarray, weights: np.ndarray, grid_res: int, pad: float, sigma_frac: float, sigma: Any,
+                   cutoff: float, budget: int | None, min_grid_res: int) -> tuple:
     """Choose a grid (and possibly an edge subset) whose support fits ``budget``.
 
     Two-stage degradation, in the order that costs the least information:
@@ -241,7 +246,7 @@ def _fit_to_budget(positions, A, B, weights, grid_res, pad, sigma_frac, sigma,
 # K-layer assignment
 # ===========================================================================
 
-def _edge_components(ends, dirs, cos_thr=0.5):
+def _edge_components(ends: np.ndarray, dirs: np.ndarray, cos_thr: float = 0.5) -> list:
     """Union-find the edges into coherent flow structures.
 
     Two edges join when they share an endpoint AND their directions agree
@@ -260,13 +265,13 @@ def _edge_components(ends, dirs, cos_thr=0.5):
     E = len(ends)
     parent = np.arange(E)
 
-    def find(a):
+    def find(a: int) -> Any:
         while parent[a] != a:
             parent[a] = parent[parent[a]]
             a = parent[a]
         return a
 
-    def union(a, b):
+    def union(a: int, b: int) -> None:
         ra, rb = find(a), find(b)
         if ra != rb:
             parent[max(ra, rb)] = min(ra, rb)
@@ -274,7 +279,7 @@ def _edge_components(ends, dirs, cos_thr=0.5):
     ang = np.arctan2(dirs[:, 1], dirs[:, 0])
     max_gap = math.acos(max(-1.0, min(1.0, cos_thr)))
 
-    incident = {}
+    incident: dict = {}
     for e, (u, v) in enumerate(ends):
         incident.setdefault(int(u), []).append(e)
         incident.setdefault(int(v), []).append(e)
@@ -290,15 +295,15 @@ def _edge_components(ends, dirs, cos_thr=0.5):
             if gap <= max_gap:
                 union(a, b)
 
-    comps = {}
+    comps: dict = {}
     for e in range(E):
         comps.setdefault(int(find(e)), []).append(e)
     return [np.array(c, dtype=np.int64) for c in comps.values()]
 
 
-def _assign_layers(k_layers, weights, ends, dirs, starts, idx, val, grid_size,
-                   tau=0.2, refine_passes=1, atomic_components=True,
-                   cos_thr=0.5, max_component_frac=0.55):
+def _assign_layers(k_layers: int, weights: np.ndarray, ends: np.ndarray, dirs: np.ndarray, starts: np.ndarray, idx: np.ndarray, val: np.ndarray, grid_size: int,
+                   tau: float = 0.2, refine_passes: int = 1, atomic_components: bool = True,
+                   cos_thr: float = 0.5, max_component_frac: float = 0.55) -> tuple:
     """Split the edges into exactly ``k_layers`` internally coherent layers.
 
     Matching pursuit over flow structures (``_edge_components``) in descending
@@ -352,7 +357,7 @@ def _assign_layers(k_layers, weights, ends, dirs, starts, idx, val, grid_size,
     groups = [g[np.argsort(-weights[g], kind='stable')] for g in groups]
     groups.sort(key=lambda g: (-float(weights[g].sum()), int(g[0])))
 
-    def _deposit(group, k, sign):
+    def _deposit(group: np.ndarray, k: int, sign: float) -> None:
         for e in group:
             s, t = starts[e], starts[e + 1]
             if s == t:
@@ -361,7 +366,7 @@ def _assign_layers(k_layers, weights, ends, dirs, starts, idx, val, grid_size,
             U[k, gi] += sign * weights[e] * gv * dirs[e, 0]
             V[k, gi] += sign * weights[e] * gv * dirs[e, 1]
 
-    def _place(group, remove=False):
+    def _place(group: np.ndarray, remove: bool = False) -> int:
         if remove:
             _deposit(group, int(label[group[0]]), -1.0)
 
@@ -419,12 +424,12 @@ def _assign_layers(k_layers, weights, ends, dirs, starts, idx, val, grid_size,
 # Glyphs -- world-coordinate SVG path descriptors
 # ===========================================================================
 
-def _fmt(v):
+def _fmt(v: Any) -> str:
     return f'{v:.6g}'
 
 
-def _arrow_subpath(x0, y0, dx, dy, length, width_scale=1.0,
-                   head_frac=0.42, shaft_frac=0.15, head_frac_w=0.42):
+def _arrow_subpath(x0: Any, y0: Any, dx: Any, dy: Any, length: float, width_scale: float = 1.0,
+                   head_frac: float = 0.42, shaft_frac: float = 0.15, head_frac_w: float = 0.42) -> str:
     """One closed arrow polygon whose TAIL sits on (x0, y0), pointing (dx, dy).
 
     Tail-anchored rather than centred so that every layer's arrow for a given
@@ -460,7 +465,7 @@ def _arrow_subpath(x0, y0, dx, dy, length, width_scale=1.0,
     return ' '.join(out)
 
 
-def _layer_width_scales(k_layers, falloff):
+def _layer_width_scales(k_layers: int, falloff: float) -> list:
     """Arrow width factor per layer: widest at the back, narrowing forward.
 
     linkp draws the background cells in dict order, so layer 0 lands furthest
@@ -470,8 +475,8 @@ def _layer_width_scales(k_layers, falloff):
     return [falloff ** k for k in range(k_layers)]
 
 
-def _arrow_glyphs(grid, U, V, gmax, stride, min_magnitude, arrow_scale,
-                  width_scale=1.0, min_len_frac=0.35):
+def _arrow_glyphs(grid: Any, U: np.ndarray, V: np.ndarray, gmax: float, stride: int, min_magnitude: float, arrow_scale: float,
+                  width_scale: float = 1.0, min_len_frac: float = 0.35) -> tuple:
     """Arrow field: one glyph per `stride`-th grid cell above the threshold.
 
     Returns ``(path, reach)`` -- the path descriptor and the furthest any glyph
@@ -500,7 +505,7 @@ def _arrow_glyphs(grid, U, V, gmax, stride, min_magnitude, arrow_scale,
     return ' '.join(subs), reach
 
 
-def _circle_subpath(cx, cy, r):
+def _circle_subpath(cx: float, cy: float, r: float) -> str:
     """A closed circle as four cubic Beziers -- round at any zoom, and in the
     M/L/C/Z dialect linkp's background transform accepts (a real <circle> is a
     whole-shape descriptor, so it cannot be mixed into a multi-glyph path)."""
@@ -512,13 +517,13 @@ def _circle_subpath(cx, cy, r):
             f'C {_fmt(cx + k)} {_fmt(cy - r)} {_fmt(cx + r)} {_fmt(cy - k)} {_fmt(cx + r)} {_fmt(cy)} Z')
 
 
-def _diamond_subpath(cx, cy, r):
+def _diamond_subpath(cx: float, cy: float, r: float) -> str:
     """A closed diamond -- the straight-line alternative to _circle_subpath."""
     return (f'M {_fmt(cx + r)} {_fmt(cy)} L {_fmt(cx)} {_fmt(cy + r)} '
             f'L {_fmt(cx - r)} {_fmt(cy)} L {_fmt(cx)} {_fmt(cy - r)} Z')
 
 
-def _sample_field(u, v, grid, x, y):
+def _sample_field(u: np.ndarray, v: np.ndarray, grid: Any, x: float, y: float) -> tuple:
     """Bilinear sample of a (ny, nx) field at world (x, y); (0,0) outside."""
     fx = (x - grid.gx[0]) / (grid.gx[-1] - grid.gx[0]) * (grid.nx - 1)
     fy = (y - grid.gy[0]) / (grid.gy[-1] - grid.gy[0]) * (grid.ny - 1)
@@ -533,9 +538,9 @@ def _sample_field(u, v, grid, x, y):
     return float(su), float(sv)
 
 
-def _streamline_glyphs(grid, U, V, gmax, min_magnitude, spacing=1.6,
-                       max_steps=60, step_frac=0.5, min_steps=6,
-                       marker='circle', marker_size=0.1):
+def _streamline_glyphs(grid: Any, U: np.ndarray, V: np.ndarray, gmax: float, min_magnitude: float, spacing: float = 1.6,
+                       max_steps: int = 60, step_frac: float = 0.5, min_steps: int = 6,
+                       marker: str = 'circle', marker_size: float = 0.1) -> tuple:
     """Evenly-spaced streamlines (Jobard & Lefebvre).
 
     Seed on the strongest cells first, integrate RK2 in BOTH directions from
@@ -560,14 +565,14 @@ def _streamline_glyphs(grid, U, V, gmax, min_magnitude, spacing=1.6,
     onx, ony = max(2, int(nx_ * occ_res)), max(2, int(ny_ * occ_res))
     occupied = np.zeros((ony, onx), dtype=bool)
 
-    def _occ_cell(x, y):
+    def _occ_cell(x: float, y: float) -> tuple:
         cx = int((x - grid.bounds[0]) / max(grid.bounds[2] - grid.bounds[0], EPS) * (onx - 1))
         cy = int((y - grid.bounds[1]) / max(grid.bounds[3] - grid.bounds[1], EPS) * (ony - 1))
         return min(max(cy, 0), ony - 1), min(max(cx, 0), onx - 1)
 
     step = grid.cell * step_frac
 
-    def _trace(x, y, sign, owned):
+    def _trace(x: float, y: float, sign: float, owned: set) -> list:
         """RK2 along (or against) the field until it fades or hits a taken cell."""
         pts = []
         for _ in range(max_steps):
@@ -635,7 +640,7 @@ def _streamline_glyphs(grid, U, V, gmax, min_magnitude, spacing=1.6,
 # Naming / styling helpers (usable before the layout runs)
 # ===========================================================================
 
-def layerNames(k_layers, prefix='flow'):
+def layerNames(k_layers: int, prefix: str = 'flow') -> list:
     """One name per flow layer, strongest first.
 
     Deterministic and independent of the data, so the palette can be inspected
@@ -644,7 +649,7 @@ def layerNames(k_layers, prefix='flow'):
     return [f'{prefix} {i + 1}' for i in range(int(k_layers))]
 
 
-def headNames(k_layers, prefix='flow'):
+def headNames(k_layers: int, prefix: str = 'flow') -> list:
     """The companion cell holding each streamline layer's head markers.
 
     Heads are a separate background cell so they can be *filled* while the
@@ -654,7 +659,7 @@ def headNames(k_layers, prefix='flow'):
     return [f'{n} heads' for n in layerNames(k_layers, prefix)]
 
 
-def cellNames(k_layers, prefix='flow', glyph='arrow'):
+def cellNames(k_layers: int, prefix: str = 'flow', glyph: str = 'arrow') -> list:
     """Every background cell name, in the order they are drawn (back first)."""
     if glyph == 'arrow':
         return layerNames(k_layers, prefix)
@@ -664,8 +669,8 @@ def cellNames(k_layers, prefix='flow', glyph='arrow'):
     return out
 
 
-def layerAppearance(k_layers, prefix='flow', colors=None, glyph='arrow',
-                    opacity=0.6, opacity_falloff=0.0, stroke_w=1.1):
+def layerAppearance(k_layers: int, prefix: str = 'flow', colors: Any = None, glyph: str = 'arrow',
+                    opacity: float = 0.6, opacity_falloff: float = 0.0, stroke_w: float = 1.1) -> dict:
     """``{cell_name: {BackgroundShape field: value}}`` -- how each cell paints.
 
     This is what :class:`FlowFieldBackground` stamps onto its records, and it is callable
@@ -826,18 +831,31 @@ class FlowFieldBackground(object):
         Floor for the coarsening stage.
     """
 
-    def __init__(self, df=None, relationships=None, *, pos=None, k_layers=2,
-                 count=None, selection=None, log_weights=True,
-                 grid_res=48, sigma=None, sigma_frac=0.05, pad=0.01,
-                 kernel_cutoff=3.0, tau=0.2, refine_passes=1,
-                 atomic_components=True, cos_thr=0.5,
-                 glyph='arrow', glyph_stride=2, min_magnitude=0.06,
-                 arrow_scale=0.7, arrow_width_falloff=0.7,
-                 streamline_spacing=1.6, streamline_steps=60,
-                 streamline_marker='circle', streamline_marker_size=0.1,
-                 colors=None, opacity=0.6, opacity_falloff=0.0, stroke_w=1.1,
-                 name_prefix='flow', max_edges=DEFAULT_MAX_EDGES,
-                 support_budget=DEFAULT_SUPPORT_BUDGET, min_grid_res=16):
+    # ---------------------------------------------------------------------
+    # Built during __compute__() rather than passed in: initialised to None in
+    # __init__ and filled once the field is solved.  Declared so a checker can
+    # follow the methods that read them; `Any` because they are numpy arrays
+    # and a grid record whose concrete types this module does not name.
+    # ---------------------------------------------------------------------
+    grid:     Any
+    labels:   Any
+    dirs:     Any
+    U:        Any
+    V:        Any
+    _kernels: Any
+
+    def __init__(self, df: Any = None, relationships: list | None = None, *, pos: dict | None = None, k_layers: int = 2,
+                 count: str | None = None, selection: set | None = None, log_weights: bool = True,
+                 grid_res: int = 48, sigma: Any = None, sigma_frac: float = 0.05, pad: float = 0.01,
+                 kernel_cutoff: float = 3.0, tau: float = 0.2, refine_passes: int = 1,
+                 atomic_components: bool = True, cos_thr: float = 0.5,
+                 glyph: str = 'arrow', glyph_stride: int = 2, min_magnitude: float = 0.06,
+                 arrow_scale: float = 0.7, arrow_width_falloff: float = 0.7,
+                 streamline_spacing: float = 1.6, streamline_steps: int = 60,
+                 streamline_marker: str = 'circle', streamline_marker_size: float = 0.1,
+                 colors: Any = None, opacity: float = 0.6, opacity_falloff: float = 0.0, stroke_w: float = 1.1,
+                 name_prefix: str = 'flow', max_edges: int | None = DEFAULT_MAX_EDGES,
+                 support_budget: int | None = DEFAULT_SUPPORT_BUDGET, min_grid_res: int = 16) -> None:
         self.pos          = {k: (float(v[0]), float(v[1])) for k, v in (pos or {}).items()}
         self.k_layers     = max(1, int(k_layers))
         self.glyph        = glyph
@@ -932,7 +950,7 @@ class FlowFieldBackground(object):
     # Input
     # -----------------------------------------------------------------------
 
-    def __gatherEdges__(self, df, relationships, count, selection):
+    def __gatherEdges__(self, df: Any, relationships: list | None, count: str | None, selection: set | None) -> tuple:
         """-> (nodes, (E,2) endpoint indices, (E,) weights) for positioned nodes."""
         if df is None:
             return [], np.zeros((0, 2), dtype=int), np.zeros(0)
@@ -942,7 +960,7 @@ class FlowFieldBackground(object):
             pairs = self.__pairsFromDataFrame__(df, relationships, count)
 
         _sel_ = set(selection) if selection else set()
-        agg   = {}
+        agg: dict = {}
         for src, dst, w in pairs:
             if src == dst or src not in self.pos or dst not in self.pos:
                 continue
@@ -960,7 +978,7 @@ class FlowFieldBackground(object):
         w      = np.array([agg[k] for k in keys], dtype=float)
         return nodes, ends, w
 
-    def __pairsFromGraph__(self, g):
+    def __pairsFromGraph__(self, g: Any) -> list:
         """networkx graph -> [(src, dst, weight)].  An undirected graph has no
         direction to show, so each edge is emitted both ways -- which lands as
         counter-flow and is exactly what the layering separates."""
@@ -972,7 +990,8 @@ class FlowFieldBackground(object):
                 out.append((v, u, w))
         return out
 
-    def __pairsFromDataFrame__(self, df, relationships, count):
+    def __pairsFromDataFrame__(self, df: pl.DataFrame, relationships: list | None,
+                               count: str | None) -> list:
         """Polars frame of individual edge records -> [(src, dst, weight)].
 
         Mirrors createNetworkXGraph()'s aggregation: group by the endpoint
@@ -1012,7 +1031,7 @@ class FlowFieldBackground(object):
                     for row in grouped.select(fm, to, '__count__').iter_rows()]
         return out
 
-    def __concatColumn__(self, df, columns, new_column):
+    def __concatColumn__(self, df: pl.DataFrame, columns: tuple, new_column: str) -> pl.DataFrame:
         import polars as pl
         parts = [pl.col(c) if df[c].dtype == pl.String else pl.col(c).cast(pl.String)
                  for c in columns]
@@ -1022,9 +1041,9 @@ class FlowFieldBackground(object):
     # Output
     # -----------------------------------------------------------------------
 
-    def __buildCells__(self, glyph_stride, min_magnitude, arrow_scale,
-                       arrow_width_falloff, streamline_spacing, streamline_steps,
-                       streamline_marker, streamline_marker_size):
+    def __buildCells__(self, glyph_stride: int, min_magnitude: float, arrow_scale: float,
+                       arrow_width_falloff: float, streamline_spacing: float, streamline_steps: int,
+                       streamline_marker: str, streamline_marker_size: float) -> dict:
         mags = np.sqrt(self.U * self.U + self.V * self.V)
         gmax = float(mags.max()) if mags.size else 0.0
         self.glyph_reach = 0.0
@@ -1054,7 +1073,7 @@ class FlowFieldBackground(object):
                 cells[head] = BackgroundShape(heads, **self.appearance[head])
         return cells
 
-    def cells(self):
+    def cells(self) -> dict:
         """``{name: BackgroundShape}`` in world coordinates, in draw order.
 
         Each record holds an ``M/L/C/Z`` path in the same space as ``pos`` plus
@@ -1069,18 +1088,18 @@ class FlowFieldBackground(object):
         """
         return dict(self._cells)
 
-    def cellNames(self):
+    def cellNames(self) -> list:
         """Every cell name this instance can emit, in draw order."""
         return cellNames(self.k_layers, self.name_prefix, self.glyph)
 
-    def edgeLayers(self):
+    def edgeLayers(self) -> dict:
         """``{(src, dst): layer_index}`` -- which layer each aggregated edge
         landed in, for inspection or for colouring the links to match."""
         if self.labels is None:
             return {}
         return {(s, d): int(k) for (s, d, _w), k in zip(self.edges, self.labels)}
 
-    def tensorField(self):
+    def tensorField(self) -> tuple | None:
         """Structure tensor ``(a, b, c)`` per grid cell, ``T = [[a,b],[b,c]]``.
 
         The retired prototype's other answer to multi-valued flow, kept here
@@ -1111,12 +1130,12 @@ class FlowFieldBackground(object):
         shape = (self.grid.ny, self.grid.nx)
         return a.reshape(shape), b.reshape(shape), c.reshape(shape)
 
-    def __glyphCount__(self, name):
+    def __glyphCount__(self, name: str) -> int:
         """Subpaths drawn for one cell -- each glyph starts with an M."""
         _rec_ = self._cells.get(name)
         return 0 if _rec_ is None else _rec_.shape.count('M')
 
-    def summary(self):
+    def summary(self) -> str:
         """One-line-per-layer description of the decomposition."""
         if self.labels is None:
             return 'FlowFieldBackground: no flow (nothing to describe)'
@@ -1132,6 +1151,6 @@ class FlowFieldBackground(object):
                         f'{self.__glyphCount__(name)} glyphs')
         return '\n'.join(rows)
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return (f'FlowFieldBackground(k_layers={self.k_layers}, edges={len(self.edges)}, '
                 f'glyph={self.glyph!r})')

@@ -44,7 +44,7 @@ class UDistScatterPlotsViaSectorsTileOpt(object):
     # decay_rate : float, optional
     #     Decay rate, by default None -- how the vector scalar decays with each iteration
     #
-    def __init__(self, x_vals=[], y_vals=[], weights=None, colors=None, static_points=None, vector_scalar=0.05, iterations=4, num_of_tiles=128, decay_rate=None):
+    def __init__(self, x_vals: list = [], y_vals: list = [], weights: list | None = None, colors: list | None = None, static_points: list | None = None, vector_scalar: float = 0.05, iterations: int = 4, num_of_tiles: int = 128, decay_rate: float | None = None) -> None:
         self.vector_scalar = vector_scalar
         self.iterations    = iterations
         self.num_of_tiles  = num_of_tiles
@@ -62,7 +62,7 @@ class UDistScatterPlotsViaSectorsTileOpt(object):
         if static_points is None: static_points_exist, static_points = False, np.zeros(len(x_vals)) # by default, all points will move
         else:                     static_points_exist                = True
 
-        def rayIntersectsSegment(xy_ray, uv_ray, xy0_segment, xy1_segment, include_xy1_endpoint=False, epsilon=1e-9):
+        def rayIntersectsSegment(xy_ray: tuple, uv_ray: tuple, xy0_segment: tuple, xy1_segment: tuple, include_xy1_endpoint: bool = False, epsilon: float = 1e-9) -> tuple | None:
             x_r,  y_r  = xy_ray
             dx_r, dy_r = uv_ray
             x0,   y0   = xy0_segment
@@ -234,7 +234,7 @@ class UDistScatterPlotsViaSectorsTileOpt(object):
             # ... it will be joined with the points dataframe to calculate the area of each sector for each point
             #
             t = time.time()
-            _lu_ = {'sector':[], 
+            _lu_: dict = {'sector':[], 
                     'a0':[],       'a0u':[],       'a0v':[],                 # Ray 0 angle & uv components
                     'a1':[],       'a1u':[],       'a1v':[],                 # Ray 1 angle & uv components
                     'corner_x':[], 'corner_y':[],                            # Corner between segment0 and segment 1
@@ -245,27 +245,27 @@ class UDistScatterPlotsViaSectorsTileOpt(object):
                 _sector_align_ = (_sector_ + 8)%16
                 _lu_['sector'].append(_sector_align_)
                 _a0_ = _sector_*pi/8.0
-                _lu_['a0'].append(_a0_), _lu_['a0u'].append(cos(_a0_)), _lu_['a0v'].append(sin(_a0_))
+                _lu_['a0'].append(_a0_); _lu_['a0u'].append(cos(_a0_)); _lu_['a0v'].append(sin(_a0_))
                 _a1_ = (_sector_+1)*pi/8.0
-                _lu_['a1'].append(_a1_), _lu_['a1u'].append(cos(_a1_)), _lu_['a1v'].append(sin(_a1_))
+                _lu_['a1'].append(_a1_); _lu_['a1u'].append(cos(_a1_)); _lu_['a1v'].append(sin(_a1_))
                 _anchor_ = _a0_ + pi + pi / 16.0 # half angle on top of that
-                _lu_['anchor_a'].append(_anchor_), _lu_['anchor_u'].append(cos(_anchor_)), _lu_['anchor_v'].append(sin(_anchor_))
+                _lu_['anchor_a'].append(_anchor_); _lu_['anchor_u'].append(cos(_anchor_)); _lu_['anchor_v'].append(sin(_anchor_))
                 if   _sector_ >= 0 and _sector_ <  4:
-                    _lu_['s0x0']    .append(1.0), _lu_['s0x1']    .append(1.0), _lu_['s0y0'].append(0.0), _lu_['s0y1'].append(1.0) # segment 0 (x0,y0) -> (x1,y1) (1,0) -> (1,1)
-                    _lu_['s1x0']    .append(0.0), _lu_['s1x1']    .append(1.0), _lu_['s1y0'].append(1.0), _lu_['s1y1'].append(1.0) # segment 1 (x0,y0) -> (x1,y1) (0,1) -> (1,1)
-                    _lu_['corner_x'].append(1.0), _lu_['corner_y'].append(1.0)
+                    _lu_['s0x0']    .append(1.0); _lu_['s0x1']    .append(1.0); _lu_['s0y0'].append(0.0); _lu_['s0y1'].append(1.0) # segment 0 (x0,y0) -> (x1,y1) (1,0) -> (1,1)
+                    _lu_['s1x0']    .append(0.0); _lu_['s1x1']    .append(1.0); _lu_['s1y0'].append(1.0); _lu_['s1y1'].append(1.0) # segment 1 (x0,y0) -> (x1,y1) (0,1) -> (1,1)
+                    _lu_['corner_x'].append(1.0); _lu_['corner_y'].append(1.0)
                 elif _sector_ >= 4 and _sector_ <  8:
-                    _lu_['s0x0']    .append(0.0), _lu_['s0x1']    .append(1.0), _lu_['s0y0'].append(1.0), _lu_['s0y1'].append(1.0) # (0,1) -> (1,1)
-                    _lu_['s1x0']    .append(0.0), _lu_['s1x1']    .append(0.0), _lu_['s1y0'].append(0.0), _lu_['s1y1'].append(1.0) # (0,0) -> (0,1)
-                    _lu_['corner_x'].append(0.0), _lu_['corner_y'].append(1.0)
+                    _lu_['s0x0']    .append(0.0); _lu_['s0x1']    .append(1.0); _lu_['s0y0'].append(1.0); _lu_['s0y1'].append(1.0) # (0,1) -> (1,1)
+                    _lu_['s1x0']    .append(0.0); _lu_['s1x1']    .append(0.0); _lu_['s1y0'].append(0.0); _lu_['s1y1'].append(1.0) # (0,0) -> (0,1)
+                    _lu_['corner_x'].append(0.0); _lu_['corner_y'].append(1.0)
                 elif _sector_ >= 8 and _sector_ < 12:
-                    _lu_['s0x0']    .append(0.0), _lu_['s0x1']    .append(0.0), _lu_['s0y0'].append(0.0), _lu_['s0y1'].append(1.0) # (0,0) -> (0,1)
-                    _lu_['s1x0']    .append(0.0), _lu_['s1x1']    .append(1.0), _lu_['s1y0'].append(0.0), _lu_['s1y1'].append(0.0) # (0,0) -> (1,0)
-                    _lu_['corner_x'].append(0.0), _lu_['corner_y'].append(0.0)
+                    _lu_['s0x0']    .append(0.0); _lu_['s0x1']    .append(0.0); _lu_['s0y0'].append(0.0); _lu_['s0y1'].append(1.0) # (0,0) -> (0,1)
+                    _lu_['s1x0']    .append(0.0); _lu_['s1x1']    .append(1.0); _lu_['s1y0'].append(0.0); _lu_['s1y1'].append(0.0) # (0,0) -> (1,0)
+                    _lu_['corner_x'].append(0.0); _lu_['corner_y'].append(0.0)
                 else:
-                    _lu_['s0x0']    .append(0.0), _lu_['s0x1']    .append(1.0), _lu_['s0y0'].append(0.0), _lu_['s0y1'].append(0.0) # (0,0) -> (1,0)
-                    _lu_['s1x0']    .append(1.0), _lu_['s1x1']    .append(1.0), _lu_['s1y0'].append(0.0), _lu_['s1y1'].append(1.0) # (1,0) -> (1,1)
-                    _lu_['corner_x'].append(1.0), _lu_['corner_y'].append(0.0)
+                    _lu_['s0x0']    .append(0.0); _lu_['s0x1']    .append(1.0); _lu_['s0y0'].append(0.0); _lu_['s0y1'].append(0.0) # (0,0) -> (1,0)
+                    _lu_['s1x0']    .append(1.0); _lu_['s1x1']    .append(1.0); _lu_['s1y0'].append(0.0); _lu_['s1y1'].append(1.0) # (1,0) -> (1,1)
+                    _lu_['corner_x'].append(1.0); _lu_['corner_y'].append(0.0)
             df_sector_angles = pl.DataFrame(_lu_)
             df_sector_angles = df_sector_angles.with_columns((pl.col('s0x1') - pl.col('s0x0')).alias('s0u'), (pl.col('s0y1') - pl.col('s0y0')).alias('s0v'),
                                                              (pl.col('s1x1') - pl.col('s1x0')).alias('s1u'), (pl.col('s1y1') - pl.col('s1y0')).alias('s1v'))
@@ -382,12 +382,12 @@ class UDistScatterPlotsViaSectorsTileOpt(object):
     #
     # results() - return the results as xvals, yvals
     #
-    def results(self): return self.df_results['x'], self.df_results['y']
+    def results(self) -> tuple: return self.df_results['x'], self.df_results['y']
 
     #
     # _repr_svg_() -- simple SVG representation of the results
     #
-    def _repr_svg_(self):
+    def _repr_svg_(self) -> str:
         x0, y0, x1, y1 = self.df_results['x'].min(), self.df_results['y'].min(), self.df_results['x'].max(), self.df_results['y'].max()
         xperc, yperc   = (x1-x0)*0.01, (y1-y0)*0.01
         x0, y0, x1, y1 = x0-xperc, y0-yperc, x1+xperc, y1+yperc
@@ -405,11 +405,11 @@ class UDistScatterPlotsViaSectorsTileOpt(object):
     #
     # svgAnimation() - produce an SVG animation of the iterations
     #
-    def svgAnimation(self, duration='10s', w=256, h=256, r=0.005):
+    def svgAnimation(self, duration: str = '10s', w: int = 256, h: int = 256, r: float = 0.005) -> str:
         df = self.df_anim[0]
         x_cols = [f'x{i}' for i in range(0, len(self.df_anim))]
         y_cols = [f'y{i}' for i in range(0, len(self.df_anim))]
-        x_cols.extend(x_cols[::-1]), y_cols.extend(y_cols[::-1])
+        x_cols.extend(x_cols[::-1]); y_cols.extend(y_cols[::-1])
         for i in range(1, len(self.df_anim)):
             df = df.join(self.df_anim[i].drop(['s','w','c']), on=['__index__']) \
                    .rename({'x_right':f'x{i}', 'y_right':f'y{i}'})
@@ -442,7 +442,7 @@ class UDistScatterPlotsViaSectorsTileOpt(object):
     #
     # tileBounds()
     #
-    def tileBounds(self, xi, yi):
+    def tileBounds(self, xi: int, yi: int) -> tuple:
         x0, x1 = xi/float(self.num_of_tiles), (xi+1)/float(self.num_of_tiles)
         y0, y1 = yi/float(self.num_of_tiles), (yi+1)/float(self.num_of_tiles)
         return (x0, y0, x1, y1)
@@ -453,9 +453,9 @@ class UDistScatterPlotsViaSectorsTileOpt(object):
     # ... it can be used for any values of the data
     # ... generation time is over 24m on 7900x 96gb
     #
-    def createXoYoDataframeFile(self):
+    def createXoYoDataframeFile(self) -> None:
 
-        def rayIntersectsSegment(xy_ray, uv_ray, xy0_segment, xy1_segment, include_xy1_endpoint=False, epsilon=1e-9):
+        def rayIntersectsSegment(xy_ray: tuple, uv_ray: tuple, xy0_segment: tuple, xy1_segment: tuple, include_xy1_endpoint: bool = False, epsilon: float = 1e-9) -> tuple | None:
             x_r,  y_r  = xy_ray
             dx_r, dy_r = uv_ray
             x0,   y0   = xy0_segment
@@ -494,8 +494,8 @@ class UDistScatterPlotsViaSectorsTileOpt(object):
                     tile_to_rect[(xi,yi)] = (x0, y0, x1, y1)
             # Determine which tiles (xo,yo) need to be checked for sector comparisons the hard way
             offtiles_intersected_by_rays = set()
-            offtiles_to_sectors          = {}
-            offtiles_to_uvs              = {}
+            offtiles_to_sectors: dict    = {}
+            offtiles_to_uvs: dict = {}
             for _tile_ in [(0,0), (0, num_of_tiles-1), (num_of_tiles-1, num_of_tiles-1), (num_of_tiles-1, 0)]:
                 xi,  yi  = _tile_
                 x0,  y0, x1, y1 = tile_to_rect[_tile_]
@@ -550,11 +550,11 @@ class UDistScatterPlotsViaSectorsTileOpt(object):
                     xoyo_to_sector[(xo,yo)] = _sector_
                     sectors_seen.add(_sector_)
             # Transform into a dataframe
-            _lu_ = {'xo':[], 'yo':[], 'sector':[], 'u':[], 'v':[], 'rsector':[], 'lsector':[]}
+            _lu_: dict = {'xo':[], 'yo':[], 'sector':[], 'u':[], 'v':[], 'rsector':[], 'lsector':[]}
             # These are the tiles that intersect the rays ... and so have to be figured out on a per point basis
             for _xyo_ in offtiles_intersected_by_rays:
                 xo, yo = _xyo_
-                _lu_['xo'].append(xo), _lu_['yo'].append(yo), _lu_['sector'].append(-1)
+                _lu_['xo'].append(xo); _lu_['yo'].append(yo); _lu_['sector'].append(-1)
                 # This shouldn't happen -- if there's an intersection, it should be at least two sectors (if not more)
                 if   _xyo_ in offtiles_to_sectors and len(offtiles_to_sectors[_xyo_]) == 1: 
                     raise Polars2SVGError('This should not happen // offtiles_to_sectors[_xyo_] == len(1)')
@@ -565,16 +565,16 @@ class UDistScatterPlotsViaSectorsTileOpt(object):
                     _sectors_ = sorted(list(offtiles_to_sectors[_xyo_]))
                     if _sectors_[0] == 0 and _sectors_[1] == 15: _sector0_, _sector1_ = 15,           0
                     else:                                        _sector0_, _sector1_ = _sectors_[0], _sectors_[1]
-                    _lu_['u'].append(list(offtiles_to_uvs[_xyo_])[0][0]), _lu_['v'].append(list(offtiles_to_uvs[_xyo_])[0][1]), _lu_['rsector'].append(_sector0_), _lu_['lsector'].append(_sector1_)
+                    _lu_['u'].append(list(offtiles_to_uvs[_xyo_])[0][0]); _lu_['v'].append(list(offtiles_to_uvs[_xyo_])[0][1]); _lu_['rsector'].append(_sector0_); _lu_['lsector'].append(_sector1_)
                 # Otherwise, we'll need to use the arctangent
                 else:
-                    _lu_['u'].append(None), _lu_['v'].append(None), _lu_['rsector'].append(None), _lu_['lsector'].append(None)
+                    _lu_['u'].append(None); _lu_['v'].append(None); _lu_['rsector'].append(None); _lu_['lsector'].append(None)
             # These are the tiles that don't intersect the rays ... and therefore can be optimized to a single sector
             for _xyo_ in xoyo_to_sector:
                 xo, yo   = _xyo_
                 _sector_ = xoyo_to_sector[_xyo_]
-                _lu_['xo'].append(xo), _lu_['yo'].append(yo), _lu_['sector'].append(_sector_)
-                _lu_['u'].append(None), _lu_['v'].append(None), _lu_['rsector'].append(None), _lu_['lsector'].append(None)
+                _lu_['xo'].append(xo); _lu_['yo'].append(yo); _lu_['sector'].append(_sector_)
+                _lu_['u'].append(None); _lu_['v'].append(None); _lu_['rsector'].append(None); _lu_['lsector'].append(None)
             # Create the dataframe and add it to the list of dataframes (each added one cover a specific num_of_tiles)
             df_xoyo_sector = pl.DataFrame(_lu_).with_columns(pl.lit(num_of_tiles).alias('num_of_tiles'))
             dfs.append(df_xoyo_sector)

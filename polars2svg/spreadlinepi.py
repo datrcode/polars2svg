@@ -1,3 +1,4 @@
+from typing import Any
 """
 Interactive wrapper for SpreadLinesP.
 
@@ -30,7 +31,7 @@ from .p2s_webgpu_runtime      import P2S_GPU_JS
 # Hit-test & filter helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _to_viewbox_coords(spread, px, py):
+def _to_viewbox_coords(spread: Any, px: float, py: float) -> tuple:
     """Convert pixel mouse coordinates to SpreadLinesP viewBox coordinates.
     Accounts for preserveAspectRatio="xMidYMid meet" letterboxing: when the
     viewBox aspect ratio differs from wxh, the browser centers the content and
@@ -46,7 +47,7 @@ def _to_viewbox_coords(spread, px, py):
     return spread.vx0 + (px - ox) / scale, spread.vy0 + (py - oy) / scale
 
 
-def _nodes_at_xy(spread, vx, vy):
+def _nodes_at_xy(spread: Any, vx: float, vy: float) -> set:
     """Return the set of nodes at or nearest to (vx, vy).
     For a single node returns {that_node}; for a cloud returns all nodes sharing that center."""
     best_d, best_xy = float('inf'), None
@@ -66,7 +67,7 @@ def _nodes_at_xy(spread, vx, vy):
             if (xyrs[0], xyrs[1]) == best_xy}
 
 
-def _expand_ego(spread, nodes):
+def _expand_ego(spread: Any, nodes: set) -> set:
     """Translate '__EGO__' back to the real ego node names.
     When ego_is_set, the layout collapses all ego nodes to a virtual '__EGO__' token
     for internal routing.  Hit-testing returns '__EGO__' for cloud clicks, but peers
@@ -76,7 +77,7 @@ def _expand_ego(spread, nodes):
     return nodes
 
 
-def _apply_set_op(current, new_nodes, shiftkey, ctrlkey):
+def _apply_set_op(current: set, new_nodes: set, shiftkey: bool, ctrlkey: bool) -> set:
     """Apply ctrl/shift modifier set operation: replace, add, subtract, or intersect."""
     if shiftkey and ctrlkey: return current & new_nodes
     if shiftkey:             return current - new_nodes
@@ -84,7 +85,7 @@ def _apply_set_op(current, new_nodes, shiftkey, ctrlkey):
     return new_nodes
 
 
-def _nodes_in_rect(spread, vx0, vy0, vx1, vy1):
+def _nodes_in_rect(spread: Any, vx0: float, vy0: float, vx1: float, vy1: float) -> set:
     """Return set of nodes whose circle overlaps the viewbox rectangle.
     Uses circle-rectangle intersection so boundary nodes aren't missed."""
     x0, x1 = min(vx0, vx1), max(vx0, vx1)
@@ -101,7 +102,7 @@ def _nodes_in_rect(spread, vx0, vy0, vx1, vy1):
     return found
 
 
-def _filter_out_nodes(spread, df, nodes):
+def _filter_out_nodes(spread: Any, df: pl.DataFrame, nodes: set) -> pl.DataFrame:
     """Filter df to remove rows where any relationship column contains a node in nodes."""
     for _rel_ in spread.relationships:
         _fm_col_, _to_col_ = _rel_[0], _rel_[1]
@@ -116,15 +117,17 @@ def _filter_out_nodes(spread, df, nodes):
 # Interactive wrapper
 # ─────────────────────────────────────────────────────────────────────────────
 
-def spreadlinepi(_spread_, use_webgpu=False, **kwargs):
+def spreadlinepi(_spread_: Any, use_webgpu: bool = False, **kwargs: Any) -> Any:
     _w_, _h_    = _spread_.wxh
     _gpu_payload_default_ = _spread_.webgpu() if use_webgpu else None
     _svg_       = '' if use_webgpu else _spread_._repr_svg_()
-    _cls_       = [None]
+    # One-element cell holding the class that `type()` builds below; filled
+    # after construction, so the literal alone tells the checker nothing.
+    _cls_: list = [None]
     _spread_ref_ = [_spread_]   # mutable so 'c' (change ego) can update the template
 
     # ── Constructor ──────────────────────────────────────────────────────────
-    def __init__(self, **kwargs):
+    def __init__(self: Any, **kwargs: Any) -> None:
         _mvc_ = kwargs.pop('mvc', None)
         super(_cls_[0], self).__init__(**kwargs)
         self.lock              = asyncio.Lock()
@@ -145,38 +148,38 @@ def spreadlinepi(_spread_, use_webgpu=False, **kwargs):
             self.param.watch(self.applyGpuError, 'gpu_error')
 
     # ── View helpers ─────────────────────────────────────────────────────────
-    def __renderView__(self, df):
+    def __renderView__(self: Any, df: Any) -> Any:
         return _spread_ref_[0].render_with(df)
 
-    def _highlighted_plot(self):
+    def _highlighted_plot(self: Any) -> Any:
         """The SpreadLinesP instance to render now (with current highlight_nodes)."""
         df = self._spread_.df
         if self.selected_entities:
             return _spread_ref_[0].render_with(df, highlight_nodes=self.selected_entities)
         return self._spread_
 
-    def _highlighted_svg(self):
+    def _highlighted_svg(self: Any) -> str:
         """Re-render self._spread_.df with current highlight_nodes, return SVG."""
         return self._highlighted_plot()._repr_svg_()
 
-    def _apply_render_(self):
+    def _apply_render_(self: Any) -> None:
         """Push the current plot to whichever backend is active (GPU canvas or SVG)."""
         _plot_ = self._highlighted_plot()
         if   not use_webgpu: self.mod_inner   = _plot_._repr_svg_()
         elif self.gpu_error: self.mod_inner   = _gpu_error_overlay(self.gpu_error, _w_, _h_)
         else:                self.gpu_payload = _plot_.webgpu()
 
-    def __refreshView__(self):
+    def __refreshView__(self: Any) -> None:
         self._apply_render_()
 
     # WebGPU rendering failed in the browser -> surface the error in the overlay.
     # No automatic SVG fallback: the user must re-create the view with use_webgpu=False.
-    async def applyGpuError(self, event):
+    async def applyGpuError(self: Any, event: Any) -> None:
         if self.gpu_error:
             self.mod_inner = _gpu_error_overlay(self.gpu_error, _w_, _h_)
 
     # ── MVC callbacks ────────────────────────────────────────────────────────
-    async def display(self, df, dfs, dfs_index):
+    async def display(self: Any, df: pl.DataFrame, dfs: list, dfs_index: int) -> None:
         async with self.lock:
             # entries are (df, spread); identity-guard the id() key against reuse
             entry = self._cache_.get(id(df))
@@ -190,18 +193,18 @@ def spreadlinepi(_spread_, use_webgpu=False, **kwargs):
                 if k not in keep:
                     del self._cache_[k]
 
-    async def receiveSelection(self, entities):
+    async def receiveSelection(self: Any, entities: list) -> None:
         self.selected_entities = {str(e) for e in entities}
         self._apply_render_()
 
-    async def _broadcastSelection(self):
+    async def _broadcastSelection(self: Any) -> None:
         """Notify all mvc-registered views with receiveSelection, bypassing explicit link setup."""
         for _v_ in self.mvc.view_refs.values():
             if _v_ is not self and hasattr(_v_, 'receiveSelection'):
                 await _v_.receiveSelection(self.selected_entities)
 
     # ── Interaction callbacks ─────────────────────────────────────────────────
-    async def applyDragOp(self, event):
+    async def applyDragOp(self: Any, event: Any) -> None:
         async with self.lock:
             x0, y0 = self.drag_x0, self.drag_y0
             x1, y1 = self.drag_x1, self.drag_y1
@@ -225,7 +228,7 @@ def spreadlinepi(_spread_, use_webgpu=False, **kwargs):
         self._apply_render_()
         await self._broadcastSelection()
 
-    async def applyKeyOp(self, event):
+    async def applyKeyOp(self: Any, event: Any) -> None:
         async with self.lock:
             op = self.key_op_finished
             self.key_op_finished = ''

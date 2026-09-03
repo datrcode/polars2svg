@@ -1,3 +1,4 @@
+from typing import Any
 import html
 
 
@@ -33,16 +34,29 @@ import html
 # tests/test_svg_escaping.py holds both halves: that this behaves, and -- by scanning the
 # package for a sixth mechanism -- that it stays the only door.
 #
-def svgEscape(txt):
+def svgEscape(txt: int | str | None) -> str:
     return html.escape('' if txt is None else str(txt))
 
 
-def svgUnescape(txt):
+def svgUnescape(txt: str | None) -> str:
     return html.unescape('' if txt is None else str(txt))
 
 
 class P2STextMixin:
-    def __init__(self):
+    # ---------------------------------------------------------------------
+    # Host-class attributes this mixin reads off `self`.
+    #
+    # A mixin is never instantiated on its own -- these are provided by whatever
+    # class mixes it in (Polars2SVG).  Declared here so a checker
+    # can follow the mixin's own methods; bare annotations, so nothing exists at
+    # runtime and nothing is shadowed.
+    #
+    # Typed `Any` on purpose: the mixin genuinely does not know the concrete type,
+    # and several hosts declare the same name with a narrower type of their own.
+    # ---------------------------------------------------------------------
+    colorTyped: Any
+
+    def __init__(self) -> None:
         pass
 
     #
@@ -65,7 +79,7 @@ class P2STextMixin:
     # the generic sans and the measurement is approximate again.  Guaranteeing it would mean
     # embedding the subset as a base64 @font-face (~90KB/document) -- deliberately not done.
     #
-    def __p2s_text_mixin_init__(self):
+    def __p2s_text_mixin_init__(self) -> None:
         self.default_font = "'Noto Sans', sans-serif"
         self._glyph_atlas_ = None
 
@@ -74,17 +88,17 @@ class P2STextMixin:
     # components, which reach this package through their `self.p2s` handle rather than by
     # importing.  Same function, same rule: escape last.
     #
-    def svgEscape(self, txt):
+    def svgEscape(self, txt: str) -> str:
         return svgEscape(txt)
 
-    def svgUnescape(self, txt):
+    def svgUnescape(self, txt: str) -> str:
         return svgUnescape(txt)
 
     #
     # glyphAtlas() - lazily constructed shared GlyphAtlas (GPU text); built from the
     # same bundled TTF as textLength() so GPU text layout matches SVG text layout
     #
-    def glyphAtlas(self):
+    def glyphAtlas(self) -> Any:
         if self._glyph_atlas_ is None:
             from polars2svg.p2s_glyph_atlas import GlyphAtlas
             self._glyph_atlas_ = GlyphAtlas()
@@ -94,16 +108,16 @@ class P2STextMixin:
     # svgText() - Render SVG Text In A Consistent Manner
     #
     def svgText(self,
-                txt,
-                x,
-                y,
-                txt_h      = 12,
-                just_xy    = False,   # for the text block widget -- that will use an SVG group to consolidate the rendering
-                color      = None,
-                anchor     = 'start',
-                font       = None,
-                font_style = None,
-                rotation   = None):
+                txt: str,
+                x: float,
+                y: float,
+                txt_h: float       = 12,
+                just_xy: bool     = False,   # for the text block widget -- that will use an SVG group to consolidate the rendering
+                color: str | None       = None,
+                anchor: str      = 'start',
+                font: Any        = None,
+                font_style: Any  = None,
+                rotation: int | None    = None) -> str:
         if txt == '\n' or txt == '' or txt == '\r' or txt == '\t': return ''
         if font  is None: font  = self.default_font
         if color is None: color = self.colorTyped('label','defaultfg')
@@ -127,7 +141,7 @@ class P2STextMixin:
     # cropText() - Based on the height of the font, shorten the string to fit into a specific width...
     # ... empirically derived values for letters / so unlikely to work exactly right if the font changes
     #
-    def cropText(self, txt, txt_h, w):
+    def cropText(self, txt: str, txt_h: float, w: float) -> str:
         # If it fits, it ships
         if self.textLength(txt,txt_h) <= w:
             return txt
@@ -150,10 +164,10 @@ class P2STextMixin:
     # prefer_center=True  (timep default): keep center when LR don't fit, drop last.
     # prefer_center=False (histop default): keep LR when center doesn't fit, drop LR last.
     #
-    def svgAxisLabels(self, lbl_left, lbl_center, lbl_right,
-                      x0, available_w, y, txt_h,
-                      color_left=None, color_center=None, color_right=None,
-                      gap=None, prefer_center=True, dl=None):
+    def svgAxisLabels(self, lbl_left: str, lbl_center: str, lbl_right: str,
+                      x0: float, available_w: float, y: int, txt_h: float,
+                      color_left: str | None = None, color_center: str | None = None, color_right: str | None = None,
+                      gap: float | None = None, prefer_center: bool = True, dl: Any = None) -> list:
         if gap is None:           gap          = txt_h * 0.5
         if color_left   is None:  color_left   = self.colorTyped('label', 'defaultfg')
         if color_center is None:  color_center = color_left
@@ -165,7 +179,7 @@ class P2STextMixin:
                      c_w / 2 + r_w + gap  <= available_w / 2)
         _c_fits_  = c_w           <= available_w
         _lr_fits_ = l_w + gap + r_w <= available_w
-        def _emit_(txt, x, anchor, color):
+        def _emit_(txt: str, x: float, anchor: str, color: str) -> str:
             _s_ = self.svgText(txt, x, y, txt_h=txt_h, anchor=anchor, color=color)
             if dl is not None: dl.text(self, txt, x, y, txt_h=txt_h, anchor=anchor, color=color, svg=_s_)
             return _s_
@@ -188,7 +202,7 @@ class P2STextMixin:
     #
     # __SignXDivUnit__() - Separate a number into its sign, value, divisor and unit (for a unitized number)
     #
-    def __SignXDivUnit__(self, x):
+    def __SignXDivUnit__(self, x: float) -> tuple:
         _sign_ = '-' if x < 0 else ''
         x      = abs(x)
         if   x < 10e2:  _div_, _unit_ = 1,     ''
@@ -202,7 +216,7 @@ class P2STextMixin:
     #
     # unitizeInt_extendUntilDifferent() - format a pair of numbers, extending decimal places until they differ
     #
-    def unitizeInt_extendUntilDifferent(self, a, b):
+    def unitizeInt_extendUntilDifferent(self, a: float, b: float) -> tuple:
         _xsign_, _x_, _xdiv_, _xunit_ = self.__SignXDivUnit__(a)
         _ysign_, _y_, _ydiv_, _yunit_ = self.__SignXDivUnit__(b)
         _round_ = 0
@@ -212,7 +226,7 @@ class P2STextMixin:
     #
     # unitizeInt() - format a number with K/M/B/T/Q suffix to a target digit count
     #
-    def unitizeInt(self, a, num_of_digits=5):
+    def unitizeInt(self, a: float, num_of_digits: int = 5) -> str:
         _xsign_, _x_, _xdiv_, _xunit_ = self.__SignXDivUnit__(a)
         _round_ = 0
         while len(str(round(_x_/_xdiv_, _round_))) < num_of_digits:
@@ -230,7 +244,7 @@ class P2STextMixin:
     # The size is still quantized to an integer, matching GlyphAtlas.layoutText() so GPU
     # text and SVG text agree on every pen position.
     #
-    def textLength(self, txt, txt_h):
+    def textLength(self, txt: str, txt_h: float) -> float:
         if not txt or txt in ('\n', '\r', '\t', ''):
             return 0
         from polars2svg.p2s_font_metrics import textAdvance
@@ -252,7 +266,7 @@ class P2STextMixin:
     # Guarded on None rather than falsiness: a label value of 0 is a glyph like any other,
     # and str() it before measuring so a numeric label measures its rendered form.
     #
-    def textInk(self, txt, txt_h):
+    def textInk(self, txt: float | int | str | None, txt_h: float) -> tuple:
         if txt is None:
             return 0.0, 0.0
         from polars2svg.p2s_font_metrics import textInk

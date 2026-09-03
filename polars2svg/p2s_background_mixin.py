@@ -1,3 +1,4 @@
+from typing import Any
 import math
 import xml.etree.ElementTree as ET  # nosec B405 - background= shape descriptors are trusted caller config, not untrusted data; see SECURITY.md
 
@@ -15,11 +16,11 @@ from polars2svg.p2s_displaylist import DisplayList, pathToDL, strokePolylineDL, 
 #
 class _InheritSentinel_:
     _instance_ = None
-    def __new__(cls):
+    def __new__(cls) -> Any:
         if cls._instance_ is None: cls._instance_ = super().__new__(cls)
         return cls._instance_
-    def __repr__(self):  return 'INHERIT'
-    def __reduce__(self): return (_InheritSentinel_, ())
+    def __repr__(self) -> str:  return 'INHERIT'
+    def __reduce__(self) -> tuple: return (_InheritSentinel_, ())
 
 INHERIT = _InheritSentinel_()
 
@@ -45,10 +46,26 @@ class BackgroundShape:
     _FIELDS_ = ('shape', 'fill', 'fill_opacity', 'stroke', 'stroke_opacity', 'stroke_width',
                 'dash', 'stroke_linecap', 'stroke_linejoin', 'label', 'label_color')
 
-    def __init__(self, shape, fill=INHERIT, fill_opacity=INHERIT, stroke=INHERIT,
-                 stroke_opacity=INHERIT, stroke_width=INHERIT, dash=INHERIT,
-                 stroke_linecap=INHERIT, stroke_linejoin=INHERIT,
-                 label=INHERIT, label_color=INHERIT):
+    # Field types, for the checker.  __init__ writes these straight into __dict__
+    # (so __setattr__ can refuse unconditionally), which no checker can follow.
+    # Bare annotations -- nothing exists at runtime.  Every field but `shape`
+    # may hold the INHERIT sentinel as well as a caller value, hence `Any`.
+    shape:          Any   # a shapely geometry
+    fill:           Any
+    fill_opacity:   Any
+    stroke:         Any
+    stroke_opacity: Any
+    stroke_width:   Any
+    dash:           Any
+    stroke_linecap: Any
+    stroke_linejoin: Any
+    label:          Any
+    label_color:    Any
+
+    def __init__(self, shape: Any, fill: Any = INHERIT, fill_opacity: Any = INHERIT, stroke: Any = INHERIT,
+                 stroke_opacity: Any = INHERIT, stroke_width: Any = INHERIT, dash: Any = INHERIT,
+                 stroke_linecap: Any = INHERIT, stroke_linejoin: Any = INHERIT,
+                 label: Any = INHERIT, label_color: Any = INHERIT) -> None:
         # written straight into __dict__ so __setattr__ can refuse unconditionally
         _d_ = self.__dict__
         _d_['shape']          = shape
@@ -63,13 +80,13 @@ class BackgroundShape:
         _d_['label']          = label
         _d_['label_color']    = label_color
 
-    def __setattr__(self, name, value):
+    def __setattr__(self, name: str, value: str) -> None:
         raise AttributeError(f'BackgroundShape is immutable (attempted to set {name!r}); '
                              f'build a new one with p2s.bgShape(...)')
-    def __delattr__(self, name):
+    def __delattr__(self, name: str) -> None:
         raise AttributeError('BackgroundShape is immutable')
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         _set_ = [f'{_f_}={getattr(self, _f_)!r}' for _f_ in self._FIELDS_[1:]
                  if getattr(self, _f_) is not INHERIT]
         return f'BackgroundShape({type(self.shape).__name__}{", " if _set_ else ""}{", ".join(_set_)})'
@@ -83,11 +100,48 @@ class BackgroundShape:
 class _BackgroundStyle_:
     __slots__ = ('fill', 'fill_opacity', 'stroke', 'stroke_opacity', 'stroke_width',
                  'dash', 'linecap', 'linejoin', 'label', 'label_color')
-    def __repr__(self):
+    # Slot types, for the checker.  Bare annotations create no class attribute,
+    # so they do not collide with __slots__.  Every slot is filled by
+    # __resolveBackgroundStyle__(); `Any` because each resolves from an INHERIT
+    # sentinel, a component default, or a caller value.
+    fill:           Any
+    fill_opacity:   Any
+    stroke:         Any
+    stroke_opacity: Any
+    stroke_width:   Any
+    dash:           Any
+    linecap:        Any
+    linejoin:       Any
+    label:          Any
+    label_color:    Any
+    def __repr__(self) -> str:
         return '_BackgroundStyle_(' + ', '.join(f'{_s_}={getattr(self, _s_)!r}' for _s_ in self.__slots__) + ')'
 
 
 class P2SBackgroundMixin:
+    # ---------------------------------------------------------------------
+    # Host-class attributes this mixin reads off `self`.
+    #
+    # A mixin is never instantiated on its own -- these are provided by whatever
+    # class mixes it in (XYp, LinkP).  Declared here so a checker
+    # can follow the mixin's own methods; bare annotations, so nothing exists at
+    # runtime and nothing is shadowed.
+    #
+    # Typed `Any` on purpose: the mixin genuinely does not know the concrete type,
+    # and several hosts declare the same name with a narrower type of their own.
+    # ---------------------------------------------------------------------
+    _COMPONENT_NAME_:       Any
+    __shapelyToSVGPath__:   Any
+    background:             Any
+    background_fill:        Any
+    background_label_color: Any
+    background_opacity:     Any
+    background_stroke:      Any
+    background_stroke_w:    Any
+    p2s:                    Any
+    txt_h:                  Any
+    wxh:                    Any
+
     #
     # P2SBackgroundMixin - shared background-shape transform/render helpers for
     # the coordinate-plane components (XYp, LinkP). These methods were duplicated in
@@ -106,18 +160,19 @@ class P2SBackgroundMixin:
     #   __backgroundShapeToDL__       the SAME geometry + style -> GPU primitives
     # The last two both read the resolved style; neither parses the other's output.
     #
-    def __bgX__(self, _v_):
+    def __bgX__(self, _v_: float) -> float:
         raise NotImplementedError   # each component overrides with its world->screen X
-    def __bgY__(self, _v_):
+    def __bgY__(self, _v_: float) -> float:
         raise NotImplementedError   # each component overrides with its world->screen Y
 
     #
     # __bgMinsAndMaxes__() - update a bounding box with a new point
     #
-    def __bgMinsAndMaxes__(self, x, y, x0, y0, x1, y1):
+    def __bgMinsAndMaxes__(self, x: float, y: float, x0: float | None, y0: float | None, x1: float | None, y1: float | None) -> tuple:
         if x0 is None:
             return x, y, x, y
-        return min(x, x0), min(y, y0), max(x, x1), max(y, y1)
+        # x0/y0/x1/y1 are set together, so the x0 check above covers all four.
+        return min(x, x0), min(y, y0), max(x, x1), max(y, y1)  # type: ignore[type-var]
 
     #
     # __normalizeBackgroundEntry__() - every accepted background= value -> a BackgroundShape
@@ -127,7 +182,7 @@ class P2SBackgroundMixin:
     #   anything (a layout returning cells); unambiguous, since a dict was never a
     #   valid shape descriptor
     #
-    def __normalizeBackgroundEntry__(self, name, value):
+    def __normalizeBackgroundEntry__(self, name: int | str, value: Any) -> Any:
         if isinstance(value, BackgroundShape): return value
         if isinstance(value, dict):
             _unknown_ = [_k_ for _k_ in value if _k_ not in BackgroundShape._FIELDS_]
@@ -148,7 +203,7 @@ class P2SBackgroundMixin:
     #   stay disjoint, but the kind of divergence a single resolver removes rather than
     #   documents
     #
-    def __resolveBackgroundColor__(self, value, name):
+    def __resolveBackgroundColor__(self, value: dict | str, name: int | str) -> str:
         if isinstance(value, dict) and name in value:              return value[name]
         if value == 'vary':                                        return self.p2s.color(name)
         if isinstance(value, self.p2s.HexColorString):             return value
@@ -162,7 +217,7 @@ class P2SBackgroundMixin:
     # and background_stroke=None / background_stroke_w=None means "no stroke".  A record
     # field is uniform instead: None = off / omit the attribute.
     #
-    def __resolveBackgroundStyle__(self, name, record):
+    def __resolveBackgroundStyle__(self, name: int | str, record: Any) -> Any:
         _st_ = _BackgroundStyle_()
 
         # ---- fill (background_fill + background_opacity) -----------------------------
@@ -225,7 +280,7 @@ class P2SBackgroundMixin:
     # path would take SVG's initial value and render solid black.  stroke=None does omit
     # its attributes -- SVG's initial stroke is already none.
     #
-    def __backgroundShapeRenderDetails__(self, style):
+    def __backgroundShapeRenderDetails__(self, style: Any) -> str:
         if style.fill is None:
             svg = ' fill="none"'
         else:
@@ -245,8 +300,9 @@ class P2SBackgroundMixin:
     # - returns (svg, dl_args); dl_args feeds the display list directly rather than
     #   being regexed back out of the svg
     #
-    def __backgroundShapeLabel__(self, style, x0, y0, x1, y1):
-        if style.label is None or x0 is None:
+    def __backgroundShapeLabel__(self, style: Any, x0: float | None, y0: float | None,
+                             x1: float | None, y1: float | None) -> tuple:
+        if style.label is None or x0 is None or y0 is None or x1 is None or y1 is None:
             return '', None
         _cx_ = (x0 + x1) / 2
         _cy_ = self.txt_h / 2 + (y0 + y1) / 2
@@ -258,7 +314,7 @@ class P2SBackgroundMixin:
     #
     # __transformCircleSVG__() - transform a <circle> SVG element into an <ellipse> in screen coordinates
     #
-    def __transformCircleSVG__(self, shape_desc, style):
+    def __transformCircleSVG__(self, shape_desc: str, style: Any) -> tuple:
         _root_ = ET.fromstring(shape_desc)  # nosec B314 - trusted caller config (background= shape descriptor), not untrusted data; see SECURITY.md
         cx  = float(_root_.attrib['cx'])
         cy  = float(_root_.attrib['cy'])
@@ -276,7 +332,7 @@ class P2SBackgroundMixin:
     #
     # __transformPathDescription__() - transform an SVG path description string into screen coordinates
     #
-    def __transformPathDescription__(self, shape_desc, style):
+    def __transformPathDescription__(self, shape_desc: str, style: Any) -> tuple:
         _d_ = ''
         x0, y0, x1, y1 = None, None, None, None
         tokens = ' '.join(shape_desc.split()).split(' ')
@@ -313,7 +369,7 @@ class P2SBackgroundMixin:
     #
     # __transformPointsList__() - transform a list of (x, y) tuples into a screen-coordinate SVG path
     #
-    def __transformPointsList__(self, points_list, style):
+    def __transformPointsList__(self, points_list: list, style: Any) -> tuple:
         _x, _y = self.__bgX__(points_list[0][0]), self.__bgY__(points_list[0][1])
         _d_ = f'M {_x} {_y}'
         x0, y0, x1, y1 = _x, _y, _x, _y
@@ -331,7 +387,7 @@ class P2SBackgroundMixin:
     # - returns (shape_svg, label_svg, geometry, label_dl_args); geometry is the SCREEN-space
     #   ('path', d) or ('ellipse', (cx, cy, rx, ry)) that the display-list writer consumes
     #
-    def __transformBackgroundShapes__(self, name, record, style):
+    def __transformBackgroundShapes__(self, name: int | str, record: Any, style: Any) -> tuple:
         shape_desc = record.shape
         # Convert Shapely geometries to SVG path strings. shapely is an optional
         # 'layouts' dependency: if it isn't installed, shape_desc can't actually
@@ -374,7 +430,7 @@ class P2SBackgroundMixin:
     # Draw order is dict insertion order, all shapes then all labels -- documented contract,
     # not incidental: a producer emitting several layers depends on it to stack them.
     #
-    def __renderBackground__(self):
+    def __renderBackground__(self) -> None:
         self.svg_background  = ''
         self._dl_background_ = DisplayList(self.wxh[0], self.wxh[1])
         if self.background is None:
@@ -402,7 +458,7 @@ class P2SBackgroundMixin:
     # re-parse route removed from spreadlinesp (PLANNING.md §8).  Both writers now read
     # the record, so stroke-opacity and dash need no regex to reach the GPU path.
     #
-    def __backgroundShapeToDL__(self, geometry, style, dl):
+    def __backgroundShapeToDL__(self, geometry: tuple, style: Any, dl: Any) -> None:
         if geometry is None: return
         _kind_, _payload_ = geometry
         _fo_     = 1.0 if style.fill_opacity   is None else float(style.fill_opacity)
@@ -425,7 +481,7 @@ class P2SBackgroundMixin:
     # __backgroundLabelToDL__() - GPU glyphs for a background label (also from the
     # resolved values, not from a regex over the <text> element just emitted)
     #
-    def __backgroundLabelToDL__(self, label_dl, dl):
+    def __backgroundLabelToDL__(self, label_dl: tuple | None, dl: Any) -> None:
         if label_dl is None: return
         _txt_, _x_, _y_, _co_ = label_dl
         dl.text(self.p2s, _txt_, _x_, _y_, txt_h=self.txt_h, anchor='middle', color=_co_, svg='')

@@ -11,7 +11,7 @@ _INTERACTIVE_DEPS_MSG_ = (
 # param), an optional dependency — every method below imports lazily so the
 # static render path never pays for it, and importing raises a clear
 # ImportError naming the extra rather than a bare "no module named panel".
-def _importInteractiveController_():
+def _importInteractiveController_() -> Any:
     try:
         from . import interactive_controller as _mod_
     except ImportError as _e_:
@@ -19,7 +19,7 @@ def _importInteractiveController_():
     return _mod_
 
 
-def _importStackControl_():
+def _importStackControl_() -> Any:
     try:
         from . import stack_control as _mod_
     except ImportError as _e_:
@@ -27,7 +27,7 @@ def _importStackControl_():
     return _mod_
 
 
-def _importSpreadLinePI_():
+def _importSpreadLinePI_() -> Any:
     try:
         from . import spreadlinepi as _mod_
     except ImportError as _e_:
@@ -36,13 +36,13 @@ def _importSpreadLinePI_():
 
 
 class P2SInteractiveMixin:
-    def __init__(self):
+    def __init__(self) -> None:
         pass
 
-    def __p2s_interactive_mixin_init__(self):
+    def __p2s_interactive_mixin_init__(self) -> None:
         pass
 
-    def interactiveController(self):
+    def interactiveController(self) -> Any:
         '''Create a fresh InteractionController — the shared model/view/controller
         that coordinates selection and drill-down across interactive panels. Normally
         created for you by ``panelize()``; construct one directly only when wiring
@@ -50,7 +50,7 @@ class P2SInteractiveMixin:
         return _importInteractiveController_().InteractionController()
 
     def panelize(self, layout: Any, stack: str = 'default', use_webgpu: bool = False,
-                 websocket_max_message_size: int = None) -> Any:
+                 websocket_max_message_size: int | None = None) -> Any:
         '''
         Compose interactive components into a single cross-linked dashboard.
 
@@ -84,53 +84,53 @@ class P2SInteractiveMixin:
             layout, stack, use_webgpu=use_webgpu,
             websocket_max_message_size=websocket_max_message_size)
 
-    def panelizeSketch(self, layout, use_webgpu: bool = False):
+    def panelizeSketch(self, layout: list, use_webgpu: bool = False) -> Any:
         '''Static (non-server) HTML sketch of a ``panelize()`` layout.
 
         ``use_webgpu`` has the same meaning as in ``panelize()``.'''
         return _importInteractiveController_().panelizeSketch(layout, use_webgpu=use_webgpu)
 
-    def xypi(self, _xyp_, **kwargs):
+    def xypi(self, _xyp_: Any, **kwargs: Any) -> Any:
         '''Wrap a static ``xyp`` component as an interactive, cross-linkable panel
         (brushing/selection). Pass the result to ``panelize()``.'''
         return _importInteractiveController_().xypi(_xyp_, **kwargs)
 
-    def histopi(self, _histop_, **kwargs):
+    def histopi(self, _histop_: Any, **kwargs: Any) -> Any:
         '''Wrap a static ``histop`` component as an interactive, cross-linkable panel
         (bar selection). Pass the result to ``panelize()``.'''
         return _importInteractiveController_().histopi(_histop_, **kwargs)
 
-    def timepi(self, _timep_, **kwargs):
+    def timepi(self, _timep_: Any, **kwargs: Any) -> Any:
         '''Wrap a static ``timep`` component as an interactive, cross-linkable panel
         (time-range selection). Pass the result to ``panelize()``.'''
         return _importInteractiveController_().timepi(_timep_, **kwargs)
 
-    def linkpi(self, _linkp_, mvc=None, **kwargs):
+    def linkpi(self, _linkp_: Any, mvc: Any = None, **kwargs: Any) -> Any:
         '''Wrap a static ``linkp`` graph as an interactive, cross-linkable panel
         (node/edge selection). Pass the result to ``panelize()``.'''
         return _importInteractiveController_().linkpi(_linkp_, mvc=mvc, **kwargs)
 
-    def smallpi(self, _smallp_, **kwargs):
+    def smallpi(self, _smallp_: Any, **kwargs: Any) -> Any:
         '''Wrap a static ``smallp`` small-multiples view as an interactive,
         cross-linkable panel. Pass the result to ``panelize()``.'''
         return _importInteractiveController_().smallpi(_smallp_, **kwargs)
 
-    def chordpi(self, _chordp_, **kwargs):
+    def chordpi(self, _chordp_: Any, **kwargs: Any) -> Any:
         '''Wrap a static ``chordp`` diagram as an interactive, cross-linkable panel
         (arc/ribbon selection). Pass the result to ``panelize()``.'''
         return _importInteractiveController_().chordpi(_chordp_, **kwargs)
 
-    def piepi(self, _piep_, **kwargs):
+    def piepi(self, _piep_: Any, **kwargs: Any) -> Any:
         '''Wrap a static ``piep`` chart as an interactive, cross-linkable panel
         (wedge selection). Pass the result to ``panelize()``.'''
         return _importInteractiveController_().piepi(_piep_, **kwargs)
 
-    def spreadlinepi(self, _spread_, **kwargs):
+    def spreadlinepi(self, _spread_: Any, **kwargs: Any) -> Any:
         '''Wrap a static ``spreadlinesp`` view as an interactive, cross-linkable panel
         (node/cloud selection). Pass the result to ``panelize()``.'''
         # Imported from its own module rather than off interactive_controller: that
         # module only re-exports the name when it wins the circular-import race.
         return _importSpreadLinePI_().spreadlinepi(_spread_, **kwargs)
 
-    def stack_controli(self, component, stack_name='default', **kwargs):
+    def stack_controli(self, component: Any, stack_name: str = 'default', **kwargs: Any) -> Any:
         return _importStackControl_().stack_controli(component, stack_name, **kwargs)

@@ -1,3 +1,4 @@
+from pathlib import Path
 #
 # export - save rendered components to disk (SVG always; PNG via optional deps)
 #
@@ -13,6 +14,7 @@
 # which are an optional install (`pip install polars2svg[export]`); savePNG /
 # svgToPNGBytes raise a clear ImportError naming that extra when they are absent.
 #
+from typing import Any
 import io
 import os
 import re
@@ -24,8 +26,8 @@ import re
 #   (e.g. "<style> .foo </style>").  Such rules are visually inert, so blank out
 #   any <style> element whose content has no '{'.
 #
-def _fixSVGForRasterize_(svg):
-    def _blank_empty_style_(m):
+def _fixSVGForRasterize_(svg: str) -> str:
+    def _blank_empty_style_(m: Any) -> str:
         return '<style></style>' if '{' not in m.group(1) else m.group(0)
     return re.sub(r'<style>(.*?)</style>', _blank_empty_style_, svg, flags=re.DOTALL)
 
@@ -44,7 +46,7 @@ def _fixSVGForRasterize_(svg):
 # tiles (smallp/spreadlinesp) outright.  reportlab 5 itself is fine here — it is
 # svglib 2 that changes the geometry — so the cap is on svglib, not reportlab.
 #
-def svgToPNGBytes(svg):
+def svgToPNGBytes(svg: str) -> bytes:
     try:
         from svglib.svglib import svg2rlg
         from reportlab.graphics import renderPM
@@ -66,12 +68,25 @@ class ExportMixin:
     # a standalone SVG document, so it works uniformly across the eight components.
     #
 
+    # ---------------------------------------------------------------------
+    # Host-class attributes this mixin reads off `self`.
+    #
+    # A mixin is never instantiated on its own -- these are provided by whatever
+    # class mixes it in (every component).  Declared here so a checker
+    # can follow the mixin's own methods; bare annotations, so nothing exists at
+    # runtime and nothing is shadowed.
+    #
+    # Typed `Any` on purpose: the mixin genuinely does not know the concrete type,
+    # and several hosts declare the same name with a narrower type of their own.
+    # ---------------------------------------------------------------------
+    _repr_svg_: Any
+
     #
     # save() - write this rendering to disk, dispatching on the file extension
     # - a '.png' path rasterizes (see savePNG); every other path writes the SVG
     #   document verbatim (UTF-8).  Returns the path written.
     #
-    def save(self, path):
+    def save(self, path: str | Path) -> str:
         _path_ = os.fspath(path)
         if _path_.lower().endswith('.png'):
             return self.savePNG(_path_)
@@ -84,7 +99,7 @@ class ExportMixin:
     # - requires the optional [export] extra (svglib + reportlab); raises a clear
     #   ImportError naming it when absent.  Returns the path written.
     #
-    def savePNG(self, path):
+    def savePNG(self, path: str | Path) -> str:
         _path_      = os.fspath(path)
         _png_bytes_ = svgToPNGBytes(self._repr_svg_())
         with open(_path_, 'wb') as _f_:

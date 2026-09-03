@@ -379,7 +379,7 @@ struct GlyphOut {
 # standalone_html() - self-contained HTML (canvas + runtime + payload) for notebook
 # display and manual verification; no Panel required
 #
-def standalone_html(payload, border='1px solid #ccc'):
+def standalone_html(payload: dict, border: str = '1px solid #ccc') -> str:
     import random
     _canvas_id_ = f'p2s_gpu_{random.randint(100000, 999999)}'  # nosec B311 - non-cryptographic DOM id scoping, see SECURITY.md
     w, h = payload['wxh']

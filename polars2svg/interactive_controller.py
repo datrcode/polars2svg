@@ -1234,7 +1234,7 @@ def smallpi(_smallp_, **kwargs):
     _cls_ref_[0] = cls
     return cls(**kwargs)
 
-_PLOT_TYPE_TO_WRAPPER_ = {
+_PLOT_TYPE_TO_WRAPPER_: dict = {
     'Timep':  timepi,
     'Histop': histopi,
     'XYp':    xypi,
@@ -1381,7 +1381,7 @@ def _warnOversizePanelPayload_(views, websocket_max_message_size=None):
 
 
 def panelize(layout: Any, stack: str = 'default', use_webgpu: bool = False,
-             websocket_max_message_size: int = None) -> Any:
+             websocket_max_message_size: int | None = None) -> Any:
     pn.extension()
     plots = _collect_leaves(layout)
     mvc   = InteractionController()

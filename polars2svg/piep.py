@@ -1,3 +1,4 @@
+from typing import Any, TypedDict, Unpack, cast
 import polars as pl
 import time
 import random
@@ -8,6 +9,49 @@ from math import pi, cos, sin, atan2, sqrt, radians
 import polars2svg
 from polars2svg.p2s_displaylist import DisplayList
 from polars2svg.export import ExportMixin
+
+class PiepKwargs(TypedDict, total=False):
+    """Keyword arguments accepted by ``p2s.piep()`` / ``Piep(...)``.
+
+    Every key is optional (``total=False``); the set is exactly Piep._VALID_KWARGS,
+    which is what the constructor validates at runtime -- a name not listed here
+    raises TypeError.  Declaring it lets a type checker catch the misspelling
+    before the call runs, and gives editors completion over the parameter set.
+
+    Value types are deliberately conservative.  Most parameters are data-drivable
+    (they take a literal *or* a column name *or* a ``(field, enum)`` spec), so they
+    are typed ``Any`` rather than guessed at; the precise ones were each confirmed
+    against how the test suite actually calls them.
+
+    Keys wrapped in underscores are internal -- smallp sets them when it shares
+    state across small-multiple panels; callers have no reason to pass them.
+    """
+    _base_slices_:           list | None
+    _shared_order_:          list | None
+    bin_by:                  str | tuple | None
+    color:                   Any
+    color_stat_range_shared: Any
+    count:                   Any
+    count_range:             Any
+    count_range_shared:      Any
+    descending:              bool
+    df:                      pl.DataFrame | None
+    donut_ratio:             Any
+    draw_border:             bool
+    draw_context:            bool
+    draw_labels:             bool
+    insets:                  tuple
+    legend:                  Any
+    min_slice_deg:           Any
+    sm_shared:               set
+    start_angle:             Any
+    style:                   Any
+    template:                'Piep | None'
+    txt_h:                   Any
+    use_lazy_execution:      bool
+    waffle_n:                Any
+    wxh:                     Any
+
 
 #
 # Piechart  (pie / donut / waffle)
@@ -31,10 +75,69 @@ class Piep(ExportMixin):
         '_shared_order_', '_base_slices_',
     })
 
-    def __init__(self, *args, **kwargs):
+    # ---------------------------------------------------------------------
+    # Parameters assigned onto the instance from _defaults_ by
+    # Polars2SVG.assignScratchDefaults() -- setattr(), so no checker can see them.
+    #
+    # Declarations, not assignments: bare annotations populate __annotations__
+    # and create no class attribute, so this block is a no-op at runtime.
+    #
+    # Types are deliberately conservative -- `Any` wherever a parameter is
+    # data-drivable (accepts a literal *or* a column name), which is most of
+    # them.  The job here is to make the attribute VISIBLE; the precise
+    # per-parameter contract lands in the Unpack[TypedDict] work (phase 2),
+    # which is where a caller-facing type belongs.
+    #
+    # tests/test_typing_surface.py::TestComponentAttrDeclarations checks this
+    # block against _VALID_KWARGS, so a new parameter fails the suite until it
+    # is declared here too.
+    # ---------------------------------------------------------------------
+    color:                   Any
+    color_stat_range_shared: Any
+    count:                   Any
+    count_range:             Any
+    count_range_shared:      Any
+    descending:              bool
+    donut_ratio:             float
+    draw_border:             bool
+    draw_labels:             bool
+    insets:                  tuple
+    legend:                  bool
+    min_slice_deg:           float
+    sm_shared:               set
+    start_angle:             float
+    style:                   Any
+    txt_h:                   int
+    use_lazy_execution:      bool
+    waffle_n:                int
+
+    # --- state built during __init__/render, not passed in --------------
+    # Initialised to None and filled once the frame is resolved, so a checker
+    # infers `... | None` and flags every later use.  `Any` because these hold
+    # polars frames, display lists and cached statistics whose concrete types
+    # this class does not otherwise name.
+    _base_slices_:    list | None
+    _color_agg_:      str | None
+    _color_field_:    Any
+    _color_stat_max_: Any
+    _color_stat_min_: Any
+    _fixed_color_:    Any            # HexColorString is not a str to a checker
+    _hex_list_:       Any
+    _legend_region_:  Any
+    _shared_order_:   list | None
+    df:               Any
+    df_orig:          pl.DataFrame | None
+    legend_info:      Any
+    template:         'Piep | None'
+    _dl_:   DisplayList
+    bin_by: str | tuple | None
+    svg:    str
+    wxh:    Any
+
+    def __init__(self, *args: Any, **kwargs: Unpack[PiepKwargs]) -> None:
         self.t_start        = time.time()
         self.p2s            = polars2svg.Polars2SVG()
-        self.timing_metrics = {}
+        self.timing_metrics: dict = {}
         self.gatherMetrics(self.__parseInput__, *args, **kwargs)
         self.gatherMetrics(self.__validateInput__)
         if self.df is not None:
@@ -46,21 +149,21 @@ class Piep(ExportMixin):
         self.t_end     = time.time()
         self.t_overall = self.t_end - self.t_start
 
-    def _repr_svg_(self): return self.svg
+    def _repr_svg_(self) -> str: return self.svg
 
     #
     # webgpu() - WebGPU payload of the same render (buffers + manifest); the polars
     # compute is shared with the SVG path -- only the serialization differs
     #
-    def webgpu(self):
+    def webgpu(self) -> dict | None:
         if getattr(self, '_dl_', None) is None: return None
         return self._dl_.webgpu_payload(self.p2s.glyphAtlas())
 
     # gpuDisplayList() - consumed by smallp when this component renders as a cell
-    def gpuDisplayList(self):
+    def gpuDisplayList(self) -> Any:
         return getattr(self, '_dl_', None)
 
-    def gatherMetrics(self, callable, *args, **kwargs):
+    def gatherMetrics(self, callable: Any, *args: Any, **kwargs: Any) -> int:
         t0 = time.time()
         _results_ = callable(*args, **kwargs)
         t1 = time.time()
@@ -70,14 +173,14 @@ class Piep(ExportMixin):
 
     # ── Input parsing ─────────────────────────────────────────────────────────
 
-    def __parseInput__(self, *args, **kwargs):
+    def __parseInput__(self, *args: Any, **kwargs: Unpack[PiepKwargs]) -> None:
         _unknown_ = set(kwargs) - self._VALID_KWARGS
         if _unknown_:
             raise TypeError(f'Piep: unexpected keyword argument(s): {sorted(_unknown_)}')
 
         # Single source of truth for every parameter (name -> from-scratch default);
         # drives both the from-scratch assignment and the keyword-override copy below.
-        _defaults_ = {
+        _defaults_: dict = {
             'bin_by':                  None,
             'count':                   self.p2s.ROW_COUNTp,
             'count_range':             None,
@@ -119,7 +222,7 @@ class Piep(ExportMixin):
             self.p2s.assignScratchDefaults(self, _defaults_)
             # from-scratch builds only — a template clone is an exact snapshot and
             # must not re-apply session defaults (see Polars2SVG._apply_defaults)
-            kwargs = self.p2s._apply_defaults('piep', kwargs)
+            kwargs = cast(PiepKwargs, self.p2s._apply_defaults('piep', kwargs))
 
         # A template re-render must not inherit stale one-shot sharing state unless
         # the caller explicitly re-supplies it.
@@ -162,7 +265,7 @@ class Piep(ExportMixin):
         w, h = self.wxh
         self.svg = self.p2s.placeholderSVG(w, h)
 
-    def __validateInput__(self):
+    def __validateInput__(self) -> None:
         # Normalize legend= eagerly so a bad spec fails fast (raises InvalidSpecError).
         self.legend_spec = self.p2s.legendResolveSpec(self.legend)
         if self.df is None: return
@@ -228,7 +331,7 @@ class Piep(ExportMixin):
     #                or raw row count) mapped onto the colour spectrum, normalized
     #                linearly (magnitude) or by rank (stretched)
     #
-    def __resolveColor__(self):
+    def __resolveColor__(self) -> None:
         self._color_mode_         = 'none'
         self._color_fields_       = []
         self._color_field_        = None
@@ -320,7 +423,7 @@ class Piep(ExportMixin):
         else:
             raise ValueError(f'Piep: unsupported color enum {_enum_}')
 
-    def __addColumnsToDataFrame__(self):
+    def __addColumnsToDataFrame__(self) -> None:
         _ops_ = []
 
         # Multi-field bin: concatenate to '__bin__' (non-printable separator so distinct
@@ -357,7 +460,7 @@ class Piep(ExportMixin):
 
     # ── Aggregate expressions (shared with Histop's contract) ────────────────
 
-    def __countAggExpr__(self):
+    def __countAggExpr__(self) -> pl.Expr:
         if self.count == self.p2s.ROW_COUNTp:
             return pl.len().alias('__count__')
         elif isinstance(self.count, str):
@@ -377,7 +480,7 @@ class Piep(ExportMixin):
 
     # ── Aggregation ─────────────────────────────────────────────────────────
 
-    def __computeAggregates__(self):
+    def __computeAggregates__(self) -> None:
         # Coloring mode was resolved in __resolveColor__; expose the two flags the
         # rest of the pipeline (spectrum range, smallp sharing) keys off of.
         self._color_is_spectrum_ = (self._color_mode_ == 'spectrum')
@@ -506,7 +609,7 @@ class Piep(ExportMixin):
 
     # ── Color resolution ─────────────────────────────────────────────────────
 
-    def __dataColorShades__(self, hexcolor, n=5):
+    def __dataColorShades__(self, hexcolor: str, n: int = 5) -> list:
         '''n shades of hexcolor spread by small (barely perceptible) lightness steps.'''
         try:
             _r_ = int(hexcolor[1:3], 16) / 255.0
@@ -524,7 +627,7 @@ class Piep(ExportMixin):
             _out_.append('#%02x%02x%02x' % (round(_rr_ * 255), round(_gg_ * 255), round(_bb_ * 255)))
         return _out_
 
-    def __assignShades__(self, bins, shades):
+    def __assignShades__(self, bins: list, shades: list) -> dict:
         '''Deterministically assign shades to bins so no two adjacent slices (the ring
         wraps, so first and last are adjacent too) share a shade.  The RNG is seeded from
         the ordered bin values, so identical data + settings always yield the same image.'''
@@ -532,6 +635,7 @@ class Piep(ExportMixin):
         if _n_ == 0: return {}
         _seed_ = zlib.crc32('|'.join(str(b) for b in bins).encode('utf-8'))
         _rng_  = random.Random(_seed_)  # nosec B311 - deterministic seeded shade assignment, not security sensitive
+        _chosen_: list
         _chosen_, _out_ = [], {}
         for _i_, _b_ in enumerate(bins):
             _excluded_ = set()
@@ -543,7 +647,7 @@ class Piep(ExportMixin):
             _out_[_b_] = shades[_idx_]
         return _out_
 
-    def __sliceColors__(self, bins):
+    def __sliceColors__(self, bins: list) -> dict:
         '''Return {bin_value: hex} for a list of bins under the active coloring mode.'''
         _default_ = self.p2s.colorTyped('data', 'default')
 
@@ -600,7 +704,7 @@ class Piep(ExportMixin):
 
         return {b: _default_ for b in bins}
 
-    def __colorFor__(self, bin_value, lu):
+    def __colorFor__(self, bin_value: str, lu: dict) -> str:
         return lu.get(bin_value, self.p2s.colorTyped('data', 'default'))
 
     # ── Geometry ────────────────────────────────────────────────────────────
@@ -612,7 +716,7 @@ class Piep(ExportMixin):
     # (color=None / fixed hex / hexlist -- no data-driven color semantics) silently
     # reserves nothing.
     #
-    def __legendPrepare__(self):
+    def __legendPrepare__(self) -> None:
         self.legend_info      = None
         self._legend_region_  = None
         self._legend_reserve_ = (0, 0, 0, 0)
@@ -641,7 +745,7 @@ class Piep(ExportMixin):
         elif _pos_ == 'top':    self._legend_region_ = (0, 0, self.wxh[0], _t_)
         else:                   self._legend_region_ = (0, self.wxh[1] - _b_, self.wxh[0], _b_)
 
-    def __constructGeometry__(self):
+    def __constructGeometry__(self) -> None:
         w, h         = self.wxh
         # Legend strip (if any) comes out of wxh first -- the plot region shrinks,
         # the physical output size does not ("reserve from wxh").
@@ -702,15 +806,15 @@ class Piep(ExportMixin):
 
     # ── Wedge drawing (SVG path + GPU polygon) ───────────────────────────────
 
-    def __wedge__(self, dl, r0, r1, a0_deg, a1_deg, fill=None, opacity=1.0, stroke=None, stroke_w=1.0,
-                  stroke_in_svg=True):
+    def __wedge__(self, dl: Any, r0: float, r1: float, a0_deg: float, a1_deg: float, fill: str | None = None, opacity: float = 1.0, stroke: str | None = None, stroke_w: float = 1.0,
+                  stroke_in_svg: bool = True) -> None:
         '''Draw an annular wedge. fill=None → outline only; stroke=None → filled only.
         stroke_in_svg=False omits the stroke attributes from the SVG element (so it
         inherits them from an enclosing <g>) while still drawing the GPU stroke lines.'''
         _sweep_ = a1_deg - a0_deg
         if _sweep_ <= 1e-6 or r1 <= r0:    return
         if fill is None and stroke is None: return
-        def _strokeAttr_():
+        def _strokeAttr_() -> str:
             if not stroke_in_svg:   return ''
             if stroke is not None:  return f' stroke="{stroke}" stroke-width="{stroke_w:.2f}"'
             return ' stroke="none"'
@@ -768,7 +872,7 @@ class Piep(ExportMixin):
 
     # ── Waffle allocation (largest-remainder so cells sum to the grid) ───────
 
-    def __waffleCounts__(self, bins_counts, total_cells):
+    def __waffleCounts__(self, bins_counts: list, total_cells: int) -> list:
         _tot_ = sum(c for _, c in bins_counts if c > 0) or 1.0
         _raw_ = [(b, c / _tot_ * total_cells) for b, c in bins_counts if c > 0]
         _base_ = [(b, int(v)) for b, v in _raw_]
@@ -783,7 +887,7 @@ class Piep(ExportMixin):
 
     # ── Rendering ────────────────────────────────────────────────────────────
 
-    def __renderSVG__(self, rand_id):
+    def __renderSVG__(self, rand_id: int) -> None:
         w, h          = self.wxh
         _bg_          = self.p2s.colorTyped('background', 'default')
         _label_color_ = self.p2s.colorTyped('label',      'defaultfg')
@@ -819,7 +923,7 @@ class Piep(ExportMixin):
 
         self.svg = _svg_head_ + _dl_.svg() + '</svg>'
 
-    def __renderRadial__(self, _dl_, _color_lu_, _part_of_whole_, _fade_, _label_color_):
+    def __renderRadial__(self, _dl_: Any, _color_lu_: dict, _part_of_whole_: bool, _fade_: float, _label_color_: str) -> None:
         r0, r1 = self.r_inner, self.r
         # Every slice gets a thin background-color delineation stroke so adjacent
         # slices read apart regardless of color.  The stroke lives on a wrapping
@@ -849,13 +953,13 @@ class Piep(ExportMixin):
         if self.draw_context:
             self.__renderTitle__(_dl_, _label_color_)
 
-    def __renderTitle__(self, _dl_, _label_color_):
+    def __renderTitle__(self, _dl_: Any, _label_color_: str) -> None:
         # Bin field name centered below the chart
         _title_ = self.p2s.cropText('|'.join(self._bin_cols_), self.txt_h, self._plot_w_)
         _dl_.text(self.p2s, _title_, self.cx, self._plot_y0_ + self._plot_h_ + self.txt_h,
                   txt_h=self.txt_h, anchor='middle', color=_label_color_)
 
-    def __fitLabel__(self, txt, avail_w):
+    def __fitLabel__(self, txt: str, avail_w: float) -> str:
         '''Crop txt to avail_w; return None if not even one real character fits.'''
         _s_ = self.p2s.formatMultiFieldValue(txt)
         if self.p2s.textLength(_s_, self.txt_h) <= avail_w:
@@ -870,7 +974,7 @@ class Piep(ExportMixin):
     #     around the pie (large insets / oblong wxh); labels are prioritized
     #     largest-slice-first, cropped to the room on their side, with whitespace.
     #
-    def __renderSliceLabels__(self, _dl_, _label_color_):
+    def __renderSliceLabels__(self, _dl_: Any, _label_color_: str) -> None:
         # outside labels must stay within the plot area (excludes any legend strip)
         w, h    = self._avail_x1_, self._avail_y1_
         _lr_    = (self.r_inner + self.r) / 2.0 if self.style == self.p2s.DONUTp else self.r * 0.58
@@ -916,6 +1020,8 @@ class Piep(ExportMixin):
         # Prioritize by slice size (largest first) since space is limited.
         _ranked_ = sorted(_outside_, key=lambda s: s['count'], reverse=True)
 
+        _right_: list
+        _left_: list
         _right_, _left_ = [], []
         for s in _ranked_:
             _am_ = radians((s['a0'] + s['a1']) / 2.0)
@@ -925,7 +1031,7 @@ class Piep(ExportMixin):
             elif (not _to_right_) and _avail_l_ >= _min_room_ and len(_left_) < _capacity_:
                 _left_.append((s, _am_))
 
-        def _place_side_(items, avail_w, x_text, anchor):
+        def _place_side_(items: list, avail_w: float, x_text: float, anchor: str) -> None:
             if not items or avail_w < _min_room_: return
             # natural y where each slice's mid-ray meets the circle
             _rows_ = [[s, _am_, self.cy + self.r * sin(_am_)] for s, _am_ in items]
@@ -956,7 +1062,7 @@ class Piep(ExportMixin):
         _place_side_(_right_, _avail_r_, _x_txt_r_, 'start')
         _place_side_(_left_,  _avail_l_, _x_txt_l_, 'end')
 
-    def __renderWaffle__(self, _dl_, _color_lu_, _part_of_whole_, _fade_, _label_color_):
+    def __renderWaffle__(self, _dl_: Any, _color_lu_: dict, _part_of_whole_: bool, _fade_: float, _label_color_: str) -> None:
         _n_    = max(1, int(self.waffle_n))
         _cells_ = _n_ * _n_
         _side_ = min(self._plot_w_, self._plot_h_)
@@ -976,7 +1082,7 @@ class Piep(ExportMixin):
                 _fill_alloc_[s['bin']] = _f_
 
         # cell order: bottom-up, left-to-right (row 0 = bottom)
-        def _cell_xy_(idx):
+        def _cell_xy_(idx: int) -> tuple:
             _row_ = idx // _n_
             _col_ = idx % _n_
             _x_ = _ox_ + _col_ * _cell_
@@ -1007,7 +1113,9 @@ class Piep(ExportMixin):
 
     # ── smallp integration ───────────────────────────────────────────────────
 
-    def render_with(self, df, **overrides):
+    def render_with(self, df: pl.DataFrame, **overrides: Any) -> Any:
+        # `overrides` cannot be Unpack[PiepKwargs]: PEP 692 rejects a TypedDict
+        # that repeats a named parameter, and `df` is both.
         return Piep(df=df, template=self, **overrides)
 
     #
@@ -1018,8 +1126,8 @@ class Piep(ExportMixin):
     #                                each slice's share (implies a shared order)
     #   SM_COUNT                  : share the spectrum/count normalization range
     #
-    def renderSmallMultiples(self, df_all, df_lu, all_key):
-        _kwargs_       = {'sm_shared': self.sm_shared}
+    def renderSmallMultiples(self, df_all: Any, df_lu: dict, all_key: Any) -> dict:
+        _kwargs_: dict[str, Any] = {'sm_shared': self.sm_shared}
         _want_order_   = (self.p2s.SM_SLICE_ORDERp in self.sm_shared or
                           self.p2s.SM_COLOR        in self.sm_shared)
         _want_pow_     = self.p2s.SM_PARTOFWHOLEp in self.sm_shared
@@ -1041,7 +1149,7 @@ class Piep(ExportMixin):
 
     # ── Interactivity (panelize / brushing) ──────────────────────────────────
 
-    def __expandBins__(self, bins):
+    def __expandBins__(self, bins: list) -> list:
         '''Expand the synthetic "(other)" slice into the real bin values it folded in.'''
         _out_ = []
         for _b_ in bins:
@@ -1049,16 +1157,16 @@ class Piep(ExportMixin):
             else:                _out_.append(_b_)
         return list(dict.fromkeys(_out_))
 
-    def __sliceForBin__(self, bin_value, how='inner'):
+    def __sliceForBin__(self, bin_value: str, how: str = 'inner') -> pl.DataFrame:
         return self.__binsForBins__([bin_value], remove=(how == 'anti'))
 
-    def __dropInternal__(self, df):
+    def __dropInternal__(self, df: pl.DataFrame) -> pl.DataFrame:
         _to_drop_ = [c for c in ['__p2s_index__'] if c in df.columns]
         if self._bin_col_ == '__bin__' and '__bin__' in df.columns:
             _to_drop_.append('__bin__')
         return df.drop(_to_drop_)
 
-    def __binsForBins__(self, bins, remove=False):
+    def __binsForBins__(self, bins: list, remove: bool = False) -> pl.DataFrame:
         _bins_ = self.__expandBins__(bins)
         if not _bins_:
             return self.__dropInternal__(self.df if remove else self.df.clear())
@@ -1067,7 +1175,7 @@ class Piep(ExportMixin):
         _how_         = 'anti' if remove else 'inner'
         return self.__dropInternal__(self.df.join(_selected_df_, on=self._bin_col_, how=_how_))
 
-    def __binAtAngleDist__(self, angle_deg, dist):
+    def __binAtAngleDist__(self, angle_deg: float, dist: float) -> str | None:
         '''Return the bin whose wedge/annulus contains (angle_deg, dist), or None.'''
         if self.style == self.p2s.WAFFLEp: return None
         if dist < self.r_inner or dist > self.r: return None
@@ -1082,7 +1190,7 @@ class Piep(ExportMixin):
                 return s['bin']
         return None
 
-    def __binAtWaffleXY__(self, x, y):
+    def __binAtWaffleXY__(self, x: float, y: float) -> str | None:
         _n_    = max(1, int(self.waffle_n))
         _side_ = min(self._plot_w_, self._plot_h_)
         _cell_ = _side_ / _n_
@@ -1101,7 +1209,7 @@ class Piep(ExportMixin):
             _acc_ += _cnt_
         return None
 
-    def recordsAt(self, xy, shape=None, threshold=2.0):
+    def recordsAt(self, xy: tuple, shape: Any = None, threshold: float = 2.0) -> pl.DataFrame:
         '''Records whose slice contains the pixel xy (SELECT_CIRCLEp).'''
         if shape is None: shape = self.p2s.SELECT_CIRCLEp
         if shape != self.p2s.SELECT_CIRCLEp:
@@ -1118,7 +1226,7 @@ class Piep(ExportMixin):
             return self.__dropInternal__(self.df.clear())
         return self.__sliceForBin__(_bin_)
 
-    def filterByRectangle(self, bounding_box, remove_records=False):
+    def filterByRectangle(self, bounding_box: tuple, remove_records: bool = False) -> pl.DataFrame:
         _x0_, _y0_, _x1_, _y1_ = bounding_box
         if _x0_ > _x1_: _x0_, _x1_ = _x1_, _x0_
         if _y0_ > _y1_: _y0_, _y1_ = _y1_, _y0_
@@ -1126,7 +1234,7 @@ class Piep(ExportMixin):
         # rectangle as covering at least the pixel under the cursor.
         _cxr_, _cyr_ = (_x0_ + _x1_) / 2.0, (_y0_ + _y1_) / 2.0
 
-        def _in_rect_(px, py):
+        def _in_rect_(px: float, py: float) -> bool:
             return _x0_ <= px <= _x1_ and _y0_ <= py <= _y1_
 
         _selected_ = []
@@ -1185,14 +1293,14 @@ class Piep(ExportMixin):
             return self.__dropInternal__(self.df if remove_records else self.df.clear())
         return self.__binsForBins__(_selected_, remove=remove_records)
 
-    def filterByOval(self, oval, remove_records=False):
+    def filterByOval(self, oval: tuple, remove_records: bool = False) -> pl.DataFrame:
         _cx_, _cy_, _rx_, _ry_ = oval
         # A plain click arrives as a zero-radius oval: keep it covering the pixel under the cursor.
         _rx_, _ry_ = max(float(_rx_), 0.5), max(float(_ry_), 0.5)
         # The oval center is the click point (mouse-press seeds the center).
         _cxr_, _cyr_ = _cx_, _cy_
 
-        def _in_ellipse_(px, py):
+        def _in_ellipse_(px: float, py: float) -> bool:
             return ((px - _cx_) / _rx_) ** 2 + ((py - _cy_) / _ry_) ** 2 <= 1.0
 
         _selected_ = []
@@ -1251,7 +1359,7 @@ class Piep(ExportMixin):
             return self.__dropInternal__(self.df if remove_records else self.df.clear())
         return self.__binsForBins__(_selected_, remove=remove_records)
 
-    def filterBySubstring(self, substring, remove_bins=False):
+    def filterBySubstring(self, substring: str, remove_bins: bool = False) -> pl.DataFrame:
         _sub_ = substring.lower()
         # Search every real bin, including those folded into "(other)", so a folded
         # category is still findable by name.

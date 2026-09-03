@@ -18,6 +18,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import math
 
 import numpy as np
@@ -30,7 +32,7 @@ EPS = 1e-12
 # Geometry -- convex polygon clipping / centroids, circle hull, pockets (F_v)
 # ===========================================================================
 
-def _clip_halfplane_batch(poly, count, a, c, eps=1e-12):
+def _clip_halfplane_batch(poly: np.ndarray, count: np.ndarray, a: np.ndarray, c: np.ndarray, eps: float = 1e-12) -> tuple:
     """Sutherland-Hodgman for every power cell at once (paper Sec. 4.4).
 
     Cells are held as a padded ``(n, V, 2)`` buffer with ``count[i]`` live
@@ -73,7 +75,7 @@ def _clip_halfplane_batch(poly, count, a, c, eps=1e-12):
     return out, np.minimum(valid.sum(axis=1), cap)
 
 
-def _polygon_centroid_batch(poly, count):
+def _polygon_centroid_batch(poly: np.ndarray, count: np.ndarray) -> tuple:
     """Area centroids of a padded cell buffer; vertex mean where degenerate."""
     n, cap, _ = poly.shape
     idx = np.arange(cap)
@@ -98,14 +100,14 @@ def _polygon_centroid_batch(poly, count):
     return np.column_stack([np.where(ok, cx, mx), np.where(ok, cy, my)]), count > 0
 
 
-def _bbox_polygon(centers, radii, pad=1.0):
+def _bbox_polygon(centers: np.ndarray, radii: np.ndarray, pad: float = 1.0) -> np.ndarray:
     """CCW rectangle enclosing every circle with ``pad`` times the max radius."""
     lo = (centers - radii[:, None]).min(axis=0) - pad * float(radii.max())
     hi = (centers + radii[:, None]).max(axis=0) + pad * float(radii.max())
     return np.array([[lo[0], lo[1]], [hi[0], lo[1]], [hi[0], hi[1]], [lo[0], hi[1]]])
 
 
-def _circle_hull(centers, radii, samples=48):
+def _circle_hull(centers: np.ndarray, radii: np.ndarray, samples: int = 48) -> tuple:
     """Convex hull of the union of circles: (CCW vertices, owning circle ids)."""
     n = len(centers)
     ang = np.linspace(0.0, 2.0 * np.pi, samples, endpoint=False)
@@ -118,7 +120,7 @@ def _circle_hull(centers, radii, samples=48):
     return pts[order], owner[order]
 
 
-def _hull_circle_cycle(centers, radii, samples=48):
+def _hull_circle_cycle(centers: np.ndarray, radii: np.ndarray, samples: int = 48) -> tuple:
     """The circles touching the convex hull, in CCW order: (ids, touch points)."""
     verts, owners = _circle_hull(centers, radii, samples=samples)
     ids, touch = [], []
@@ -138,7 +140,7 @@ def _hull_circle_cycle(centers, radii, samples=48):
     return ids, np.asarray(touch, dtype=float)
 
 
-def _hull_pockets(centers, radii, samples=48):
+def _hull_pockets(centers: np.ndarray, radii: np.ndarray, samples: int = 48) -> list:
     """Concavities along the circle hull -- the input to F_v (paper Fig. 8).
 
     Returns a list of ``(i, M, gap)``: the circle to move, the chord midpoint
@@ -182,7 +184,7 @@ def _hull_pockets(centers, radii, samples=48):
 # Power diagram / regular triangulation (paper Sec. 4.4)
 # ===========================================================================
 
-def _regular_triangulation(centers, radii):
+def _regular_triangulation(centers: np.ndarray, radii: np.ndarray) -> np.ndarray:
     """Simplices (m, 3) of the weighted Delaunay (regular) triangulation."""
     if len(centers) < 3:
         return np.zeros((0, 3), dtype=int)
@@ -195,7 +197,7 @@ def _regular_triangulation(centers, radii):
     return hull.simplices[lower]
 
 
-def _triangulation_edges(simplices):
+def _triangulation_edges(simplices: np.ndarray) -> np.ndarray:
     """Unique undirected edges (k, 2) of a triangulation, sorted."""
     if len(simplices) == 0:
         return np.zeros((0, 2), dtype=int)
@@ -204,15 +206,15 @@ def _triangulation_edges(simplices):
     return np.unique(e, axis=0)
 
 
-def _neighbor_lists(edges, n):
-    nbrs = [[] for _ in range(n)]
+def _neighbor_lists(edges: np.ndarray, n: int) -> list:
+    nbrs: list[list] = [[] for _ in range(n)]
     for a, b in edges:
         nbrs[a].append(b)
         nbrs[b].append(a)
     return [np.asarray(sorted(v), dtype=int) for v in nbrs]
 
 
-def _power_cells(centers, radii, nbrs, region=None):
+def _power_cells(centers: np.ndarray, radii: np.ndarray, nbrs: list, region: Any = None) -> tuple:
     """Clip ``region`` by each site's power half-planes, all sites at once.
 
     Returns the padded ``(n, V, 2)`` vertex buffer and per-cell vertex count.
@@ -244,14 +246,14 @@ def _power_cells(centers, radii, nbrs, region=None):
     return poly, count
 
 
-def _cell_centroids(cells, centers):
+def _cell_centroids(cells: tuple, centers: np.ndarray) -> np.ndarray:
     """Centroid of each power cell (max-inscribed-circle stand-in, Sec. 4.4)."""
     poly, count = cells
     cent, ok = _polygon_centroid_batch(poly, count)
     return np.where(ok[:, None], cent, centers)
 
 
-def _max_scale(centers, weights, hint=None, chunk=512):
+def _max_scale(centers: np.ndarray, weights: np.ndarray, hint: float | None = None, chunk: int = 512) -> float:
     """Largest ``s`` with ``r_i = s * w_i`` satisfying the non-overlap constraint.
 
     ``s = min_{i<j} ||p_i - p_j|| / (w_i + w_j)``. A ``hint`` enables an exact
@@ -290,7 +292,7 @@ def _max_scale(centers, weights, hint=None, chunk=512):
     return best
 
 
-def _weighted_circumcenter(centers, radii, tri):
+def _weighted_circumcenter(centers: np.ndarray, radii: np.ndarray, tri: tuple) -> np.ndarray:
     """Power-diagram vertex of three weighted sites (Fig. 6). None if collinear."""
     a, b, c = (int(t) for t in tri)
     lift = (centers ** 2).sum(axis=1) - radii ** 2
@@ -306,7 +308,7 @@ def _weighted_circumcenter(centers, radii, tri):
 # Stage 1 -- neighbourhood-preserving planar graph initialization (Sec. 4.3)
 # ===========================================================================
 
-def _initial_planar_graph(positions, jitter=1e-9, seed=0):
+def _initial_planar_graph(positions: np.ndarray, jitter: float = 1e-9, seed: int = 0) -> tuple:
     """Delaunay triangulation of the input layout -> maximal planar graph."""
     positions = np.asarray(positions, dtype=float)
     n = len(positions)
@@ -323,7 +325,7 @@ def _initial_planar_graph(positions, jitter=1e-9, seed=0):
     return tri.simplices, _triangulation_edges(tri.simplices)
 
 
-def _normalize_weights(weights, n, floor=0.05):
+def _normalize_weights(weights: np.ndarray, n: int, floor: float = 0.05) -> np.ndarray:
     """Coerce caller weights into strictly positive radii multipliers in (0, 1]."""
     if weights is None:
         return np.ones(n, dtype=float)
@@ -340,7 +342,7 @@ def _normalize_weights(weights, n, floor=0.05):
     return np.maximum(w, floor * hi) / hi
 
 
-def _missing_edges(target_edges, current_edges):
+def _missing_edges(target_edges: np.ndarray, current_edges: np.ndarray) -> np.ndarray:
     """Target edges absent from the current triangulation (Fig. 6, step 1)."""
     if len(target_edges) == 0:
         return np.zeros((0, 2), dtype=int)
@@ -354,25 +356,25 @@ def _missing_edges(target_edges, current_edges):
 # Objective and gradient (paper Eqs. 1, 3, 4)
 # ===========================================================================
 
-def _f_neighborhood(positions, edges, s):
+def _f_neighborhood(positions: np.ndarray, edges: np.ndarray, s: float) -> float:
     if len(edges) == 0:
         return 0.0
     d = np.linalg.norm(positions[edges[:, 0]] - positions[edges[:, 1]], axis=1)
     return 2.0 * float(d.sum()) / s
 
 
-def _f_compactness(positions, center, s):
+def _f_compactness(positions: np.ndarray, center: np.ndarray, s: float) -> float:
     return float(np.linalg.norm(positions - center, axis=1).sum()) / s
 
 
-def _f_convexity(positions, radii, s, pockets=None):
+def _f_convexity(positions: np.ndarray, radii: np.ndarray, s: float, pockets: Any = None) -> float:
     if pockets is None:
         pockets = _hull_pockets(positions, radii)
     return float(sum(gap for _i, _m, gap in pockets)) / s
 
 
-def _objective_total(positions, radii, edges, center, s, alpha=0.2, beta=1.0,
-                     convexity=True, pockets=None):
+def _objective_total(positions: np.ndarray, radii: np.ndarray, edges: np.ndarray, center: np.ndarray, s: float, alpha: float = 0.2, beta: float = 1.0,
+                     convexity: bool = True, pockets: Any = None) -> float:
     """Weighted sum of the three objectives; ``beta=0`` gives Eq. 3."""
     val = _f_neighborhood(positions, edges, s) + alpha * _f_compactness(positions, center, s)
     if convexity and beta:
@@ -380,8 +382,8 @@ def _objective_total(positions, radii, edges, center, s, alpha=0.2, beta=1.0,
     return val
 
 
-def _gradient(positions, radii, edges, center, s, alpha=0.2, beta=1.0,
-              convexity=True, pockets=None):
+def _gradient(positions: np.ndarray, radii: np.ndarray, edges: np.ndarray, center: np.ndarray, s: float, alpha: float = 0.2, beta: float = 1.0,
+              convexity: bool = True, pockets: list | None = None) -> np.ndarray:
     """d(F'_p + alpha F_c + beta F_v) / dp, holding ``s`` fixed."""
     g = np.zeros_like(positions)
 
@@ -413,13 +415,13 @@ def _gradient(positions, radii, edges, center, s, alpha=0.2, beta=1.0,
 # Stage 2 -- power-diagram-based planar graph layout (Sec. 4.4, Eq. 3)
 # ===========================================================================
 
-def _stage2_energy(pos, w, edges, alpha, hint=None):
+def _stage2_energy(pos: np.ndarray, w: np.ndarray, edges: np.ndarray, alpha: float, hint: float | None = None) -> float:
     s = _max_scale(pos, w, hint=hint)
     center = pos.mean(axis=0)
     return _objective_total(pos, w * s, edges, center, s, alpha=alpha, convexity=False)
 
 
-def _stage2_line_search(pos, disp, w, edges, alpha, step0, step_min, hint=None):
+def _stage2_line_search(pos: np.ndarray, disp: np.ndarray, w: np.ndarray, edges: np.ndarray, alpha: float, step0: float, step_min: float, hint: float | None = None) -> tuple:
     """Move along ``disp``, halving the cap until the objective improves."""
     base = _stage2_energy(pos, w, edges, alpha, hint=hint)
     norm = np.linalg.norm(disp, axis=1)[:, None]
@@ -434,7 +436,7 @@ def _stage2_line_search(pos, disp, w, edges, alpha, step0, step_min, hint=None):
     return pos, _max_scale(pos, w, hint=hint), False
 
 
-def _stage2_centroid_targets(pos, radii):
+def _stage2_centroid_targets(pos: np.ndarray, radii: np.ndarray) -> np.ndarray:
     simplices = _regular_triangulation(pos, radii)
     if len(simplices) == 0:
         return pos.copy()
@@ -442,12 +444,12 @@ def _stage2_centroid_targets(pos, radii):
     return _cell_centroids(_power_cells(pos, radii, nbrs), pos)
 
 
-def _stage2_side(a, b, p):
+def _stage2_side(a: np.ndarray, b: np.ndarray, p: np.ndarray) -> np.ndarray:
     return (b[..., 0] - a[..., 0]) * (p[..., 1] - a[..., 1]) - \
            (b[..., 1] - a[..., 1]) * (p[..., 0] - a[..., 0])
 
 
-def _stage2_crossing_edge(pos, edges, i, j):
+def _stage2_crossing_edge(pos: np.ndarray, edges: np.ndarray, i: Any, j: Any) -> tuple | None:
     """The triangulation edge crossing segment ``ij``, nearest to ``i``."""
     a, b = pos[i], pos[j]
     p, q = pos[edges[:, 0]], pos[edges[:, 1]]
@@ -465,7 +467,7 @@ def _stage2_crossing_edge(pos, edges, i, j):
     return tuple(int(v) for v in edges[idx[np.argmin(np.linalg.norm(mid - a, axis=1))]])
 
 
-def _stage2_repair_targets(pos, radii, target_edges):
+def _stage2_repair_targets(pos: np.ndarray, radii: np.ndarray, target_edges: np.ndarray) -> tuple:
     """Displacements that restore lost target edges (Fig. 6)."""
     simplices = _regular_triangulation(pos, radii)
     if len(simplices) == 0:
@@ -491,8 +493,8 @@ def _stage2_repair_targets(pos, radii, target_edges):
     return (disp if hit else None), len(lost)
 
 
-def _stage2_optimize(positions, weights, edges, alpha=0.2, iterations=60,
-                     move_frac=0.35, min_frac=1e-3, repair=True, tol=1e-6, budget=None):
+def _stage2_optimize(positions: np.ndarray, weights: np.ndarray, edges: np.ndarray, alpha: float = 0.2, iterations: int = 60,
+                     move_frac: float = 0.35, min_frac: float = 1e-3, repair: bool = True, tol: float = 1e-6, budget: Any = None) -> tuple:
     """Run Stage 2 (compactness + neighbourhood repair). Returns (pos, s, report)."""
     pos = np.array(positions, dtype=float, copy=True)
     w = np.asarray(weights, dtype=float)
@@ -546,14 +548,14 @@ def _stage2_optimize(positions, weights, edges, alpha=0.2, iterations=60,
 # Stage 3 -- force-directed refinement (Sec. 4.5, Eq. 4)
 # ===========================================================================
 
-def _safe_pockets(pos, radii):
+def _safe_pockets(pos: np.ndarray, radii: np.ndarray) -> list:
     try:
         return _hull_pockets(pos, radii)
     except Exception:                       # noqa: BLE001 - degenerate hulls
         return []
 
 
-def _overlap_pairs(pos, radii, cache, pad=0.10):
+def _overlap_pairs(pos: np.ndarray, radii: np.ndarray, cache: dict | None, pad: float = 0.10) -> tuple:
     """Candidate overlapping pairs, reusing the KD-tree across iterations.
 
     The cache is reused only while a movement certificate holds
@@ -571,7 +573,7 @@ def _overlap_pairs(pos, radii, cache, pad=0.10):
                    'radius': radius}
 
 
-def _resolve_overlaps(pos, radii, passes=6, tol=1e-7, cache=None):
+def _resolve_overlaps(pos: np.ndarray, radii: np.ndarray, passes: int = 6, tol: float = 1e-7, cache: dict | None = None) -> tuple:
     """Project onto the non-overlap constraint via Gauss-Seidel pair separation.
 
     Returns ``(positions, cache)``; pass the cache back in on the next call.
@@ -600,9 +602,9 @@ def _resolve_overlaps(pos, radii, passes=6, tol=1e-7, cache=None):
     return pos, cache
 
 
-def _stage3_refine(positions, weights, edges, alpha=0.2, beta=1.0, iterations=1250,
-                   step_frac=0.05, pocket_every=25, overlap_passes=6, seed_scale=None,
-                   budget=None):
+def _stage3_refine(positions: np.ndarray, weights: np.ndarray, edges: np.ndarray, alpha: float = 0.2, beta: float = 1.0, iterations: int = 1250,
+                   step_frac: float = 0.05, pocket_every: int = 25, overlap_passes: int = 6, seed_scale: float | None = None,
+                   budget: Any = None) -> tuple:
     """Run Stage 3 (adds convexity). Returns (pos, s, report).
 
     ``s`` may only grow, never shrink: recomputing it fresh from the projection
@@ -653,7 +655,7 @@ def _stage3_refine(positions, weights, edges, alpha=0.2, beta=1.0, iterations=12
 # The packing core (paper Fig. 5 pipeline)
 # ===========================================================================
 
-def _default_radius(positions):
+def _default_radius(positions: np.ndarray) -> Any:
     span = float(np.ptp(positions, axis=0).max()) or 1.0
     return 0.5 * span / max(np.sqrt(len(positions)), 1.0)
 
@@ -670,13 +672,13 @@ class NeighborhoodPreservingPacking(object):
     box and returns larger radii.
     """
 
-    def __init__(self, positions, radii=None, weights=None,
-                 alpha=0.2, beta=1.0,
-                 power_iterations=60, force_iterations=1250,
-                 move_frac=0.35, step_frac=0.05, pocket_every=25,
-                 overlap_passes=6,
-                 repair=True, fit_mode='preserve_radii', bounds=None, padding=0.0,
-                 budget=None):
+    def __init__(self, positions: np.ndarray, radii: np.ndarray | None = None, weights: np.ndarray | None = None,
+                 alpha: float = 0.2, beta: float = 1.0,
+                 power_iterations: int = 60, force_iterations: int = 1250,
+                 move_frac: float = 0.35, step_frac: float = 0.05, pocket_every: int = 25,
+                 overlap_passes: int = 6,
+                 repair: bool = True, fit_mode: str = 'preserve_radii', bounds: Any = None, padding: float = 0.0,
+                 budget: Any = None) -> None:
         self.positions_in = np.asarray(positions, dtype=float).reshape(-1, 2)
         n = len(self.positions_in)
         if n == 0:
@@ -729,7 +731,7 @@ class NeighborhoodPreservingPacking(object):
         self.radii_raw = self.w * self.scale
         self.positions, self.radii = self._fit()
 
-    def _fit(self):
+    def _fit(self) -> tuple:
         pos, r = self.positions_raw, self.radii_raw
         if self.fit_mode == 'fill':
             lo, hi = _target_box(self.bounds, self.positions_in, self.radii_in, self.padding)
@@ -746,12 +748,12 @@ class NeighborhoodPreservingPacking(object):
         out = pos * k
         return out + (self.positions_in.mean(axis=0) - out.mean(axis=0)), self.radii_in
 
-    def overlaps(self):
+    def overlaps(self) -> float:
         """Largest non-overlap violation in the result; ~0 for a valid packing."""
         return _max_overlap(self.positions, self.radii)
 
 
-def _max_overlap(positions, radii):
+def _max_overlap(positions: np.ndarray, radii: np.ndarray) -> float:
     if len(positions) < 2:
         return 0.0
     d = np.linalg.norm(positions[:, None, :] - positions[None, :, :], axis=2)
@@ -760,7 +762,7 @@ def _max_overlap(positions, radii):
     return float(np.max(need - d))
 
 
-def _target_box(bounds, positions, radii, padding):
+def _target_box(bounds: Any, positions: np.ndarray, radii: np.ndarray, padding: float) -> tuple:
     if bounds is not None:
         lo = np.array([bounds[0], bounds[1]], dtype=float)
         hi = np.array([bounds[2], bounds[3]], dtype=float)
@@ -774,7 +776,7 @@ def _target_box(bounds, positions, radii, padding):
 # Graph-facing wrapper -- the linkp layout interface
 # ===========================================================================
 
-def _node_size_weights(g, nodes):
+def _node_size_weights(g: Any, nodes: list) -> np.ndarray:
     """Per-node radius weight = log(count), count = the node's flow volume.
 
     ``count`` is the node's total incident edge weight (the ``__count__`` the
@@ -822,9 +824,9 @@ class NCPLayout(object):
         :class:`NeighborhoodPreservingPacking`.
     """
 
-    def __init__(self, g, *, pos=None, selection=None,
-                 alpha=0.2, beta=1.0, power_iterations=60, force_iterations=1250,
-                 fit_mode='preserve_radii', **kwargs):
+    def __init__(self, g: Any, *, pos: dict | None = None, selection: set | None = None,
+                 alpha: float = 0.2, beta: float = 1.0, power_iterations: int = 60, force_iterations: int = 1250,
+                 fit_mode: str = 'preserve_radii', **kwargs: Any) -> None:
         pos = pos or {}
         _sel_ = set(selection) if selection else set()
 

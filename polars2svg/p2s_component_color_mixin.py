@@ -1,7 +1,36 @@
+from typing import Any
 import polars as pl
 
 
 class P2SComponentColorMixin:
+
+    # --- stat accumulators owned by this mixin ---------------------------
+    # Set to None before accumulation and filled as rows are folded in; the
+    # `is None` guards in __accumulateColorStats__ below rely on that.  Without
+    # these declarations each class infers its own type from whichever
+    # assignment it sees first, and the components (which declare them
+    # `float | None`) then conflict with the base.
+    _color_stat_min_:  float | None
+    _color_stat_max_:  float | None
+    _legend_stat_min_: float | None
+    _legend_stat_max_: float | None
+    # ---------------------------------------------------------------------
+    # Host-class attributes this mixin reads off `self`.
+    #
+    # A mixin is never instantiated on its own -- these are provided by whatever
+    # class mixes it in (ChP, LinkP).  Declared here so a checker
+    # can follow the mixin's own methods; bare annotations, so nothing exists at
+    # runtime and nothing is shadowed.
+    #
+    # Typed `Any` on purpose: the mixin genuinely does not know the concrete type,
+    # and several hosts declare the same name with a narrower type of their own.
+    # ---------------------------------------------------------------------
+    color:                   Any
+    color_stat_range_shared: Any
+    df:                      Any
+    node_color:              Any
+    p2s:                     Any
+
     #
     # P2SComponentColorMixin - shared edge/node color-resolution logic for the
     # graph components (LinkP, ChP). These five methods were byte-identical in
@@ -19,7 +48,7 @@ class P2SComponentColorMixin:
     #
     # __effectiveColorSpec__() - resolve the color spec for links or nodes
     #
-    def __effectiveColorSpec__(self, target):
+    def __effectiveColorSpec__(self, target: str) -> Any:
         if target == 'links': return self.color
         return self.node_color
 
@@ -29,7 +58,7 @@ class P2SComponentColorMixin:
     # Kinds: 'default' | 'fixed_hex' | 'categorical' | 'crow_magnitude' | 'crow_stretched' |
     #        'cset_magnitude' | 'cset_stretched' | 'stat_magnitude' | 'stat_stretched'
     #
-    def __colorModeInfo__(self, spec):
+    def __colorModeInfo__(self, spec: Any) -> dict:
         _p2s_ = self.p2s
         _cmag_  = {_p2s_.CMAGNITUDE_SUMp, _p2s_.CMAGNITUDE_MINp, _p2s_.CMAGNITUDE_MEDIANp,
                    _p2s_.CMAGNITUDE_MEANp, _p2s_.CMAGNITUDE_MAXp}
@@ -87,7 +116,7 @@ class P2SComponentColorMixin:
     #
     # __colorAggExprs__() - return agg expressions needed by a color mode (added into group_by().agg())
     #
-    def __colorAggExprs__(self, mode_info, prefix):
+    def __colorAggExprs__(self, mode_info: dict, prefix: str) -> list:
         kind = mode_info['kind']
         if kind in ('categorical', 'cset'):
             return [
@@ -114,7 +143,7 @@ class P2SComponentColorMixin:
     #
     # __applyColorToDF__() - add f'__{prefix}_hex__' column to an aggregated DataFrame
     #
-    def __applyColorToDF__(self, df, mode_info, prefix, default_hex):
+    def __applyColorToDF__(self, df: pl.DataFrame, mode_info: dict, prefix: str, default_hex: str) -> pl.DataFrame:
         kind    = mode_info['kind']
         col_hex = f'__{prefix}_hex__'
         if kind == 'fixed_hex':
@@ -184,7 +213,7 @@ class P2SComponentColorMixin:
     #
     # __validateColorSpec__() - raise ValueError if a node_color value is not a recognized form
     #
-    def __validateColorSpec__(self, spec, param_name, allow_dict=False):
+    def __validateColorSpec__(self, spec: Any, param_name: str, allow_dict: bool = False) -> None:
         if spec is None: return
         if isinstance(spec, dict):
             if not allow_dict:

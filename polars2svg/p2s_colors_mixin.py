@@ -1,3 +1,4 @@
+from typing import Any
 import polars as pl
 
 _HEX_DIGITS_ = frozenset('0123456789abcdefABCDEF')
@@ -16,7 +17,7 @@ _HEX_DIGITS_ = frozenset('0123456789abcdefABCDEF')
 #   result: '#ff000080' was a field name to xyp but a color to linkp. Every component
 #   now routes through this one function via isinstance(x, HexColorString).
 #
-def isHexColor(value):
+def isHexColor(value: Any) -> bool:
     if not isinstance(value, str) or len(value) < 4 or value[0] != '#':
         return False
     _body_ = value[1:]
@@ -25,7 +26,7 @@ def isHexColor(value):
     return all(_c_ in _HEX_DIGITS_ for _c_ in _body_)
 
 class P2SColorsMixin:
-    def __init__(self):
+    def __init__(self) -> None:
         pass
 
     # Expose the canonical detector as a callable for programmatic use / tests.
@@ -37,7 +38,7 @@ class P2SColorsMixin:
     #   it delegates to the module-level isHexColor() so the rule lives in one place.
     #
     class HexColorStringMeta(type):
-        def __instancecheck__(cls, instance):
+        def __instancecheck__(cls, instance: Any) -> bool:
             return isHexColor(instance)
 
     class HexColorString(metaclass=HexColorStringMeta):
@@ -46,7 +47,7 @@ class P2SColorsMixin:
     #
     # __p2s_colors_mixin_init__() - initialization via the mixin methodology
     #
-    def __p2s_colors_mixin_init__(self):
+    def __p2s_colors_mixin_init__(self) -> None:
         # to_color_lu holds only base hash-derived colors (never override results),
         # so it can persist across re-inits without going stale when overrides change.
         if not hasattr(self, 'to_color_lu'):
@@ -110,7 +111,7 @@ class P2SColorsMixin:
     # - overrides are resolved live (matching colorizeColumnPolarsOperations, which
     #   matches on the string cast of the value); only base colors are cached
     #
-    def color(self, _obj_):
+    def color(self, _obj_: str | tuple) -> str:
         if self.color_overrides_lu:
             _override_ = self.color_overrides_lu.get(_obj_ if isinstance(_obj_, str) else str(_obj_))
             if _override_ is not None: return _override_
@@ -128,7 +129,7 @@ class P2SColorsMixin:
     # - returns {value: hex_color} for every distinct value in _objs_
     # - one collect for all cache misses instead of one 1-row collect per miss
     #
-    def colors(self, _objs_):
+    def colors(self, _objs_: list | set) -> dict:
         _result_, _to_compute_ = {}, []
         for _obj_ in _objs_:
             if _obj_ in _result_: continue
@@ -155,14 +156,14 @@ class P2SColorsMixin:
     #
     # colorTyped() - return a typed color (usually a chart element, not a data element)
     #
-    def colorTyped(self, _type_, _subtype_): return self.color_type_lu[(_type_, _subtype_)]
+    def colorTyped(self, _type_: str, _subtype_: str) -> str: return self.color_type_lu[(_type_, _subtype_)]
 
     #
     # setColorOverrides() - register explicit hex colors for specific cell values
     # - overrides is a dict mapping cell value strings to hex color strings (#RRGGBB or #RGB)
     # - calling multiple times merges; later calls overwrite earlier ones for the same key
     #
-    def setColorOverrides(self, overrides):
+    def setColorOverrides(self, overrides: dict | list) -> None:
         if not isinstance(overrides, dict):
             raise ValueError(f'setColorOverrides(): expected dict, got {type(overrides).__name__}')
         for _k_, _v_ in overrides.items():
@@ -175,7 +176,7 @@ class P2SColorsMixin:
     # - keys may be a single string or any iterable of strings
     # - silently ignores keys that are not present
     #
-    def removeColorOverrides(self, keys):
+    def removeColorOverrides(self, keys: list | str) -> None:
         if isinstance(keys, str):
             keys = (keys,)
         for _k_ in keys:
@@ -188,7 +189,7 @@ class P2SColorsMixin:
     # - light_gray : RGB value for the minimum (0.0); defaults to 0.8 (#cccccc)
     # Mapping: 0.0 → light_gray (barely perceptible on white), 1.0 → 0.0 (black)
     #
-    def grayscaleSpectrumPolarsOperations(self, normalized_input, red_output, green_output, blue_output, light_gray=0.8):
+    def grayscaleSpectrumPolarsOperations(self, normalized_input: str, red_output: str, green_output: str, blue_output: str, light_gray: float = 0.8) -> list:
         _gray_ = (pl.lit(float(light_gray)) * (1.0 - pl.col(normalized_input))).clip(0.0, 1.0)
         return [
             _gray_.alias(red_output),
@@ -199,7 +200,7 @@ class P2SColorsMixin:
     #
     # colorSpectrumTuples() - return a list of rgb tuples for the color spectrum
     #
-    def colorSpectrumTuples(self):
+    def colorSpectrumTuples(self) -> list:
         _palette_   = self.spectrum_palette
         _list_      = []
         for i in range(len(_palette_)):
@@ -212,7 +213,7 @@ class P2SColorsMixin:
     # - normalized_{input} is a value between 0.0 and 1.0
     # - {red|green|blue}_output is the destination column of the calculated spectrum color
     #
-    def colorSpectrumPolarsOperations(self, normalized_input, red_output, green_output, blue_output):
+    def colorSpectrumPolarsOperations(self, normalized_input: str, red_output: str, green_output: str, blue_output: str) -> list:
         # Get the tuples & their mixture index (r, g, b, mix) where all values are between 0.0 and 1.0 ... the mix should come in sorted from 0.0 to 1.0
         _tuples_ = self.colorSpectrumTuples()
         _col_    = pl.col(normalized_input)
@@ -236,7 +237,7 @@ class P2SColorsMixin:
     # - this version is limited to exactly 5 colors
     # - the final version is in colorSpectrumPolarsOperations()
     #
-    def colorSpectrumPolarsOperations_LIMITED_TO_EXACTLY_FIVE(self, normalized_input, red_output, green_output, blue_output):
+    def colorSpectrumPolarsOperations_LIMITED_TO_EXACTLY_FIVE(self, normalized_input: str, red_output: str, green_output: str, blue_output: str) -> list:
         _tuples_ = self.colorSpectrumTuples()
         return [
             pl.when(pl.col(normalized_input) < _tuples_[1][3])
@@ -266,7 +267,7 @@ class P2SColorsMixin:
     # hexColorFromRGBTriplesPolarsOperations() - convert RGB triples to hex color strings
     # - red_column, green_column, blue_column are columns of type float from 0.0 to 1.0
     #
-    def hexColorFromRGBTriplesPolarsOperations(self, red_column, green_column, blue_column):
+    def hexColorFromRGBTriplesPolarsOperations(self, red_column: str, green_column: str, blue_column: str) -> pl.Expr:
         hex_digits = "0123456789abcdef"
         return  pl.concat_str([
                 pl.lit("#"),
@@ -283,7 +284,7 @@ class P2SColorsMixin:
     # float [0,1] r/g/b columns (the inverse of hexColorFromRGBTriplesPolarsOperations;
     # hex is the quantizer in both directions, so the round-trip is exact)
     #
-    def rgbFromHexPolarsOperations(self, hex_column, red_output, green_output, blue_output):
+    def rgbFromHexPolarsOperations(self, hex_column: str, red_output: str, green_output: str, blue_output: str) -> list:
         _c_ = pl.col(hex_column)
         return [
             (_c_.str.slice(1, 2).str.to_integer(base=16) / 255.0).alias(red_output),
@@ -296,7 +297,7 @@ class P2SColorsMixin:
     # - apply_overrides=False skips the color_overrides_lu when/then chain (used by color()/colors(),
     #   which resolve overrides in Python and cache only the base hash colors)
     #
-    def colorizeColumnPolarsOperations(self, input, apply_overrides=True):
+    def colorizeColumnPolarsOperations(self, input: Any, apply_overrides: bool = True) -> pl.Expr:
             _color_     = pl.col(input)
             _hc_        = _color_.hash()
             _hsv_h_     = (((_hc_ //  2**16) & 0x00ffff)/65535.0)

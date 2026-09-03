@@ -79,7 +79,9 @@ class _QTNode:
                 self._subdivide()
                 old, self.pts = self.pts, []
                 for p in old:
-                    for ch in self.children:  # type: ignore[union-attr]
+                    # _subdivide() just assigned self.children; mypy still has it
+                    # narrowed to None from the enclosing `is None` test.
+                    for ch in self.children:  # type: ignore[union-attr, attr-defined]
                         if ch.insert(p[0], p[1], p[2], capacity):
                             break
         else:

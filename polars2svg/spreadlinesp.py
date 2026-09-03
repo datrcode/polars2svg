@@ -1,3 +1,4 @@
+from typing import Any, TypedDict, Unpack, cast
 import polars as pl
 import random
 import time
@@ -37,6 +38,56 @@ from polars2svg.p2s_displaylist import (CLOUD_ICON_H, CLOUD_ICON_RX, CLOUD_ICON_
 #
 
 
+class SpreadLinesPKwargs(TypedDict, total=False):
+    """Keyword arguments accepted by ``p2s.spreadlinesp()`` / ``SpreadLinesP(...)``.
+
+    Every key is optional (``total=False``); the set is exactly SpreadLinesP._VALID_KWARGS,
+    which is what the constructor validates at runtime -- a name not listed here
+    raises TypeError.  Declaring it lets a type checker catch the misspelling
+    before the call runs, and gives editors completion over the parameter set.
+
+    Value types are deliberately conservative.  Most parameters are data-drivable
+    (they take a literal *or* a column name *or* a ``(field, enum)`` spec), so they
+    are typed ``Any`` rather than guessed at; the precise ones were each confirmed
+    against how the test suite actually calls them.
+    """
+    alter_inter_d:           Any
+    alter_separation_h:      Any
+    anno:                    Any
+    channel_inter_d:         Any
+    circle_inter_d:          Any
+    circle_spacer:           Any
+    color_stat_range_shared: Any
+    count:                   Any
+    count_range_shared:      Any
+    df:                      pl.DataFrame | None
+    draw_border:             bool
+    draw_context:            bool
+    draw_labels:             bool
+    ego:                     Any
+    h_collapsed_sections:    Any
+    highlight_nodes:         Any
+    legend:                  Any
+    max_bin_h:               Any
+    max_bin_w:               Any
+    max_channel_w:           Any
+    max_rings:               Any
+    min_channel_w:           Any
+    node_color:              Any
+    node_labels:             Any
+    r_min:                   Any
+    r_pref:                  Any
+    relationships:           Any
+    sm_shared:               set
+    template:                'SpreadLinesP | None'
+    time:                    Any
+    time_order:              Any
+    txt_h:                   Any
+    wxh:                     Any
+    x_ins:                   Any
+    y_ins:                   Any
+
+
 class SpreadLinesP(ExportMixin):
 
     _VALID_KWARGS = frozenset({
@@ -66,10 +117,84 @@ class SpreadLinesP(ExportMixin):
         'highlight_nodes',            # set/frozenset of node names to visually highlight
     })
 
-    def __init__(self, *args, **kwargs):
+    # ---------------------------------------------------------------------
+    # Parameters assigned onto the instance from _defaults_ by
+    # Polars2SVG.assignScratchDefaults() -- setattr(), so no checker can see them.
+    #
+    # Declarations, not assignments: bare annotations populate __annotations__
+    # and create no class attribute, so this block is a no-op at runtime.
+    #
+    # Types are deliberately conservative -- `Any` wherever a parameter is
+    # data-drivable (accepts a literal *or* a column name), which is most of
+    # them.  The job here is to make the attribute VISIBLE; the precise
+    # per-parameter contract lands in the Unpack[TypedDict] work (phase 2),
+    # which is where a caller-facing type belongs.
+    #
+    # tests/test_typing_surface.py::TestComponentAttrDeclarations checks this
+    # block against _VALID_KWARGS, so a new parameter fails the suite until it
+    # is declared here too.
+    # ---------------------------------------------------------------------
+    alter_inter_d:           int
+    alter_separation_h:      int
+    anno:                    dict
+    channel_inter_d:         int
+    circle_inter_d:          float
+    circle_spacer:           int
+    color_stat_range_shared: Any
+    count:                   Any
+    count_range_shared:      Any
+    draw_border:             bool
+    draw_context:            bool
+    draw_labels:             bool
+    ego:                     Any
+    h_collapsed_sections:    int
+    legend:                  bool
+    max_bin_h:               int
+    max_bin_w:               int
+    max_channel_w:           int
+    max_rings:               int
+    min_channel_w:           int
+    node_color:              Any
+    node_labels:             Any
+    r_min:                   float
+    r_pref:                  float
+    sm_shared:               set
+    time_order:              Any
+    txt_h:                   int
+    x_ins:                   int
+    y_ins:                   int
+
+    # --- state built during __init__/render, not passed in --------------
+    # Initialised to None and filled once the frame is resolved, so a checker
+    # infers `... | None` and flags every later use.  `Any` because these hold
+    # polars frames, display lists and cached statistics whose concrete types
+    # this class does not otherwise name.
+    _color_stat_max_: Any
+    _color_stat_min_: Any
+    _count_max_:      Any
+    _count_min_:      Any
+    _dl_body_:        Any
+    _dl_legend_:      Any
+    _gpu_dl_:         Any
+    _gpu_payload_:    dict | None
+    _legend_region_:  tuple | None
+    _ts_enum_:        Any
+    _ts_field_:       Any
+    df:               Any
+    df_orig:          pl.DataFrame | None
+    legend_info:      Any
+    template:         'SpreadLinesP | None'
+    vx0:              Any
+    vx1:              Any
+    vy0:              Any
+    vy1:              Any
+    svg: str
+    wxh: Any
+
+    def __init__(self, *args: Any, **kwargs: Unpack[SpreadLinesPKwargs]) -> None:
         self.t_start        = time.time()
         self.p2s            = polars2svg.Polars2SVG()
-        self.timing_metrics = {}
+        self.timing_metrics: dict = {}
         self.gatherMetrics(self.__parseInput__, *args, **kwargs)
         self.gatherMetrics(self.__validateInput__)
         if self.df is not None:
@@ -79,7 +204,7 @@ class SpreadLinesP(ExportMixin):
         self.t_end     = time.time()
         self.t_overall = self.t_end - self.t_start
 
-    def _repr_svg_(self): return self.svg
+    def _repr_svg_(self) -> str: return self.svg
 
     #
     # gpuDisplayList() / webgpu() - WebGPU representation of the same render.
@@ -93,7 +218,7 @@ class SpreadLinesP(ExportMixin):
     #
     # Lazy + cached; invalidated by __renderSVG__.
     #
-    def gpuDisplayList(self):
+    def gpuDisplayList(self) -> Any:
         if self.df is None or getattr(self, 'svg', None) is None: return None
         if getattr(self, '_gpu_dl_', None) is not None: return self._gpu_dl_
         _body_ = getattr(self, '_dl_body_', None)
@@ -106,14 +231,14 @@ class SpreadLinesP(ExportMixin):
         self._gpu_dl_ = _dl_
         return _dl_
 
-    def webgpu(self):
+    def webgpu(self) -> dict | None:
         if getattr(self, '_gpu_payload_', None) is not None: return self._gpu_payload_
         _dl_ = self.gpuDisplayList()
         if _dl_ is None: return None
         self._gpu_payload_ = _dl_.webgpu_payload(self.p2s.glyphAtlas())
         return self._gpu_payload_
 
-    def gatherMetrics(self, callable, *args, **kwargs):
+    def gatherMetrics(self, callable: Any, *args: Any, **kwargs: Any) -> int:
         t0 = time.time()
         _results_ = callable(*args, **kwargs)
         t1 = time.time()
@@ -126,14 +251,14 @@ class SpreadLinesP(ExportMixin):
     # __parseInput__
     # -------------------------------------------------------------------------
 
-    def __parseInput__(self, *args, **kwargs):
+    def __parseInput__(self, *args: Any, **kwargs: Unpack[SpreadLinesPKwargs]) -> None:
         _unknown_ = set(kwargs) - self._VALID_KWARGS
         if _unknown_:
             raise TypeError(f'SpreadLinesP: unexpected keyword argument(s): {sorted(_unknown_)}')
 
         # Single source of truth for every parameter (name -> from-scratch default);
         # drives both the from-scratch assignment and the keyword-override copy below.
-        _defaults_ = {
+        _defaults_: dict = {
             'relationships':          None,
             'ego':                    None,
             'time':                   None,   # str | (str, TimeLinearTypeP)
@@ -198,7 +323,7 @@ class SpreadLinesP(ExportMixin):
             self._color_stat_max_ = None
             # from-scratch builds only — a template clone is an exact snapshot and
             # must not re-apply session defaults (see Polars2SVG._apply_defaults)
-            kwargs = self.p2s._apply_defaults('spreadlinesp', kwargs)
+            kwargs = cast(SpreadLinesPKwargs, self.p2s._apply_defaults('spreadlinesp', kwargs))
 
         # DataFrame
         _new_df_ = None
@@ -280,14 +405,14 @@ class SpreadLinesP(ExportMixin):
             else: raise ValueError(f'SpreadLinesP: relationship tuple bad length: {_edge_!r}')
             _i_ += 1
 
-    def _createConcatColumn_(self, df, fields, new_col):
+    def _createConcatColumn_(self, df: pl.DataFrame, fields: tuple, new_col: str) -> pl.DataFrame:
         _parts_ = []
         for i, f in enumerate(fields):
             if i > 0: _parts_.append(pl.lit('|'))
             _parts_.append(pl.col(f).cast(pl.String))
         return df.with_columns(pl.concat_str(_parts_).alias(new_col))
 
-    def __countAggExpr__(self):
+    def __countAggExpr__(self) -> pl.Expr:
         if self.count == self.p2s.ROW_COUNTp:
             return pl.len().alias('__count__')
         elif isinstance(self.count, str):
@@ -304,7 +429,7 @@ class SpreadLinesP(ExportMixin):
             else:                            return pl.struct(_fields_).n_unique().alias('__count__')
         return pl.len().alias('__count__')
 
-    def __countFields__(self):
+    def __countFields__(self) -> set:
         if self.count == self.p2s.ROW_COUNTp: return set()
         if isinstance(self.count, str):        return {self.count}
         if isinstance(self.count, tuple):      return {_f_ for _f_ in self.count if isinstance(_f_, str)}
@@ -314,7 +439,7 @@ class SpreadLinesP(ExportMixin):
     # __validateInput__
     # -------------------------------------------------------------------------
 
-    def __validateInput__(self):
+    def __validateInput__(self) -> None:
         # Normalize legend= eagerly so a bad spec fails fast (raises InvalidSpecError).
         self.legend_spec = self.p2s.legendResolveSpec(self.legend)
         if self.df is None: return
@@ -338,7 +463,7 @@ class SpreadLinesP(ExportMixin):
     # Temporal binning helpers  (mirror timep's approach, tailored for bins)
     # -------------------------------------------------------------------------
 
-    def __linearTruncMap__(self):
+    def __linearTruncMap__(self) -> dict:
         """TimeLinearTypeP → dt.truncate()-compatible interval string."""
         p = self.p2s
         return {
@@ -354,7 +479,7 @@ class SpreadLinesP(ExportMixin):
             p.LT_Y_m_d_H_M_Sp:    '1s',
         }
 
-    def __linearEnumOrder__(self):
+    def __linearEnumOrder__(self) -> list:
         """Return enums coarsest → finest."""
         p = self.p2s
         return [
@@ -365,7 +490,7 @@ class SpreadLinesP(ExportMixin):
             p.LT_Y_m_d_H_M_15Sp, p.LT_Y_m_d_H_M_Sp,
         ]
 
-    def __dataGranularityCap__(self):
+    def __dataGranularityCap__(self) -> Any:
         """Return the finest TimeLinearTypeP allowed by actual data precision."""
         p = self.p2s
         if p.dateColumn(self.df, self._ts_field_):
@@ -388,7 +513,7 @@ class SpreadLinesP(ExportMixin):
         if                               all_on_min:    return p.LT_Y_m_d_H_Mp
         return p.LT_Y_m_d_H_M_Sp
 
-    def __autoResolveLinearEnum__(self):
+    def __autoResolveLinearEnum__(self) -> Any:
         """
         Pick the finest granularity where ego-containing bins fit within the
         canvas without overcrowding.
@@ -461,7 +586,7 @@ class SpreadLinesP(ExportMixin):
     # __calculateLayout__  — build per-bin alter sets
     # -------------------------------------------------------------------------
 
-    def __calculateLayout__(self):
+    def __calculateLayout__(self) -> None:
         # ── Normalise ego to a frozenset of strings ────────────────────────────
         if isinstance(self.ego, (list, set)):
             self.node_focus = frozenset(str(n) for n in self.ego)
@@ -579,10 +704,10 @@ class SpreadLinesP(ExportMixin):
 
         # ── Bin data structures ────────────────────────────────────────────────
         self.bin_to_timestamps             = {}   # bin_idx → ts_str
-        self.bin_to_alter1s                = {}   # bin_idx → {'fm': set, 'to': set}
-        self.bin_to_alter2s                = {}   # bin_idx → {'fm': set, 'to': set}
-        self.bin_to_focal_nodes_present    = {}   # bin_idx → set of ego nodes present
-        self.discontinuity_count_after_bin = {}   # bin_idx → count of absent timestamps
+        self.bin_to_alter1s: dict                = {}   # bin_idx → {'fm': set, 'to': set}
+        self.bin_to_alter2s: dict                = {}   # bin_idx → {'fm': set, 'to': set}
+        self.bin_to_focal_nodes_present: dict    = {}   # bin_idx → set of ego nodes present
+        self.discontinuity_count_after_bin: dict = {}   # bin_idx → count of absent timestamps
         self.bin_to_node_weights           = {}   # bin_idx → {node_str: weight}  (empty when count=ROW_COUNTp)
 
         _bin_        = 0
@@ -724,7 +849,7 @@ class SpreadLinesP(ExportMixin):
     # Helpers: node count in bin, node existence across bins
     # -------------------------------------------------------------------------
 
-    def _nodesInBin_(self, b):
+    def _nodesInBin_(self, b: int) -> set:
         s = set()
         if b in self.bin_to_alter1s:
             s |= self.bin_to_alter1s[b].get('fm', set())
@@ -734,7 +859,7 @@ class SpreadLinesP(ExportMixin):
             s |= self.bin_to_alter2s[b].get('to', set())
         return s
 
-    def _nodesExistInOtherBins_(self, b):
+    def _nodesExistInOtherBins_(self, b: Any) -> set:
         me = self._nodesInBin_(b)
         others = set()
         for ob in list(self.bin_to_alter1s.keys()) + list(self.bin_to_alter2s.keys()):
@@ -746,7 +871,7 @@ class SpreadLinesP(ExportMixin):
     # Node color
     # -------------------------------------------------------------------------
 
-    def __nodeColor__(self, node):
+    def __nodeColor__(self, node: str) -> str:
         _ns_ = str(node)
         if self.node_color is None or self.node_color == self.p2s.COLOR_BY_NODE_NAME:
             _c_ = self._node_color_lu_.get(_ns_)
@@ -768,8 +893,8 @@ class SpreadLinesP(ExportMixin):
     #   Returns (node_to_xy, left_overs, out_of) or (None, None, None)
     # -------------------------------------------------------------------------
 
-    def packable(self, nodes, x, y, y_max, w_max, mul,
-                 r_min, r_pref, circle_inter_d, circle_spacer):
+    def packable(self, nodes: list, x: float, y: float, y_max: float, w_max: int, mul: int,
+                 r_min: float, r_pref: float, circle_inter_d: float, circle_spacer: int) -> tuple:
         node_to_xy = {}
         h          = abs(y - y_max)
         n          = len(nodes)
@@ -800,6 +925,8 @@ class SpreadLinesP(ExportMixin):
                 out_of        = nodes_per_col
                 if left_overs > 0: m += 1
                 tw = m * (2 * r) + (m - 1) * circle_spacer
+                _cols_: list
+                _col_: list
                 _cols_, _col_ = [], []
                 for _node_ in nodes:
                     col_i = len(_col_)
@@ -834,8 +961,8 @@ class SpreadLinesP(ExportMixin):
     #     svgToDisplayList() uses, so a curve cannot land in two different places
     # -------------------------------------------------------------------------
 
-    def __roundedRectToDL__(self, dl, x, y, w, h, rx, fill=None, fill_opacity=1.0,
-                            stroke=None, stroke_w=0.0, stroke_opacity=1.0, scissor=None):
+    def __roundedRectToDL__(self, dl: Any, x: float, y: float, w: float, h: float, rx: float, fill: str | None = None, fill_opacity: float = 1.0,
+                            stroke: str | None = None, stroke_w: float = 0.0, stroke_opacity: float = 1.0, scissor: tuple | None = None) -> None:
         if fill is not None and fill != 'none':
             dl.rect(x, y, w, h, fill, rx=rx, opacity=fill_opacity, svg='', scissor=scissor)
         if stroke is not None and stroke != 'none' and stroke_w > 0:
@@ -846,7 +973,7 @@ class SpreadLinesP(ExportMixin):
     # The selection ring around a collapsed ego: the SVG strokes the cloud outline,
     # so on the GPU it rings the cloud's rounded-rect stand-in, 2px outside the
     # silhouette.  scissor reproduces the partial-selection clip window.
-    def __selectionRingToDL__(self, dl, x, y, color, scissor=None):
+    def __selectionRingToDL__(self, dl: Any, x: float, y: float, color: str, scissor: tuple | None = None) -> None:
         self.__roundedRectToDL__(dl, x - CLOUD_ICON_W / 2.0 - 2, y - CLOUD_ICON_H / 2.0 - 2,
                                  CLOUD_ICON_W + 4, CLOUD_ICON_H + 4, CLOUD_ICON_RX + 2,
                                  stroke=color, stroke_w=2.0, scissor=scissor)
@@ -857,21 +984,21 @@ class SpreadLinesP(ExportMixin):
 
     # dl records the same primitives this method emits as SVG (world coordinates --
     # __renderSVG__ maps the whole body into canvas pixels once the viewBox is known).
-    def renderAlter(self, nodes, befores, afters, x, y, y_max, w_max, mul,
-                    r_min, r_pref, circle_inter_d, circle_spacer,
-                    h_collapsed_sections, _bin_, _alter_, _alter_side_,
-                    node_weights=None, dl=None):
+    def renderAlter(self, nodes: list, befores: set, afters: set, x: float, y: float, y_max: float, w_max: int, mul: int,
+                    r_min: float, r_pref: float, circle_inter_d: float, circle_spacer: int,
+                    h_collapsed_sections: int, _bin_: int, _alter_: int, _alter_side_: str,
+                    node_weights: dict | None = None, dl: Any = None) -> tuple:
         xmin, ymin, xmax, ymax = x, y, x, y
         node_to_xyrepstat = {}
         svg               = []
 
-        def _nodeState_(seen_before, seen_after):
+        def _nodeState_(seen_before: bool, seen_after: bool) -> str:
             if   seen_before and seen_after: return 'continuous'
             elif seen_before:                return 'stopped'
             elif seen_after:                 return 'started'
             else:                            return 'isolated'
 
-        def _triangle_(tx, ty, r, s, d):
+        def _triangle_(tx: float, ty: float, r: float, s: float, d: int) -> str:
             nonlocal xmin, ymin, xmax, ymax
             p0 = (tx + d * (r / 2.0),  ty)
             p1 = (tx + d * (r + s),    ty + r)
@@ -884,7 +1011,7 @@ class SpreadLinesP(ExportMixin):
             if dl is not None: dl.polygon([p0, p1, p2], _co_, svg='')
             return f'<path d="{_path_}" stroke="none" fill="{_co_}" />'
 
-        def _cloud_triangle_(tx, ty, offset, s, d):
+        def _cloud_triangle_(tx: float, ty: float, offset: int, s: int, d: int) -> str:
             nonlocal xmin, ymin, xmax, ymax
             p0 = (tx + d * offset,        ty)
             p1 = (tx + d * (offset + s),  ty + s)
@@ -897,7 +1024,7 @@ class SpreadLinesP(ExportMixin):
             if dl is not None: dl.polygon([p0, p1, p2], _co_, svg='')
             return f'<path d="{_path_}" stroke="none" fill="{_co_}" />'
 
-        def _place_(n2xy):
+        def _place_(n2xy: dict) -> None:
             nonlocal xmin, ymin, xmax, ymax, svg
             for _node_, _xyr_ in n2xy.items():
                 _co_  = self.__nodeColor__(_node_)
@@ -928,7 +1055,7 @@ class SpreadLinesP(ExportMixin):
                 node_to_xyrepstat[_node_] = _xyrepstat_
                 self.bin_to_node_to_xyrepstat[_bin_][_node_] = _xyrepstat_
 
-        def _cloud_(n, y_cloud, ltriangle, rtriangle, nodes_in_cloud):
+        def _cloud_(n: int, y_cloud: float, ltriangle: bool, rtriangle: bool, nodes_in_cloud: list) -> None:
             nonlocal xmin, ymin, xmax, ymax, svg
             _cloud_co_ = self.p2s.colorTyped('axis', 'default')
             svg.append(
@@ -1046,7 +1173,7 @@ class SpreadLinesP(ExportMixin):
     # -------------------------------------------------------------------------
 
     @staticmethod
-    def _cloud_outline_d_(cx, cy):
+    def _cloud_outline_d_(cx: float, cy: float) -> str:
         x, y = cx, cy
         return (
             f'M {x+2.27:.2f} {y-7.14:.2f}'
@@ -1068,9 +1195,9 @@ class SpreadLinesP(ExportMixin):
     # svgCrossConnect() — Bézier curve joining two points across bins
     # -------------------------------------------------------------------------
 
-    def svgCrossConnect(self, x0, y0, x1, y1,
-                        launch=None, shift0=None, shift1=None,
-                        color='#000000', width=1.0, dl=None):
+    def svgCrossConnect(self, x0: float, y0: float, x1: float, y1: float,
+                        launch: Any = None, shift0: Any = None, shift1: Any = None,
+                        color: str = '#000000', width: float = 1.0, dl: Any = None) -> str:
         if launch is None: launch = (x1 - x0) * 0.1
         if shift0 is None: shift0 = 0
         if shift1 is None: shift1 = 0
@@ -1086,8 +1213,8 @@ class SpreadLinesP(ExportMixin):
     # bubbleNumberOnLine() — channel label pill
     # -------------------------------------------------------------------------
 
-    def bubbleNumberOnLine(self, x0, x1, y, txt,
-                           color='#c0c0c0', width=2.0, dl=None):
+    def bubbleNumberOnLine(self, x0: float, x1: float, y: float, txt: str,
+                           color: str = '#c0c0c0', width: float = 2.0, dl: Any = None) -> str:
         _txt_h_  = self.txt_h
         _txt_w_  = len(str(txt)) * _txt_h_ * 0.62
         xm       = (x0 + x1) / 2.0
@@ -1122,7 +1249,7 @@ class SpreadLinesP(ExportMixin):
     # _smoothedPath_() — closed polygon with rounded corners
     # -------------------------------------------------------------------------
 
-    def _smoothedPath_(self, points, corner_r=8.0):
+    def _smoothedPath_(self, points: list, corner_r: float = 8.0) -> str:
         """
         Convert a closed polygon (list of (x,y) tuples) into an SVG path
         with rounded corners.
@@ -1137,18 +1264,18 @@ class SpreadLinesP(ExportMixin):
         if n < 2:
             return ''
 
-        def _unit_(a, b):
+        def _unit_(a: tuple, b: tuple) -> tuple:
             dx, dy = b[0] - a[0], b[1] - a[1]
             d = (dx * dx + dy * dy) ** 0.5
             return (dx / d, dy / d) if d > 1e-9 else (1.0, 0.0)
 
-        def _dist_(a, b):
+        def _dist_(a: tuple, b: tuple) -> float:
             return ((b[0] - a[0]) ** 2 + (b[1] - a[1]) ** 2) ** 0.5
 
-        def _offset_(pt, uv, r):
+        def _offset_(pt: tuple, uv: tuple, r: float) -> tuple:
             return (pt[0] + uv[0] * r, pt[1] + uv[1] * r)
 
-        def _corner_(i):
+        def _corner_(i: int) -> tuple:
             """(pre_corner, post_corner, corner_pt) for vertex i of the polygon."""
             p_prev = points[(i - 1) % n]
             p_curr = points[i]
@@ -1190,8 +1317,8 @@ class SpreadLinesP(ExportMixin):
     # _binOutlinePoints_() — polygon corners for the metro-map bin outline
     # -------------------------------------------------------------------------
 
-    def _binOutlinePoints_(self, x, y, w2, ind, r_pref,
-                           a1fm, a2fm, a1to, a2to):
+    def _binOutlinePoints_(self, x: float, y: float, w2: float, ind: float, r_pref: float,
+                           a1fm: tuple | None, a2fm: tuple | None, a1to: tuple | None, a2to: tuple | None) -> list:
         """
         Return the clockwise corner sequence (list of (x,y) tuples) that
         describes the metro-map bin boundary.  Starting from the left edge
@@ -1257,7 +1384,7 @@ class SpreadLinesP(ExportMixin):
     # renderBin() — render a full temporal bin column
     # -------------------------------------------------------------------------
 
-    def renderBin(self, b, x, y, max_w, max_h, dl=None):
+    def renderBin(self, b: int, x: float, y: float, max_w: int, max_h: int, dl: Any = None) -> tuple:
         r_min                = self.r_min
         r_pref               = self.r_pref
         circle_inter_d       = self.circle_inter_d
@@ -1457,7 +1584,7 @@ class SpreadLinesP(ExportMixin):
     # a categorical swatch list.  Decision A: fixed hex / explicit dict node colors
     # carry no data-driven semantics, so a truthy legend silently reserves nothing.
     #
-    def __legendPrepare__(self):
+    def __legendPrepare__(self) -> None:
         self.legend_info      = None
         self._legend_region_  = None
         self._legend_reserve_ = (0, 0, 0, 0)
@@ -1486,7 +1613,7 @@ class SpreadLinesP(ExportMixin):
         # transform (the content is letterbox-fitted, so the strip position depends
         # on the fitted bounds)
 
-    def __renderSVG__(self, rand_id):
+    def __renderSVG__(self, rand_id: int) -> None:
         self._gpu_dl_ = self._gpu_payload_ = None   # invalidate cached GPU state
         self._dl_body_ = None
         self.__legendPrepare__()
@@ -1504,7 +1631,7 @@ class SpreadLinesP(ExportMixin):
         max_channel_w   = self.max_channel_w
         channel_inter_d = self.channel_inter_d
 
-        svg = []
+        svg: list = []
 
         # ── GPU recording layers ───────────────────────────────────────────────
         # Everything below is emitted in *world* coordinates and mapped into canvas
@@ -1529,7 +1656,7 @@ class SpreadLinesP(ExportMixin):
         # ── Reset per-render state ─────────────────────────────────────────────
         self.vx0 = self.vy0 = self.vx1 = self.vy1 = None
         self.bin_to_bounds            = {}
-        self.bin_to_node_to_xyrepstat = {}
+        self.bin_to_node_to_xyrepstat: dict = {}
 
         if not self.bin_to_timestamps:
             # No data — blank
@@ -1564,9 +1691,9 @@ class SpreadLinesP(ExportMixin):
             self.vy1 = max(self.vy1, _bnd_[3] + 3 * channel_inter_d)
 
         # ── Channel allocation ─────────────────────────────────────────────────
-        bin_to_nodes_to_channel          = {}
+        bin_to_nodes_to_channel: dict          = {}
         max_n_channel, min_n_channel     = 0, int(1e9)
-        tuple_to_channel_geom            = {}
+        tuple_to_channel_geom: dict            = {}
         channel_tuples                   = []
 
         for _fm_to_ in ['to', 'fm']:
@@ -1649,7 +1776,7 @@ class SpreadLinesP(ExportMixin):
         # ── Direct connects and channel end-connectors ─────────────────────────
         # Each connect goes to its own DisplayList so the compose step can replay them
         # in the order svg.insert(0) leaves them in (newest underneath).
-        def _connect_(*args, **kwargs):
+        def _connect_(*args: Any, **kwargs: Any) -> str:
             _d_ = _mkdl_()
             _dl_connects_.append(_d_)
             return self.svgCrossConnect(*args, dl=_d_, **kwargs)
@@ -1891,8 +2018,10 @@ class SpreadLinesP(ExportMixin):
     # Small multiples / render_with
     # -------------------------------------------------------------------------
 
-    def renderSmallMultiples(self, df_all, df_lu, all_key):
+    def renderSmallMultiples(self, df_all: Any, df_lu: dict, all_key: Any) -> dict:
         return {k: SpreadLinesP(df=v, template=self) for k, v in df_lu.items()}
 
-    def render_with(self, df, **overrides):
+    def render_with(self, df: pl.DataFrame, **overrides: Any) -> Any:
+        # `overrides` cannot be Unpack[SpreadLinesPKwargs]: PEP 692 rejects a TypedDict
+        # that repeats a named parameter, and `df` is both.
         return SpreadLinesP(df=df, template=self, **overrides)

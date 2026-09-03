@@ -17,7 +17,7 @@
 #
 
 from dataclasses import dataclass, field
-from typing import Callable, Optional, Tuple
+from typing import Any, Callable, Optional, Tuple
 
 
 @dataclass(frozen=True)
@@ -138,12 +138,12 @@ LAYOUT_TREATMENTS = {
 }
 
 
-def treatment_for(label):
+def treatment_for(label: str) -> Any:
     '''The declaration for a layout-operation menu label; CHEAP when none is recorded.'''
     return LAYOUT_TREATMENTS.get(label, CHEAP)
 
 
-def menu_annotation(treatment, unit='nodes'):
+def menu_annotation(treatment: Any, unit: str = 'nodes') -> str | None:
     '''The suffix a picker shows for an operation that will stop to ask, or None.
 
     Static, from the declaration rather than from the current graph: the menus are

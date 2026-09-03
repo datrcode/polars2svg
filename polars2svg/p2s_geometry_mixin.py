@@ -1,3 +1,4 @@
+from typing import Any
 import polars as pl
 import math
 import random
@@ -8,10 +9,10 @@ from .udist_scatterplots_via_sectors_tile_opt import UDistScatterPlotsViaSectors
 from .exceptions import DataError
 
 class P2SGeometryMixin:
-    def __init__(self):
+    def __init__(self) -> None:
         pass
 
-    def __p2s_geometry_mixin_init__(self):
+    def __p2s_geometry_mixin_init__(self) -> None:
         pass
 
     #
@@ -19,7 +20,7 @@ class P2SGeometryMixin:
     # - P. Heckbert. Nice numbers for graph labels. In A. Glassner, editor, Graphics Gems, pages 61–63.
     #   Academic Press, Boston, 1990.
     #
-    def heckbertNiceNumbers(self, n_ticks, _min_, _max_):
+    def heckbertNiceNumbers(self, n_ticks: int, _min_: float, _max_: float) -> float:
         # Handle the degenerate case (part i)
         if n_ticks < 1: n_ticks = 1
         # Handle the degenerate case (part ii)
@@ -39,14 +40,14 @@ class P2SGeometryMixin:
         I_nice = _base_nice_ * 10**E
         return I_nice
 
-    def heckbertFirstGridLine(self, i_nice, _min_, _max_):
+    def heckbertFirstGridLine(self, i_nice: float, _min_: float, _max_: float) -> float:
         return math.floor(_min_ / i_nice) * i_nice
 
     # -------------------------------------------------------------------------
     # Ported from rtsvg/rt_graph_layouts_mixin.py (David Trimm, Apache 2.0)
     # -------------------------------------------------------------------------
 
-    def positionExtents(self, pos, _graph=None):
+    def positionExtents(self, pos: dict, _graph: Any = None) -> tuple:
         x0 = y0 = x1 = y1 = None
         if _graph is not None:
             from_structure = set(_graph.nodes())
@@ -62,28 +63,30 @@ class P2SGeometryMixin:
             y0 = y if y0 is None else min(y0, y)
             x1 = x if x1 is None else max(x1, x)
             y1 = y if y1 is None else max(y1, y)
-        if x0 == x1: x0, x1 = x0 - 0.5, x1 + 0.5
-        if y0 == y1: y0, y1 = y0 - 0.5, y1 + 0.5
+        # The loop above sets all four together; they are only still None for an
+        # empty position set, which the callers do not produce.
+        if x0 == x1: x0, x1 = x0 - 0.5, x1 + 0.5  # type: ignore[operator]
+        if y0 == y1: y0, y1 = y0 - 0.5, y1 + 0.5  # type: ignore[operator]
         return x0, y0, x1, y1
 
     # -------------------------------------------------------------------------
     # Ported from rtsvg/rt_geometry_mixin.py (David Trimm, Apache 2.0)
     # -------------------------------------------------------------------------
 
-    def segmentLength(self, _segment_):
+    def segmentLength(self, _segment_: tuple) -> float:
         dx, dy = _segment_[1][0] - _segment_[0][0], _segment_[1][1] - _segment_[0][1]
         return sqrt(dx*dx+dy*dy)
 
-    def unitVector(self, _segment_):
+    def unitVector(self, _segment_: tuple) -> tuple:
         dx, dy = _segment_[1][0] - _segment_[0][0], _segment_[1][1] - _segment_[0][1]
         _len_  = sqrt(dx*dx+dy*dy)
         if _len_ < 0.0001: _len_ = 1.0
         return (dx/_len_, dy/_len_)
 
-    def circlesOverlap(self, c0, c1):
+    def circlesOverlap(self, c0: tuple, c1: tuple) -> bool:
         return (c0[0] - c1[0])**2 + (c0[1] - c1[1])**2 < (c0[2] + c1[2])**2
 
-    def overlappingCirclesIntersections(self, c0, c1):
+    def overlappingCirclesIntersections(self, c0: tuple, c1: tuple) -> tuple:
         R, r  = c0[2], c1[2]
         d  = self.segmentLength((c0, c1))
         if d == 0.0: raise DataError('overlappingCirclesIntersections(): circles have the same center')
@@ -94,12 +97,12 @@ class P2SGeometryMixin:
         return (c0[0] + uv[0]*x + pp[0] * (a/2.0), c0[1] + uv[1]*x + pp[1] * (a/2.0)), \
                (c0[0] + uv[0]*x - pp[0] * (a/2.0), c0[1] + uv[1]*x - pp[1] * (a/2.0))
 
-    def intersectionPoint(self, line1, line2):
-        def floatify(line): return (float(line[0][0]), float(line[0][1])), (float(line[1][0]), float(line[1][1]))
+    def intersectionPoint(self, line1: tuple, line2: tuple) -> tuple:
+        def floatify(line: tuple) -> tuple: return (float(line[0][0]), float(line[0][1])), (float(line[1][0]), float(line[1][1]))
         line1, line2 = floatify(line1), floatify(line2)
         xdiff = (line1[0][0] - line1[1][0], line2[0][0] - line2[1][0])
         ydiff = (line1[0][1] - line1[1][1], line2[0][1] - line2[1][1])
-        def det(a, b): return a[0] * b[1] - a[1] * b[0]
+        def det(a: tuple, b: tuple) -> float: return a[0] * b[1] - a[1] * b[0]
         div = det(xdiff, ydiff)
         if abs(div) < 0.0001 or div == 0: return None
         d = (det(*line1), det(*line2))
@@ -107,8 +110,8 @@ class P2SGeometryMixin:
         y = det(d, ydiff) / div
         return x, y
 
-    def lineSegmentIntersectionPoint(self, line, segment):
-        def floatify(line): return (float(line[0][0]), float(line[0][1])), (float(line[1][0]), float(line[1][1]))
+    def lineSegmentIntersectionPoint(self, line: tuple, segment: tuple) -> tuple:
+        def floatify(line: tuple) -> tuple: return (float(line[0][0]), float(line[0][1])), (float(line[1][0]), float(line[1][1]))
         line, segment = floatify(line), floatify(segment)
         results = self.intersectionPoint(line, segment)
         if results is None: return None
@@ -124,7 +127,7 @@ class P2SGeometryMixin:
             if t >= 0.0 and t <= 1.0: return segment[0][0] + t * dx, y
         return None
 
-    def closestPointOnSegment(self, _segment_, _pt_):
+    def closestPointOnSegment(self, _segment_: tuple, _pt_: tuple) -> tuple:
         if _segment_[0][0] == _segment_[1][0] and _segment_[0][1] == _segment_[1][1]:
             dx, dy = _pt_[0] - _segment_[0][0], _pt_[1] - _segment_[0][1]
             return sqrt(dx*dx+dy*dy), _segment_[0]
@@ -147,11 +150,11 @@ class P2SGeometryMixin:
                 if    d0 < d1:             return sqrt(d0), _segment_[0]
                 else:                      return sqrt(d1), _segment_[1]
 
-    def smallestEnclosingCircleApprox(self, points):
+    def smallestEnclosingCircleApprox(self, points: list) -> tuple:
         _sec_ = SmallestEnclosingCircle(points)
         return (_sec_.center[0], _sec_.center[1], _sec_.radius)
 
-    def packCircles(self, circles, into_circle=None):
+    def packCircles(self, circles: list, into_circle: Any = None) -> list:
         _cp_      = CirclePacker(self, circles)
         _circles_ = _cp_.packedCircles(into_circle)
         return _circles_
@@ -163,8 +166,8 @@ class P2SGeometryMixin:
     # -------------------------------------------------------------------------
 
     def uniformSampleDistributionInScatterplotsViaSectorBasedTransformation(
-            self, df, x_field, y_field, weight_field=None, static_field=None,
-            iterations=32, vector_scalar=0.01):
+            self, df: pl.DataFrame, x_field: str, y_field: str, weight_field: str | None = None, static_field: str | None = None,
+            iterations: int = 32, vector_scalar: float = 0.01) -> pl.DataFrame:
         _weights_, _statics_ = None, None
         if weight_field is not None: _weights_ = df[weight_field]
         if static_field is not None: _statics_ = df[static_field]
@@ -189,7 +192,7 @@ class P2SGeometryMixin:
 # -------------------------------------------------------------------------
 
 class SmallestEnclosingCircle(object):
-    def __init__(self, points):
+    def __init__(self, points: list) -> None:
         if not points:
             self.center, self.radius = (0, 0), 0
             return
@@ -202,27 +205,27 @@ class SmallestEnclosingCircle(object):
         self.center = circle[0]
         self.radius = circle[1]
 
-    def _min_circle_with_point(self, points, p):
+    def _min_circle_with_point(self, points: list, p: list | tuple) -> tuple:
         circle = (p, 0)
         for i in range(len(points)):
             if not self._is_inside(points[i], circle):
                 circle = self._min_circle_with_2_points(points[:i+1], p, points[i])
         return circle
 
-    def _min_circle_with_2_points(self, points, p1, p2):
+    def _min_circle_with_2_points(self, points: list, p1: list | tuple, p2: list | tuple) -> tuple:
         circle = self._circle_from_2_points(p1, p2)
         for i in range(len(points)):
             if not self._is_inside(points[i], circle):
                 circle = self._circle_from_3_points(p1, p2, points[i])
         return circle
 
-    def _circle_from_2_points(self, p1, p2):
+    def _circle_from_2_points(self, p1: list | tuple, p2: list | tuple) -> tuple:
         cx = (p1[0] + p2[0]) / 2
         cy = (p1[1] + p2[1]) / 2
         r  = sqrt((p1[0] - p2[0])**2 + (p1[1] - p2[1])**2) / 2
         return ((cx, cy), r)
 
-    def _circle_from_3_points(self, p1, p2, p3):
+    def _circle_from_3_points(self, p1: list | tuple, p2: list | tuple, p3: list | tuple) -> tuple:
         ax, ay = p1
         bx, by = p2
         cx, cy = p3
@@ -234,7 +237,7 @@ class SmallestEnclosingCircle(object):
         r  = sqrt((ax - ux)**2 + (ay - uy)**2)
         return ((ux, uy), r)
 
-    def _furthest_pair_circle(self, points):
+    def _furthest_pair_circle(self, points: list) -> tuple:
         max_dist = 0
         pair = (points[0], points[1])
         for i in range(len(points)):
@@ -245,7 +248,7 @@ class SmallestEnclosingCircle(object):
                     pair = (points[i], points[j])
         return self._circle_from_2_points(pair[0], pair[1])
 
-    def _is_inside(self, point, circle):
+    def _is_inside(self, point: list | tuple, circle: tuple) -> bool:
         (cx, cy), r = circle
         dist = sqrt((point[0] - cx)**2 + (point[1] - cy)**2)
         return dist <= r + 1e-10

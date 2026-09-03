@@ -1,3 +1,5 @@
+from typing import Any
+import polars as pl
 import param
 from panel.reactive import ReactiveHTML
 
@@ -8,7 +10,7 @@ from . import od_flow_layout as _ofl_
 # Reuses od_flow_layout's cached GPU probe (mx is None when mlx isn't installed at all;
 # _default_device() falls back to mx.cpu when the GPU backend probe fails) so this never
 # runs a second, redundant device-resolution kernel.
-def _mlxCudaStatus_():
+def _mlxCudaStatus_() -> tuple:
     mx = _ofl_.mx
     if mx is None:
         return False, False
@@ -25,11 +27,11 @@ def _mlxCudaStatus_():
 _INDICATOR_LABELS_ = ('MLX', 'CUDA')
 
 
-def _statusTxtH_(txt_h):
+def _statusTxtH_(txt_h: int) -> int:
     return max(6, txt_h - 2)
 
 
-def headerHeight(txt_h=10):
+def headerHeight(txt_h: int = 10) -> int:
     """Vertical space the indicator header claims from the frame stack's budget."""
     return len(_INDICATOR_LABELS_) * (_statusTxtH_(txt_h) + 4)
 
@@ -57,21 +59,21 @@ def headerHeight(txt_h=10):
 # fixed height of one skip label. Costs are tracked as budget deltas (icon
 # cost minus any skip-label saved by newly closing a gap) so a merge that
 # collapses a gap can be cheaper than its raw icon cost.
-def _placement(n, index, avail, slot, ell_h):
+def _placement(n: int, index: int, avail: int, slot: int, ell_h: int) -> tuple:
     if n <= 1:
         return 0, 0, True, True, 0, 0
 
-    def _gap_below_(lo, base_on):
+    def _gap_below_(lo: int, base_on: bool) -> int:
         if lo == 0:
             return 0
         return (lo - 1) if base_on else lo
 
-    def _gap_above_(hi, top_on):
+    def _gap_above_(hi: int, top_on: bool) -> int:
         if hi == n - 1:
             return 0
         return (n - 2 - hi) if top_on else (n - 1 - hi)
 
-    def _label_cost_(count):
+    def _label_cost_(count: int) -> int:
         return ell_h if count > 0 else 0
 
     lo = hi = index
@@ -159,7 +161,7 @@ _STACK_KEYBOARD_COMMANDS_ = (
 )
 
 
-def _stackKeyboardHelpSvg_():
+def _stackKeyboardHelpSvg_() -> str:
     _lines_ = _STACK_KEYBOARD_COMMANDS_.split('\n')
     _hw_    = max(len(_l_) for _l_ in _lines_) * 7 + 20
     _hh_    = len(_lines_) * 14 + 12
@@ -173,13 +175,15 @@ def _stackKeyboardHelpSvg_():
 _STACK_HELP_SVG_ = _stackKeyboardHelpSvg_()
 
 
-def stack_controli(component, stack_name='default', insets=(2, 2), hgap=4,
-                   wxh=(160, 256), txt_h=10, **kwargs):
+def stack_controli(component: Any, stack_name: str = 'default', insets: tuple = (2, 2), hgap: int = 4,
+                   wxh: tuple = (160, 256), txt_h: int = 10, **kwargs: Any) -> Any:
     w, h   = wxh
     wc, hc = component.wxh
     x0_val     = insets[0]
     inset_y_val = insets[1]
-    _cls_ref_ = [None]
+    # One-element cell holding the class that `type()` builds below; filled after
+    # construction, so the checker cannot infer anything but None from the literal.
+    _cls_ref_: list = [None]
     _mlx_avail_, _cuda_avail_ = _mlxCudaStatus_()
     _row_txt_h_ = int(min(10, max(1, (hc - 4) / 2)))
 
@@ -194,7 +198,7 @@ def stack_controli(component, stack_name='default', insets=(2, 2), hgap=4,
             f'stack_controli: wxh height {h} is too small (need >= {_min_h_}) for the '
             f'MLX/CUDA header, one icon, and two "... N stack frame(s) ..." labels')
 
-    def _render_svg_content(dfs, index, cache):
+    def _render_svg_content(dfs: list, index: int, cache: dict) -> tuple:
         p2s_ref = component.p2s
         x0      = x0_val
         inset_y = inset_y_val
@@ -226,7 +230,7 @@ def stack_controli(component, stack_name='default', insets=(2, 2), hgap=4,
         y_top  = inset_y + _header_h_
         avail  = y_base - y_top
 
-        def _add_frame(df, y, stack_idx):
+        def _add_frame(df: pl.DataFrame, y: float, stack_idx: int) -> None:
             # Cache entries are (df, tile_svg): id() alone is an unsafe key because a
             # dropped frame's id can be reused by a later dataframe, so guard every
             # hit with an identity check and re-render on a mismatch.
@@ -258,7 +262,7 @@ def stack_controli(component, stack_name='default', insets=(2, 2), hgap=4,
                          f' fill="none" stroke="{_border_}" stroke-width="1"/>')
             frame_map.append((y, y + hc, stack_idx))
 
-        def _add_skip_label(y, count):
+        def _add_skip_label(y: float, count: int) -> None:
             noun     = 'frame' if count == 1 else 'frames'
             label    = f'... {count} stack {noun} ...'
             cx       = w / 2   # centered on the full widget width so it can't clip off the left edge
@@ -348,10 +352,10 @@ def stack_controli(component, stack_name='default', insets=(2, 2), hgap=4,
         _initial_dfs_, _initial_index_ = _initial_stack_['dfs'], _initial_stack_['index']
     else:
         _initial_dfs_, _initial_index_ = [component.df_orig], 0
-    _initial_cache_ = {}
+    _initial_cache_: dict = {}
     _initial_svg_, _initial_frame_map_ = _render_svg_content(_initial_dfs_, _initial_index_, _initial_cache_)
 
-    def __init__(self, **kwargs):
+    def __init__(self: Any, **kwargs: Any) -> None:
         mvc = kwargs.pop('mvc', None)
         super(_cls_ref_[0], self).__init__(**kwargs)
         self.mvc         = mvc
@@ -371,14 +375,14 @@ def stack_controli(component, stack_name='default', insets=(2, 2), hgap=4,
     # _broadcastStackChange() — push the (already mutated) stack out to every view
     # registered on the same stack name, so peers re-render in lock-step.  Shared
     # by the click handler and the keyboard ops below.
-    async def _broadcastStackChange(self, sn, df, dfs, index):
+    async def _broadcastStackChange(self: Any, sn: str, df: pl.DataFrame, dfs: list, index: int) -> None:
         for vid, vsn in self.mvc.view_stack.items():
             if vsn == sn:
                 view = self.mvc.view_refs.get(vid)
                 if view is not None:
                     await view.display(df, dfs, index)
 
-    async def applyClickOp(self, event):
+    async def applyClickOp(self: Any, event: Any) -> None:
         cy  = self.click_y
         idx = None
         for (y_top, y_bot, stack_idx) in self._frame_map_:
@@ -404,7 +408,7 @@ def stack_controli(component, stack_name='default', insets=(2, 2), hgap=4,
     #                                (or just [base] when the base itself is visible)
     #   'rebase'   (ctrl+shift+c) -> discard the whole stack and make the visible
     #                                dataframe the new base, leaving [current]
-    async def applyKeyOp(self, event):
+    async def applyKeyOp(self: Any, event: Any) -> None:
         _op_ = self.key_op_finished
         if _op_:
             self.key_op_finished = ''      # reset so an identical next press re-fires
@@ -431,7 +435,7 @@ def stack_controli(component, stack_name='default', insets=(2, 2), hgap=4,
         elif _op_ == 'rebase':
             await self.mvc.replaceStack(self, cur_df)
 
-    async def display(self, df, dfs, dfs_index):
+    async def display(self: Any, df: pl.DataFrame, dfs: list, dfs_index: int) -> None:
         if df is not dfs[dfs_index]:
             return
         svg, fm          = _render_svg_content(dfs, dfs_index, self._svg_cache_)
@@ -442,7 +446,7 @@ def stack_controli(component, stack_name='default', insets=(2, 2), hgap=4,
             if _id_ not in _ids_:
                 del self._svg_cache_[_id_]
 
-    def sketchHtml(self, use_webgpu=False):
+    def sketchHtml(self: Any, use_webgpu: bool = False) -> str | None:
         # Static snapshot for panelizeSketch(): the current stack frame already
         # lives in mod_inner as a complete <svg>...</svg>, so reuse it verbatim.
         return self.mod_inner or None

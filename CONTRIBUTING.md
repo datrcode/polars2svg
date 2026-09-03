@@ -115,13 +115,73 @@ surrounding code rather than reflowing it to a generic style guide:
   attributes.
 - **Dynamic `setattr()`-bound enums** — most `*p=`/`*P=` constant tables
   (color modes, size modes, etc.) are bound onto instances rather than
-  declared as class attributes; this is intentional (see the `[tool.mypy]`
-  comment in `pyproject.toml` for why the public surface is fully typed but
-  these internals are not).
-- Public API surface (`Polars2SVG.__init__`, the component factory methods,
-  `tField`, `panelize`, the exported layout classes) should stay fully typed —
-  `uvx mypy polars2svg` runs in CI and only checks these signatures
-  (internals are exempted via `disable_error_code` in `pyproject.toml`).
+  declared as class attributes. The binding stays dynamic, but every bound
+  member is now *declared* in a class-level annotation block (see
+  `polars2svg.py`, just above `__init__`) so type checkers can see it. Add a
+  member to an enum and you must add it to that block —
+  `tests/test_typing_surface.py` fails until you do.
+
+## Type annotations
+
+**New and modified functions must be fully annotated** — a return type and
+every parameter (`self`/`cls` excepted). This applies to internals, not just
+the public API.
+
+This reversed a previous policy. The codebase was deliberately untyped
+internally on the grounds that annotating it would be prohibitively large; a
+2026-09-02 audit measured that instead, and found ~72% of what mypy reports
+comes from a handful of undeclared dynamic attribute surfaces rather than from
+missing signatures. Declaring those is cheap, so the annotation work is now
+tractable and is proceeding module by module.
+
+Two ratchets enforce it, and both only move one way:
+
+- `[[tool.mypy.overrides]]` in `pyproject.toml` lists modules that are fully
+  annotated and holds them to `disallow_untyped_defs` with every relaxed error
+  code re-enabled. Add a module when you finish it; never remove one.
+- `TestAnnotationCoverageRatchet` in `tests/test_typing_surface.py` caps the
+  number of unannotated functions per module. Adding an untyped function fails
+  the suite; annotating one means lowering that module's number in the same
+  commit (a ceiling left above the real count also fails).
+
+So: to annotate a module, type its functions, lower its ceiling to the new
+count, and — if it reaches 0 — add it to the mypy override list. Expect the
+promotion to surface latent findings; that is the point of it.
+
+The migration itself is finished: every module except `interactive_controller.py`
+is fully annotated, and that one is *permanently relaxed* by decision — it builds
+its widget classes at runtime and lives behind the `interactive` extra, so there
+is nothing static to check. Don't "finish" it. Its ceiling still applies, and new
+code in it is still expected to be typed.
+
+### Adding a component parameter
+
+A parameter appears in **four** places, and the test suite checks all four
+against each other, so a partial addition fails rather than shipping:
+
+1. `_VALID_KWARGS` on the component class — what the constructor accepts at
+   runtime (an unlisted name raises `TypeError`).
+2. `_defaults_` in `__init__` — its default value.
+3. The class-level declaration block — so `self.<param>` type-checks inside the
+   component (the values are assigned by `setattr`, which no checker can follow).
+4. The `<Component>Kwargs` TypedDict — so `p2s.xyp(..., <param>=...)` type-checks
+   at the *call site*, and editors complete it.
+
+Keep the TypedDict's value type conservative. Most parameters are data-drivable
+(a literal *or* a column name *or* a `(field, enum)` spec) and are typed `Any` on
+purpose: a too-narrow type here rejects valid user code, which is worse than no
+type at all. The precise ones were each confirmed against how the test suite
+actually calls them — do the same before tightening one.
+
+The public API surface (`Polars2SVG.__init__`, the component factory methods,
+`tField`, `panelize`, the exported layout classes) has always been typed and
+must stay that way — `uvx mypy polars2svg` runs in CI. Never weaken a public
+annotation to satisfy the checker.
+
+One trap worth knowing: do **not** add `from __future__ import annotations` to
+`polars2svg.py`. It stringifies annotations, and `test_typing_surface.py`
+asserts on the evaluated objects (`__init__`'s return annotation must *be*
+`None`, not `'None'`). The `>=3.12` floor means it is rarely needed anyway.
 
 ## Adding a new component
 

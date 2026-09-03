@@ -9,6 +9,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Typed keyword arguments: `p2s.xyp(...)` and friends now catch a misspelled
+  parameter before the call runs.** Every component takes `**kwargs` validated at
+  runtime against `_VALID_KWARGS`, which meant a downstream user got a correct
+  return type and *nothing at all* for the ~30 parameters that actually matter --
+  no completion, no checking. Each factory method is now typed
+  `**kwargs: Unpack[<Component>Kwargs]` ([PEP 692], available on the `>=3.12`
+  floor), covering **269 parameters across the nine components**:
+
+  ```python
+  p2s.xyp(df, x='a', y='b', dot_sze=6)
+  # error: Unexpected keyword argument "dot_sze" for "xyp"; did you mean "dot_size"?
+  ```
+
+  The nine TypedDicts (`XYpKwargs`, `LinkPKwargs`, `ChPKwargs`, `HistopKwargs`,
+  `TimepKwargs`, `SpreadLinesPKwargs`, `PiepKwargs`, `SmallpKwargs`, `TileKwargs`)
+  are exported from the package root so callers can annotate their own dicts:
+
+  ```python
+  opts: p2s.XYpKwargs = {'dot_size': 6, 'wxh': (400, 300)}
+  p2s.xyp(df, x='a', y='b', **opts)
+  ```
+
+  `ChPKwargs` sits behind the same optional-extra guard as `ChP` itself, since
+  chordp imports scipy at module level.
+
+  **Value types are evidence-based, not guessed.** 77 of the 269 carry a precise
+  type; the rest are `Any` because they are data-drivable (a literal *or* a column
+  name *or* a `(field, enum)` spec) and a narrower guess would reject valid calls.
+  Each precise type was confirmed against how the test suite actually calls it,
+  which vetoed 15 that a reading of the defaults would have gotten wrong -- most
+  usefully `legend` (defaults to `False`, but also takes `'top'` and a dict) and
+  `wxh` (defaults to a tuple, but also takes a list, and an int on histop/smallp).
+  Positional `*args` stays `Any`: it dispatches on argument *type*, not position.
+
+  A parameter now appears in four places -- `_VALID_KWARGS`, `_defaults_`, the
+  class declaration block, and the `Kwargs` TypedDict -- and all four are
+  test-enforced against each other, so drift fails the suite rather than shipping.
+
+  [PEP 692]: https://peps.python.org/pep-0692/
+
 - **`tile(svg_list, ...)`** — composes already-rendered SVGs into one document: any
   component, any SVG string, or another `tile()`, mixed freely. It is the only method on
   `Polars2SVG` that takes renderings rather than a DataFrame, and it is the counterpart to
@@ -75,6 +115,160 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with the invented version.
 
 ### Changed
+
+- **Narrowed 114 component attribute declarations from `Any` to their real types.**
+  A review of the finished migration flagged the `Any` count — 967 bare `Any`, 24.8% of
+  all annotations — as higher than it should be. Most of the component class declarations
+  turned out to be lazy rather than principled: they were generated in bulk keyed on
+  "initialised to `None`", and the whole batch got one type.
+
+  Instrumenting the suite to record what is actually assigned gave a clean single type
+  (plus `None`) for most of them — `df_orig: pl.DataFrame | None`,
+  `template: 'XYp | None'`, `legend_info: LegendInfo | None`,
+  `_gpu_dl_: DisplayList | None`, `_gpu_payload_: dict | None`. 114 were applied, keeping
+  only those that cost **zero** new checker errors. Bare `Any` is down to 823 (21.1%).
+
+  It also **removed four errors from the strict-promotion backlog** (PLANNING.md §11,
+  71 → 67) and cleared one module out of it entirely: once the components declared
+  `_color_stat_min_`/`_max_` and `_legend_stat_min_`/`_max_` as `float | None`, the
+  conflict with `P2SComponentColorMixin` — which had been *inferring* `float` for them
+  from an assignment while its own guards test them against `None` — became visible. They
+  are now declared in the mixin that owns the concept.
+
+  What deliberately stayed `Any`: **`df` on every component**, where `pl.DataFrame | None`
+  is the true type but produced 137 errors on its own (every unguarded `self.df.…` in the
+  render paths — the §11 T4 cascade in concentrated form); `Piep._fixed_color_`, which is
+  assigned a `HexColorString` that no checker can see as a `str` until the T5 virtual-class
+  item is fixed; and the genuinely data-drivable parameters (`color=`, `count=`,
+  `dot_size=`), which accept a literal *or* a column name *or* a `(field, enum)` tuple by
+  design.
+
+- **Phase 3 is complete: wave E, and the whole package is annotated.**
+  `spreadlinepi`, `stack_control` and `p2s_interactive_mixin` — 53 functions, all
+  three promoted to the strict ratchet. **43 of 44 modules are at zero unannotated
+  functions**, and every one of them is strictly checked: the ratchet now covers
+  29 modules, up from 3 when the migration started.
+
+  Overall coverage is **86.5%** (926 of 1,071 functions) — **100% of everything
+  outside `interactive_controller.py`**, which is now *permanently relaxed* by
+  decision rather than left pending. It builds its widget classes at runtime with
+  `type('LINKPI', (ReactiveHTML,), {...})` and keeps its state in Panel/param
+  descriptors, so there is nothing static to check; it also sits behind the
+  `interactive` extra and is invisible to the public typed surface. Annotating it
+  would mean a wall of `Any` and `type: ignore` for no checkable benefit. Its
+  ceiling still applies, so it cannot get worse, and new code in it is still
+  expected to be typed. `TestPermanentlyRelaxedModule` keeps that decision
+  bounded and visible, and asserts every *other* module reached zero.
+
+  The migration's arc, for the record: 4.9% annotated and 2,423 errors under an
+  exploratory `check_untyped_defs` run at the start; 88 errors now, none of them
+  `attr-defined`.
+
+- **Phase 3 wave D: the eight render components.** `xyp`, `linkp`, `chordp`,
+  `spreadlinesp`, `piep`, `timep`, `histop`, `smallp` — 396 functions, the largest
+  wave and the one the golden-image tests cover. Annotation coverage is now
+  **81.5%** (873 of 1,071 functions) with **40 of 44 modules at zero**; `histop`,
+  `timep` and `smallp` joined the strict ratchet (26 modules).
+
+  Most of wave D's 203 initial errors traced to one root, and it was the same one
+  phase 1 solved for `setattr`-assigned parameters: **120 attributes across the
+  eight components are initialised to `None` in `__init__` and filled during
+  render**, so a checker infers `... | None` and flags every later use. Declaring
+  them cleared 152 errors. Among them were `SpreadLinesP`'s `vx0/vy0/vx1/vy1`,
+  the unguarded-`None` arithmetic left open since phase 1.
+
+  `xyp`, `linkp`, `chordp`, `piep` and `spreadlinesp` are fully annotated but not
+  yet promoted — 19 strict errors between them, mostly return types that need
+  widening plus the caller guards widening then demands. That work is deliberately
+  left rather than half-applied: it changes `None`-handling in the render paths.
+
+- **Phase 3 wave C: the core class and the layout algorithms.** `polars2svg.py`,
+  `ncp_layout`, `flow_field_background`, `od_flow_layout` and
+  `udist_scatterplots_via_sectors_tile_opt` — 163 functions. All five were
+  promoted to the strict ratchet, which now covers **23 of 44 modules**; overall
+  annotation coverage is **44.5%** (477 of 1,071 functions), with 32 modules at
+  zero unannotated.
+
+  Wave C exposed a third blind spot in trace-seeded annotation, and this one had
+  already shipped in waves A and B: **a parameter the tests only ever pass `None`
+  to comes back annotated `None`**, which is not a type — nothing but `None` can
+  be passed. 29 parameters across nine modules were affected. All are now `Any`,
+  and a fourth invariant in `TestAnnotationSanity` rejects the annotation outright.
+
+- **Phase 3 (waves A and B) of the typing migration: 259 functions annotated,
+  annotation coverage 4.9% -> 29.3%.** The twelve leaf modules (wave A, 61
+  functions) and the ten mixins (wave B, 198) are now fully annotated -- 27 of
+  44 modules are at zero unannotated functions, and the strict `[[tool.mypy.overrides]]`
+  ratchet grew from 3 modules to 18.
+
+  Annotations were **seeded from a runtime trace of the test suite** rather than
+  guessed: a profile hook recorded the actual argument and return types of every
+  call into the target modules across all 3,108 tests. That is evidence, not
+  inference, but it has two blind spots, and both produced wrong annotations that
+  a type checker could not have caught:
+
+  - **It never sees a branch the tests do not take.** `optimalInscriptionCircle()`
+    and `__approximateInscribedCircle__()` came back as `-> None` while both
+    actually return tuples.
+  - **`sys.setprofile` reports a return of `None` when a call leaves via an
+    exception**, so a function whose failure paths all `raise` looks Optional.
+    `_svgRootWxh_()` came back `-> tuple | None` though every failure path raises.
+
+  Three new whole-package invariants in `tests/test_typing_surface.py::TestAnnotationSanity`
+  close both blind spots permanently, checking the annotations against the AST
+  rather than against usage: a parameter defaulting to `None` must be Optional; a
+  function returning Optional must have a path that yields `None`; a function
+  annotated `-> None` must not return a value. The first caught 11 wrong
+  annotations (8 of them pre-existing, from before this migration).
+
+- **Phase 1 of the typing migration: the whole dynamic attribute surface is now
+  declared, and `attr-defined` is at zero.** Under an exploratory
+  `check_untyped_defs` run the package reported 2,423 errors, 1,825 of them
+  "has no attribute" from just 261 distinct names. Those came from three
+  setattr()-driven surfaces, all now carrying class-level declaration blocks:
+
+  | Surface | Declarations | Errors cleared |
+  |---|---:|---:|
+  | `Polars2SVG` enum members (phase 1a) | 92 | 636 |
+  | Component parameters from `_defaults_` (phase 1b) | 197 | 907 |
+  | Mixin host attributes + `__slots__`/`__dict__` records (phase 1c) | 111 | 324 |
+
+  2,423 -> 556 errors (-77%), with **no `attr-defined` left anywhere**. Every
+  block is bare annotations, so nothing exists at runtime and no instance state
+  is shadowed -- a test asserts that for each one.
+
+  Component parameter types are deliberately conservative: `Any` wherever a
+  parameter is data-drivable (accepts a literal *or* a column name), which the
+  generator detected by looking for `isinstance(self.X, ...)` dispatch in the
+  code. Mixin host attributes are `Any` throughout, since a mixin genuinely does
+  not know its host's concrete types. Precise caller-facing parameter types are
+  phase 2's `Unpack[TypedDict]` work, which is where they belong.
+
+  New guards in `tests/test_typing_surface.py`: `TestComponentAttrDeclarations`
+  closes the triangle with the existing `assertParamSpecMatches()` runtime check
+  (`_VALID_KWARGS` == `_defaults_` == declarations), and
+  `TestEnumMemberDeclarations` does the same for the enum block.
+
+- **Type annotations are now required on new code, reversing the previous policy.**
+  `pyproject.toml` used to state that the internals were dynamically typed on purpose
+  and that annotating them would be "boiling the ocean for no downstream benefit". An
+  audit measured that claim: 4.9% of the package's 1,071 functions were fully annotated,
+  but ~72% of everything mypy reports came from three *undeclared dynamic attribute
+  surfaces* -- not from missing signatures. Declaring an attribute surface is cheap, so
+  the annotation work is tractable after all and is now underway module by module.
+
+  The first of those surfaces is done: the 92 enum members that `Polars2SVG.__init__`
+  flattens onto the instance with `setattr()` loops are now declared in a class-level
+  annotation block, which removed 631 spurious "has no attribute" errors. They are bare
+  annotations, so nothing changes at runtime -- no class attribute is created and no
+  instance state is shadowed.
+
+  Two one-way ratchets keep it moving: `[[tool.mypy.overrides]]` holds finished modules
+  to `disallow_untyped_defs` with every relaxed error code re-enabled (`laguerre_voronoi`,
+  `layout_budget`, `layout_protocol` to start), and `TestAnnotationCoverageRatchet` caps
+  the unannotated-function count per module so adding an untyped function fails the suite.
+  `index` and `func-returns-value` were dropped from `disable_error_code` after measuring
+  zero occurrences of either. See CONTRIBUTING.md for the workflow.
 
 - **Golden coverage for `draw_link_labels=`, which previously had none.** Two new goldens --
   `linkp_link_labels_curve` (`<textPath>` along the drawn Bezier) and `linkp_link_labels_line`
@@ -153,6 +347,69 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   block, so the "cloud present" path stays covered.
 
 ### Fixed
+
+- **`stack_control.sketchHtml()` was annotated `-> str` but returns
+  `self.mod_inner or None`** — and `None` is the documented "defer to
+  `_repr_svg_()`" signal in the `SketchRepresentable` protocol.
+- **The runtime-built widget classes hid their own `self`.** `stack_control` and
+  `spreadlinepi` define the methods of their `type()`-constructed classes as
+  module-level functions, where `self` is an ordinary parameter; 18 of them were
+  unannotated and invisible to a per-method coverage count.
+- **`render_with(df, **overrides)` could not take `Unpack[<Component>Kwargs]`** —
+  PEP 692 rejects a `**kwargs` TypedDict that repeats a named parameter, and `df`
+  is both. It stays `Any`, with a comment saying why.
+- **`Polars2SVG._apply_defaults()` typed its mapping as `dict`**, which a
+  `TypedDict` is not assignable to — the same phase-2 incompatibility already
+  fixed in `assignKwargOverrides()`. Now `Mapping[str, Any]`.
+- **`webgpu()` returns `None` when the component has no display list** but was
+  annotated `-> dict` on all eight components.
+- **`xyp.__constructOrderColumns__()` computed `_is_dict_` and then branched on
+  it** in three places, which no checker can narrow through; now an inline
+  `isinstance`, and the now-unused variable is gone.
+- **`udist_scatterplots_via_sectors_tile_opt` built and discarded a tuple per
+  statement in 21 places** (`_lu_['a0'].append(x), _lu_['a0u'].append(y)`), inside
+  the per-sector loops; `od_flow_layout` had one more in its flow-indexing loop.
+  Rewritten with `;`.
+- **`ncp_layout._stage2_crossing_edge()` returns `None` when no edges cross** but
+  was annotated `-> tuple`.
+- **`Polars2SVG.assignKwargOverrides()` / `assignKwargsWithDefaults()` typed their
+  mapping as `dict`**, which a `TypedDict` is not assignable to — the phase-2
+  `Unpack` work made components pass exactly that. Now `Mapping[str, Any]`.
+- **Eleven parameters annotated non-optional while defaulting to `None`** --
+  `chordp` (2), `p2s_graph_mixin` (3), `tfdp_layout` (2), `circle_packer`,
+  `interactive_controller`, `p2s_interactive_mixin`, `p2s_legend_mixin`,
+  `p2s_render_mixin`. Eight predate this migration.
+- **`p2s_graph_mixin.rectangularLayout()` used `isinstance(nodes, list) == False`**
+  in three places; rewritten as `not isinstance(...)`, which reads better and lets
+  a checker narrow the type.
+- **`circle_packer` held a tuple expression used to sequence two statements**
+  (`seen.add(next), seen.add(prev)`), building and discarding a tuple per iteration
+  of the pack loop.
+- **`_svgRootWxh_()`, `optimalInscriptionCircle()`, `__approximateInscribedCircle__()`
+  and `Tile.gatherMetrics()` had return types contradicted by their own code** --
+  see the trace blind spots above.
+- **`chordp` / `piep` small-multiple kwargs dicts.** `_kwargs_` is a heterogeneous
+  dispatch dict seeded with `sm_shared` (a `set`), which pinned its value type and
+  made every later `_kwargs_['...'] = <list/tuple>` an error. Now annotated
+  `dict[str, Any]`, and `renderSmallMultiples()` is annotated with it.
+- **`chordp` `node_gap` is a float, not an int.** Its default is the literal `2`,
+  but the ring layout assigns `0.0` to it when the nodes do not fit.
+- **`circle_packer`'s host reference was typed `object`.** It calls
+  `overlappingCirclesIntersections()`, `circlesOverlap()` and three other geometry
+  helpers on `rt_self`, so `object` was too narrow to be true.
+
+- **`layout_budget.Budget` attribute types.** `stopped_at`, `note`, `_t0_` and `_total_`
+  were initialized to `None` with no annotation, so a checker inferred their type as
+  `None` and every later assignment in `start()`/`_stop_()` was an error. Now annotated
+  `Optional[...]`.
+- **`laguerre_voronoi` suppression that suppressed nothing.** The quadtree insert loop
+  carried `# type: ignore[union-attr]` on a line whose actual error code is `attr-defined`
+  (mypy narrows `self.children` to exactly `None` inside the enclosing `is None` test, and
+  `_subdivide()` reassigning it is invisible), so the ignore covered nothing. The code list
+  now matches. No runtime assert was added -- that line is the insert hot loop.
+
+  Both were found by promoting those modules into the typing ratchet, which is what the
+  promotion step is for.
 
 - **A label map is no longer mistakable for the flag that turns labels on.** `node_labels=`
   supplies the `{name: display_str}` map; `draw_node_labels=` turns the labels on. One prefix

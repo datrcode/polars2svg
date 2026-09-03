@@ -1,30 +1,44 @@
+from typing import Any
 import polars as pl
 import re
 import operator
 from functools import reduce
 
 class P2SPolarsMixin:
-    def __init__(self):
+    # ---------------------------------------------------------------------
+    # Host-class attributes this mixin reads off `self`.
+    #
+    # A mixin is never instantiated on its own -- these are provided by whatever
+    # class mixes it in (Polars2SVG).  Declared here so a checker
+    # can follow the mixin's own methods; bare annotations, so nothing exists at
+    # runtime and nothing is shadowed.
+    #
+    # Typed `Any` on purpose: the mixin genuinely does not know the concrete type,
+    # and several hosts declare the same name with a narrower type of their own.
+    # ---------------------------------------------------------------------
+    logger: Any
+
+    def __init__(self) -> None:
         pass
 
-    def __p2s_polars_mixin_init__(self):
+    def __p2s_polars_mixin_init__(self) -> None:
         pass
 
     # -------------------------------------------------------------------------
     # Ported from rtsvg/rtsvg.py (David Trimm, Apache 2.0)
     # -------------------------------------------------------------------------
 
-    def copyDataFrame(self, df):
+    def copyDataFrame(self, df: pl.DataFrame) -> pl.DataFrame:
         return df.clone()
 
-    def flattenTuple(self, _tuple_):
-        _ls_ = []
+    def flattenTuple(self, _tuple_: tuple) -> tuple:
+        _ls_: list = []
         for x in _tuple_:
             if isinstance(x, tuple): _ls_.extend(self.flattenTuple(x))
             else:                    _ls_.append(x)
         return tuple(_ls_)
 
-    def createConcatColumn(self, df, columns, new_column):
+    def createConcatColumn(self, df: pl.DataFrame, columns: tuple, new_column: str) -> pl.DataFrame:
         to_concat_new, str_casts = [], []
         for x in columns:
             if df[x].dtype != pl.String:
@@ -34,7 +48,7 @@ class P2SPolarsMixin:
                 to_concat_new.append(pl.col(x))
         return df.with_columns(*str_casts).with_columns(pl.concat_str(to_concat_new, separator='|').alias(new_column))
 
-    def polarsFilterColumnsWithNaNs(self, df, cols):
+    def polarsFilterColumnsWithNaNs(self, df: pl.DataFrame, cols: tuple) -> pl.DataFrame:
         exprs = [pl.col(col).is_not_null() for col in cols]
         if len(exprs) == 0:
             return df
@@ -47,7 +61,7 @@ class P2SPolarsMixin:
     # - handles duplicate column names
     # - performs simple precision operations -- only {_column_:.2f}
     #
-    def polarsConcatString(self, s):
+    def polarsConcatString(self, s: str) -> list:
         _matches_ = []
         for _match_ in re.findall(r'{[a-zA-Z0-9_\-. :]+}', s): _matches_.append(_match_)
         _parts_ = []

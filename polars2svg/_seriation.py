@@ -31,7 +31,7 @@ except ImportError:
 _DENSE_MAX = 512
 
 
-def affinityFromFeatures(F, similarity='cosine'):
+def affinityFromFeatures(F: np.ndarray, similarity: str = 'cosine') -> np.ndarray:
     '''Build a symmetric category x category affinity matrix from the feature
     matrix F (n_categories x n_features, non-negative counts / weights).
 
@@ -61,7 +61,7 @@ def affinityFromFeatures(F, similarity='cosine'):
     return S
 
 
-def connectedComponents(S):
+def connectedComponents(S: np.ndarray) -> list:
     '''Index arrays for the connected components of the affinity graph S.
 
     Components come back in order of their smallest member index, so the result
@@ -84,7 +84,7 @@ def connectedComponents(S):
     return _comps_
 
 
-def _fiedlerVector(S, normalize=True):
+def _fiedlerVector(S: np.ndarray, normalize: bool = True) -> np.ndarray:
     '''Return the Fiedler vector of the graph defined by affinity S.
 
     S must be CONNECTED.  On a connected graph the Laplacian's zero eigenvalue is
@@ -125,7 +125,7 @@ def _fiedlerVector(S, normalize=True):
     return _anchorSign(_vecs_[:, 1])
 
 
-def _anchorSign(v):
+def _anchorSign(v: np.ndarray) -> np.ndarray:
     '''Fix the reflection ambiguity: an eigenvector and its negation are equally
     valid, and which one comes back is solver/permutation dependent.  Orienting on
     the largest-magnitude entry makes a component's order reproducible run to run.
@@ -134,7 +134,7 @@ def _anchorSign(v):
     return -v if v[_i_] < 0.0 else v
 
 
-def spectralOrder(labels, F, similarity='cosine', normalize=True):
+def spectralOrder(labels: list, F: np.ndarray, similarity: str = 'cosine', normalize: bool = True) -> list:
     '''Order `labels` (one per row of F) by spectral seriation.
 
     Returns a new list -- the labels sorted by their Fiedler-vector component.

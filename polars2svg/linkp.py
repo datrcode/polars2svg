@@ -1,3 +1,4 @@
+from typing import Any, TypedDict, Unpack, cast
 import polars as pl
 import random
 import time
@@ -12,6 +13,79 @@ from polars2svg.p2s_background_mixin import P2SBackgroundMixin
 from polars2svg.exceptions import DataError
 from polars2svg.od_flow_layout import ODFlowLayout
 from polars2svg.layout_budget import Budget
+
+class LinkPKwargs(TypedDict, total=False):
+    """Keyword arguments accepted by ``p2s.linkp()`` / ``LinkP(...)``.
+
+    Every key is optional (``total=False``); the set is exactly LinkP._VALID_KWARGS,
+    which is what the constructor validates at runtime -- a name not listed here
+    raises TypeError.  Declaring it lets a type checker catch the misspelling
+    before the call runs, and gives editors completion over the parameter set.
+
+    Value types are deliberately conservative.  Most parameters are data-drivable
+    (they take a literal *or* a column name *or* a ``(field, enum)`` spec), so they
+    are typed ``Any`` rather than guessed at; the precise ones were each confirmed
+    against how the test suite actually calls them.
+
+    Keys wrapped in underscores are internal -- smallp sets them when it shares
+    state across small-multiple panels; callers have no reason to pass them.
+    """
+    _shared_view_x_:          Any
+    _shared_view_y_:          Any
+    background:               Any
+    background_fill:          Any
+    background_label_color:   Any
+    background_opacity:       Any
+    background_stroke:        Any
+    background_stroke_w:      Any
+    bounds_percent:           Any
+    color:                    Any
+    color_stat_range_shared:  Any
+    convex_hull_labels:       bool
+    convex_hull_lu:           dict | None
+    convex_hull_opacity:      Any
+    convex_hull_stroke_width: Any
+    count:                    Any
+    count_range_shared:       Any
+    df:                       pl.DataFrame | None
+    draw_border:              bool
+    draw_link_labels:         bool
+    draw_node_labels:         bool
+    flowmap_backend:          Any
+    flowmap_iterations:       Any
+    flowmap_max_flows:        int | None
+    flowmap_samples:          Any
+    flowmap_time_budget:      int | None
+    insets:                   tuple
+    label_ellipsis:           bool
+    label_line_width:         Any
+    label_max_lines:          Any
+    label_only:               Any
+    legend:                   Any
+    link_arrows:              bool
+    link_labels:              Any
+    link_opacity:             Any
+    link_shape:               Any
+    link_size:                Any
+    link_size_range:          tuple
+    node_color:               Any
+    node_labels:              Any
+    node_opacity:             Any
+    node_size:                float | str | None
+    node_size_range:          tuple
+    null_nodes:               bool
+    pos:                      Any
+    relationships:            Any
+    sm_shared:                set
+    template:                 'LinkP | None'
+    time:                     Any
+    timing_marks_length:      Any
+    timing_marks_spacing:     Any
+    txt_h:                    Any
+    use_pos_for_bounds:       bool
+    view_window:              Any
+    wxh:                      Any
+
 
 class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
 
@@ -45,13 +119,106 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
     _ARROW_LEN_FACTOR_ = 3.2
     _ARROW_LEN_MIN_     = 6.0
 
+    # ---------------------------------------------------------------------
+    # Parameters assigned onto the instance from _defaults_ by
+    # Polars2SVG.assignScratchDefaults() -- setattr(), so no checker can see them.
+    #
+    # Declarations, not assignments: bare annotations populate __annotations__
+    # and create no class attribute, so this block is a no-op at runtime.
+    #
+    # Types are deliberately conservative -- `Any` wherever a parameter is
+    # data-drivable (accepts a literal *or* a column name), which is most of
+    # them.  The job here is to make the attribute VISIBLE; the precise
+    # per-parameter contract lands in the Unpack[TypedDict] work (phase 2),
+    # which is where a caller-facing type belongs.
+    #
+    # tests/test_typing_surface.py::TestComponentAttrDeclarations checks this
+    # block against _VALID_KWARGS, so a new parameter fails the suite until it
+    # is declared here too.
+    # ---------------------------------------------------------------------
+    _shared_view_x_:          Any
+    _shared_view_y_:          Any
+    bounds_percent:           float
+    color:                    Any
+    color_stat_range_shared:  Any
+    convex_hull_labels:       bool
+    convex_hull_lu:           dict | None
+    convex_hull_opacity:      float
+    convex_hull_stroke_width: Any
+    count:                    Any
+    count_range_shared:       Any
+    draw_border:              bool
+    flowmap_backend:          str
+    flowmap_iterations:       int
+    flowmap_max_flows:        int | None
+    flowmap_samples:          int
+    flowmap_time_budget:      int | None
+    insets:                   tuple
+    label_ellipsis:           bool
+    label_line_width:         int
+    label_max_lines:          int
+    legend:                   bool
+    link_arrows:              bool
+    link_labels:              Any
+    link_opacity:             float
+    link_shape:               str
+    link_size:                Any
+    link_size_range:          tuple
+    node_color:               Any
+    node_labels:              Any
+    node_opacity:             float
+    node_size:                float | str | None
+    node_size_range:          tuple
+    null_nodes:               bool
+    sm_shared:                set
+    time:                     Any
+    timing_marks_length:      float
+    timing_marks_spacing:     float
+    txt_h:                    int
+    use_pos_for_bounds:       bool
+
+    # --- state built during __init__/render, not passed in --------------
+    # Initialised to None and filled once the frame is resolved, so a checker
+    # infers `... | None` and flags every later use.  `Any` because these hold
+    # polars frames, display lists and cached statistics whose concrete types
+    # this class does not otherwise name.
+    _color_stat_max_:       float | None
+    _color_stat_min_:       float | None
+    _count_max_:            float | None
+    _count_min_:            float | None
+    _dl_legend_:            DisplayList | None
+    _flowmap_cache_:        tuple | None
+    _flowmap_note_:         str | None
+    _gpu_dl_:               DisplayList | None
+    _gpu_payload_:          dict | None
+    _legend_region_:        tuple | None
+    _legend_stat_max_:      float | None
+    _legend_stat_min_:      float | None
+    _time_enum_:            Any
+    _time_field_:           Any
+    _timing_mark_dl_table_: pl.DataFrame | None
+    df:                     Any
+    df_link:                pl.DataFrame | None
+    df_orig:                pl.DataFrame | None
+    legend_info:            Any
+    template:               'LinkP | None'
+    view_window_orig:       Any
+    _link_label_svg_:  list
+    _link_label_defs_: list
+    _link_label_info_: list
+    _link_label_seen_: set
+    _flowmap_cp_: pl.DataFrame | None
+    df_node:      pl.DataFrame
+    label_only:   Any
+    svg:          str
+
     #
     # __init__()
     #
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args: Any, **kwargs: Unpack[LinkPKwargs]) -> None:
         self.t_start        = time.time()
         self.p2s            = polars2svg.Polars2SVG()
-        self.timing_metrics = {}
+        self.timing_metrics: dict = {}
         self.gatherMetrics(self.__parseInput__, *args, **kwargs)
         self.gatherMetrics(self.__validateInput__)
         if self.df is not None:
@@ -67,7 +234,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
         self.t_end     = time.time()
         self.t_overall = self.t_end - self.t_start
 
-    def _repr_svg_(self): return self.svg
+    def _repr_svg_(self) -> str: return self.svg
 
     #
     # webgpu() - WebGPU payload of the same render, extracted from the retained
@@ -75,7 +242,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
     # are flattened to line segments; collapsed-node clouds approximate as rounded
     # rects (the shared CLOUD_ICON_* shape).  Lazy + cached; invalidated by __renderSVG__.
     #
-    def webgpu(self):
+    def webgpu(self) -> dict | None:
         # Honor a pending relayout the same way renderSVG() does, so the
         # interactive GPU path never serves a stale payload after a node move /
         # layout op / zoom (which set _render_invalid_ but don't clear the cache).
@@ -90,7 +257,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
     # gpuDisplayList() - the composed backend-neutral display list (also consumed
     # by smallp when this component renders as a cell)
     #
-    def gpuDisplayList(self):
+    def gpuDisplayList(self) -> Any:
         if self.df is None or getattr(self, 'svg', None) is None: return None
         if getattr(self, '_render_invalid_', False): self.renderSVG()
         if getattr(self, '_gpu_dl_', None) is not None: return self._gpu_dl_
@@ -169,7 +336,10 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
                                    ('__r_f__', '__g_f__', '__b_f__'), opacity=self.node_opacity,
                                    stroke=hexToRGBA('#000000', self.node_opacity), stroke_w=1.0, svg_col=None)
             else:
-                _sz_ = _nsz_lu_.get(self.node_size, self.node_size) if isinstance(self.node_size, str) else float(self.node_size)
+                # 'vary' is handled above; every other accepted name is in the
+                # lookup, so this is a number at runtime.  An unrecognised name
+                # would stay a str and fail on the comparison below.
+                _sz_: Any = _nsz_lu_.get(self.node_size, self.node_size) if isinstance(self.node_size, str) else float(self.node_size)
                 _sw_ = 1.0 if _sz_ > 3 else _sz_ / 2.0
                 _singles_ = _dfn_.filter(pl.col('__nodes__') == 1)
                 _dl_.circles_table(_singles_, '__sx__', '__sy__', _sz_,
@@ -208,7 +378,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
     #
     # gatherMetrics()
     #
-    def gatherMetrics(self, callable, *args, **kwargs):
+    def gatherMetrics(self, callable: Any, *args: Any, **kwargs: Any) -> int:
         t0 = time.time()
         _results_ = callable(*args, **kwargs)
         t1 = time.time()
@@ -223,7 +393,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
     # generic unknown-kwarg TypeError into one that names the replacement.
     _RENAMED_KWARGS_ = {'draw_labels': 'draw_node_labels'}
 
-    def __parseInput__(self, *args, **kwargs):
+    def __parseInput__(self, *args: Any, **kwargs: Unpack[LinkPKwargs]) -> None:
         _unknown_ = set(kwargs) - self._VALID_KWARGS
         if _unknown_:
             _hints_ = [f'{k} -> {self._RENAMED_KWARGS_[k]}' for k in sorted(_unknown_)
@@ -368,14 +538,14 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
             self._count_max_            = None
             self._color_stat_min_       = None
             self._color_stat_max_       = None
-            self.color_nodes_final      = {}
+            self.color_nodes_final: dict      = {}
             self.view_window_orig       = None
             self._render_invalid_       = False
             self._flowmap_cache_        = None   # (key, cp table) -- see __flowmapControlPoints__
             self._flowmap_note_         = None   # what __flowmapTopK__ dropped, if anything
             # from-scratch builds only — a template clone is an exact snapshot and
             # must not re-apply session defaults (see Polars2SVG._apply_defaults)
-            kwargs = self.p2s._apply_defaults('linkp', kwargs)
+            kwargs = cast(LinkPKwargs, self.p2s._apply_defaults('linkp', kwargs))
 
         # Extract DataFrame
         _new_df_ = None
@@ -392,7 +562,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
         # Infer relationships and pos from positional args
         # - list of tuples (each length >= 2) → relationships
         # - dict with values that are length-2 numeric coordinate pairs → pos
-        def _is_pos_dict_(arg):
+        def _is_pos_dict_(arg: dict | str) -> bool:
             if not isinstance(arg, dict) or len(arg) == 0: return False
             for v in arg.values():
                 if isinstance(v, (str, dict)) or not hasattr(v, '__len__') or len(v) != 2: return False
@@ -496,7 +666,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
     # - truncates to max_lines (pass -1 for unlimited)
     # - appends '…' on the last line when truncated and use_ellipsis is True
     #
-    def _wrap_label_(self, text, line_width, max_lines, use_ellipsis):
+    def _wrap_label_(self, text: str, line_width: int, max_lines: int, use_ellipsis: bool) -> list:
         words = text.split(' ')
         lines, current = [], ''
         for word in words:
@@ -536,13 +706,13 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
     # font at all; every class of string clears its edge by ~0.5-1px more now, because a real
     # ascender reaches 0.76em where the constant said 0.67em.)
     #
-    def _labelInk_(self, txt):
+    def _labelInk_(self, txt: str) -> tuple:
         return self.p2s.textInk(txt, self.txt_h)
 
     #
     # _createConcatColumn_() - concatenate multiple fields into one string column
     #
-    def _createConcatColumn_(self, df, fields, new_col):
+    def _createConcatColumn_(self, df: pl.DataFrame, fields: tuple, new_col: str) -> pl.DataFrame:
         _parts_ = []
         for i, f in enumerate(fields):
             if i > 0: _parts_.append(pl.lit('|'))
@@ -553,7 +723,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
     # __countAggExpr__() - return the Polars aggregation expression for counting edges
     # - mirrors the identical method in Timep and Histop
     #
-    def __countAggExpr__(self):
+    def __countAggExpr__(self) -> pl.Expr:
         if self.count == self.p2s.ROW_COUNTp:
             return pl.len().alias('__count__')
         elif isinstance(self.count, str):
@@ -568,7 +738,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
             else:                                return pl.struct(_fields_).n_unique().alias('__count__')
         return pl.len().alias('__count__')
 
-    def __countFields__(self):
+    def __countFields__(self) -> set:
         if self.count == self.p2s.ROW_COUNTp: return set()
         if isinstance(self.count, str):        return {self.count}
         if isinstance(self.count, tuple):      return {_f_ for _f_ in self.count if isinstance(_f_, str)}
@@ -577,7 +747,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
     #
     # __validateInput__()
     #
-    def __validateInput__(self):
+    def __validateInput__(self) -> None:
         # Normalize legend= eagerly so a bad spec fails fast (raises InvalidSpecError).
         self.legend_spec = self.p2s.legendResolveSpec(self.legend)
         if self.df is None: return
@@ -653,7 +823,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
     # self._time_enum_ (a TimeLinearTypeP / TimePeriodicTypeP / None), and
     # self._is_periodic_.
     #
-    def __resolveTimeField__(self):
+    def __resolveTimeField__(self) -> None:
         self._time_field_  = None
         self._time_enum_   = None
         self._is_periodic_ = False
@@ -696,7 +866,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
     # so the colorbar is finalized in __renderSVG__.  Decision A: a truthy legend
     # with nothing to legend silently reserves nothing.
     #
-    def __legendPrepare__(self):
+    def __legendPrepare__(self) -> None:
         self.legend_info       = None
         self._legend_region_   = None
         self._legend_reserve_  = (0, 0, 0, 0)
@@ -760,7 +930,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
     # - map node names to world coordinates using pos dict (via replace_strict for O(n) lookup)
     # - compute world bounds and coordinate transform lambdas
     #
-    def __calculateGeometry__(self):
+    def __calculateGeometry__(self) -> None:
         # Legend strip (if any) comes out of wxh first -- the plot region shrinks,
         # the physical output size does not ("reserve from wxh").
         self.__legendPrepare__()
@@ -859,14 +1029,14 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
 
     # P2SBackgroundMixin world->screen hooks (xT/yT are set above, before any
     # background shape is transformed)
-    def __bgX__(self, _v_): return self.xT(_v_)
-    def __bgY__(self, _v_): return self.yT(_v_)
+    def __bgX__(self, _v_: float) -> float: return self.xT(_v_)
+    def __bgY__(self, _v_: float) -> float: return self.yT(_v_)
 
     #
     # __calculateScreenCoordinates__()
     # - batch convert all world coordinate columns to integer screen coordinates
     #
-    def __calculateScreenCoordinates__(self):
+    def __calculateScreenCoordinates__(self) -> None:
         _lg_l_, _lg_r_, _lg_t_, _lg_b_ = self._legend_reserve_
         w,  h  = self.wxh[0] - _lg_l_ - _lg_r_, self.wxh[1] - _lg_t_ - _lg_b_
         xi, yi = self.insets
@@ -882,13 +1052,13 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
             ]
         self.df = self.df.with_columns(*_operations_)
 
-    def __countMinMax__(self, col):
+    def __countMinMax__(self, col: pl.Series) -> tuple:
         if self.count_range_shared is not None:
             return float(self.count_range_shared[0]), float(self.count_range_shared[1])
         lo, hi = col.min(), col.max()
         return (float(lo) if lo is not None else 0.0, float(hi) if hi is not None else 1.0)
 
-    def __interpolatedSizeExpr__(self, size_range, lo, hi):
+    def __interpolatedSizeExpr__(self, size_range: tuple, lo: float, hi: float) -> pl.Expr:
         return (
             size_range[0] +
             (size_range[1] - size_range[0]) *
@@ -900,7 +1070,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
     # __nodeRadiusEstimate__() - representative node-symbol radius in pixels;
     # 'vary' is approximated with the 'medium' radius (per-node radii differ)
     #
-    def __nodeRadiusEstimate__(self):
+    def __nodeRadiusEstimate__(self) -> float:
         _nsz_lu_ = {'small': 3, 'medium': 5, 'large': 7, 'nil': 0.5}
         if   isinstance(self.node_size, (int, float)): return float(self.node_size)
         elif self.node_size is None:                   return 0.0
@@ -912,7 +1082,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
     #   flowmap, the baseline for line); the tip is pulled back to the node's
     #   edge; sized from the stroke width via _ARROW_LEN_FACTOR_/_ARROW_LEN_MIN_
     #
-    def __arrowColumns__(self, df_link, i, stroke_w_expr):
+    def __arrowColumns__(self, df_link: pl.DataFrame, i: int, stroke_w_expr: pl.Expr) -> pl.DataFrame:
         _fm_sx_, _fm_sy_ = f'__rel{i}_fm_sx__', f'__rel{i}_fm_sy__'
         _to_sx_, _to_sy_ = f'__rel{i}_to_sx__', f'__rel{i}_to_sy__'
         if self.link_shape in ('curve', 'flowmap'):
@@ -959,7 +1129,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
     # __arrowSVGExpr__() - the <polygon> string for relationship i; empty for
     # zero-length links so the row's link string survives
     #
-    def __arrowSVGExpr__(self, i):
+    def __arrowSVGExpr__(self, i: int) -> pl.Expr:
         _r2_ = lambda c: pl.col(c).round(2)
         return (
             pl.when(pl.col(f'__arr{i}_mag__') > 1e-9)
@@ -979,7 +1149,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
     # driving the link color (rtsvg rt_linknode_mixin.py:1414, where that was color_by).
     # None when neither exists, i.e. this relationship has nothing to label.
     #
-    def __linkLabelField__(self, i):
+    def __linkLabelField__(self, i: int) -> str:
         _rel_ = self.relationships[i]
         if len(_rel_) == 3: return _rel_[2]
         return self._link_color_mode_['field']
@@ -989,10 +1159,10 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
     # are force-routed around each other and threading text along them fights the routing,
     # so only 'line' and 'curve' carry labels.
     #
-    def __linkLabelsActive__(self, i):
+    def __linkLabelsActive__(self, i: int) -> bool:
         return self.draw_link_labels and self.__linkLabelDrawable__(i)
 
-    def __linkLabelDrawable__(self, i):
+    def __linkLabelDrawable__(self, i: int) -> bool:
         return (self.link_size is not None and self.link_shape in ('line', 'curve')
                 and self.__linkLabelField__(i) is not None)
 
@@ -1003,7 +1173,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
     # Lets a caller (linkpi's label-mode cycle) offer the link-label states only when the
     # graph actually has edge labels to show.
     #
-    def linkLabelsAvailable(self):
+    def linkLabelsAvailable(self) -> bool:
         if self.df is None or not self.relationships: return False
         return any(self.__linkLabelDrawable__(i) for i in range(len(self.relationships)))
 
@@ -1016,7 +1186,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
     # group_by output order is not stable and several node names can collapse onto one
     # screen pixel -- both keep the render deterministic.
     #
-    def __linkLabelAggExprs__(self, i):
+    def __linkLabelAggExprs__(self, i: int) -> list:
         if not self.__linkLabelsActive__(i): return []
         _fm_, _to_ = self.relationships[i][0], self.relationships[i][1]
         _vals_     = pl.col(self.__linkLabelField__(i)).cast(pl.String).drop_nulls()
@@ -1044,7 +1214,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
     # pair: label_only restricts which raw values get labeled at all, then link_labels
     # renames the survivors for display (and drops anything it does not name).
     #
-    def __renderLinkLabels__(self, df, i, stroke_w_expr):
+    def __renderLinkLabels__(self, df: pl.DataFrame, i: int, stroke_w_expr: pl.Expr) -> None:
         _fm_sx_, _fm_sy_ = f'__rel{i}_fm_sx__', f'__rel{i}_fm_sy__'
         _to_sx_, _to_sy_ = f'__rel{i}_to_sx__', f'__rel{i}_to_sy__'
         _f4_    = lambda c: pl.col(c).cast(pl.Float64)
@@ -1267,7 +1437,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
     # tie does not depend on group_by row order -- the layout is order-sensitive and the
     # rest of this path works hard to stay deterministic.
     #
-    def __flowmapTopK__(self, flows_df):
+    def __flowmapTopK__(self, flows_df: pl.DataFrame) -> pl.DataFrame:
         self._flowmap_note_ = None
         _k_ = self.flowmap_max_flows
         if _k_ is None or len(flows_df) <= _k_:
@@ -1282,7 +1452,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
         self.p2s.logger.info('LinkP: %s', self._flowmap_note_)
         return _kept_
 
-    def __flowmapControlPoints__(self, rel_tables):
+    def __flowmapControlPoints__(self, rel_tables: list) -> pl.DataFrame:
         _parts_ = []
         for i in range(len(self.relationships)):
             _fm_sx_, _fm_sy_ = f'__rel{i}_fm_sx__', f'__rel{i}_fm_sy__'
@@ -1373,7 +1543,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
     # perpendicular offset).  Shared by link rendering and timing-mark rendering so the
     # two never drift.
     #
-    def __curveControlPointColumns__(self, df, i):
+    def __curveControlPointColumns__(self, df: pl.DataFrame, i: int) -> pl.DataFrame:
         _fm_sx_, _fm_sy_ = f'__rel{i}_fm_sx__', f'__rel{i}_fm_sy__'
         _to_sx_, _to_sy_ = f'__rel{i}_to_sx__', f'__rel{i}_to_sy__'
         _xo0_, _yo0_ = f'__xo0{i}__', f'__yo0{i}__'
@@ -1417,7 +1587,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
     # control point (self._flowmap_cp_) and converting quadratic -> exact cubic
     # (c = p + 2/3*(cp - p)).  Shared by link and timing-mark rendering.
     #
-    def __flowmapControlPointColumns__(self, df, i):
+    def __flowmapControlPointColumns__(self, df: pl.DataFrame, i: int) -> pl.DataFrame:
         _fm_sx_, _fm_sy_ = f'__rel{i}_fm_sx__', f'__rel{i}_fm_sy__'
         _to_sx_, _to_sy_ = f'__rel{i}_to_sx__', f'__rel{i}_to_sy__'
         _xo0_, _yo0_ = f'__xo0{i}__', f'__yo0{i}__'
@@ -1471,7 +1641,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
     # arrowheads, node radii, the cloud glyph's box and a label's measured ink are added
     # as padding.  Anything that survives the box was going to be visible.
     # -------------------------------------------------------------------------
-    def __onCanvasExpr__(self, xs, ys, pad=0.0, pad_y=None):
+    def __onCanvasExpr__(self, xs: list, ys: list, pad: float | pl.Expr = 0.0, pad_y: float | None = None) -> pl.Expr:
         _w_, _h_ = self.wxh
         _f64_ = lambda c: (pl.col(c) if isinstance(c, str) else c).cast(pl.Float64)
         # A pad may be an expression (a 'vary' radius or stroke width).  Degrade an absent
@@ -1491,7 +1661,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
     # __onCanvas__() - the scalar form of the same test, for the two label emitters, which
     # already run a Python row loop (a label's extent depends on its cropped string, so it
     # is not known until the loop has one).
-    def __onCanvas__(self, x0, y0, x1, y1):
+    def __onCanvas__(self, x0: float, y0: float, x1: float, y1: float) -> bool:
         _w_, _h_ = self.wxh
         return not (x1 < 0.0 or x0 > float(_w_) or y1 < 0.0 or y0 > float(_h_))
 
@@ -1499,7 +1669,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
     # __renderLinks__()
     # - uses Polars group_by + concat_str to build SVG strings without Python row loops
     #
-    def __renderLinks__(self):
+    def __renderLinks__(self) -> None:
         _node_size_lu_ = {'small': 1, 'nil': 0.2, 'medium': 3, 'large': 5}
         _sz_           = _node_size_lu_.get(self.link_size, 1.0)
         if isinstance(self.link_size, (int, float)): _sz_ = float(self.link_size)
@@ -1626,7 +1796,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
     # integer; a linear granularity truncates first then casts; a periodic granularity is
     # already an integer bin.
     #
-    def __timeNumericExpr__(self):
+    def __timeNumericExpr__(self) -> pl.Expr:
         if self._time_enum_ is None:
             return pl.col(self._time_field_).cast(pl.Int64)
         return self.p2s.polarsOperationForEnum(self._time_field_, self._time_enum_).cast(pl.Int64)
@@ -1642,7 +1812,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
     #   at most one mark per pixel instead of one per event; the final unique() then collapses
     #   any exact-coordinate collisions across relationships.  No-op unless time= is set.
     #
-    def __renderTimingMarks__(self):
+    def __renderTimingMarks__(self) -> None:
         self._timing_mark_svg_list_  = []
         self._timing_mark_dl_table_  = None   # numeric mirror of the marks for gpuDisplayList()
         if self._time_field_ is None or self.df is None or len(self.df) == 0:
@@ -1754,7 +1924,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
                 )
 
             # Evaluate the cubic B(t) at t (mark base) and t+0.01 (tangent sample).
-            def _bez_(_a_, _c1_, _c2_, _b_, _t_):
+            def _bez_(_a_: str, _c1_: str, _c2_: str, _b_: str, _t_: pl.Expr) -> pl.Expr:
                 _mt_ = (1.0 - _t_)
                 return (_mt_**3 * pl.col(_a_) + 3.0 * _mt_**2 * _t_ * pl.col(_c1_)
                         + 3.0 * _mt_ * _t_**2 * pl.col(_c2_) + _t_**3 * pl.col(_b_))
@@ -1820,7 +1990,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
     # - build a node DataFrame from all relationship endpoints via pl.concat
     # - group by screen coordinates and assemble SVG strings without Python row loops
     #
-    def __renderNodes__(self):
+    def __renderNodes__(self) -> None:
         _node_size_lu_ = {'small': 3, 'medium': 5, 'large': 7, 'nil': 0.5}
 
         # Build node DataFrame by concat of fm/to columns for each relationship
@@ -1934,7 +2104,10 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
             _svg_strs_ = ([f'<g stroke="#000000" stroke-width="1" opacity="{self.node_opacity}">']
                           + _raw_svgs_ + ['</g>'] if _raw_svgs_ else [])
         else:
-            _sz_ = _node_size_lu_.get(self.node_size, self.node_size) if isinstance(self.node_size, str) else float(self.node_size)
+            # 'vary' is handled above; every other accepted name is in the
+            # lookup, so this is a number at runtime.  An unrecognised name
+            # would stay a str and fail on the comparison below.
+            _sz_: Any = _node_size_lu_.get(self.node_size, self.node_size) if isinstance(self.node_size, str) else float(self.node_size)
             _sw_ = 1.0 if _sz_ > 3 else _sz_ / 2.0
             # Single nodes (not collapsed)
             _str_op_ = [
@@ -2067,7 +2240,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
     #
     # __renderConvexHull__() - render convex hull annotations
     #
-    def __renderConvexHull__(self):
+    def __renderConvexHull__(self) -> str:
         self._dl_hull_ = _dl_ = DisplayList(self.wxh[0], self.wxh[1])
         if not self.convex_hull_lu: return ''
         _svg_ = []
@@ -2129,11 +2302,13 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
     #
     # _convexHull_() - gift-wrapping convex hull for a list of (x, y) points
     #
-    def _convexHull_(self, points):
+    def _convexHull_(self, points: list) -> list:
         if len(points) <= 2: return points
         _pts_ = sorted(set(points))
         if len(_pts_) <= 2: return _pts_
-        def _cross_(o, a, b): return (a[0]-o[0])*(b[1]-o[1]) - (a[1]-o[1])*(b[0]-o[0])
+        def _cross_(o: tuple, a: tuple, b: tuple) -> float: return (a[0]-o[0])*(b[1]-o[1]) - (a[1]-o[1])*(b[0]-o[0])
+        _lower_: list
+        _upper_: list
         _lower_, _upper_ = [], []
         for p in _pts_:
             while len(_lower_) >= 2 and _cross_(_lower_[-2], _lower_[-1], p) <= 0: _lower_.pop()
@@ -2148,7 +2323,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
     # - background= is the only feature that needs shapely, so the import is
     #   deferred here rather than paid by every linkp render.
     #
-    def __shapelyToSVGPath__(self, shape):
+    def __shapelyToSVGPath__(self, shape: Any) -> str:
         try:
             from shapely.geometry import Polygon, MultiPolygon, LineString, MultiLineString, GeometryCollection
         except ImportError as _e_:
@@ -2193,7 +2368,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
     #
     # __renderSVG__()
     #
-    def __renderSVG__(self, rand_id):
+    def __renderSVG__(self, rand_id: int) -> None:
         self._gpu_payload_ = self._gpu_dl_ = None   # invalidate GPU state cached from a template
         if self.view_window_orig is None:
             self.view_window_orig = self.view_window
@@ -2266,8 +2441,8 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
     # renderSmallMultiples() - smallp integration
     # - each panel gets the same pos/relationships (graph layout) but a different data subset
     #
-    def renderSmallMultiples(self, df_all, df_lu, all_key):
-        _kwargs_ = {}
+    def renderSmallMultiples(self, df_all: pl.DataFrame, df_lu: dict, all_key: str) -> dict:
+        _kwargs_: dict[str, Any] = {}
 
         # The template's computed view_window would otherwise be inherited by every sub-panel
         # and force all panels to share the same bounds. Reset it unless the user explicitly
@@ -2295,7 +2470,9 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
     #
     # render_with() - create a new instance with overrides (used by smallp cycle_by mode)
     #
-    def render_with(self, df, **overrides):
+    def render_with(self, df: pl.DataFrame, **overrides: Any) -> Any:
+        # `overrides` cannot be Unpack[LinkPKwargs]: PEP 692 rejects a TypedDict
+        # that repeats a named parameter, and `df` is both.
         return LinkP(df=df, template=self, **overrides)
 
     # -------------------------------------------------------------------------
@@ -2303,10 +2480,10 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
     # Modeled on RTLink in racetrack_svg_framework/rtsvg/rt_link_mixin.py
     # -------------------------------------------------------------------------
 
-    def invalidateRender(self):
+    def invalidateRender(self) -> None:
         self._render_invalid_ = True
 
-    def renderSVG(self):
+    def renderSVG(self) -> str:
         if self._render_invalid_:
             rand_id = self._rand_id_ = random.randint(0, 2**32)  # nosec B311 - see __init__
             self.gatherMetrics(self.__calculateGeometry__)
@@ -2317,15 +2494,15 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
             self.gatherMetrics(self.__renderSVG__, rand_id)
         return self.svg
 
-    def setViewWindow(self, view_window):
+    def setViewWindow(self, view_window: tuple) -> None:
         self.view_window = view_window
         self.wx0, self.wy0, self.wx1, self.wy1 = view_window
         self.invalidateRender()
 
-    def getViewWindow(self):
+    def getViewWindow(self) -> tuple:
         return self.view_window
 
-    def applyScrollEvent(self, scroll_amount, coordinate=None):
+    def applyScrollEvent(self, scroll_amount: int, coordinate: list | tuple | None = None) -> bool:
         factor = 1.0 + scroll_amount / 1000.0
         wx0, wy0, wx1, wy1 = self.view_window
         cx = self.xT_inv(coordinate[0]) if coordinate is not None else (wx0 + wx1) / 2
@@ -2334,13 +2511,13 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
                             cx + (wx1 - cx) * factor, cy + (wy1 - cy) * factor))
         return True
 
-    def applyMiddleClick(self, coordinate):
+    def applyMiddleClick(self, coordinate: list | tuple) -> bool:
         if self.view_window != self.view_window_orig:
             self.setViewWindow(self.view_window_orig)
             return True
         return False
 
-    def applyMiddleDrag(self, coordinate, delta):
+    def applyMiddleDrag(self, coordinate: list, delta: list) -> bool:
         if self.view_window is not None:
             dwx = self.xT_inv(coordinate[0]) - self.xT_inv(coordinate[0] + delta[0])
             dwy = self.yT_inv(coordinate[1]) - self.yT_inv(coordinate[1] + delta[1])
@@ -2349,14 +2526,14 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
             return True
         return False
 
-    def applyViewConfiguration(self, other):
+    def applyViewConfiguration(self, other: Any) -> bool:
         other_vw = other.getViewWindow()
         if other_vw != self.getViewWindow():
             self.setViewWindow(other_vw)
             return True
         return False
 
-    def overlappingEntities(self, to_intersect):
+    def overlappingEntities(self, to_intersect: Any) -> list:
         from shapely.geometry import Point
         _str_to_key_ = {str(k): k for k in self.pos.keys()}
         _set_ = set()
@@ -2366,7 +2543,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
                     _set_.add(_str_to_key_.get(nm, nm))
         return list(_set_)
 
-    def entitiesAtPoint(self, xy):
+    def entitiesAtPoint(self, xy: list | tuple) -> list:
         from shapely.geometry import Polygon
         poly = Polygon([(xy[0] - 5, xy[1] - 5), (xy[0] - 5, xy[1] + 5),
                         (xy[0] + 5, xy[1] + 5), (xy[0] + 5, xy[1] - 5)])
@@ -2376,7 +2553,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
     # segment (ax_col,ay_col)->(bx_col,by_col).  Standard clamped-projection formula;
     # degenerate zero-length segments (self-loops) collapse to point distance.  Int32
     # screen columns are lifted to Float64 so squaring can't overflow.
-    def __segmentDistSqExpr__(self, px, py, ax_col, ay_col, bx_col, by_col):
+    def __segmentDistSqExpr__(self, px: float, py: float, ax_col: str, ay_col: str, bx_col: str, by_col: str) -> pl.Expr:
         _ax_, _ay_ = pl.col(ax_col).cast(pl.Float64), pl.col(ay_col).cast(pl.Float64)
         _bx_, _by_ = pl.col(bx_col).cast(pl.Float64), pl.col(by_col).cast(pl.Float64)
         _dx_, _dy_ = _bx_ - _ax_, _by_ - _ay_
@@ -2397,7 +2574,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
     # Matching is done on __p2s_index__ (a stable row id) and the original columns are
     # re-selected, so synthetic concat/geometry columns never leak to peers.  Only
     # SELECT_CIRCLEp is supported (a radius); bands don't fit a 2-D node-link view.
-    def recordsAt(self, xy, shape=None, threshold=5.0):
+    def recordsAt(self, xy: tuple, shape: Any = None, threshold: float = 5.0) -> pl.DataFrame:
         if shape is None: shape = self.p2s.SELECT_CIRCLEp
         if shape != self.p2s.SELECT_CIRCLEp:
             raise ValueError(f'LinkP.recordsAt(): only SELECT_CIRCLEp is supported, got {shape}')
@@ -2451,37 +2628,37 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
         _keep_ = [c for c in self.df_orig.columns if c in _out_.columns]
         return _out_.select(_keep_)
 
-    def nodeColor(self, node):
+    def nodeColor(self, node: int | str) -> str:
         # color_nodes_final is keyed by the stringified node names (__nm__), but entitiesAtPoint()
         # / overlappingEntities() hand back the original pos keys -- which aren't strings when the
         # node ids are ints.  Fall back to the string form so those callers resolve a color.
         if node in self.color_nodes_final: return self.color_nodes_final[node]
         return self.color_nodes_final.get(str(node))
 
-    def nodesWithColor(self, color):
+    def nodesWithColor(self, color: str) -> set:
         return {k for k, v in self.color_nodes_final.items() if v == color}
 
-    def nodeShape(self, node):
+    def nodeShape(self, node: str) -> str:
         return 'circle'
 
-    def nodesWithShape(self, shape):
+    def nodesWithShape(self, shape: str) -> set:
         return set(self.color_nodes_final.keys()) if shape == 'circle' else set()
 
     _NODE_PATH_OPS_ = [pl.lit('M '), pl.col('__sx__') - 5, pl.lit(' '), pl.col('__sy__') - 5,
                        pl.lit(' l 10 0 l 0 10 l -10 0 z')]
 
-    def __filterNodesBySelection__(self, my_selection):
+    def __filterNodesBySelection__(self, my_selection: list | set) -> pl.DataFrame:
         _strs_ = {str(e) for e in my_selection}
         return self.df_node.explode('__nm__').filter(pl.col('__nm__').is_in(_strs_))
 
-    def __createPathDescriptionForAllEntities__(self):
+    def __createPathDescriptionForAllEntities__(self) -> str:
         return ' '.join(
             self.df_node.unique(['__sx__', '__sy__'])
                         .with_columns(pl.concat_str(*self._NODE_PATH_OPS_).alias('__svg__'))
                         ['__svg__']
         )
 
-    def __createPathDescriptionOfSelectedEntities__(self, my_selection=None):
+    def __createPathDescriptionOfSelectedEntities__(self, my_selection: list | set | None = None) -> str:
         _fallback_ = 'M -100 -100 l 10 0 l 0 10 l -10 0 l 0 -10 Z'
         if not my_selection:
             return _fallback_
@@ -2494,7 +2671,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
                 ['__svg__']
         )
 
-    def __moveSelectedEntities__(self, dxy, my_selection=None):
+    def __moveSelectedEntities__(self, dxy: tuple, my_selection: set | None = None) -> dict:
         if not my_selection:
             return {}
         _updated_    = {}
@@ -2507,14 +2684,14 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
         self.invalidateRender()
         return _updated_
 
-    def labelOnly(self, label_set):
+    def labelOnly(self, label_set: set | None) -> None:
         self.label_only = set(label_set) if label_set else set()
         self.invalidateRender()
 
-    def drawNodeLabels(self, draw_node_labels):
+    def drawNodeLabels(self, draw_node_labels: bool) -> None:
         self.draw_node_labels = draw_node_labels
         self.invalidateRender()
 
-    def drawLinkLabels(self, draw_link_labels):
+    def drawLinkLabels(self, draw_link_labels: bool) -> None:
         self.draw_link_labels = draw_link_labels
         self.invalidateRender()

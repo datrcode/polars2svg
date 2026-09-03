@@ -1,3 +1,4 @@
+from typing import Any, TypedDict, Unpack, cast
 import polars as pl
 import polars.selectors as cs
 import numpy as np
@@ -28,11 +29,71 @@ from polars2svg import _seriation
 # end-of-month day clamping is required.
 #
 class _CalendarStep:
-    def __init__(self, months=0, years=0):
+    def __init__(self, months: int = 0, years: int = 0) -> None:
         self.months = months + years * 12
-    def __radd__(self, when):
+    def __radd__(self, when: Any) -> Any:
         total = when.month - 1 + self.months
         return when.replace(year=when.year + total // 12, month=total % 12 + 1)
+
+class XYpKwargs(TypedDict, total=False):
+    """Keyword arguments accepted by ``p2s.xyp()`` / ``XYp(...)``.
+
+    Every key is optional (``total=False``); the set is exactly XYp._VALID_KWARGS,
+    which is what the constructor validates at runtime -- a name not listed here
+    raises TypeError.  Declaring it lets a type checker catch the misspelling
+    before the call runs, and gives editors completion over the parameter set.
+
+    Value types are deliberately conservative.  Most parameters are data-drivable
+    (they take a literal *or* a column name *or* a ``(field, enum)`` spec), so they
+    are typed ``Any`` rather than guessed at; the precise ones were each confirmed
+    against how the test suite actually calls them.
+    """
+    aspect:                        Any
+    background:                    dict | None
+    background_fill:               Any
+    background_label_color:        Any
+    background_opacity:            Any
+    background_stroke:             Any
+    background_stroke_w:           Any
+    color:                         Any
+    color_magnitude_max:           float | None
+    color_magnitude_min:           float | None
+    color_stretched_global_values: list | None
+    df:                            pl.DataFrame | None
+    dot_size:                      Any
+    dot_size_global_max:           Any
+    dot_size_global_min:           float | None
+    dot_size_range:                tuple
+    dot_size_supersample:          Any
+    draw_border:                   bool
+    draw_context:                  bool
+    insets:                        tuple
+    legend:                        Any
+    line:                          str | tuple | None
+    line_order_by:                 tuple | None
+    opacity:                       Any
+    opacity_range:                 tuple
+    sm_shared:                     set
+    spectral_by:                   str | None
+    spectral_normalize:            bool
+    spectral_similarity:           Any
+    spectral_weight:               Any
+    template:                      'XYp | None'
+    txt_h:                         Any
+    use_lazy_execution:            bool
+    wxh:                           Any
+    x:                             Any
+    x_distributions:               Any
+    x_order:                       Any
+    x_range:                       tuple | None
+    x_shared_label_range:          tuple | None
+    x_time_expand_perc:            Any
+    y:                             Any
+    y_distributions:               Any
+    y_order:                       list | str | None
+    y_range:                       tuple | None
+    y_shared_label_range:          tuple | None
+
 
 #
 # XYp
@@ -57,16 +118,98 @@ class XYp(P2SBackgroundMixin, ExportMixin):
         'use_lazy_execution', 'legend', 'x_time_expand_perc', 'aspect',
     })
 
+    # ---------------------------------------------------------------------
+    # Parameters assigned onto the instance from _defaults_ by
+    # Polars2SVG.assignScratchDefaults() -- setattr(), so no checker can see them.
+    #
+    # Declarations, not assignments: bare annotations populate __annotations__
+    # and create no class attribute, so this block is a no-op at runtime.
+    #
+    # Types are deliberately conservative -- `Any` wherever a parameter is
+    # data-drivable (accepts a literal *or* a column name), which is most of
+    # them.  The job here is to make the attribute VISIBLE; the precise
+    # per-parameter contract lands in the Unpack[TypedDict] work (phase 2),
+    # which is where a caller-facing type belongs.
+    #
+    # tests/test_typing_surface.py::TestComponentAttrDeclarations checks this
+    # block against _VALID_KWARGS, so a new parameter fails the suite until it
+    # is declared here too.
+    # ---------------------------------------------------------------------
+    aspect:                        Any
+    background:                    dict | None
+    color:                         Any
+    color_magnitude_max:           float | None
+    color_magnitude_min:           float | None
+    color_stretched_global_values: list | None
+    dot_size:                      int
+    dot_size_global_max:           Any
+    dot_size_global_min:           float | None
+    dot_size_supersample:          int
+    draw_border:                   bool
+    draw_context:                  bool
+    insets:                        tuple
+    legend:                        bool
+    line:                          str | tuple | None
+    line_order_by:                 tuple | None
+    opacity:                       Any
+    opacity_range:                 tuple
+    sm_shared:                     set
+    spectral_by:                   str | None
+    spectral_normalize:            bool
+    spectral_similarity:           str
+    spectral_weight:               Any
+    txt_h:                         int
+    use_lazy_execution:            bool
+    x_distributions:               Any
+    x_order:                       Any
+    x_range:                       tuple | None
+    x_shared_label_range:          tuple | None
+    x_time_expand_perc:            float
+    y_distributions:               Any
+    y_order:                       list | str | None
+    y_range:                       tuple | None
+    y_shared_label_range:          tuple | None
+
+    # --- state built during __init__/render, not passed in --------------
+    # Initialised to None and filled once the frame is resolved, so a checker
+    # infers `... | None` and flags every later use.  `Any` because these hold
+    # polars frames, display lists and cached statistics whose concrete types
+    # this class does not otherwise name.
+    _clip_rect_:           tuple | None
+    _gpu_dl_:              DisplayList | None
+    _gpu_payload_:         dict | None
+    _legend_region_:       tuple | None
+    color_clean:           list | None
+    df:                    Any
+    df_flat:               pl.DataFrame
+    df_orig:               pl.DataFrame | None
+    df_x_distribution:     pl.DataFrame | None
+    df_y_distribution:     pl.DataFrame | None
+    dot_size_clean:        list | None
+    legend_info:           Any
+    line_clean:            list | None
+    line_order_by_clean:   Any
+    opacity_clean:         list | None
+    template:              'XYp | None'
+    x:                     Any
+    x_clean:               Any
+    x_distributions_clean: Any
+    x_effective_range:     tuple | None
+    y:                     Any
+    y_clean:               Any
+    y_distributions_clean: Any
+    y_effective_range:     tuple | None
+
     #
     # __init__()
     #
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args: Any, **kwargs: Unpack[XYpKwargs]) -> None:
         self.t_start             = time.time()
         self.p2s                 = polars2svg.Polars2SVG()
         # use_lazy_execution is a normal parameter, resolved in __parseInput__ via the
         # shared spec (so a global set_defaults('xyp', use_lazy_execution=...) is now
         # honoured — it used to be read here from raw kwargs, bypassing the merge).
-        self.timing_metrics      = {}
+        self.timing_metrics: dict      = {}
         self.gatherMetrics(self.__parseInput__, *args, **kwargs)
         self.gatherMetrics(self.__validateInput__)
         if self.df is not None:
@@ -95,14 +238,14 @@ class XYp(P2SBackgroundMixin, ExportMixin):
         self.t_end          = time.time()
         self.t_overall      = self.t_end - self.t_start
 
-    def _repr_svg_(self): return self.svg
+    def _repr_svg_(self) -> str: return self.svg
 
     #
     # webgpu() - WebGPU payload of the same render (buffers + manifest), composed from
     # the per-phase DisplayLists recorded during the render stage; the polars compute
     # is shared with the SVG path -- only the serialization differs.  Lazy + cached.
     #
-    def webgpu(self):
+    def webgpu(self) -> dict | None:
         if getattr(self, '_gpu_payload_', None) is not None: return self._gpu_payload_
         _dl_ = self.gpuDisplayList()
         if _dl_ is None: return None
@@ -113,7 +256,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     # gpuDisplayList() - the composed backend-neutral display list (also consumed
     # by smallp when this component renders as a cell)
     #
-    def gpuDisplayList(self):
+    def gpuDisplayList(self) -> Any:
         if self.df is None or getattr(self, 'svg', None) is None: return None
         if getattr(self, '_gpu_dl_', None) is not None: return self._gpu_dl_
         w, h  = self.wxh
@@ -141,7 +284,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     # __dotsToInstances__() - convert the already-computed df_pixels table into GPU
     # circle/rect instances (same columns the SVG concat_str serializes)
     #
-    def __dotsToInstances__(self):
+    def __dotsToInstances__(self) -> Any:
         _dl_ = DisplayList(self.wxh[0], self.wxh[1])
         if self.dot_size_orig is None or self.df_pixels is None or len(self.df_pixels) == 0:
             return _dl_
@@ -153,7 +296,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
         else:
             _r_, _g_, _b_, _ = hexToRGBA(_color_default_)
             _rgba_ = (_r_, _g_, _b_)
-        _opacity_ = '__fill_opacity__' if '__fill_opacity__' in _df_.columns else 1.0
+        _opacity_: Any = '__fill_opacity__' if '__fill_opacity__' in _df_.columns else 1.0
         if isinstance(self.dot_size_orig, int):
             # SVG rect dots take width/height from a CSS style block; bake per-instance
             _dl_.rects_table(_df_, '__xpx__', '__ypx__', self.dot_size_orig, self.dot_size_orig,
@@ -169,7 +312,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     #
     # gatherMetrics()
     #
-    def gatherMetrics(self, callable, *args, **kwargs):
+    def gatherMetrics(self, callable: Any, *args: Any, **kwargs: Any) -> Any:
         t0 = time.time()
         _results_ = callable(*args, **kwargs)
         t1 = time.time()
@@ -180,7 +323,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     #
     # __parseInput__()
     #
-    def __parseInput__(self, *args, **kwargs):
+    def __parseInput__(self, *args: Any, **kwargs: Unpack[XYpKwargs]) -> None:
         _unknown_ = set(kwargs) - self._VALID_KWARGS
         if _unknown_:
             raise TypeError(f'XYp: unexpected keyword argument(s): {sorted(_unknown_)}')
@@ -188,7 +331,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
         # Single source of truth for every parameter (name -> from-scratch default);
         # drives both the from-scratch assignment and the keyword-override copy below.
         # (x/y also arrive positionally; the positional loop below fills those in.)
-        _defaults_ = {
+        _defaults_: dict = {
             'x':                     None,
             'y':                     None,
             'color':                 None,
@@ -250,7 +393,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
             self.p2s.assignScratchDefaults(self, _defaults_)
             # from-scratch builds only — a template clone is an exact snapshot and
             # must not re-apply session defaults (see Polars2SVG._apply_defaults)
-            kwargs = self.p2s._apply_defaults('xyp', kwargs)
+            kwargs = cast(XYpKwargs, self.p2s._apply_defaults('xyp', kwargs))
 
         # Handle the arguments first. Positional dispatch keys on type: the first
         # str/tuple/list positional is x, the second is y. Track which of x/y were
@@ -313,7 +456,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     # An unhashable item can never be an enum, so short-circuit to False rather
     # than crashing.
     #
-    def __isEnum__(self, _item_):
+    def __isEnum__(self, _item_: Any) -> bool:
         try:
             return _item_ in self.p2s.all_enums
         except TypeError:
@@ -324,12 +467,12 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     # spec with a descriptive error instead of an opaque
     # `TypeError: unhashable type: 'list'`.
     #
-    def __assertHashableSpecItem__(self, _item_, where):
+    def __assertHashableSpecItem__(self, _item_: Any, where: str) -> None:
         if not isinstance(_item_, typing.Hashable):
             raise ValueError(f'XYp.{where}():  {type(_item_).__name__} {_item_!r} cannot be nested inside a '
                              f'field/enum spec (expected a field-name string, hex color, or enum)')
 
-    def __cleanTuple__(self, _tuple_):
+    def __cleanTuple__(self, _tuple_: tuple) -> tuple:
         _list_, _enums_ = [], set()
         for i in range(len(_tuple_)):
             self.__assertHashableSpecItem__(_tuple_[i], '__cleanTuple__')
@@ -341,7 +484,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     # __isLiteral__() -- determine if an object (list, tuple, or single value) is a literal
     # - certain fields can't be literals -- for example, 'x', 'y', 'line', 'line_order_by'
     #
-    def __isLiteral__(self, _obj_, attr_name):
+    def __isLiteral__(self, _obj_: Any, attr_name: str) -> bool:
         if   isinstance(_obj_, list):
             for i in range(len(_obj_)):
                 if self.__isLiteral__(_obj_[i], attr_name) == False: return False
@@ -361,7 +504,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     #
     # __toListAndExtractEnums__() -- convert to a list, determine if it's a literal, and extract any enums
     #
-    def __toListAndExtractEnums__(self, v, attr_name):
+    def __toListAndExtractEnums__(self, v: Any, attr_name: str) -> tuple:
         if   isinstance(v, list):
             _list_  = []
             _enums_ = set()
@@ -388,7 +531,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     #
     # __separateAndCleanParam__() - separate into a clean tuple and a set of enums
     #
-    def __separateAndCleanParam__(self, distribution_param, initial_call=True):
+    def __separateAndCleanParam__(self, distribution_param: Any, initial_call: bool = True) -> tuple:
         _ints_, _floats_, _colors_, _fields_, _enums_ = [], [], [], [], set()
         if   isinstance(distribution_param, str): _fields_.append((distribution_param,))
         elif self.__isEnum__(distribution_param): _enums_ |= {distribution_param}
@@ -414,7 +557,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
             # Fit the fields into a specific format
             if len(_fields_) >  0:
                 # Make sure they are all tuples
-                _new_fields_ = []
+                _new_fields_: list = []
                 for i in range(len(_fields_)):
                     if isinstance(_fields_[i], tuple): _new_fields_.append(_fields_[i])
                     else:                              _new_fields_.append((_fields_[i],))
@@ -434,7 +577,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     #
     # __distributionsParamSetDefaults__() -- set defaults for distributions / do some validation too
     #
-    def __distributionsParamSetDefaults__(self, _fields_, _ints_, _floats_, _colors_, _enums_):
+    def __distributionsParamSetDefaults__(self, _fields_: list, _ints_: list, _floats_: list, _colors_: list, _enums_: set) -> tuple:
         if   len(_ints_)   >  1: raise ValueError('XYp.__distributionsParamSetDefaults__():  more than one bin found')
         elif len(_ints_)   == 0: _enums_ |= {self.p2s.DISTRIBUTION_AUTOBINp}
         if   len(_floats_) >  1: raise ValueError('XYp.__distributionsParamSetDefaults__():  more than one height percentage found')
@@ -452,8 +595,8 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     #
     # __cleanLineParamTuple__()
     #
-    def __cleanLineParamTuple__(self, _param_, widths_default, int_lists_default, colors_default, enums_default):
-        def isListOfInts(data): return isinstance(data, list) and all(type(item) is int for item in data)
+    def __cleanLineParamTuple__(self, _param_: tuple, widths_default: list, int_lists_default: list, colors_default: list, enums_default: set) -> tuple:
+        def isListOfInts(data: list) -> bool: return isinstance(data, list) and all(type(item) is int for item in data)
         _fields_, _widths_, _colors_, _int_lists_, _enums_ = [], [], [], [], set()
         for i in range(len(_param_)):
             _obj_ = _param_[i]
@@ -482,7 +625,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     #
     # __lineParamLineWidthCleaner__()
     #
-    def __lineParamLineWidthCleaner__(self, _param_, _widths_, _enums_, _parent_widths_, _parent_enums_):
+    def __lineParamLineWidthCleaner__(self, _param_: list | str | tuple, _widths_: list, _enums_: set, _parent_widths_: list, _parent_enums_: set) -> tuple:
         _width_enums_ = {self.p2s.LINEWIDTH_DOTSIZE_MEAN, self.p2s.LINEWIDTH_DOTSIZE_VARIABLE, self.p2s.LINEWIDTH_DOTSIZE_SPECIFIED}
         _lw_enum_     = _enums_        & _width_enums_
         _lw_parent_   = _parent_enums_ & _width_enums_
@@ -520,7 +663,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     #
     # __lineParamLineStyleCleaner__()
     #
-    def __lineParamLineStyleCleaner__(self, _param_, _int_lists_, _enums_, _parent_int_lists_, _parent_enums_):
+    def __lineParamLineStyleCleaner__(self, _param_: list | str | tuple, _int_lists_: list, _enums_: set, _parent_int_lists_: list, _parent_enums_: set) -> tuple:
         _style_enums_ = {self.p2s.LINESTYLE_SOLID, self.p2s.LINESTYLE_DOTTED, self.p2s.LINESTYLE_SPECIFIED}
         _ls_enum_   = _enums_        & _style_enums_
         _ls_parent_ = _parent_enums_ & _style_enums_
@@ -551,7 +694,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     #
     # __lineParamLineColorCleaner__()
     #    
-    def __lineParamLineColorCleaner__(self, _param_, _colors_, _enums_, _parent_colors_, _parent_enums_):
+    def __lineParamLineColorCleaner__(self, _param_: list | str | tuple, _colors_: list, _enums_: set, _parent_colors_: list, _parent_enums_: set) -> tuple:
         _color_enums_ = {self.p2s.LINECOLOR_GROUPBY, self.p2s.LINECOLOR_FIELD, self.p2s.LINECOLOR_SPECIFIED}
         _lc_enum_   = _enums_        & _color_enums_
         _lc_parent_ = _parent_enums_ & _color_enums_
@@ -582,7 +725,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     #
     # __lineParamLineOpacityCleaner__()
     #
-    def __lineParamLineOpacityCleaner__(self, _param_, _enums_, _parent_enums_):
+    def __lineParamLineOpacityCleaner__(self, _param_: list | str | tuple, _enums_: set, _parent_enums_: set) -> set:
         _opacity_enums_ = {self.p2s.LINEOPACITY_FIELD_MEAN, self.p2s.LINEOPACITY_FIELD_VARIABLE,  self.p2s.LINEOPACITY_100,
                            self.p2s.LINEOPACITY_75, self.p2s.LINEOPACITY_50, self.p2s.LINEOPACITY_25, self.p2s.LINEOPACITY_10}
         _lo_enum_     = _enums_        & _opacity_enums_
@@ -597,8 +740,8 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     #
     # __cleanLineParam__()
     #
-    def __cleanLineParam__(self, _param_):
-        def isListOfInts(data): return isinstance(data, list) and all(type(item) is int for item in data)
+    def __cleanLineParam__(self, _param_: list | str | tuple) -> list:
+        def isListOfInts(data: list) -> bool: return isinstance(data, list) and all(type(item) is int for item in data)
         # Do a first pass and create a structure that can be cleaned
         _fields_, _widths_, _colors_, _int_lists_, _enums_ = [], [], [], [], set()
         if   isinstance(_param_, tuple): _fields_ = [_param_]
@@ -634,7 +777,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     #
     # __expandToMaxLen__() -- expand a list to the max length
     #
-    def __expandToMaxLen__(self, _list_, max_len):
+    def __expandToMaxLen__(self, _list_: list | None, max_len: int) -> list | None:
         if   _list_ is None:         return None
         elif len(_list_) == 1:       return [_list_[0]] * max_len
         elif len(_list_) == max_len: return _list_
@@ -644,7 +787,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     # __validateDistributions__()
     # - parses x/y distribution params and resolves INSIDE/OUTSIDE placement when not explicitly set
     #
-    def __validateDistributions__(self):
+    def __validateDistributions__(self) -> None:
         if self.x_distributions is not None:
             _fields_, _ints_, _floats_, _colors_, _enums_ = self.__separateAndCleanParam__(self.x_distributions)
             _fields_, _ints_, _floats_, _colors_, _enums_ = self.__distributionsParamSetDefaults__(_fields_, _ints_, _floats_, _colors_, _enums_)
@@ -703,7 +846,9 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     # - scans all clean params for t-field strings and applies the required Polars column transforms to self.df
     # - must only be called when self.df is not None
     #
-    def __applyTimeFieldTransforms__(self):
+    def __applyTimeFieldTransforms__(self) -> None:
+        _ops_: list
+        _needed_columns_: set
         _ops_, _needed_columns_ = [], set()
         for _triple_ in [(self.x_clean,              self.x_is_lits,             'x'),
                          (self.y_clean,               self.y_is_lits,             'y'),
@@ -736,7 +881,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     # - verifies that all referenced columns exist in self.df and that dtypes are consistent within each param
     # - must only be called when self.df is not None
     #
-    def __validateColumnTypes__(self):
+    def __validateColumnTypes__(self) -> None:
         # Most of the column checks are here / with the exception of line, line_order_by, and the x/y distributions
         for _triple_ in [(self.x_clean,             self.x_is_lits,             'x'),
                          (self.y_clean,             self.y_is_lits,             'y'),
@@ -814,7 +959,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     # - appends a polars time-field transform operation to _ops_ if _str_ is a t-field not yet handled
     # - assumption: string spec items are only ever column names or hex colors
     #
-    def __addTransformIfNeeded__(self, _str_, _ops_, _needed_columns_):
+    def __addTransformIfNeeded__(self, _str_: Any, _ops_: list, _needed_columns_: set) -> None:
         if _str_ in _needed_columns_: return
         if isinstance(_str_, self.p2s.TField):
             self.p2s.warnIfTFieldAliasCollides(_str_, self.df_orig, 'XYp')
@@ -835,7 +980,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     # __columnDataTypes__()
     # - returns the dtype(s) for a column name or tuple of column names from self.df
     #
-    def __columnDataTypes__(self, _obj_):
+    def __columnDataTypes__(self, _obj_: Any) -> Any:
         if isinstance(_obj_, tuple):
             _as_list_ = []
             for i in range(len(_obj_)):
@@ -846,7 +991,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     #
     # __validateInput__()
     #
-    def __validateInput__(self):
+    def __validateInput__(self) -> None:
         self.p2s.checkReservedColumns(self.df, 'XYp')
         if self.x is None: raise ValueError('XYp.__validateInput__():  x must be specified')
         if self.y is None: raise ValueError('XYp.__validateInput__():  y must be specified')
@@ -912,7 +1057,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
         # order on a numeric/temporal axis would be silently ignored downstream,
         # so fail loudly here instead.
         #
-        def _axis_is_categorical_(clean, enums):
+        def _axis_is_categorical_(clean: list, enums: set) -> bool:
             if self.p2s.SETp in enums: return True
             if clean is None:          return False
             for _field_ in clean:
@@ -944,7 +1089,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
         # background shapes require scalar (numeric / date / datetime) axes on both x and y
         #
         if self.background is not None and self.df is not None:
-            def _axis_is_scalar_(clean, enums):
+            def _axis_is_scalar_(clean: list, enums: set) -> bool:
                 if clean is None:                    return False  # enum-only axis
                 if self.p2s.SETp in enums:           return False  # explicitly categorical
                 for field in clean:
@@ -992,7 +1137,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
         # reports itself through __validateColumnTypes__() first.
         #
         if self.aspect is not None and self.df is not None:
-            def _axis_is_numeric_(clean, enums):
+            def _axis_is_numeric_(clean: list, enums: set) -> bool:
                 if clean is None:          return False  # enum-only axis
                 if self.p2s.SETp in enums: return False  # explicitly categorical
                 if len(enums & (self.p2s.time_linear_types | self.p2s.time_periodic_types)) > 0: return False
@@ -1041,7 +1186,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     #
     # __flattenDataFrame__()
     #
-    def __flattenDataFrame__(self):
+    def __flattenDataFrame__(self) -> None:
         # Quads |  attribute-name  | column(s)                 | final-column-in-render | was-a-literal-specification | enums-found-in-the-specification
         _quads_ = [('x',             self.x_clean,             None,                    self.x_is_lits,               self.x_enums),
                    ('y',             self.y_clean,             None,                    self.y_is_lits,               self.y_enums),
@@ -1056,7 +1201,8 @@ class XYp(P2SBackgroundMixin, ExportMixin):
                 self.df = self.df.with_row_index('__p2s_index__') # Add a row index column to reference the original dataframe
             _dfs_   = []
             for i in range(len(self.x_clean)):
-                _ops_, _columns_forward_ = [], ['__p2s_index__'] # create the polars operations & the columns forward (keep the index around)
+                _ops_: list = []
+                _columns_forward_: list = ['__p2s_index__']   # polars ops + the columns carried forward (keep the index around)
                 # Base columns
                 for _quad_ in _quads_:
                     _str_, _list_, _final_, _lits_flag_, _enums_ = _quad_
@@ -1124,7 +1270,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     # sort deterministically.  Plain values stringify directly.
     #
     @staticmethod
-    def __specKey__(v):
+    def __specKey__(v: Any) -> tuple | str:
         if isinstance(v, dict): return tuple(str(_x_) for _x_ in v.values())
         return str(v)
 
@@ -1136,7 +1282,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     # when they co-occur with the same partners); override with spectral_by and
     # weight cells with spectral_weight (else raw co-occurrence counts).
     #
-    def __spectralOrder__(self, src_col):
+    def __spectralOrder__(self, src_col: str) -> list:
         _opp_col_ = '__y__' if src_col == '__x__' else '__x__'
         _base_    = self.df_flat   # eager, flattened, pre-index (the join loop never mutates it)
 
@@ -1205,11 +1351,10 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     # After this runs the join below finds no unmatched rows, so its fill_null() is only
     # a safety net.
     #
-    def __resolveOrder__(self, _df_, _src_, _order_):
+    def __resolveOrder__(self, _df_: pl.DataFrame | pl.LazyFrame, _src_: str, _order_: dict | list) -> tuple:
         _sentinel_ = self.p2s.REMAINDERp
         _label_    = self.p2s.REMAINDER_LABEL
-        _is_dict_  = isinstance(_order_, dict)
-        _keys_     = list(_order_.keys()) if _is_dict_ else list(_order_)
+        _keys_     = list(_order_.keys()) if isinstance(_order_, dict) else list(_order_)
         _listed_   = [_k_ for _k_ in _keys_ if _k_ is not _sentinel_]
         _has_rem_  = len(_listed_) != len(_keys_)
         if len(_listed_) == 0 and not _has_rem_: return _order_, _df_
@@ -1225,7 +1370,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
 
         # Append -- every value keeps its own slot (nothing collides)
         if not _has_rem_ or len(_unlisted_) == 0:
-            if _is_dict_:
+            if isinstance(_order_, dict):
                 _order_ = dict((_k_, _v_) for _k_, _v_ in _order_.items() if _k_ is not _sentinel_)
                 _next_  = (max(_order_.values()) + 1) if len(_order_) > 0 else 0
                 for _v_ in _unlisted_: _order_[_v_], _next_ = _next_, _next_ + 1
@@ -1251,11 +1396,11 @@ class XYp(P2SBackgroundMixin, ExportMixin):
             _unlisted_   = [str(_u_) for _u_ in _unlisted_]
         _df_ = _df_.with_columns(pl.when(pl.col(_src_).cast(pl.String).is_in(_unlisted_))
                                    .then(pl.lit(_label_)).otherwise(pl.col(_src_).cast(pl.String)).alias(_src_))
-        if _is_dict_: _order_ = dict(((_label_ if _k_ is _sentinel_ else _cast_(_k_)), _v_) for _k_, _v_ in _order_.items())
+        if isinstance(_order_, dict): _order_ = dict(((_label_ if _k_ is _sentinel_ else _cast_(_k_)), _v_) for _k_, _v_ in _order_.items())
         else:         _order_ = [(_label_ if _k_ is _sentinel_ else _cast_(_k_)) for _k_ in _order_]
         return _order_, _df_
 
-    def __indexXandY_join__(self):
+    def __indexXandY_join__(self) -> None:
         if self.df_flat is not None:
 
             _df_ = self.df_flat.lazy() if self.use_lazy_execution else self.df_flat
@@ -1344,7 +1489,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
                         else:
                             _dict_ = {_src_:[], _dst_:[]}
                             _max_  = max(_order_.values()) + 1 # values missing from the order dict share this one fallback slot
-                            for k, v in _order_.items(): _dict_[_src_].append(k), _dict_[_dst_].append(v)
+                            for k, v in _order_.items(): _dict_[_src_].append(k); _dict_[_dst_].append(v)
                             _df_order_ = pl.DataFrame(_dict_)
                             if self.use_lazy_execution: _df_order_ = _df_order_.lazy()
                             _df_       = _df_.join(_df_order_, on=_src_, how='left') \
@@ -1384,7 +1529,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     # - Decision A: a truthy legend with nothing to legend (color=None / literal
     #   hex) silently reserves nothing
     #
-    def __legendPrepare__(self):
+    def __legendPrepare__(self) -> None:
         self.legend_info      = None
         self._legend_region_  = None
         self._legend_reserve_ = (0, 0, 0, 0)
@@ -1416,7 +1561,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     #
     # __legendDefaultTitle__() - default legend title from the color spec
     #
-    def __legendDefaultTitle__(self, _mode_):
+    def __legendDefaultTitle__(self, _mode_: Any) -> str:
         if _mode_ in (self.p2s.CROW_MAGNITUDEp, self.p2s.CROW_STRETCHEDp): return 'rows'
         if self.color_clean:
             _first_ = self.color_clean[0]
@@ -1426,7 +1571,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
                 if _strs_: return '|'.join(_strs_)
         return ''
 
-    def __constructGeometry__(self):
+    def __constructGeometry__(self) -> None:
         w,     h     = self.wxh
         # Legend strip (if any) comes out of wxh first -- the plot region shrinks,
         # the physical output size does not ("reserve from wxh").
@@ -1519,7 +1664,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     # good-enough correction for a regional extent; it does not reproject, so it does
     # not stay true across a range of latitudes wide enough for the curvature to matter.
     #
-    def __aspectTargetRatio__(self, _ymin_, _ymax_):
+    def __aspectTargetRatio__(self, _ymin_: float, _ymax_: float) -> float:
         if self.aspect == 'equal': return 1.0
         if self.aspect == 'geo':
             _lat_ = (_ymin_ + _ymax_)/2.0
@@ -1555,7 +1700,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     # Returns (xmin, dx, ymin, dy); the window maxima are xmin+dx / ymin+dy, which is
     # not always the resolved max -- a degenerate (zero-width) axis is given dx = 1.
     #
-    def __resolveRanges__(self):
+    def __resolveRanges__(self) -> tuple:
         # 1) resolve
         if self.x_range is None: _xmin_, _xmax_ = self.df_flat['__xi__'].min(), self.df_flat['__xi__'].max()
         else:                    _xmin_, _xmax_ = self.x_range
@@ -1602,7 +1747,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     #
     # __toPixelCoordinates_int__() - compute the x and y pixel coordinates
     #
-    def __toPixelCoordinates_int__(self):
+    def __toPixelCoordinates_int__(self) -> None:
         _xmin_, _dx_, _ymin_, _dy_ = self.__resolveRanges__()
         # Clamp normalized values to [0, 0.9999999...] before scaling, then snap to
         # the raster grid.  Without supersampling the snap step is the whole dot_size
@@ -1645,7 +1790,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     #
     # __toPixelCoordinates_float__() - compute the x and y pixel coordinates
     #
-    def __toPixelCoordinates_float__(self):
+    def __toPixelCoordinates_float__(self) -> None:
         _xmin_, _dx_, _ymin_, _dy_ = self.__resolveRanges__()
         # Clamp normalized values to [0, 0.9999999...] before scaling
         self.df_flat = self.df_flat.with_columns(
@@ -1661,7 +1806,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     # - background= is the only feature that needs shapely, so the import is
     #   deferred here rather than paid by every xyp render.
     #
-    def __shapelyToSVGPath__(self, shape):
+    def __shapelyToSVGPath__(self, shape: Any) -> str:
         try:
             from shapely.geometry import Polygon, MultiPolygon, LineString, MultiLineString, GeometryCollection
         except ImportError as _e_:
@@ -1712,31 +1857,31 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     #
     # world to screen conversions
     #
-    def wxToSx(self, wx):
+    def wxToSx(self, wx: float) -> float:
         _xorigin_, _xmin_, _dx_, _width_ = self.x_transform_vars
         return _xorigin_ + ((wx - _xmin_)/_dx_) * _width_
-    def wyToSy(self, wy):
+    def wyToSy(self, wy: float) -> float:
         _yorigin_, _ymin_, _dy_, _height_ = self.y_transform_vars
         return _yorigin_ - ((wy - _ymin_)/_dy_) * _height_
 
     # P2SBackgroundMixin world->screen hooks
-    def __bgX__(self, _v_): return self.wxToSx(_v_)
-    def __bgY__(self, _v_): return self.wyToSy(_v_)
+    def __bgX__(self, _v_: float) -> float: return self.wxToSx(_v_)
+    def __bgY__(self, _v_: float) -> float: return self.wyToSy(_v_)
 
     #
     # screen to world conversions
     #
-    def sxToWx(self, sx):
+    def sxToWx(self, sx: float) -> float:
         _xorigin_, _xmin_, _dx_, _width_ = self.x_transform_vars
         return _xmin_ + ((sx - _xorigin_)/_width_) * _dx_
-    def syToWy(self, sy):
+    def syToWy(self, sy: float) -> float:
         _yorigin_, _ymin_, _dy_, _height_ = self.y_transform_vars
         return _dy_ * (_yorigin_ - sy)/ _height_ + _ymin_
 
     #
     # __distributeElements__()
     #
-    def __distributeElements__(self):
+    def __distributeElements__(self) -> None:
         for _pair_ in [('x', self.x_distributions_clean), ('y', self.y_distributions_clean)]:
             _axis_, _clean_     = _pair_
             _field_             = f'__{_axis_}i__'                   # original name in df_flat ... doesn't survive into the df_distributions
@@ -1860,20 +2005,20 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     #
     # __humanReadableMinAndMax_{type}__()
     #
-    def __humanReadableMinAndMax_int__(self, _min_, _max_):
+    def __humanReadableMinAndMax_int__(self, _min_: float, _max_: float) -> tuple:
         _min_unit_ = self.p2s.unitizeInt(_min_)
         _max_unit_ = self.p2s.unitizeInt(_max_)
         if _min_unit_ == _max_unit_: return self.p2s.unitizeInt_extendUntilDifferent(_min_, _max_)
         else:                        return _min_unit_, _max_unit_
 
-    def __humanReadableMinAndMax_float__(self, _min_, _max_):
+    def __humanReadableMinAndMax_float__(self, _min_: float, _max_: float) -> tuple:
         if abs(_min_) > 1.0 or abs(_max_) > 1.0: return self.__humanReadableMinAndMax_int__(_min_, _max_)
         return f'{_min_:.4}', f'{_max_:.4}'
 
     #
     # __humanReadableMinAndMax__()
     #
-    def __humanReadableMinAndMax__(self, _min_, _max_, clean_axis):
+    def __humanReadableMinAndMax__(self, _min_: Any, _max_: Any, clean_axis: list) -> tuple:
         if   self.__axisIsPeriodicTime__(clean_axis):
             _tfield_ = clean_axis[0]
             if isinstance(_tfield_, tuple): _tfield_ = _tfield_[0]
@@ -1887,7 +2032,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     # __axisIsPeriodicTime__() - determine if an x/y axis is periodic
     # - only works with single columns ... i.e., no tuples (or rather, only tuples with one value)
     #
-    def __axisIsPeriodicTime__(self, _clean_):
+    def __axisIsPeriodicTime__(self, _clean_: list) -> bool:
         _first_ = _clean_[0]
         if isinstance(_first_, tuple):
             _strs_ = [_ for _ in _first_ if isinstance(_, str)]
@@ -1900,7 +2045,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     #
     # __formatLabels__()
     #
-    def __formatLabels__(self, axis, cell_min, cell_max, sz, clean_axis, buffer=30):
+    def __formatLabels__(self, axis: str, cell_min: Any, cell_max: Any, sz: int, clean_axis: list, buffer: int = 30) -> tuple:
         # Figure out what the axis is called ... there's a special case for time fields
         if isinstance(cell_min, datetime) and isinstance(cell_max, datetime):
             _timedelta_ = cell_max - cell_min
@@ -1952,7 +2097,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     #
     # __determineColoringMode__()
     #
-    def __determineColoringMode__(self):
+    def __determineColoringMode__(self) -> Any:
         # Check if any of the color enums are in self.color_enums
         # ... and then make sure the column supports that mode
         for x in self.p2s.ColorTypeP:
@@ -1977,14 +2122,14 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     #
     # __renderContext_set__()
     #
-    def __renderContext_set__(self, plot_origin, plot_wxh, x_axis=True, pixel_goal=30, dl=None):
+    def __renderContext_set__(self, plot_origin: tuple, plot_wxh: tuple, x_axis: bool = True, pixel_goal: int = 30, dl: Any = None) -> list:
         _dim_           = plot_wxh[0] if x_axis else plot_wxh[1]
         xo, yo          = plot_origin
         xw, yh          = plot_wxh
         _color_inner_   = self.p2s.colorTyped('axis', 'inner')
         _svg_           = []
         # Render a line in the correct orientation
-        def __line__(_screen_, _label_, _color_=_color_inner_, _width_=0.4):
+        def __line__(_screen_: int, _label_: dict | str, _color_: str = _color_inner_, _width_: float = 0.4) -> None:
             if _screen_ is None: return
             # Calculate the endpoints (and ensure that they within the plot itself)
             if x_axis:  x1, y1, x2, y2 = _screen_, yo-yh,   _screen_, yo
@@ -2036,19 +2181,21 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     #
     # __renderContext_numeric__()
     #
-    def __renderContext_numeric__(self, _min_, _max_, plot_origin, plot_wxh, x_axis=True, pixel_goal=80, dl=None):
+    def __renderContext_numeric__(self, _min_: float | None, _max_: float | None, plot_origin: tuple, plot_wxh: tuple, x_axis: bool = True, pixel_goal: int = 80, dl: Any = None) -> list:
         if _min_ is None or _max_ is None: return [] # happens if there's no data (because user-specified axis range)
         _dim_           = plot_wxh[0] if x_axis else plot_wxh[1]
         n_ticks         = _dim_ // pixel_goal
         i_nice          = self.p2s.heckbertNiceNumbers(n_ticks, _min_, _max_)
-        i_nice_decimals = abs((Decimal(str(i_nice))).as_tuple().exponent)
+        # exponent is `int | Literal['n','N','F']`; the literals mean NaN/Infinity,
+        # which heckbertNiceNumbers() never returns.
+        i_nice_decimals = abs((Decimal(str(i_nice))).as_tuple().exponent)  # type: ignore[arg-type]
         xo, yo          = plot_origin
         xw, yh          = plot_wxh
         _color_origin_  = self.p2s.colorTyped('axis', 'origin')
         _color_inner_   = self.p2s.colorTyped('axis', 'inner')
         _svg_           = []
         # Render a line in the correct orientation
-        def __line__(_offset_, _world_, _color_=_color_inner_, _width_=0.4):
+        def __line__(_offset_: float, _world_: float, _color_: str = _color_inner_, _width_: float = 0.4) -> None:
             if _offset_ is None: return
             # Calculate the endpoints (and ensure that they within the plot itself)
             if x_axis:
@@ -2067,7 +2214,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
             _svg_.append(self.p2s.svgText(f'{_world_}', x1, y1, color=self.p2s.colorTyped('axis', 'inner'), txt_h=self.txt_h*0.6, rotation=_rot_))
             if dl is not None: dl.text(self.p2s, f'{_world_}', x1, y1, color=self.p2s.colorTyped('axis', 'inner'), txt_h=self.txt_h*0.6, rotation=_rot_, svg='')
         # Convert to screen coordinates
-        def __toScreen__(_world_):
+        def __toScreen__(_world_: float) -> float:
             if abs(_max_ - _min_) < 1e-6: return None
             else:                         return _dim_ * (_world_ - _min_) / (_max_ - _min_)
         # If the origin is in the range, center on that
@@ -2096,21 +2243,21 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     #
     # __renderContext_periodicTime__()
     #
-    def __renderContext_periodicTime__(self, _clean_, _min_world_, _max_world_, plot_origin, plot_wxh, x_axis=True, pixel_goal=10, dl=None):
+    def __renderContext_periodicTime__(self, _clean_: list, _min_world_: int, _max_world_: int, plot_origin: tuple, plot_wxh: tuple, x_axis: bool = True, pixel_goal: int = 10, dl: Any = None) -> str:
         _dim_          = plot_wxh[0] if x_axis else plot_wxh[1]
         xo, yo         = plot_origin
         xw, yh         = plot_wxh
         _svg_          = []
         # Convert to screen coordinates
-        def __toScreen__(_world_):
+        def __toScreen__(_world_: float) -> float:
             if abs(_max_world_ - _min_world_) < 1e-6: return None
             else:                                     return _dim_ * (_world_ - _min_world_) / (_max_world_ - _min_world_)
         # Distance between two world coordinates in pixels
-        def __distanceBetweenLines__(_line1_, _line2_): return abs(__toScreen__(_line1_) - __toScreen__(_line2_))
+        def __distanceBetweenLines__(_line1_: int, _line2_: float) -> float: return abs(__toScreen__(_line1_) - __toScreen__(_line2_))
         # Add a description
-        def __addDescription__(_desc_, _num_, _out_of_): _svg_.append(f'<!-- xyp.__renderContext_periodicTime__(): {_desc_}|{_num_}|{_out_of_} -->')
+        def __addDescription__(_desc_: Any, _num_: int, _out_of_: int) -> None: _svg_.append(f'<!-- xyp.__renderContext_periodicTime__(): {_desc_}|{_num_}|{_out_of_} -->')
         # Render a line in the correct orientation
-        def __line__(_world_, _str_, _type_):
+        def __line__(_world_: int, _str_: str | None, _type_: str) -> None:
             if _world_ < _min_world_ or _world_ > _max_world_: return
             if   _type_ == 'major':   _color_, _width_, _txt_h_ = self.p2s.colorTyped('axis', 'origin'), 0.4, round(self.txt_h*0.8,1)
             elif _type_ == 'minor':   _color_, _width_, _txt_h_ = self.p2s.colorTyped('axis', 'inner'),  0.4, round(self.txt_h*0.6,1)
@@ -2522,7 +2669,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     #
     # __renderContext_linearTime__()
     #
-    def __renderContext_linearTime__(self, dt_start, dt_end, plot_origin, plot_wxh, x_axis=True, pixel_goal=80, dl=None):
+    def __renderContext_linearTime__(self, dt_start: Any, dt_end: Any, plot_origin: tuple, plot_wxh: tuple, x_axis: bool = True, pixel_goal: int = 80, dl: Any = None) -> list:
         _dim_ = plot_wxh[0] if x_axis else plot_wxh[1]
         _sec_total_         = (dt_end - dt_start).total_seconds()
         if _sec_total_ == 0: return []
@@ -2579,7 +2726,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
         # Iterate through the time interval & construct the svg
         _dt_             = dt_start_rounded
         _display_format_ = _closest_tuple_[2]
-        _time_delta_     = _closest_tuple_[4]
+        _time_delta_: Any = _closest_tuple_[4]   # a timedelta; the tuple is heterogeneous
         _svg_            = []
         _inner_color_    = self.p2s.colorTyped('axis',  'inner')
         _text_color_     = self.p2s.colorTyped('label', 'inner')
@@ -2609,7 +2756,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     #
     # __renderContext__()
     #
-    def __renderContext__(self, _randid_):
+    def __renderContext__(self, _randid_: int) -> None:
         # Render the context
         self._dl_context_ = _dl_ = DisplayList(self.wxh[0], self.wxh[1])
         self._clip_rect_  = None
@@ -2679,7 +2826,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
                 else: raise ValueError(f'XYp.__renderContext__(): Unrecognized axis {_axis_} (shouldn\'t be possible)')
             # Render the internal grid lines
             # -- helper functions
-            def __min__(col):
+            def __min__(col: str) -> Any:
                 if col == 'x':
                     if self.x_range is not None: return self.x_range[0]
                     return self.df_flat['__x__'].min()
@@ -2687,7 +2834,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
                     if self.y_range is not None: return self.y_range[0]
                     return self.df_flat['__y__'].min()
                 raise ValueError(f'XYp.__renderContext__().__min__(): Unrecognized axis {col} (shouldn\'t be possible)')
-            def __max__(col):
+            def __max__(col: str) -> Any:
                 if col == 'x': 
                     if self.x_range is not None: return self.x_range[1]
                     return self.df_flat['__x__'].max()
@@ -2701,7 +2848,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
             # even without it a y_range filter can shrink the x extent after the x
             # window was already fixed.  The temporal branches keep their world-unit
             # datetimes, which __min__/__max__ still supply.
-            def __numericRange__(col):
+            def __numericRange__(col: str) -> tuple:
                 _eff_ = self.x_effective_range if col == 'x' else self.y_effective_range
                 if _eff_ is not None: return _eff_
                 return (__min__(col), __max__(col))
@@ -2761,7 +2908,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     #
     # __renderDistributions__()
     #
-    def __renderDistributions__(self):
+    def __renderDistributions__(self) -> None:
         self._dl_distributions_ = _dl_ = DisplayList(self.wxh[0], self.wxh[1])
         if self.x_distributions is None and self.y_distributions is None:
             self.svg_distributions = ''
@@ -2863,7 +3010,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     #
     # __strokeOpacityAttr__() - returns the SVG stroke-opacity attribute string for the given enums
     #
-    def __strokeOpacityAttr__(self, _enums_):
+    def __strokeOpacityAttr__(self, _enums_: set) -> str:
         if self.p2s.LINEOPACITY_75 in _enums_: return 'stroke-opacity="0.75"'
         if self.p2s.LINEOPACITY_50 in _enums_: return 'stroke-opacity="0.50"'
         if self.p2s.LINEOPACITY_25 in _enums_: return 'stroke-opacity="0.25"'
@@ -2873,7 +3020,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     #
     # __dashArrayAttr__() - returns the SVG stroke-dasharray attribute string for the given enums
     #
-    def __dashArrayAttr__(self, _enums_, _dash_array_):
+    def __dashArrayAttr__(self, _enums_: set, _dash_array_: list) -> str:
         if   self.p2s.LINESTYLE_DOTTED    in _enums_: return 'stroke-dasharray="5 5"'
         elif self.p2s.LINESTYLE_SPECIFIED in _enums_: return f'stroke-dasharray="{" ".join(str(x) for x in _dash_array_)}"'
         elif self.p2s.LINESTYLE_SOLID     in _enums_: return 'stroke-dasharray="none"'
@@ -2882,7 +3029,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     #
     # __coordinateAdjustOps__() - returns Polars operations to center rectangle dots on their coordinates
     #
-    def __coordinateAdjustOps__(self):
+    def __coordinateAdjustOps__(self) -> list:
         if isinstance(self.dot_size_orig, int):
             _half_ = self.dot_size_orig / 2.0
             return [(pl.col('__xpx__') + _half_).alias('__xpx__'),
@@ -2893,14 +3040,14 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     # __gpuDashFromEnums__() / __gpuOpacityFromEnums__() - GPU equivalents of the
     # stroke-dasharray / stroke-opacity attribute helpers (dash approximated on/off)
     #
-    def __gpuDashFromEnums__(self, _enums_, _dash_array_):
+    def __gpuDashFromEnums__(self, _enums_: set, _dash_array_: list) -> tuple | None:
         if self.p2s.LINESTYLE_DOTTED in _enums_: return (5.0, 5.0)
         if self.p2s.LINESTYLE_SPECIFIED in _enums_ and _dash_array_ is not None and len(_dash_array_) > 0:
             if len(_dash_array_) >= 2: return (float(_dash_array_[0]), float(_dash_array_[1]))
             return (float(_dash_array_[0]), float(_dash_array_[0]))
         return None
 
-    def __gpuOpacityFromEnums__(self, _enums_):
+    def __gpuOpacityFromEnums__(self, _enums_: set) -> float:
         if self.p2s.LINEOPACITY_75 in _enums_: return 0.75
         if self.p2s.LINEOPACITY_50 in _enums_: return 0.50
         if self.p2s.LINEOPACITY_25 in _enums_: return 0.25
@@ -2912,9 +3059,10 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     # - consecutive (__xpx__, __ypx__) pairs within each '__line__' become one segment
     # - color: constant hex (color=) or per-row hex column (color_col=)
     #
-    def __lineSegmentsToDL__(self, df, dl, color=None, color_col=None,
-                             width=1.0, width_col=None, opacity=1.0, opacity_col=None,
-                             dash=None, apply_adjust=True):
+    def __lineSegmentsToDL__(self, df: pl.DataFrame, dl: Any, color: str | None = None, color_col: str | None = None,
+                             width: float | None = 1.0, width_col: str | None = None,
+                             opacity: float = 1.0, opacity_col: str | None = None,
+                             dash: tuple | None = None, apply_adjust: bool = True) -> None:
         if dl is None or len(df) == 0: return
         if apply_adjust: df = df.with_columns(self.__coordinateAdjustOps__())
         _seg_ = df.with_columns([pl.col('__xpx__').shift(-1).over('__line__').alias('__x2__'),
@@ -2947,7 +3095,8 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     # - everything is a constant
     # - columns needed in the input dataframe: '__line__', '__xpx__', '__ypx__'
     #
-    def __renderLines_simple__(self, df, _enums_, _color_, _dash_array_, _width_):
+    def __renderLines_simple__(self, df: pl.DataFrame, _enums_: set, _color_: str | None,
+                           _dash_array_: list, _width_: float | None) -> list:
         _df_lines_ = df.with_columns(
             self.__coordinateAdjustOps__()
         ).group_by('__line__', maintain_order=True).agg([
@@ -2974,7 +3123,8 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     # - everything is a constant except the color -- and that's the group_by element
     # - columns needed in the input dataframe: ['__line__', '__xpx__', '__ypx__']
     #
-    def __renderLines_groupByColor__(self, df, _enums_, _color_, _dash_array_, _width_):
+    def __renderLines_groupByColor__(self, df: pl.DataFrame, _enums_: set, _color_: Any,
+                                 _dash_array_: list, _width_: float | None) -> list:
         _df_lines_ = df.with_columns(
             self.__coordinateAdjustOps__()
         ).group_by('__line__', maintain_order=True).agg([
@@ -3004,7 +3154,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     # __renderLines_complex__()
     # - assumes df is pre-sorted by the line_order option
     #
-    def __renderLines_complex__(self, df, _enums_, _color_, _dash_array_, _width_, _randid_):
+    def __renderLines_complex__(self, df: pl.DataFrame, _enums_: set, _color_: str | None, _dash_array_: list, _width_: float | None, _randid_: int) -> list:
         # Add the line width column
         if   self.p2s.LINEWIDTH_DOTSIZE_MEAN      in _enums_: df = df.with_columns(pl.col('__radius__').mean().over('__line__').alias('__line_width__'))
         elif self.p2s.LINEWIDTH_DOTSIZE_VARIABLE  in _enums_: df = df.with_columns(pl.col('__radius__').alias('__line_width__'))
@@ -3149,7 +3299,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     # - routes a per-line dataframe to the appropriate renderer based on enum flags
     # - _randid_ must be supplied when __renderLines_complex__ is a valid path; omit to raise on that branch
     #
-    def __dispatchLineRenderer__(self, k_df, _enums_, _color_, _dash_array_, _width_, _fixed_opacities_, _randid_=None):
+    def __dispatchLineRenderer__(self, k_df: pl.DataFrame, _enums_: set, _color_: str | None, _dash_array_: list, _width_: float | None, _fixed_opacities_: set, _randid_: int | None = None) -> list:
         if   self.p2s.LINECOLOR_SPECIFIED         in _enums_ and \
              self.p2s.LINEWIDTH_DOTSIZE_SPECIFIED in _enums_ and \
              len(_fixed_opacities_ & _enums_) == 1:
@@ -3166,7 +3316,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     #
     # __renderLines__()
     #
-    def __renderLines__(self, _randid_):
+    def __renderLines__(self, _randid_: int) -> None:
         self.svg_lines  = ''
         self._dl_lines_ = DisplayList(self.wxh[0], self.wxh[1])
         if self.line_clean is None: return
@@ -3211,8 +3361,8 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     # - populates the provided operation lists with color pipeline ops for the given color mode
     # - mutates _agg_ops_, _norm_ops_, _spectrum_ops_, _tohexcolor_ops_, _fill_nulls_, _shape_template_ in place
     #
-    def __buildColorOps__(self, _color_mode_, _color_default_, _color_error_,
-                          _agg_ops_, _norm_ops_, _spectrum_ops_, _tohexcolor_ops_, _fill_nulls_, _shape_template_):
+    def __buildColorOps__(self, _color_mode_: Any, _color_default_: str, _color_error_: str,
+                          _agg_ops_: list, _norm_ops_: list, _spectrum_ops_: list, _tohexcolor_ops_: list, _fill_nulls_: list, _shape_template_: list) -> None:
         if   _color_mode_ in [self.p2s.CROW_MAGNITUDEp,      self.p2s.CROW_STRETCHEDp,
                               self.p2s.CMAGNITUDE_SUMp,      self.p2s.CSTRETCHED_SUMp,
                               self.p2s.CMAGNITUDE_MINp,      self.p2s.CSTRETCHED_MINp,
@@ -3280,7 +3430,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     # - populates the provided operation lists with dot-size and opacity pipeline ops
     # - mutates _agg_ops_, _norm_ops_, _shape_template_ in place
     #
-    def __buildSizeAndOpacityOps__(self, _agg_ops_, _norm_ops_, _shape_template_):
+    def __buildSizeAndOpacityOps__(self, _agg_ops_: list, _norm_ops_: list, _shape_template_: list) -> None:
         # PLANNING.md S1: the normalization below is a raw float ratio, so r= and
         # fill-opacity= serialize 13-16 fractional digits.  Rounded at the column (the last
         # element of each tuple) rather than on the finished string.  Radius is pixels, so 2
@@ -3317,7 +3467,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     #
     # __renderDots__()
     #
-    def __renderDots__(self, line_rendering_mode=False):
+    def __renderDots__(self, line_rendering_mode: bool = False) -> pl.DataFrame:
         _color_default_                   = self.p2s.colorTyped('data',       'default')
         _color_error_                     = self.p2s.colorTyped('error',      'default')
         _color_mode_                      = self.__determineColoringMode__()
@@ -3326,6 +3476,11 @@ class XYp(P2SBackgroundMixin, ExportMixin):
         else:                                      _shape_template_ = ['<circle cx="{__xpx__}" cy="{__ypx__}"']
 
         # Pipeline Stages: Group By, Aggregation, Normalization, Spectrum, To Hex Color, Fill Nulls, Concat
+        _agg_ops_: list
+        _norm_ops_: list
+        _spectrum_ops_: list
+        _tohexcolor_ops_: list
+        _fill_nulls_: list
         _agg_ops_, _norm_ops_, _spectrum_ops_, _tohexcolor_ops_, _fill_nulls_, _concat_ops_ = [], [], [], [], [], []
 
         self.__buildColorOps__(_color_mode_, _color_default_, _color_error_,
@@ -3374,9 +3529,11 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     # magnitude modes; color_stretched_global_values for stretched modes; else
     # the per-pixel aggregated data)
     #
-    def __legendCaptureColorbarDomain__(self, _df_pixels_):
+    def __legendCaptureColorbarDomain__(self, _df_pixels_: pl.DataFrame) -> None:
         if getattr(self, 'legend_info', None) is None or self.legend_info.kind != 'colorbar': return
         _stretched_ = self.p2s.legendModeIsStretched(self._legend_color_mode_)
+        _vmin_: float | None
+        _vmax_: float | None
         if   not _stretched_ and self.color_magnitude_min is not None and self.color_magnitude_max is not None:
             _vmin_, _vmax_ = self.color_magnitude_min, self.color_magnitude_max
         elif _stretched_ and self.color_stretched_global_values:
@@ -3390,7 +3547,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     #
     # __renderLegend__() - draw the captured legend metadata into the reserved strip
     #
-    def __renderLegend__(self):
+    def __renderLegend__(self) -> None:
         self.svg_legend  = ''
         self._dl_legend_ = DisplayList(self.wxh[0], self.wxh[1])
         if getattr(self, 'legend_info', None) is None or self._legend_region_ is None: return
@@ -3401,7 +3558,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     #
     # __renderSVG__()
     #
-    def __renderSVG__(self, _randid_):
+    def __renderSVG__(self, _randid_: int) -> None:
         self._gpu_payload_ = self._gpu_dl_ = None   # invalidate GPU state cached from a template
         w, h                 = self.wxh
         _color_default_      = self.p2s.colorTyped('data',       'default')
@@ -3436,7 +3593,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     #
     # - return a lookup table w/ the original df_lu keys pointing to the rendered small multiples
     #
-    def renderSmallMultiples(self, df_all, df_lu, all_key):
+    def renderSmallMultiples(self, df_all: pl.DataFrame, df_lu: dict, all_key: str | None) -> dict:
         _kwargs_shared_ = {}   # kwargs for ALL instances (including all_key)
         _kwargs_subset_ = {}   # kwargs for non-all instances only (SM_COUNT / SM_COLOR)
 
@@ -3462,7 +3619,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
             # are (__resolveRanges__()) -- which aspect= widens past the data extent.  For a
             # categorical or temporal axis the label is the extreme *value*, so it still
             # comes from the reference's data.
-            def _shared_labels_(_axis_):
+            def _shared_labels_(_axis_: str) -> tuple:
                 _eff_ = _ref_.x_effective_range if _axis_ == 'x' else _ref_.y_effective_range
                 if _eff_ is not None and self.p2s.numericColumn(_ref_.df_flat, f'__{_axis_}__'): return _eff_
                 _lo_ = _ref_.df_flat[f'__{_axis_}__'][_ref_.df_flat[f'__{_axis_}i__'].arg_min()]
@@ -3483,7 +3640,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
             # inject it as a concrete list.  That list overrides the cloned
             # 'spectral' string in every tile (kwarg overrides beat template state),
             # so each tile applies the identical order without re-solving.
-            def _global_order_(_val_col_, _idx_col_):
+            def _global_order_(_val_col_: str, _idx_col_: str) -> list:
                 _ord_ = _ref_.df_flat.select([_val_col_, _idx_col_]).unique().sort(_idx_col_)[_val_col_].to_list()
                 if _ord_ and isinstance(_ord_[0], dict): _ord_ = [tuple(_d_.values()) for _d_ in _ord_]
                 return _ord_
@@ -3545,13 +3702,15 @@ class XYp(P2SBackgroundMixin, ExportMixin):
         # No SM_COUNT or SM_COLOR: single pass (possibly with shared x/y ranges)
         return {k: self.p2s.xyp(df=v, template=self, **_kwargs_shared_) for k, v in df_lu.items()}
 
-    def render_with(self, df, **overrides):
+    def render_with(self, df: pl.DataFrame, **overrides: Any) -> Any:
+        # `overrides` cannot be Unpack[XYpKwargs]: PEP 692 rejects a TypedDict
+        # that repeats a named parameter, and `df` is both.
         return self.p2s.xyp(df=df, template=self, **overrides)
 
     #
     # methods supporting interactive operations
     #
-    def filterByRectangle(self, bounding_box, remove_records=False):
+    def filterByRectangle(self, bounding_box: tuple, remove_records: bool = False) -> pl.DataFrame:
         _x0_, _y0_, _x1_, _y1_ = bounding_box
         if _x0_ > _x1_: _x0_, _x1_ = _x1_, _x0_
         if _y0_ > _y1_: _y0_, _y1_ = _y1_, _y0_
@@ -3563,7 +3722,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
         if remove_records: return self.df.join(_df_filtered_, on='__p2s_index__', how='anti').drop('__p2s_index__')
         else:              return self.df.join(_df_filtered_, on='__p2s_index__')            .drop('__p2s_index__')
 
-    def filterByOval(self, oval, remove_records=False):
+    def filterByOval(self, oval: tuple, remove_records: bool = False) -> pl.DataFrame:
         _cx_, _cy_, _rx_, _ry_ = oval
         # A plain click arrives as a zero-radius oval: keep it covering the pixel under the cursor.
         _rx_, _ry_ = max(float(_rx_), 0.5), max(float(_ry_), 0.5)
@@ -3575,7 +3734,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
         if remove_records: return self.df.join(_df_filtered_, on='__p2s_index__', how='anti').drop('__p2s_index__')
         else:              return self.df.join(_df_filtered_, on='__p2s_index__')            .drop('__p2s_index__')
 
-    def filterByColorAtXY(self, xy, remove_records=False, distance_threshold=2.0):
+    def filterByColorAtXY(self, xy: tuple, remove_records: bool = False, distance_threshold: float = 2.0) -> pl.DataFrame | None:
         _x_, _y_ = xy
 
         # No hexcolor column means all dots share the same default color.
@@ -3604,7 +3763,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
         if remove_records: return self.df.join(_df_filtered_, on='__p2s_index__', how='anti').drop('__p2s_index__')
         else:              return self.df.join(_df_filtered_, on='__p2s_index__')            .drop('__p2s_index__')
 
-    def recordsAt(self, xy, shape=None, threshold=2.0):
+    def recordsAt(self, xy: tuple, shape: Any = None, threshold: float = 2.0) -> pl.DataFrame:
         if shape is None: shape = self.p2s.SELECT_CIRCLEp # SELECT_HORIZONTALp, SELECT_VERTICALp
         _x_, _y_ = xy
         if   shape == self.p2s.SELECT_CIRCLEp:
@@ -3630,7 +3789,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     #
     # __xAxisIsTime__() - True when the x-axis represents linear (date/datetime) time
     #
-    def __xAxisIsTime__(self):
+    def __xAxisIsTime__(self) -> bool:
         return self.df_flat is not None and '__x__' in self.df_flat.columns and \
                (self.p2s.dateColumn(self.df_flat, '__x__') or self.p2s.dateTimeColumn(self.df_flat, '__x__'))
 
@@ -3638,14 +3797,14 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     # __currentTimeframe__() - (t_min, t_max) of the currently visible x (time) axis, or None
     # - the visible timeframe is the min/max of the x values actually rendered at this stack level
     #
-    def __currentTimeframe__(self):
+    def __currentTimeframe__(self) -> tuple | None:
         if not self.__xAxisIsTime__() or len(self.df_flat) == 0: return None
         return (self.df_flat['__x__'].min(), self.df_flat['__x__'].max())
 
     #
     # __timeColumn__() - the raw source column backing a single-column time x-axis (else None)
     #
-    def __timeColumn__(self):
+    def __timeColumn__(self) -> str:
         if self.x_clean is None or len(self.x_clean) != 1: return None
         _c_ = self.x_clean[0]
         return _c_ if isinstance(_c_, str) else None
@@ -3671,7 +3830,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     # Returns the new dataframe to push onto the stack, or None when the operation does not
     # apply or brings in no additional rows.
     #
-    def filterByTimeframe(self, top_df, mode):
+    def filterByTimeframe(self, top_df: pl.DataFrame, mode: str) -> pl.DataFrame | None:
         _tf_ = self.__currentTimeframe__()
         if _tf_ is None: return None
         _t0_, _t1_ = _tf_

@@ -1,12 +1,33 @@
+from typing import Any
 import polars as pl
 
 from .exceptions import InvalidSpecError
 
 class P2SRenderMixin:
-    def __init__(self):
+    # ---------------------------------------------------------------------
+    # Host-class attributes this mixin reads off `self`.
+    #
+    # A mixin is never instantiated on its own -- these are provided by whatever
+    # class mixes it in (Polars2SVG).  Declared here so a checker
+    # can follow the mixin's own methods; bare annotations, so nothing exists at
+    # runtime and nothing is shadowed.
+    #
+    # Typed `Any` on purpose: the mixin genuinely does not know the concrete type,
+    # and several hosts declare the same name with a narrower type of their own.
+    # ---------------------------------------------------------------------
+    MULTI_FIELD_SEP:                Any
+    ROW_COUNTp:                     Any
+    SCALARp:                        Any
+    colorTyped:                     Any
+    colorizeColumnPolarsOperations: Any
+    numericColumn:                  Any
+    polarsConcatString:             Any
+    rgbFromHexPolarsOperations:     Any
+
+    def __init__(self) -> None:
         pass
 
-    def __p2s_render_mixin_init__(self):
+    def __p2s_render_mixin_init__(self) -> None:
         pass
 
 
@@ -15,7 +36,7 @@ class P2SRenderMixin:
     # Returns a list of color values sorted by their global total (descending),
     # to be passed as color_order to colorizeBar() for consistent cross-bar ordering.
     #
-    def colorizeOrder(self, df, count, color):
+    def colorizeOrder(self, df: pl.DataFrame, count: Any, color: Any) -> list:
         color_enums = set()
         if isinstance(color, tuple):
             _strs_ = []
@@ -78,7 +99,7 @@ class P2SRenderMixin:
     # colorizeBar() - colorize a bar for a barchart using polars operations
     # xywh convention: (x, y_bottom, bar_width, bar_height) - bars extend upward from y_bottom
     #
-    def colorizeBar(self, df, xywh, count, color, color_order=None, orientation='horizontal', remainder_threshold=3.0, dl=None):
+    def colorizeBar(self, df: pl.DataFrame, xywh: tuple, count: Any, color: str | tuple | None, color_order: list | None = None, orientation: str = 'horizontal', remainder_threshold: float = 3.0, dl: Any = None) -> str:
         if orientation not in ('horizontal', 'vertical'):
             raise ValueError('colorizeBar(): orientation must be "horizontal" or "vertical"')
         bar_h, bar_w = xywh[3], xywh[2]
@@ -199,10 +220,10 @@ class P2SRenderMixin:
     # x_lookup is a small DataFrame with columns (bin_col, '__x__') giving the x position per bin.
     # count_min / count_max define the y-axis scale (bars are proportionally scaled to plot_h).
     #
-    def colorizeAllBarsVertical(self, df, bin_col, x_lookup, y_bottom, bar_w,
-                                plot_h, count_min, count_max, color,
-                                color_order=None, remainder_threshold=3.0,
-                                hexcolor_col=None, dl=None):
+    def colorizeAllBarsVertical(self, df: pl.DataFrame, bin_col: str, x_lookup: pl.DataFrame, y_bottom: int, bar_w: float,
+                                plot_h: int, count_min: int, count_max: float, color: Any,
+                                color_order: list | None = None, remainder_threshold: float = 3.0,
+                                hexcolor_col: str | None = None, dl: Any = None) -> str:
         _color_data_ = self.colorTyped('data', 'default')
         _span_        = max(float(count_max) - float(count_min), 1e-9)
         _count_min_f_ = float(count_min)
@@ -285,10 +306,10 @@ class P2SRenderMixin:
     # bar_h is the fixed height of each bar.
     # count_min / count_max define the x-axis scale (bars are proportionally scaled to plot_w).
     #
-    def colorizeAllBarsHorizontal(self, df, bin_col, y_lookup, x_left, bar_h,
-                                  plot_w, count_min, count_max, color,
-                                  color_order=None, remainder_threshold=3.0,
-                                  hexcolor_col=None, dl=None):
+    def colorizeAllBarsHorizontal(self, df: pl.DataFrame, bin_col: str, y_lookup: pl.DataFrame, x_left: int, bar_h: int,
+                                  plot_w: int, count_min: int, count_max: float, color: str,
+                                  color_order: list | None = None, remainder_threshold: float = 3.0,
+                                  hexcolor_col: str | None = None, dl: Any = None) -> str:
         _color_data_ = self.colorTyped('data', 'default')
         _span_        = max(float(count_max) - float(count_min), 1e-9)
         _count_min_f_ = float(count_min)

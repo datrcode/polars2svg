@@ -1,3 +1,4 @@
+from typing import Any
 #
 # DisplayList - backend-neutral primitive recording for dual SVG / WebGPU rendering
 #
@@ -59,7 +60,7 @@ _CLOUD_ICON_D_ = (
 # - id     : the symbol name a matching '<use href="#...">' will reference
 # - stroke : outline color, or None for the unstroked variant (spreadlinesp's #cloud_outline)
 #
-def cloudIconDef(id='cloud', stroke='#000000'):
+def cloudIconDef(id: str = 'cloud', stroke: str | None = '#000000') -> str:
     _stroke_ = f'stroke="{stroke}" ' if stroke is not None else ''
     return (f'<g id="{id}" transform="translate(-50,-25)">'
             '<svg x="0" y="0" width="100px" height="50px" viewBox="-5 -5.5 35 35"'
@@ -81,7 +82,7 @@ _NAMED_COLORS_ = {
 # - opacity multiplies the alpha channel; unparseable colors fall back to gray so a
 #   GPU-side parse problem can never break the SVG render path it is embedded in
 #
-def hexToRGBA(color, opacity=1.0):
+def hexToRGBA(color: str | None, opacity: float = 1.0) -> tuple:
     if color is None or color == 'none': return (0.0, 0.0, 0.0, 0.0)
     if color.startswith('#'):
         _h_ = color[1:]
@@ -103,7 +104,7 @@ def hexToRGBA(color, opacity=1.0):
 # - pts is a list of (x, y) tuples (closing point optional)
 # - returns a list of index triples into pts
 #
-def triangulatePolygon(pts):
+def triangulatePolygon(pts: list) -> list:
     if len(pts) >= 2 and pts[0] == pts[-1]: pts = pts[:-1]
     n = len(pts)
     if n < 3: return []
@@ -114,9 +115,9 @@ def triangulatePolygon(pts):
         x1, y1 = pts[(i+1) % n]
         _area_ += x0*y1 - x1*y0
     _ccw_ = _area_ > 0.0
-    def _cross_(o, a, b):
+    def _cross_(o: tuple, a: tuple, b: tuple) -> float:
         return (a[0]-o[0])*(b[1]-o[1]) - (a[1]-o[1])*(b[0]-o[0])
-    def _inside_(p, a, b, c):
+    def _inside_(p: tuple, a: tuple, b: tuple, c: tuple) -> bool:
         d0, d1, d2 = _cross_(a, b, p), _cross_(b, c, p), _cross_(c, a, p)
         _has_neg_ = (d0 < 0) or (d1 < 0) or (d2 < 0)
         _has_pos_ = (d0 > 0) or (d1 > 0) or (d2 > 0)
@@ -152,7 +153,7 @@ def triangulatePolygon(pts):
 # flattenPathD() - flatten an SVG path 'd' string (M/L/C/Z tokens, space separated)
 # into a list of (points, closed) subpaths; cubic beziers are sampled
 #
-def flattenPathD(d, samples_per_curve=16):
+def flattenPathD(d: str, samples_per_curve: int = 16) -> list:
     _tokens_ = d.replace(',', ' ').split()
     _subpaths_, _cur_ = [], []
     i = 0
@@ -195,7 +196,7 @@ def flattenPathD(d, samples_per_curve=16):
 # runs its outline through strokePolylineDL() using these points.  Four straight
 # edges would cut the corners off.
 #
-def roundedRectPoints(x, y, w, h, rx, samples_per_corner=6):
+def roundedRectPoints(x: float, y: float, w: float, h: float, rx: float, samples_per_corner: int = 6) -> list:
     r = max(0.0, min(float(rx), w / 2.0, h / 2.0))
     if r <= 0.0:
         return [(x, y), (x + w, y), (x + w, y + h), (x, y + h)]
@@ -215,7 +216,7 @@ def roundedRectPoints(x, y, w, h, rx, samples_per_corner=6):
 # - carries the running arc length as each segment's dash_phase so a dash pattern
 #   continues across vertices the way SVG runs it along the whole path
 #
-def strokePolylineDL(dl, pts, color, width=1.0, opacity=1.0, dash=None, scissor=None):
+def strokePolylineDL(dl: Any, pts: list, color: str, width: float = 1.0, opacity: float = 1.0, dash: tuple | None = None, scissor: tuple | None = None) -> None:
     _ph_ = 0.0
     for j in range(len(pts) - 1):
         dl.line(pts[j][0], pts[j][1], pts[j+1][0], pts[j+1][1], color,
@@ -231,7 +232,7 @@ def strokePolylineDL(dl, pts, color, width=1.0, opacity=1.0, dash=None, scissor=
 # svgToDisplayList() parser and components that compose a dasharray directly (the
 # background records) cannot disagree about how a pattern string is read.
 #
-def dashArrayToTuple(dasharray):
+def dashArrayToTuple(dasharray: str | None) -> tuple | None:
     if dasharray is None or dasharray in ('', 'none'): return None
     _dv_ = [float(_x_) for _x_ in str(dasharray).replace(',', ' ').split()]
     if len(_dv_) == 0: return None
@@ -249,8 +250,8 @@ def dashArrayToTuple(dasharray):
 # never disagree about where a curve goes.  xform maps each flattened point into
 # the target space (identity when the caller records in its own coordinates).
 #
-def pathToDL(dl, d, fill=None, stroke=None, width=1.0, fill_opacity=1.0,
-             stroke_opacity=1.0, dash=None, scissor=None, xform=None):
+def pathToDL(dl: Any, d: str, fill: str | None = None, stroke: str | None = None, width: float = 1.0, fill_opacity: float = 1.0,
+             stroke_opacity: float = 1.0, dash: tuple | None = None, scissor: Any = None, xform: Any = None) -> None:
     for _pts_, _closed_ in flattenPathD(d):
         if xform is not None: _pts_ = [xform(px, py) for px, py in _pts_]
         if fill is not None and fill != 'none' and _closed_ and len(_pts_) >= 3:
@@ -266,7 +267,7 @@ def pathToDL(dl, d, fill=None, stroke=None, width=1.0, fill_opacity=1.0,
 # - returns one row per segment with __bx__/__by__ -> __bx2__/__by2__ endpoints;
 #   all other input columns (colors, widths, counts) are carried through
 #
-def cubicBezierSegmentsTable(df, x0, y0, cx0, cy0, cx1, cy1, x1, y1, n=24):
+def cubicBezierSegmentsTable(df: pl.DataFrame, x0: str, y0: str, cx0: str, cy0: str, cx1: str, cy1: str, x1: str, y1: str, n: int = 24) -> pl.DataFrame:
     _df_ = df.with_row_index('__bz_id__')
     _t_  = pl.DataFrame({'__t__': [i / n for i in range(n + 1)]})
     _j_  = _df_.join(_t_, how='cross')
@@ -291,7 +292,7 @@ def cubicBezierSegmentsTable(df, x0, y0, cx0, cy0, cx1, cy1, x1, y1, n=24):
 # (so circles stay circular and text stays uniform) with the scaled viewBox
 # centered in the canvas.  Returns identity (1, 0, 0) when there is no viewBox.
 #
-def _rootViewBoxTransform_(svg_str):
+def _rootViewBoxTransform_(svg_str: str) -> tuple:
     import re
     m = re.search(r'<svg\b([^>]*)>', svg_str)
     if m is None: return (1.0, 0.0, 0.0)
@@ -326,14 +327,14 @@ def _rootViewBoxTransform_(svg_str):
 # Gradients/clip-paths are ignored -- a component needing a clip should record a
 # per-op scissor instead.
 #
-def svgToDisplayList(svg_str, dl, p2s):
+def svgToDisplayList(svg_str: str, dl: Any, p2s: Any) -> None:
     from polars2svg.p2s_text_mixin import svgUnescape
     import re
     _scale_, _tx_, _ty_ = _rootViewBoxTransform_(svg_str)
-    def _TX_(x): return x * _scale_ + _tx_
-    def _TY_(y): return y * _scale_ + _ty_
-    def _TL_(l): return l * _scale_
-    def _TDASH_(d): return None if d is None else (d[0] * _scale_, d[1] * _scale_)
+    def _TX_(x: float) -> float: return x * _scale_ + _tx_
+    def _TY_(y: float) -> float: return y * _scale_ + _ty_
+    def _TL_(l: float) -> float: return l * _scale_
+    def _TDASH_(d: tuple | None) -> tuple: return None if d is None else (d[0] * _scale_, d[1] * _scale_)
     _s_ = re.sub(r'<defs>.*?</defs>', '', svg_str, flags=re.DOTALL)
     _elem_re_ = re.compile(r'<(rect|circle|line|polygon|path|text|use)\b([^>]*?)(/>|>)', re.DOTALL)
     _attr_re_ = re.compile(r'([\w-]+)="([^"]*)"')
@@ -344,7 +345,7 @@ def svgToDisplayList(svg_str, dl, p2s):
         tag, attr_str, close = m.group(1), m.group(2), m.group(3)
         pos = m.end()
         a = dict(_attr_re_.findall(attr_str))
-        def _f_(name, default=0.0):
+        def _f_(name: str, default: float = 0.0) -> float:
             v = a.get(name)
             if v is None: return default
             try:    return float(v.replace('px', ''))
@@ -357,7 +358,8 @@ def svgToDisplayList(svg_str, dl, p2s):
         _stroke_w_     = _TL_(_f_('stroke-width', 1.0))
         _dash_ = _TDASH_(dashArrayToTuple(a.get('stroke-dasharray')))
 
-        def _strokePolyline_(pts):
+        def _strokePolyline_(pts: list) -> None:
+            if _stroke_ is None: return          # callers check, but not visibly to a checker
             strokePolylineDL(dl, pts, _stroke_, width=_stroke_w_,
                              opacity=_stroke_op_, dash=_dash_)
 
@@ -431,26 +433,26 @@ class DisplayList:
     #                                          -- resolved to glyph instances at payload time
     # - 'tri':                                 payload = (verts np.float32 [n,6], indices np.uint32)
     #
-    def __init__(self, w, h, bg='#ffffff'):
+    def __init__(self, w: int, h: int, bg: str = '#ffffff') -> None:
         self.w, self.h = w, h
         self.bg        = bg
         self._svg_     = []   # ordered svg strings (svg() output = join)
         self._ops_     = []
 
     # ── scalar emitters ──────────────────────────────────────────────────
-    def _record_(self, kind, values, svg, scissor=None):
+    def _record_(self, kind: str, values: list, svg: str | None, scissor: tuple | None = None) -> str:
         if svg: self._svg_.append(svg)
         self._ops_.append((kind, values, scissor))
         return svg if svg else ''
 
-    def rect(self, x, y, w, h, fill, rx=0.0, opacity=1.0, svg=None, scissor=None):
+    def rect(self, x: float, y: float, w: float, h: float, fill: str, rx: float = 0.0, opacity: float = 1.0, svg: str | None = None, scissor: tuple | None = None) -> str:
         r, g, b, a = hexToRGBA(fill, opacity)
         return self._record_('rect', [x, y, w, h, rx, r, g, b, a], svg, scissor)
 
     # stroke_opacity defaults to opacity; pass it when SVG's fill-opacity and
     # stroke-opacity differ on the same element (the instance carries both alphas)
-    def circle(self, cx, cy, r, fill, stroke=None, stroke_w=0.0, opacity=1.0,
-               stroke_opacity=None, svg=None, scissor=None):
+    def circle(self, cx: float, cy: float, r: float, fill: str, stroke: str | None = None, stroke_w: float = 0.0, opacity: float = 1.0,
+               stroke_opacity: float | None = None, svg: str | None = None, scissor: Any = None) -> str:
         _so_ = opacity if stroke_opacity is None else stroke_opacity
         fr, fg, fb, fa = hexToRGBA(fill, opacity)
         sr, sg, sb, sa = hexToRGBA(stroke, _so_) if stroke is not None else (0.0, 0.0, 0.0, 0.0)
@@ -463,8 +465,8 @@ class DisplayList:
     #   a caller flattening a polyline or a curve must pass the running total; leaving it
     #   at 0 restarts the pattern at every vertex.  Ignored when dash is None.
     #
-    def line(self, x0, y0, x1, y1, color, width=1.0, dash=None, opacity=1.0, dash_phase=0.0,
-             svg=None, scissor=None):
+    def line(self, x0: float, y0: float, x1: float, y1: float, color: str, width: float = 1.0, dash: tuple | None = None, opacity: float = 1.0, dash_phase: float = 0.0,
+             svg: str | None = None, scissor: tuple | None = None) -> str:
         r, g, b, a = hexToRGBA(color, opacity)
         _don_, _doff_ = (float(dash[0]), float(dash[1])) if dash is not None else (0.0, 0.0)
         return self._record_('line', [x0, y0, x1, y1, width, r, g, b, a, _don_, _doff_,
@@ -475,7 +477,7 @@ class DisplayList:
     # - xy is a flat list/array of vertex coordinates [x0, y0, x1, y1, ...]
     # - indices is a flat list of index triples; rgba is one color tuple or a per-vertex array
     #
-    def tris(self, xy, indices, rgba, svg=None, scissor=None):
+    def tris(self, xy: list, indices: list, rgba: np.ndarray | tuple, svg: str | None = None, scissor: Any = None) -> str:
         _xy_  = np.asarray(xy, dtype=np.float32).reshape(-1, 2)
         _n_   = len(_xy_)
         _rgba_ = np.asarray(rgba, dtype=np.float32)
@@ -489,7 +491,7 @@ class DisplayList:
     #
     # polygon() - convenience: ear-clip a simple polygon into a tri op
     #
-    def polygon(self, pts, fill, opacity=1.0, svg=None, scissor=None):
+    def polygon(self, pts: list, fill: str, opacity: float = 1.0, svg: str | None = None, scissor: Any = None) -> str:
         _tris_ = triangulatePolygon(list(pts))
         if len(_tris_) == 0:
             if svg: self._svg_.append(svg)
@@ -504,8 +506,8 @@ class DisplayList:
     # - p2s supplies svgText() (for the canonical string when svg= is omitted)
     # - mirrors the svgText() signature so call sites swap mechanically
     #
-    def text(self, p2s, txt, x, y, txt_h=12, color=None, anchor='start', font=None,
-             font_style=None, rotation=None, baseline_shift=0.0, svg=None, scissor=None):
+    def text(self, p2s: Any, txt: int | str, x: float, y: float, txt_h: float = 12, color: str | None = None, anchor: str = 'start', font: Any = None,
+             font_style: Any = None, rotation: float | None = None, baseline_shift: float = 0.0, svg: str | None = None, scissor: Any = None) -> str:
         if svg is None:
             svg = p2s.svgText(txt, x, y, txt_h=txt_h, color=color, anchor=anchor,
                               font=font, font_style=font_style, rotation=rotation)
@@ -520,7 +522,7 @@ class DisplayList:
     #
     # raw() - svg-only content with no GPU primitive (defs, gradients, unsupported markup)
     #
-    def raw(self, svg_str):
+    def raw(self, svg_str: str) -> str:
         if svg_str: self._svg_.append(svg_str)
         return svg_str
 
@@ -532,11 +534,11 @@ class DisplayList:
     # column's strings to the svg stream verbatim; svg_col=None contributes
     # nothing to the SVG output (caller already appended the strings).
     #
-    def _colexpr_(self, c):
+    def _colexpr_(self, c: float | int | str) -> pl.Expr:
         if isinstance(c, str): return pl.col(c).cast(pl.Float32)
         return pl.lit(float(c), dtype=pl.Float32)
 
-    def _df_to_op_(self, kind, df, exprs, svg_col, scissor):
+    def _df_to_op_(self, kind: str, df: pl.DataFrame, exprs: list, svg_col: str | None, scissor: Any) -> str:
         if len(df) == 0: return ''
         _arr_ = df.select([e.alias(f'__c{i}__') for i, e in enumerate(exprs)]).to_numpy().astype(np.float32)
         _svg_ = ''
@@ -546,15 +548,15 @@ class DisplayList:
         self._ops_.append((kind, _arr_, scissor))
         return _svg_
 
-    def rects_table(self, df, x, y, w, h, rgba, rx=0.0, opacity=1.0, svg_col='__svg__', scissor=None):
+    def rects_table(self, df: pl.DataFrame, x: int | str, y: str, w: float | int | str, h: float | int | str, rgba: tuple, rx: float = 0.0, opacity: float = 1.0, svg_col: str | None = '__svg__', scissor: Any = None) -> str:
         _r_, _g_, _b_ = rgba
         _exprs_ = [self._colexpr_(x), self._colexpr_(y), self._colexpr_(w), self._colexpr_(h),
                    self._colexpr_(rx), self._colexpr_(_r_), self._colexpr_(_g_), self._colexpr_(_b_),
                    self._colexpr_(opacity)]
         return self._df_to_op_('rect', df, _exprs_, svg_col, scissor)
 
-    def circles_table(self, df, cx, cy, r, rgba, opacity=1.0, stroke=None, stroke_w=0.0,
-                      svg_col='__svg__', scissor=None):
+    def circles_table(self, df: pl.DataFrame, cx: str, cy: str, r: float | int | str, rgba: tuple, opacity: float | str = 1.0, stroke: tuple | None = None, stroke_w: float = 0.0,
+                      svg_col: str | None = '__svg__', scissor: Any = None) -> str:
         _r_, _g_, _b_ = rgba
         if stroke is not None:
             _sr_, _sg_, _sb_, _sa_ = hexToRGBA(stroke, opacity) if isinstance(stroke, str) else stroke
@@ -566,8 +568,8 @@ class DisplayList:
         return self._df_to_op_('circle', df, _exprs_, svg_col, scissor)
 
     # dash_phase: see line() -- a column name (per-segment running arc length) or a constant
-    def lines_table(self, df, x0, y0, x1, y1, rgba, width=1.0, opacity=1.0, dash=None,
-                    dash_phase=0.0, svg_col='__svg__', scissor=None):
+    def lines_table(self, df: pl.DataFrame, x0: str, y0: str, x1: str, y1: str, rgba: tuple, width: float | int | str = 1.0, opacity: float | str = 1.0, dash: tuple | None = None,
+                    dash_phase: float | str = 0.0, svg_col: Any = '__svg__', scissor: Any = None) -> str:
         _r_, _g_, _b_ = rgba
         _don_, _doff_ = (float(dash[0]), float(dash[1])) if dash is not None else (0.0, 0.0)
         _exprs_ = [self._colexpr_(x0), self._colexpr_(y0), self._colexpr_(x1), self._colexpr_(y1),
@@ -598,7 +600,7 @@ class DisplayList:
         'line':   ([(0, 1), (2, 3)], [4, 9, 10, 11]),
     }
 
-    def applyTransform(self, scale, tx, ty):
+    def applyTransform(self, scale: float, tx: float, ty: float) -> Any:
         s, tx, ty = float(scale), float(tx), float(ty)
         _ops_ = []
         for kind, payload, scissor in self._ops_:
@@ -637,7 +639,7 @@ class DisplayList:
     # - svg strings are NOT copied (callers keep their own svg assembly, e.g. smallp's
     #   <g transform=...> path) unless copy_svg=True
     #
-    def extend(self, other, offset=(0, 0), scissor=None, copy_svg=False):
+    def extend(self, other: Any, offset: tuple = (0, 0), scissor: tuple | None = None, copy_svg: bool = False) -> None:
         ox, oy = float(offset[0]), float(offset[1])
         _translate_ = (ox != 0.0 or oy != 0.0)
         for kind, payload, op_scissor in other._ops_:
@@ -669,7 +671,7 @@ class DisplayList:
         if copy_svg: self._svg_.extend(other._svg_)
 
     # ── output ───────────────────────────────────────────────────────────
-    def svg(self):
+    def svg(self) -> str:
         return ''.join(self._svg_)
 
     #
@@ -678,7 +680,7 @@ class DisplayList:
     # - text runs are laid out against the glyph atlas here (deferred from text())
     # - returns a JSON-safe dict: buffers are base64-encoded little-endian float32/uint32
     #
-    def webgpu_payload(self, atlas=None):
+    def webgpu_payload(self, atlas: Any = None) -> dict:
         _chunks_   = {k: [] for k in FLOATS_PER_INSTANCE}   # per-kind list of np arrays
         _tri_v_, _tri_i_ = [], []
         _counts_   = {k: 0 for k in FLOATS_PER_INSTANCE}    # instances emitted so far per kind
@@ -686,7 +688,7 @@ class DisplayList:
         _manifest_ = []
         _has_text_ = False
 
-        def _scissor_list_(sc):
+        def _scissor_list_(sc: tuple | None) -> list | None:
             if sc is None: return None
             x, y, w, h = sc
             x0, y0 = max(0, int(math.floor(x))), max(0, int(math.floor(y)))

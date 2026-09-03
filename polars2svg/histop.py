@@ -1,3 +1,4 @@
+from typing import Any, TypedDict, Unpack, cast
 import polars as pl
 import time
 import random
@@ -6,6 +7,49 @@ import polars2svg
 from polars2svg.p2s_displaylist import DisplayList
 from polars2svg.export import ExportMixin
 from polars2svg.p2s_bin_component_mixin import P2SBinComponentMixin
+
+class HistopKwargs(TypedDict, total=False):
+    """Keyword arguments accepted by ``p2s.histop()`` / ``Histop(...)``.
+
+    Every key is optional (``total=False``); the set is exactly Histop._VALID_KWARGS,
+    which is what the constructor validates at runtime -- a name not listed here
+    raises TypeError.  Declaring it lets a type checker catch the misspelling
+    before the call runs, and gives editors completion over the parameter set.
+
+    Value types are deliberately conservative.  Most parameters are data-drivable
+    (they take a literal *or* a column name *or* a ``(field, enum)`` spec), so they
+    are typed ``Any`` rather than guessed at; the precise ones were each confirmed
+    against how the test suite actually calls them.
+    """
+    bar_h:                   Any
+    bin_by:                  Any
+    color:                   Any
+    color_stat_range_shared: Any
+    count:                   Any
+    count_range:             tuple | None
+    count_range_shared:      tuple | None
+    descending:              bool
+    df:                      pl.DataFrame | None
+    distribution:            bool
+    distribution_bin_w:      Any
+    draw_border:             bool
+    draw_context:            bool
+    draw_distribution:       bool
+    draw_labels:             bool
+    insets:                  tuple
+    legend:                  Any
+    min_bar_w:               Any
+    order:                   Any
+    remainder_threshold:     Any
+    sm_shared:               set
+    style:                   Any
+    swarm_max_pts:           Any
+    template:                'Histop | None'
+    txt_h:                   Any
+    use_lazy_execution:      bool
+    v_gap:                   Any
+    wxh:                     Any
+
 
 #
 # Histogram
@@ -23,10 +67,71 @@ class Histop(P2SBinComponentMixin, ExportMixin):
         'legend',
     })
 
-    def __init__(self, *args, **kwargs):
+    # ---------------------------------------------------------------------
+    # Parameters assigned onto the instance from _defaults_ by
+    # Polars2SVG.assignScratchDefaults() -- setattr(), so no checker can see them.
+    #
+    # Declarations, not assignments: bare annotations populate __annotations__
+    # and create no class attribute, so this block is a no-op at runtime.
+    #
+    # Types are deliberately conservative -- `Any` wherever a parameter is
+    # data-drivable (accepts a literal *or* a column name), which is most of
+    # them.  The job here is to make the attribute VISIBLE; the precise
+    # per-parameter contract lands in the Unpack[TypedDict] work (phase 2),
+    # which is where a caller-facing type belongs.
+    #
+    # tests/test_typing_surface.py::TestComponentAttrDeclarations checks this
+    # block against _VALID_KWARGS, so a new parameter fails the suite until it
+    # is declared here too.
+    # ---------------------------------------------------------------------
+    color:                   Any
+    color_stat_range_shared: Any
+    count:                   Any
+    count_range:             tuple | None
+    count_range_shared:      tuple | None
+    descending:              bool
+    distribution:            bool
+    distribution_bin_w:      int
+    draw_border:             bool
+    draw_distribution:       bool
+    draw_labels:             bool
+    legend:                  bool
+    min_bar_w:               float
+    order:                   Any
+    remainder_threshold:     float
+    sm_shared:               set
+    swarm_max_pts:           int
+    txt_h:                   int
+    use_lazy_execution:      bool
+    v_gap:                   int
+
+    # --- state built during __init__/render, not passed in --------------
+    # Initialised to None and filled once the frame is resolved, so a checker
+    # infers `... | None` and flags every later use.  `Any` because these hold
+    # polars frames, display lists and cached statistics whose concrete types
+    # this class does not otherwise name.
+    _color_field_:    Any
+    _color_stat_max_: Any
+    _color_stat_min_: Any
+    _legend_region_:  tuple | None
+    _numeric_field_:  str | None
+    df:               Any
+    df_orig:          pl.DataFrame | None
+    df_swarm:         Any
+    legend_info:      Any
+    template:         'Histop | None'
+    _dl_:   DisplayList
+    bar_h:  Any
+    bin_by: Any
+    insets: tuple
+    style:  Any
+    svg:    str
+    wxh:    Any
+
+    def __init__(self, *args: Any, **kwargs: Unpack[HistopKwargs]) -> None:
         self.t_start        = time.time()
         self.p2s            = polars2svg.Polars2SVG()
-        self.timing_metrics = {}
+        self.timing_metrics: dict = {}
         self.gatherMetrics(self.__parseInput__, *args, **kwargs)
         self.gatherMetrics(self.__validateInput__)
         if self.df is not None:
@@ -39,21 +144,21 @@ class Histop(P2SBinComponentMixin, ExportMixin):
         self.t_end     = time.time()
         self.t_overall = self.t_end - self.t_start
 
-    def _repr_svg_(self): return self.svg
+    def _repr_svg_(self) -> str: return self.svg
 
     #
     # webgpu() - WebGPU payload of the same render (buffers + manifest); the polars
     # compute is shared with the SVG path -- only the serialization differs
     #
-    def webgpu(self):
+    def webgpu(self) -> dict | None:
         if getattr(self, '_dl_', None) is None: return None
         return self._dl_.webgpu_payload(self.p2s.glyphAtlas())
 
     # gpuDisplayList() - consumed by smallp when this component renders as a cell
-    def gpuDisplayList(self):
+    def gpuDisplayList(self) -> Any:
         return getattr(self, '_dl_', None)
 
-    def gatherMetrics(self, callable, *args, **kwargs):
+    def gatherMetrics(self, callable: Any, *args: Any, **kwargs: Any) -> int:
         t0 = time.time()
         _results_ = callable(*args, **kwargs)
         t1 = time.time()
@@ -61,7 +166,7 @@ class Histop(P2SBinComponentMixin, ExportMixin):
         self.timing_metrics[callable.__name__] += t1 - t0
         return _results_
 
-    def __parseInput__(self, *args, **kwargs):
+    def __parseInput__(self, *args: Any, **kwargs: Unpack[HistopKwargs]) -> None:
         _unknown_ = set(kwargs) - self._VALID_KWARGS
         if _unknown_:
             raise TypeError(f'Histop: unexpected keyword argument(s): {sorted(_unknown_)}')
@@ -113,7 +218,7 @@ class Histop(P2SBinComponentMixin, ExportMixin):
             self.p2s.assignScratchDefaults(self, _defaults_)
             # from-scratch builds only — a template clone is an exact snapshot and
             # must not re-apply session defaults (see Polars2SVG._apply_defaults)
-            kwargs = self.p2s._apply_defaults('histop', kwargs)
+            kwargs = cast(HistopKwargs, self.p2s._apply_defaults('histop', kwargs))
 
         # Extract DataFrame
         _new_df_ = None
@@ -151,7 +256,7 @@ class Histop(P2SBinComponentMixin, ExportMixin):
         w, h = self.wxh
         self.svg = self.p2s.placeholderSVG(w, h)
 
-    def __validateInput__(self):
+    def __validateInput__(self) -> None:
         # Normalize legend= eagerly so a bad spec fails fast (raises InvalidSpecError).
         self.legend_spec = self.p2s.legendResolveSpec(self.legend)
         if self.df is None: return
@@ -217,7 +322,7 @@ class Histop(P2SBinComponentMixin, ExportMixin):
         if self.bar_h is None:
             self.bar_h = self.txt_h + 4 if self.draw_context else 5
 
-    def __addColumnsToDataFrame__(self):
+    def __addColumnsToDataFrame__(self) -> None:
         _ops_ = []
 
         # Multi-field bin: concatenate to '__bin__' (non-printable separator so distinct
@@ -251,7 +356,7 @@ class Histop(P2SBinComponentMixin, ExportMixin):
 
     # ── Count aggregate expression ──────────────────────────────────────────
 
-    def __countAggExpr__(self):
+    def __countAggExpr__(self) -> pl.Expr:
         if self.count == self.p2s.ROW_COUNTp:
             return pl.len().alias('__count__')
         elif isinstance(self.count, str):
@@ -269,13 +374,13 @@ class Histop(P2SBinComponentMixin, ExportMixin):
                 return pl.struct(_fields_).n_unique().alias('__count__')
         return pl.len().alias('__count__')
 
-    def __countFields__(self):
+    def __countFields__(self) -> set:
         if self.count == self.p2s.ROW_COUNTp: return set()
         if isinstance(self.count, str):        return {self.count}
         if isinstance(self.count, tuple):      return {_f_ for _f_ in self.count if isinstance(_f_, str)}
         return set()
 
-    def __findNumericCountField__(self):
+    def __findNumericCountField__(self) -> str | None:
         if isinstance(self.count, str) and self.p2s.numericColumn(self.df, self.count):
             return self.count
         elif isinstance(self.count, tuple):
@@ -284,7 +389,7 @@ class Histop(P2SBinComponentMixin, ExportMixin):
                     return _f_
         return None
 
-    def __orderAggExpr__(self):
+    def __orderAggExpr__(self) -> pl.Expr:
         if self.order == self.p2s.ROW_COUNTp:
             return pl.len().alias('__order_metric__')
         elif isinstance(self.order, str):
@@ -309,7 +414,7 @@ class Histop(P2SBinComponentMixin, ExportMixin):
 
     # ── Aggregation ─────────────────────────────────────────────────────────
 
-    def __computeAggregates__(self):
+    def __computeAggregates__(self) -> None:
         # Determine color field and whether it's categorical
         self._color_field_            = None
         self._color_is_categorical_   = False
@@ -512,7 +617,7 @@ class Histop(P2SBinComponentMixin, ExportMixin):
     # nothing to legend (color=None / boxplot styles, which ignore color=) silently
     # reserves nothing.
     #
-    def __legendPrepare__(self):
+    def __legendPrepare__(self) -> None:
         self.legend_info      = None
         self._legend_region_  = None
         self._legend_reserve_ = (0, 0, 0, 0)
@@ -552,7 +657,7 @@ class Histop(P2SBinComponentMixin, ExportMixin):
         elif _pos_ == 'top':    self._legend_region_ = (0, 0, self.wxh[0], _t_)
         else:                   self._legend_region_ = (0, self.wxh[1] - _b_, self.wxh[0], _b_)
 
-    def __constructGeometry__(self):
+    def __constructGeometry__(self) -> None:
         w, h         = self.wxh
         # Legend strip (if any) comes out of wxh first -- the plot region shrinks,
         # the physical output size does not ("reserve from wxh").
@@ -585,9 +690,9 @@ class Histop(P2SBinComponentMixin, ExportMixin):
             self._dist_h_        = _raw_strip_h_ + y_ins
             self._dist_strip_y0_ = _candidate_strip_y0_
 
-    def __computeDistribution__(self):
-        self._dist_stacked_     = {}
-        self._dist_bins_lu_     = {}
+    def __computeDistribution__(self) -> None:
+        self._dist_stacked_: dict     = {}
+        self._dist_bins_lu_: dict     = {}
         self._dist_stacked_max_ = 1
         self._dist_stacked_min_ = 1
         self._dist_n_bins_      = 0
@@ -625,7 +730,7 @@ class Histop(P2SBinComponentMixin, ExportMixin):
 
     # ── Rendering ────────────────────────────────────────────────────────────
 
-    def __renderSVG__(self, rand_id):
+    def __renderSVG__(self, rand_id: int) -> None:
         w, h          = self.wxh
         _bg_          = self.p2s.colorTyped('background', 'default')
         _axis_color_  = self.p2s.colorTyped('axis',       'default')
@@ -670,7 +775,7 @@ class Histop(P2SBinComponentMixin, ExportMixin):
         _col_avail_ = _avail_h_span_ - 2 * self.insets[1] - (2 * _L_more_full_ + _rhs_gap_ if _L_more_full_ > 0 else 0)
         _show_col_lbl_ = self.draw_context and _n_visible_ > 0 and _col_avail_ >= _f_std_
 
-        def __countToBarW__(count):
+        def __countToBarW__(count: float) -> float:
             _span_ = max(float(self._count_max_) - float(self._count_min_), 1e-9)
             return max(0.0, self._plot_w_ * (float(count) - float(self._count_min_)) / _span_)
 
@@ -945,7 +1050,7 @@ class Histop(P2SBinComponentMixin, ExportMixin):
 
         self.svg = _svg_head_ + _dl_.svg() + '</svg>'
 
-    def __renderDistributionStrip__(self, _dl_):
+    def __renderDistributionStrip__(self, _dl_: Any) -> None:
         _abw_   = self._dist_actual_bin_w_   # float cell width
         _bin_h_ = self.distribution_bin_w    # height stays fixed
         _y0_    = self._dist_strip_y0_
@@ -972,7 +1077,7 @@ class Histop(P2SBinComponentMixin, ExportMixin):
                       svg=f'<rect x="{_rx_:.1f}" y="{_ry_:.1f}" width="{_rw_:.1f}" '
                           f'height="{_rh_:.1f}" fill="{_row_["__hx__"]}" stroke="none" />')
 
-    def __renderDistribution__(self, _dl_, fill_color, line_color):
+    def __renderDistribution__(self, _dl_: Any, fill_color: str, line_color: str) -> None:
         '''Overlay a bucketed frequency distribution of bar lengths below the chart.'''
         if self._agg_type_ not in ('simple', 'stacked') or len(self.df_agg) == 0: return
         _y_ins_   = self.insets[1]
@@ -1009,8 +1114,8 @@ class Histop(P2SBinComponentMixin, ExportMixin):
                       svg=f'<rect x="{_bx_:.1f}" y="{_by_:.1f}" width="{_bw_:.1f}" height="{_bh_:.1f}" '
                           f'fill="{fill_color}" fill-opacity="0.4" stroke="{line_color}" stroke-width="0.3" />')
 
-    def renderSmallMultiples(self, df_all, df_lu, all_key):
-        _kwargs_ = {}
+    def renderSmallMultiples(self, df_all: pl.DataFrame, df_lu: dict, all_key: str) -> dict:
+        _kwargs_: dict[str, Any] = {}
         _needs_ref_ = self.p2s.SM_COUNT in self.sm_shared or self.p2s.SM_COLOR in self.sm_shared
         if _needs_ref_:
             _ref_ = Histop(df=df_all, template=self)
@@ -1020,10 +1125,12 @@ class Histop(P2SBinComponentMixin, ExportMixin):
                 _kwargs_['color_stat_range_shared'] = (_ref_._color_stat_min_, _ref_._color_stat_max_)
         return {k: Histop(df=v, template=self, **_kwargs_) for k, v in df_lu.items()}
 
-    def render_with(self, df, **overrides):
+    def render_with(self, df: pl.DataFrame, **overrides: Any) -> Any:
+        # `overrides` cannot be Unpack[HistopKwargs]: PEP 692 rejects a TypedDict
+        # that repeats a named parameter, and `df` is both.
         return Histop(df=df, template=self, **overrides)
 
-    def filterByRectangle(self, bounding_box, remove_records=False):
+    def filterByRectangle(self, bounding_box: tuple, remove_records: bool = False) -> pl.DataFrame:
         _x0_, _y0_, _x1_, _y1_ = bounding_box
         if _x0_ > _x1_: _x0_, _x1_ = _x1_, _x0_
         if _y0_ > _y1_: _y0_, _y1_ = _y1_, _y0_
@@ -1043,7 +1150,7 @@ class Histop(P2SBinComponentMixin, ExportMixin):
 
         # Per-bin bar pixel bounds
         _span_ = max(float(self._count_max_) - float(self._count_min_), 1e-9)
-        def __countToBarW__(v):
+        def __countToBarW__(v: int) -> float:
             return max(0.0, self._plot_w_ * (float(v) - float(self._count_min_)) / _span_)
 
         if self._agg_type_ == 'stacked':
@@ -1098,14 +1205,14 @@ class Histop(P2SBinComponentMixin, ExportMixin):
             _to_drop_.append('__bin__')
         return _df_result_.drop(_to_drop_)
 
-    def filterByOval(self, oval, remove_records=False):
+    def filterByOval(self, oval: tuple, remove_records: bool = False) -> pl.DataFrame:
         _cx_, _cy_, _rx_, _ry_ = oval
         # A plain click arrives as a zero-radius oval: keep it covering the pixel under the cursor.
         _rx_, _ry_ = max(float(_rx_), 0.5), max(float(_ry_), 0.5)
 
         # Exact ellipse-vs-box (axis-aligned) overlap: clamp the oval center to the box,
         # then check that closest point against the ellipse.
-        def _ellipse_hits_box_(bx0, by0, bx1, by1):
+        def _ellipse_hits_box_(bx0: float, by0: int, bx1: float, by1: int) -> bool:
             _qx_ = min(max(_cx_, bx0), bx1)
             _qy_ = min(max(_cy_, by0), by1)
             return ((_qx_ - _cx_) / _rx_) ** 2 + ((_qy_ - _cy_) / _ry_) ** 2 <= 1.0
@@ -1123,7 +1230,7 @@ class Histop(P2SBinComponentMixin, ExportMixin):
         _visible_bins_ = self._sorted_bins_[:_n_visible_]
 
         _span_ = max(float(self._count_max_) - float(self._count_min_), 1e-9)
-        def __countToBarW__(v):
+        def __countToBarW__(v: int) -> float:
             return max(0.0, self._plot_w_ * (float(v) - float(self._count_min_)) / _span_)
 
         if self._agg_type_ == 'stacked':
@@ -1172,7 +1279,7 @@ class Histop(P2SBinComponentMixin, ExportMixin):
             _to_drop_.append('__bin__')
         return _df_result_.drop(_to_drop_)
 
-    def filterBySubstring(self, substring, remove_bins=False):
+    def filterBySubstring(self, substring: str, remove_bins: bool = False) -> pl.DataFrame:
         _sub_ = substring.lower()
         # Match against the display form ('|'-joined) so a user's 'A|x' still matches a
         # multi-field bin whose internal key uses the non-printable MULTI_FIELD_SEP.
@@ -1187,7 +1294,7 @@ class Histop(P2SBinComponentMixin, ExportMixin):
             _to_drop_.append('__bin__')
         return _df_result_.drop(_to_drop_)
 
-    def recordsAt(self, xy, shape=None, threshold=2.0):
+    def recordsAt(self, xy: tuple, shape: Any = None, threshold: float = 2.0) -> pl.DataFrame:
         """Return the original records whose bin row contains pixel y.
 
         Only SELECT_HORIZONTALp is supported: the x coordinate and threshold are
@@ -1219,7 +1326,7 @@ class Histop(P2SBinComponentMixin, ExportMixin):
                 break
 
         # Helper: return a correctly-schemed empty DataFrame
-        def _empty_():
+        def _empty_() -> pl.DataFrame:
             _drop_ = [c for c in ['__p2s_index__'] if c in self.df.columns]
             if self._bin_col_ == '__bin__':
                 _drop_ += [c for c in ['__bin__'] if c in self.df.columns]

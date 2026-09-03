@@ -1,3 +1,4 @@
+from typing import Any
 import polars as pl
 
 from datetime import timedelta
@@ -5,17 +6,58 @@ from datetime import timedelta
 from .exceptions import InvalidSpecError, Polars2SVGError
 
 class P2STimeMixin:
-    def __init__(self):
+    # ---------------------------------------------------------------------
+    # Host-class attributes this mixin reads off `self`.
+    #
+    # A mixin is never instantiated on its own -- these are provided by whatever
+    # class mixes it in (Polars2SVG).  Declared here so a checker
+    # can follow the mixin's own methods; bare annotations, so nothing exists at
+    # runtime and nothing is shadowed.
+    #
+    # Typed `Any` on purpose: the mixin genuinely does not know the concrete type,
+    # and several hosts declare the same name with a narrower type of their own.
+    # ---------------------------------------------------------------------
+    LT_Y_Qp:           Any
+    LT_Y_m_d_4Hp:      Any
+    LT_Y_m_d_H_15Mp:   Any
+    LT_Y_m_d_H_M_15Sp: Any
+    LT_Y_m_d_H_M_Sp:   Any
+    LT_Y_m_d_H_Mp:     Any
+    LT_Y_m_d_Hp:       Any
+    LT_Y_m_dp:         Any
+    LT_Y_mp:           Any
+    LT_Yp:             Any
+    PT_DoW_H_Mp:       Any
+    PT_DoW_Hp:         Any
+    PT_DoWp:           Any
+    PT_DoYp:           Any
+    PT_H_M_Sp:         Any
+    PT_H_Mp:           Any
+    PT_Hp:             Any
+    PT_M_Sp:           Any
+    PT_Mp:             Any
+    PT_Qp:             Any
+    PT_Sp:             Any
+    PT_d_H_Mp:         Any
+    PT_d_Hp:           Any
+    PT_dp:             Any
+    PT_m_d_Hp:         Any
+    PT_m_dp:           Any
+    PT_mp:             Any
+    TimePeriodicTypeP: Any
+    periodic_ranges:   Any
+
+    def __init__(self) -> None:
         pass
 
-    def __p2s_time_mixin_init__(self):
+    def __p2s_time_mixin_init__(self) -> None:
         pass
 
     #
     # polarsOperationForEnum
     # - see also timePeriodicHumanReadable()
     #
-    def polarsOperationForEnum(self, column, _enum_):
+    def polarsOperationForEnum(self, column: str, _enum_: Any) -> pl.Expr:
         if isinstance(column, tuple):
             if len(column) == 1: column = column[0]
             else: raise InvalidSpecError(f'XYp.polarsOperationForTimeEnums(): column must be a string {column=}')
@@ -59,7 +101,7 @@ class P2STimeMixin:
     #
     # __monthLookup__()
     #
-    def __monthLookup__(self):
+    def __monthLookup__(self) -> dict:
         return {
             1: 'jan', 2: 'feb', 3: 'mar',  4: 'apr',  5: 'may',  6: 'jun',
             7: 'jul', 8: 'aug', 9: 'sep', 10: 'oct', 11: 'nov', 12: 'dec',
@@ -68,7 +110,7 @@ class P2STimeMixin:
     #
     # __daysInMonth__()
     # - the most days in a month ... i.e., in a leap year
-    def __maxDaysInMonthLookup__(self):
+    def __maxDaysInMonthLookup__(self) -> dict:
         return {
             1: 31, 2: 29, 3: 31,  4: 30,  5: 31,  6: 30,
             7: 31, 8: 31, 9: 30, 10: 31, 11: 30, 12: 31,
@@ -77,7 +119,7 @@ class P2STimeMixin:
     #
     # __daysInMonth__() - return the number of days in a month
     #
-    def __daysInMonth__(self, year, month):
+    def __daysInMonth__(self, year: int, month: int) -> int:
         _max_days_lu_ = self.__maxDaysInMonthLookup__()
         _max_day_     = _max_days_lu_[month]
         if month == 2:
@@ -90,7 +132,7 @@ class P2STimeMixin:
     #
     # __daysOfWeekLookup__()
     #
-    def __daysOfWeekLookup__(self):
+    def __daysOfWeekLookup__(self) -> dict:
         return {
             1: 'mon', 2: 'tue', 3: 'wed', 4: 'thu', 5: 'fri', 6: 'sat', 7: 'sun',
         }
@@ -98,7 +140,7 @@ class P2STimeMixin:
     #
     # humanReadablePeriodicTimeDelta()
     #
-    def humanReadablePeriodicTimeDelta(self, _diff_, _enum_):
+    def humanReadablePeriodicTimeDelta(self, _diff_: int, _enum_: Any) -> str:
         if   _diff_ == 0: return ''
         elif _enum_ == self.PT_Qp:        # (1,     4)          # quarters ... i.e., 3 months
             return f'{_diff_}q'
@@ -157,7 +199,7 @@ class P2STimeMixin:
     #
     # humanReadableTimeDelta() - return a short human readable time delta
     #
-    def humanReadableTimeDelta(self, td):
+    def humanReadableTimeDelta(self, td: Any) -> str:
         _seconds_ = int(td.total_seconds())
         # Years
         _seconds_in_a_year_ = int(24*60*60*(365*3+366*1)/4.0)
@@ -211,13 +253,13 @@ class P2STimeMixin:
     #
     # timePeriodicRange() - return the range for a time periodic type
     #
-    def timePeriodicRange(self, _enum_): return self.periodic_ranges[_enum_]
+    def timePeriodicRange(self, _enum_: Any) -> tuple: return self.periodic_ranges[_enum_]
 
     #
     # timePeriodicHumanReadable() - return a human readable string for a time periodic type
     # - see also polarsOperationForEnum
     #
-    def timePeriodicHumanReadable(self, value, _enum_):
+    def timePeriodicHumanReadable(self, value: int, _enum_: Any) -> str:
         _months_   = self.__monthLookup__()
         _max_days_ = self.__maxDaysInMonthLookup__() # max days (in a year with a leap year)
         _dow_      = self.__daysOfWeekLookup__()

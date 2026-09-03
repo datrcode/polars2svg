@@ -10,6 +10,7 @@
 # Computing Systems (CHI '06), Montreal, Quebec, Canada, 2006, pp. 517-520,
 # doi: 10.1145/1124772.1124851.
 
+from typing import Any
 import copy
 import queue
 from math import sqrt, acos, pi, atan2
@@ -21,13 +22,16 @@ class CirclePacker(object):
     Implements the circle packing algorithm from "Visualization of large hierarchical data by circle packing".
     """
     def __init__(self,
-                 rt_self             : object,
+                 rt_self             : Any,   # the Polars2SVG host -- geometry helpers are called on it
                  circles             : list[tuple[float, float, float]],
                  epsilon             : float  = 0.01,
                  largest_to_smallest : bool   = True,
-                 keep_order          : bool   = True):
+                 keep_order          : bool   = True) -> None:
         self.rt_self = rt_self
-        self.circles = circles
+        # Rebound below to 4-tuples (x, y, r, original_index); the incoming
+        # 3-tuples are only read to build those, so the attribute is wider
+        # than the parameter.
+        self.circles: list[tuple] = list(circles)
 
         circles_with_i = []
         self.r_min = self.r_max  = self.circles[0][2]
@@ -44,11 +48,11 @@ class CirclePacker(object):
 
         self.circles_left        = copy.deepcopy(self.circles)
         self.epsilon             = epsilon
-        self.packed              = []
-        self.fwd                 = {}
-        self.bck                 = {}
+        self.packed:  list[tuple] = []
+        self.fwd:     dict[int, int] = {}
+        self.bck:     dict[int, int] = {}
         self.r_max_so_far        = 0.0
-        self.nearest             = queue.PriorityQueue()
+        self.nearest: queue.PriorityQueue = queue.PriorityQueue()
 
         self.__packFirstCircles__()
         self.__recenterPackedCircles__()
@@ -73,7 +77,7 @@ class CirclePacker(object):
         for c in self.packed: wout_i.append((c[0], c[1], c[2]))
         self.packed = wout_i
 
-    def packedCircles(self, into_circle=None):
+    def packedCircles(self, into_circle: tuple | None = None) -> list:
         if into_circle is None: return copy.deepcopy(self.packed)
         _inscribed_ = self.optimalInscriptionCircle()
         scale       = _inscribed_[2] / into_circle[2]
@@ -85,17 +89,17 @@ class CirclePacker(object):
             _return_.append((x,y,r))
         return _return_
 
-    def __packedCircleExtents__(self):
+    def __packedCircleExtents__(self) -> tuple:
         _pkd_ = self.packed
         x0, y0, x1, y1 = _pkd_[0][0] - _pkd_[0][2], _pkd_[0][1] - _pkd_[0][2], _pkd_[0][0] + _pkd_[0][2], _pkd_[0][1] + _pkd_[0][2]
         for i in range(1, len(_pkd_)): x0, y0, x1, y1 = min(x0, _pkd_[i][0] - _pkd_[i][2]), min(y0, _pkd_[i][1] - _pkd_[i][2]), max(x1, _pkd_[i][0] + _pkd_[i][2]), max(y1, _pkd_[i][1] + _pkd_[i][2])
         return x0, y0, x1, y1
 
-    def __recenterPackedCircles__(self):
+    def __recenterPackedCircles__(self) -> None:
         x0, y0, x1, y1 = self.__packedCircleExtents__()
         for i in range(len(self.packed)): self.packed[i] = (self.packed[i][0] - (x0 + x1)/2.0, self.packed[i][1] - (y0 + y1)/2.0, self.packed[i][2], self.packed[i][3])
 
-    def __packFirstCircles__(self):
+    def __packFirstCircles__(self) -> None:
         cx0, cy0, r0, i0  = self.circles_left.pop(0)
         cx0 = cy0 = 0.0
         self.packed.append((cx0, cy0, r0, i0))
@@ -154,8 +158,8 @@ class CirclePacker(object):
 
         self.packed.append((cx3, cy3, r3, i3))
 
-    def __packNextCircle__(self):
-        def approximateCircleArcLength(cir0, cir1):
+    def __packNextCircle__(self) -> None:
+        def approximateCircleArcLength(cir0: tuple, cir1: tuple) -> float:
             a = b = (sqrt(cir0[0]**2 + cir0[1]**2) + sqrt(cir1[0]**2 + cir1[1]**2)) / 2.0
             c     = self.rt_self.segmentLength((cir0, cir1))
             gamma         = acos((a**2 + b**2 - c**2)/(2.0*a*b))
@@ -176,7 +180,7 @@ class CirclePacker(object):
             while overlapped_after is None and overlapped_before is None and next not in seen and prev not in seen:
                 if self.rt_self.circlesOverlap((c[0], c[1], c[2]-self.epsilon), self.packed[next]): overlapped_after  = next
                 if self.rt_self.circlesOverlap((c[0], c[1], c[2]-self.epsilon), self.packed[prev]): overlapped_before = prev
-                seen.add(next), seen.add(prev)
+                seen.add(next); seen.add(prev)
                 next, prev = self.fwd[next], self.bck[prev]
                 if 0 not in self.fwd and len(self.packed) > 50:
                     circumference_next = approximateCircleArcLength(self.packed[next], c)
@@ -217,7 +221,7 @@ class CirclePacker(object):
                 self.nearest.put((sqrt(c[0]**2 + c[1]**2)+c[2], _index_))
                 while self.nearest.queue[0][1] not in self.fwd.keys(): self.nearest.get()
 
-    def __eraseChain__(self, fm_i, to_i):
+    def __eraseChain__(self, fm_i: int, to_i: int) -> None:
         i_start = self.bck[fm_i]
         i_end   = self.fwd[to_i]
         while fm_i != i_end:
@@ -230,13 +234,13 @@ class CirclePacker(object):
             to_i   = i_prev
         self.fwd[i_start], self.bck[i_end] = i_end, i_start
 
-    def __validateChains__(self):
+    def __validateChains__(self) -> None:
         if len(self.fwd) != len(self.bck):   raise Polars2SVGError('Chains Are Different Lengths')
         for i in self.fwd.keys():
             if i not in self.bck.keys():     raise Polars2SVGError('Forward Chain Has Key Not In Backward Chain')
             if self.bck[self.fwd[i]] != i:   raise Polars2SVGError('Backward Chain Has Key Not In Forward Chain')
 
-    def __validateNoOverlaps__(self):
+    def __validateNoOverlaps__(self) -> bool:
         for i in range(len(self.packed)):
             c0 = self.packed[i]
             for j in range(i+1, len(self.packed)):
@@ -244,11 +248,11 @@ class CirclePacker(object):
                 if self.rt_self.circlesOverlap((c0[0], c0[1], c0[2]), (c1[0], c1[1], c1[2]-self.epsilon)): return False
         return True
 
-    def optimalInscriptionCircle(self, iterations=10, angular_distance=pi/3.0):
+    def optimalInscriptionCircle(self, iterations: int = 10, angular_distance: float = pi/3.0) -> tuple:
         _border_circles_ = []
         _packed_circles_ = self.packedCircles()
         for k, v in self.fwd.items(): _border_circles_.append(_packed_circles_[v])
-        def __findRMax__(_xycoord_):
+        def __findRMax__(_xycoord_: tuple) -> float:
             _r_max_ = 0.0
             for _bc_ in _border_circles_:
                 _r_ = self.rt_self.segmentLength((_xycoord_, _bc_)) + _bc_[2]
@@ -270,7 +274,7 @@ class CirclePacker(object):
                 _xy_best_ = _xy_
         return (_xy_best_[0], _xy_best_[1], _r_best_)
 
-    def __approximateInscribedCircle__(self, xy=None, angular_distance=pi/3.0):
+    def __approximateInscribedCircle__(self, xy: tuple | None = None, angular_distance: float = pi/3.0) -> tuple:
         _border_circles_ = []
         _packed_circles_ = self.packedCircles()
         for k, v in self.fwd.items(): _border_circles_.append(_packed_circles_[v])
@@ -308,6 +312,8 @@ class CirclePacker(object):
             while i2 is None and i < len(_sorter_):
                 if i != i1: i2 = i
                 i += 1
-        p0, p1, p2 = (_sorter_[i0][1], _sorter_[i0][2]), (_sorter_[i1][1], _sorter_[i1][2]), (_sorter_[i2][1], _sorter_[i2][2])
+        # i2 is always found: the len(_border_circles_) < 3 guard above means
+        # _sorter_ holds at least three entries, so the search cannot fall through.
+        p0, p1, p2 = (_sorter_[i0][1], _sorter_[i0][2]), (_sorter_[i1][1], _sorter_[i1][2]), (_sorter_[i2][1], _sorter_[i2][2])  # type: ignore[index]
         _circle_ = self.rt_self.threePointCircle(p0, p1, p2)
         return _circle_, [p0, p1, p2]

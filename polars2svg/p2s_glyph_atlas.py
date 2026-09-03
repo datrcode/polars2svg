@@ -1,3 +1,4 @@
+from typing import Any
 #
 # GlyphAtlas - GPU text rendering with SVG-identical layout
 #
@@ -19,16 +20,16 @@ _PAD_     = 2
 _INITIAL_CHARSET_ = ''.join(chr(c) for c in range(32, 127))
 
 class GlyphAtlas:
-    def __init__(self, font_path=None):
+    def __init__(self, font_path: str | None = None) -> None:
         if font_path is None:
             font_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                      'fonts', 'NotoSans-Regular-subset.ttf')
         self.font_path  = font_path
         self.version    = 0
-        self._charset_  = set()
-        self._glyphs_   = {}    # ch -> {'u0','v0','u1','v1','bx','by','w','h'} (px metrics at ATLAS_PX)
-        self._img_      = None
-        self._png_b64_  = None
+        self._charset_: set  = set()
+        self._glyphs_: dict = {}    # ch -> {'u0','v0','u1','v1','bx','by','w','h'} (px metrics at ATLAS_PX)
+        self._img_: Any = None      # PIL.Image, built lazily by _build_()
+        self._png_b64_: str | None = None
         from PIL import ImageFont
         self._font48_   = ImageFont.truetype(self.font_path, size=ATLAS_PX)
         self._ascent48_, self._descent48_ = self._font48_.getmetrics()
@@ -37,7 +38,7 @@ class GlyphAtlas:
     #
     # _build_() - (re)render and shelf-pack the atlas for the union of the current charset and new_chars
     #
-    def _build_(self, new_chars):
+    def _build_(self, new_chars: set | str) -> None:
         from PIL import Image, ImageDraw
         self._charset_ |= set(new_chars)
         _renderable_ = []
@@ -81,7 +82,7 @@ class GlyphAtlas:
     # - (ox, oy) is the SVG text anchor point; rotation (degrees) rotates around it,
     #   matching transform="rotate(deg, x, y)"
     #
-    def layoutText(self, txt, x, y, txt_h, anchor='start', rotation=None, dy=0.0):
+    def layoutText(self, txt: str, x: float, y: float, txt_h: float, anchor: str = 'start', rotation: float | None = None, dy: float = 0.0) -> list:
         _size_ = int(round(txt_h))
         if _size_ <= 0 or not txt: return []
         _missing_ = set(txt) - self._charset_
@@ -112,7 +113,7 @@ class GlyphAtlas:
     #
     # payload() - JSON-safe atlas description for the JS runtime (texture upload)
     #
-    def payload(self):
+    def payload(self) -> dict:
         if self._png_b64_ is None:
             import io
             _buf_ = io.BytesIO()

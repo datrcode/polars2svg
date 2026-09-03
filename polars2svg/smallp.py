@@ -1,9 +1,41 @@
+from typing import Any, TypedDict, Unpack, cast
 import polars as pl
 import time
 import random
 
 import polars2svg
 from polars2svg.export import ExportMixin
+
+class SmallpKwargs(TypedDict, total=False):
+    """Keyword arguments accepted by ``p2s.smallp()`` / ``Smallp(...)``.
+
+    Every key is optional (``total=False``); the set is exactly Smallp._VALID_KWARGS,
+    which is what the constructor validates at runtime -- a name not listed here
+    raises TypeError.  Declaring it lets a type checker catch the misspelling
+    before the call runs, and gives editors completion over the parameter set.
+
+    Value types are deliberately conservative.  Most parameters are data-drivable
+    (they take a literal *or* a column name *or* a ``(field, enum)`` spec), so they
+    are typed ``Any`` rather than guessed at; the precise ones were each confirmed
+    against how the test suite actually calls them.
+    """
+    category_by:        Any
+    collate_remainder:  bool
+    cycle_by:           Any
+    descending:         bool
+    df:                 pl.DataFrame | None
+    draw_border:        bool
+    draw_labels:        bool
+    grid_mode:          bool
+    include_all:        bool
+    insets:             tuple
+    order:              Any
+    sketch_only:        bool
+    sm_template:        Any
+    txt_h:              Any
+    use_lazy_execution: bool
+    wxh:                Any
+
 
 #
 # Small Multiples
@@ -17,10 +49,57 @@ class Smallp(ExportMixin):
         'sketch_only', 'draw_labels', 'draw_border', 'txt_h', 'cycle_by',
     })
 
-    def __init__(self, *args, **kwargs):
+    # ---------------------------------------------------------------------
+    # Parameters assigned onto the instance from _defaults_ by
+    # Polars2SVG.assignScratchDefaults() -- setattr(), so no checker can see them.
+    #
+    # Declarations, not assignments: bare annotations populate __annotations__
+    # and create no class attribute, so this block is a no-op at runtime.
+    #
+    # Types are deliberately conservative -- `Any` wherever a parameter is
+    # data-drivable (accepts a literal *or* a column name), which is most of
+    # them.  The job here is to make the attribute VISIBLE; the precise
+    # per-parameter contract lands in the Unpack[TypedDict] work (phase 2),
+    # which is where a caller-facing type belongs.
+    #
+    # tests/test_typing_surface.py::TestComponentAttrDeclarations checks this
+    # block against _VALID_KWARGS, so a new parameter fails the suite until it
+    # is declared here too.
+    # ---------------------------------------------------------------------
+    collate_remainder:  bool
+    cycle_by:           Any
+    descending:         bool
+    draw_border:        bool
+    draw_labels:        bool
+    grid_mode:          bool
+    include_all:        bool
+    insets:             tuple
+    order:              Any
+    sketch_only:        bool
+    txt_h:              int
+    use_lazy_execution: bool
+
+    # --- state built during __init__/render, not passed in --------------
+    # Initialised to None and filled once the frame is resolved, so a checker
+    # infers `... | None` and flags every later use.  `Any` because these hold
+    # polars frames, display lists and cached statistics whose concrete types
+    # this class does not otherwise name.
+    _gpu_dl_:      Any
+    _gpu_payload_: dict | None
+    category_by:   Any
+    df:            Any
+    df_orig:       pl.DataFrame | None
+    sm_template:   Any
+    _render_lu_:    dict
+    category_to_xy: dict
+    svg:            str
+    wxh:            Any
+    wxh_actual:     tuple
+
+    def __init__(self, *args: Any, **kwargs: Unpack[SmallpKwargs]) -> None:
         self.t_start        = time.time()
         self.p2s            = polars2svg.Polars2SVG()
-        self.timing_metrics = {}
+        self.timing_metrics: dict = {}
         self.gatherMetrics(self.__parseInput__, *args, **kwargs)
         self.gatherMetrics(self.__validateInput__)
         if self.df is not None:
@@ -33,14 +112,14 @@ class Smallp(ExportMixin):
         self.t_end     = time.time()
         self.t_overall = self.t_end - self.t_start
 
-    def _repr_svg_(self): return self.svg
+    def _repr_svg_(self) -> str: return self.svg
 
     #
     # gpuDisplayList() / webgpu() - WebGPU representation composed from each cell
     # component's own display list, translated to its tile position (mirrors the
     # SVG <g transform="translate(...)"> assembly).  Lazy + cached.
     #
-    def gpuDisplayList(self):
+    def gpuDisplayList(self) -> Any:
         if self.df is None or getattr(self, '_render_lu_', None) is None: return None
         if getattr(self, '_gpu_dl_', None) is not None: return self._gpu_dl_
         from polars2svg.p2s_displaylist import DisplayList
@@ -70,14 +149,14 @@ class Smallp(ExportMixin):
         self._gpu_dl_ = _dl_
         return _dl_
 
-    def webgpu(self):
+    def webgpu(self) -> dict | None:
         if getattr(self, '_gpu_payload_', None) is not None: return self._gpu_payload_
         _dl_ = self.gpuDisplayList()
         if _dl_ is None: return None
         self._gpu_payload_ = _dl_.webgpu_payload(self.p2s.glyphAtlas())
         return self._gpu_payload_
 
-    def render_with_df(self, df):
+    def render_with_df(self, df: Any) -> 'Smallp':
         return Smallp(df, self.sm_template,
                       category_by        = self.category_by,
                       cycle_by           = self.cycle_by,
@@ -94,7 +173,7 @@ class Smallp(ExportMixin):
                       draw_border        = self.draw_border,
                       txt_h              = self.txt_h)
 
-    def gatherMetrics(self, callable, *args, **kwargs):
+    def gatherMetrics(self, callable: Any, *args: Any, **kwargs: Any) -> Any:
         t0 = time.time()
         _results_ = callable(*args, **kwargs)
         t1 = time.time()
@@ -102,20 +181,20 @@ class Smallp(ExportMixin):
         self.timing_metrics[callable.__name__] += t1 - t0
         return _results_
 
-    def _label_for_tuple_(self, _tuple_):
+    def _label_for_tuple_(self, _tuple_: str | tuple) -> str:
         if   _tuple_ == '__remainder__': return 'Remainder'
         elif _tuple_ == '__all__':       return 'All'
         else:
             _as_strs_ = [str(x) for x in _tuple_]
             return '|'.join(_as_strs_) if len(_tuple_) > 1 else str(_tuple_[0])
 
-    def _validate_tfield_column_(self, field):
+    def _validate_tfield_column_(self, field: Any) -> None:
         _column_, _ = self.p2s.tFieldTuple(field)
         _types_          = self.p2s.tFieldAccepts(field)
         if not any(isinstance(self.df.dtypes[self.df.columns.index(_column_)], t) for t in _types_):
             raise ValueError(f'Smallp.__validateInput__(): the column {_column_} is not of type {_types_} for t-field {field}')
 
-    def __parseInput__(self, *args, **kwargs):
+    def __parseInput__(self, *args: Any, **kwargs: Unpack[SmallpKwargs]) -> None:
         _unknown_ = set(kwargs) - self._VALID_KWARGS
         if _unknown_:
             raise TypeError(f'Smallp: unexpected keyword argument(s): {sorted(_unknown_)}')
@@ -143,15 +222,15 @@ class Smallp(ExportMixin):
 
         self.df, self.df_orig, self.sm_template, self.category_by = None, None, None, None
 
-        def __isColumn__(df, col):
+        def __isColumn__(df: pl.DataFrame, col: Any) -> bool:
             # t-field-aware column membership -- delegates to the shared helper so the
             # (isTField -> tFieldTuple -> base-column) logic lives in exactly one place.
             return self.p2s.columnInDataFrame(col, df)
 
-        def __tupleElementsAreColumns__(df, _tuple_):
+        def __tupleElementsAreColumns__(df: pl.DataFrame, _tuple_: tuple) -> bool:
             return all(__isColumn__(df, _tuple_[i]) for i in range(len(_tuple_)))
 
-        def __elementsAreDataFrames__(_list_):
+        def __elementsAreDataFrames__(_list_: list) -> bool:
             return all(isinstance(_list_[i], pl.DataFrame) for i in range(len(_list_)))
 
         # Extract the dataframe first
@@ -195,7 +274,7 @@ class Smallp(ExportMixin):
         # unconditional on purpose: sm_template is a panel template (a resolved
         # sibling component), not a Smallp clone source — smallp itself has no
         # template snapshot to preserve, so current defaults always apply
-        kwargs = self.p2s._apply_defaults('smallp', kwargs)
+        kwargs = cast(SmallpKwargs, self.p2s._apply_defaults('smallp', kwargs))
         self.p2s.assignKwargsWithDefaults(self, _defaults_, kwargs)
 
         # Normalize to a canonical (w, h) tuple; smallp permits one dimension to be
@@ -216,7 +295,7 @@ class Smallp(ExportMixin):
         _w_, _h_ = self.wxh
         self.svg = self.p2s.placeholderSVG(_w_, _h_)
 
-    def __validateInput__(self):
+    def __validateInput__(self) -> None:
         self.p2s.checkReservedColumns(self.df, 'Smallp')
         if self.cycle_by is not None:
             if not isinstance(self.cycle_by, dict) or len(self.cycle_by) == 0:
@@ -241,9 +320,9 @@ class Smallp(ExportMixin):
                     if isinstance(field, str) and self.p2s.isTField(field, df=self.df):
                         self._validate_tfield_column_(field)
 
-    def __addColumnsToDataFrame__(self):
+    def __addColumnsToDataFrame__(self) -> None:
         _ops_ = []
-        def __addOp__(field):
+        def __addOp__(field: Any) -> None:
             self.p2s.warnIfTFieldAliasCollides(field, self.df, 'Smallp')
             _column_, _enum_ = self.p2s.tFieldTuple(field)
             _ops_.append(self.p2s.polarsOperationForEnum(_column_, _enum_).alias(field))
@@ -259,7 +338,7 @@ class Smallp(ExportMixin):
             if self.use_lazy_execution: self.df = self.df.lazy().with_columns(_ops_).collect()
             else:                       self.df = self.df.with_columns(_ops_)
 
-    def __orderAggExpr__(self):
+    def __orderAggExpr__(self) -> pl.Expr:
         if self.order == self.p2s.ROW_COUNTp:
             return pl.len().alias('__order_metric__')
         elif isinstance(self.order, str):
@@ -284,7 +363,7 @@ class Smallp(ExportMixin):
                 return _stat_map_[self.order[1]].alias('__order_metric__')
         return pl.len().alias('__order_metric__')
 
-    def __computeOrderingStats__(self):
+    def __computeOrderingStats__(self) -> None:
         if isinstance(self.category_by, (str, tuple)):
             _cat_cols_ = [self.category_by] if isinstance(self.category_by, str) else list(self.category_by)
             _agg_df_   = self.df.group_by(_cat_cols_).agg(self.__orderAggExpr__())
@@ -316,7 +395,7 @@ class Smallp(ExportMixin):
             raise ValueError('Smallp.__computeOrderingStats__(): Unknown category_by type: ' + str(type(self.category_by)))
         self._num_categories_ = len(self._sorted_category_keys_)
 
-    def __filterForKey__(self, key):
+    def __filterForKey__(self, key: tuple) -> pl.DataFrame:
         if isinstance(self.category_by, str):
             return self.df.filter(pl.col(self.category_by) == key[0])
         else:
@@ -325,13 +404,20 @@ class Smallp(ExportMixin):
             _target_   = {c: v for c, v in zip(_cat_cols_, key)}
             return self.df.filter(_struct_.is_in([_target_]))
 
-    def __constructGeometry__(self):
+    def __constructGeometry__(self) -> None:
         _tiles_needed_ = self._num_categories_
         if self.include_all: _tiles_needed_ += 1
         tmpl_w, tmpl_h = self.sm_template.wxh
         tmpl_h_adj = tmpl_h + self.txt_h + 3 if self.draw_labels else tmpl_h
         x_ins,  y_ins  = self.insets
         _w_,    _h_    = self.wxh
+        # int-or-None, and which is which is decided by whether wxh carried a
+        # width or a height; the branches below rely on that correlation, which
+        # is not expressible as a type.
+        _tiles_down_:   Any
+        _tiles_across_: Any
+        _w_leftover_:   Any
+        _h_leftover_:   Any
         _tiles_down_, _tiles_across_ = None, None
         _w_leftover_, _h_leftover_   = None, None
         if isinstance(_w_, int):
@@ -356,7 +442,7 @@ class Smallp(ExportMixin):
         self.category_to_xy, self.category_to_df = {}, {}
         _x_tile_,   _y_tile_   = 0,     0
         _x_offset_, _y_offset_ = x_ins, y_ins
-        def __increment__():
+        def __increment__() -> None:
             nonlocal _x_tile_, _x_offset_, _y_tile_, _y_offset_
             _x_tile_   += 1
             _x_offset_ += tmpl_w + x_ins
@@ -443,7 +529,7 @@ class Smallp(ExportMixin):
             _svg_.append('</svg>')
             self.svg = ''.join(_svg_)
 
-    def __printSketchInfo__(self, _tiles_needed_, _tiles_across_, _tiles_down_, _w_, _h_, _w_leftover_, _h_leftover_, _num_remainder_categories_):
+    def __printSketchInfo__(self, _tiles_needed_: int, _tiles_across_: int, _tiles_down_: int, _w_: int, _h_: int, _w_leftover_: int, _h_leftover_: int, _num_remainder_categories_: int) -> None:
         _tiles_needed_str_ = f'Tiles Needed:    {_tiles_needed_}'
         _tiles_total_str_  = f'Tile Spaces:     {_tiles_across_ * _tiles_down_}'
         _tiles_across_str_ = f'Tiles Across:    {_tiles_across_}'
@@ -480,7 +566,7 @@ class Smallp(ExportMixin):
         print(f'{_w_leftover_str_:<{strw}} | {_h_leftover_str_:<{strw}} | {_remainder_str_:<{strw}} |')
         print(f'{_width_fit_str_:<{strw}} | {_height_fit_str_:<{strw}} | {_adj_tile_w_str_:<{strw}} | {_adj_tile_h_str_:<{strw}}')
 
-    def __renderSVG__(self, rand_id):
+    def __renderSVG__(self, rand_id: int) -> None:
         tmpl_w, tmpl_h = self.sm_template.wxh
         _w_,    _h_    = self.wxh_actual
         _bg_color_     = self.p2s.colorTyped('background', 'default')

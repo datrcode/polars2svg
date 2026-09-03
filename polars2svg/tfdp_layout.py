@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Optional
+from typing import Any, Optional
 
 try:
     import mlx.core as mx
@@ -126,7 +126,7 @@ def _scale_by_edge(pos: np.ndarray, indptr: np.ndarray,
 
 
 def _pivot_mds(adj: sp.csr_matrix, n_pivots: int = 50, dim: int = 2,
-               seed=None) -> np.ndarray:
+               seed: int | None = None) -> np.ndarray:
     from sklearn.utils.extmath import randomized_svd
     rng = np.random.default_rng(seed)
     n = adj.shape[0]
@@ -216,7 +216,7 @@ def _tfdp_layout_core(
     seed: Optional[int] = None,
     verbose: bool = False,
     device: mx.Device | None = None,
-    budget=None,
+    budget: Any = None,
     selection: set | None = None,
     focal_attraction_scale: float = 5.0,
     bg_repulsion_scale: float = 3.0,
@@ -361,11 +361,15 @@ class TFDPLayout(object):
     seed, verbose, device : optional
     """
 
-    def __init__(self, g, *, pos=None, selection=None, pin_background=False,
-                 algo='exact', alpha=0.1, beta=8.0, gamma=2.0,
-                 max_iter=300, combine=True, rvs_k=64, lr=0.1,
-                 focal_attraction_scale=5.0, bg_repulsion_scale=3.0,
-                 seed=None, verbose=False, device=None, budget=None) -> None:
+    # Written by both layout paths (single graph, and the per-component merge).
+    elapsed:             float
+    resulting_positions: dict
+
+    def __init__(self, g: Any, *, pos: dict | None = None, selection: set | None = None, pin_background: bool = False,
+                 algo: str = 'exact', alpha: float = 0.1, beta: float = 8.0, gamma: float = 2.0,
+                 max_iter: int = 300, combine: bool = True, rvs_k: int = 64, lr: float = 0.1,
+                 focal_attraction_scale: float = 5.0, bg_repulsion_scale: float = 3.0,
+                 seed: int | None = None, verbose: bool = False, device: Any = None, budget: Any = None) -> None:
 
         # Determine connectivity (handle directed and undirected graphs)
         if isinstance(g, nx.DiGraph):
@@ -379,7 +383,7 @@ class TFDPLayout(object):
         if not _is_connected_:
             g_und = g.to_undirected() if isinstance(g, nx.DiGraph) else g
             components = list(nx.connected_components(g_und))
-            merged_pos = {}
+            merged_pos: dict = {}
             total_elapsed = 0.0
             for comp_nodes in components:
                 sub = g.subgraph(comp_nodes)

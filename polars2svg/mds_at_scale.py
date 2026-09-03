@@ -1,3 +1,4 @@
+from typing import Any
 # Vendored from racetrack_svg_framework/rtsvg/mds_at_scale.py
 # Original author: David Trimm — Apache License 2.0
 # Removed: import rtsvg — replaced with optional rt_self parameter.
@@ -45,11 +46,11 @@ class LandmarkMDSLayout(object):
         pos = LandmarkMDSLayout(g).results()
         p2s.linkp(df, [('src', 'dst')], pos)
     '''
-    def __init__(self, g, num_landmarks=None, dimensions=2, landmarks=None, landmark_pos=None, rt_self=None) -> None:
+    def __init__(self, g: Any, num_landmarks: int | None = None, dimensions: int = 2, landmarks: list | None = None, landmark_pos: dict | None = None, rt_self: Any = None) -> None:
         # If separate components, split up and process each separately
         if isinstance(g, nx.Graph) and nx.is_connected(g) == False:
             components = list(nx.connected_components(g))
-            _pos_      = {}
+            _pos_: dict = {}
             for _subgraph_nodes_ in components:
                 _subgraph_        = g.subgraph(_subgraph_nodes_)
                 _subgraph_layout_ = LandmarkMDSLayout(_subgraph_, num_landmarks, dimensions, landmarks, landmark_pos, rt_self)
@@ -90,7 +91,9 @@ class LandmarkMDSLayout(object):
                 min_distances = np.minimum(min_distances, new_distances)
             landmarks = np.array(landmarks)
         else:
-            if landmarks is None: landmarks = list(landmark_pos.keys())
+            # reached only when NOT (landmarks is None and landmark_pos is None),
+            # so landmarks being None here means landmark_pos is not.
+            if landmarks is None: landmarks = list(landmark_pos.keys())  # type: ignore[union-attr]
             num_landmarks   = len(landmarks)
             _as_set_        = set(landmarks)
             _nodes_as_list_ = list(g.nodes())
@@ -164,11 +167,11 @@ class PivotMDSLayout(object):
         pos = PivotMDSLayout(g).results()
         p2s.linkp(df, [('src', 'dst')], pos)
     '''
-    def __init__(self, g, num_pivots=None, dimensions=2, rt_self=None) -> None:
+    def __init__(self, g: Any, num_pivots: int | None = None, dimensions: int = 2, rt_self: Any = None) -> None:
         # If separate components, split up and process each separately
         if isinstance(g, nx.Graph) and nx.is_connected(g) == False:
             components = list(nx.connected_components(g))
-            _pos_      = {}
+            _pos_: dict = {}
             for _subgraph_nodes_ in components:
                 _subgraph_        = g.subgraph(_subgraph_nodes_)
                 _subgraph_layout_ = PivotMDSLayout(_subgraph_, num_pivots, dimensions, rt_self)
@@ -238,7 +241,7 @@ class PivotMDSLayout(object):
     def results(self) -> dict: return self.resulting_positions
 
 
-def _tileSideBySide_(g, pos):
+def _tileSideBySide_(g: Any, pos: dict) -> dict:
     """Fallback for disconnected graphs when no rt_self: place components in a row."""
     components = list(nx.connected_components(g))
     offset, result = 0.0, {}

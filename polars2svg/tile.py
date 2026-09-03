@@ -2,6 +2,7 @@
 # Original author: David Trimm — Apache License 2.0
 # The two methods are one component here; see the class comment for what changed.
 
+from typing import Any, TypedDict, Unpack
 import time
 import random
 import re
@@ -37,7 +38,7 @@ _SVG_ATTR_H_    = re.compile(r'\sheight="([^"]*)"')
 # - the framework always emits numeric, unit-less width/height on that tag; anything
 #   else (units, percentages, a missing attribute) raises rather than guessing a size
 #
-def _svgRootWxh_(svg, where):
+def _svgRootWxh_(svg: str, where: str) -> tuple:
     _tag_ = _SVG_ROOT_TAG_.search(svg)
     if _tag_ is None:
         raise ValueError(f'Tile: {where} does not contain an <svg> element')
@@ -58,8 +59,28 @@ def _svgRootWxh_(svg, where):
 # - sizes are pixel counts and are almost always integral, so this keeps the composed
 #   markup as clean as the components' own (float precision is preserved when it matters)
 #
-def _fmt_(v):
+def _fmt_(v: float) -> str:
     return str(int(v)) if float(v).is_integer() else str(v)
+
+
+class TileKwargs(TypedDict, total=False):
+    """Keyword arguments accepted by ``p2s.tile()`` / ``Tile(...)``.
+
+    Every key is optional (``total=False``); the set is exactly Tile._VALID_KWARGS,
+    which is what the constructor validates at runtime -- a name not listed here
+    raises TypeError.  Declaring it lets a type checker catch the misspelling
+    before the call runs, and gives editors completion over the parameter set.
+
+    Value types are deliberately conservative.  Most parameters are data-drivable
+    (they take a literal *or* a column name *or* a ``(field, enum)`` spec), so they
+    are typed ``Any`` rather than guessed at; the precise ones were each confirmed
+    against how the test suite actually calls them.
+    """
+    bg_color: str | tuple | None
+    per_row:  Any
+    spacer:   Any
+    svg_list: Any
+    wxh:      Any
 
 
 class Tile(ExportMixin):
@@ -68,10 +89,39 @@ class Tile(ExportMixin):
         'svg_list', 'per_row', 'spacer', 'wxh', 'bg_color',
     })
 
-    def __init__(self, *args, **kwargs):
+    # ---------------------------------------------------------------------
+    # Parameters assigned onto the instance from _defaults_ by
+    # Polars2SVG.assignScratchDefaults() -- setattr(), so no checker can see them.
+    #
+    # Declarations, not assignments: bare annotations populate __annotations__
+    # and create no class attribute, so this block is a no-op at runtime.
+    #
+    # Types are deliberately conservative -- `Any` wherever a parameter is
+    # data-drivable (accepts a literal *or* a column name), which is most of
+    # them.  The job here is to make the attribute VISIBLE; the precise
+    # per-parameter contract lands in the Unpack[TypedDict] work (phase 2),
+    # which is where a caller-facing type belongs.
+    #
+    # tests/test_typing_surface.py::TestComponentAttrDeclarations checks this
+    # block against _VALID_KWARGS, so a new parameter fails the suite until it
+    # is declared here too.
+    # ---------------------------------------------------------------------
+    bg_color: str | tuple | None
+    per_row:  Any
+    spacer:   Any
+    wxh:      Any
+
+    # Built during render rather than passed in; declared for the same reason.
+    svg:          str
+    svg_strings:  list
+    xy_list:      list
+    content_wxh:  tuple
+    wxh_actual:   tuple
+
+    def __init__(self, *args: Any, **kwargs: Unpack[TileKwargs]) -> None:
         self.t_start        = time.time()
         self.p2s            = polars2svg.Polars2SVG()
-        self.timing_metrics = {}
+        self.timing_metrics: dict = {}
         self.gatherMetrics(self.__parseInput__, *args, **kwargs)
         self.gatherMetrics(self.__validateInput__)
         rand_id = random.randint(0, 2**32)  # nosec B311 - non-cryptographic SVG id scoping, see SECURITY.md
@@ -80,9 +130,9 @@ class Tile(ExportMixin):
         self.t_end     = time.time()
         self.t_overall = self.t_end - self.t_start
 
-    def _repr_svg_(self): return self.svg
+    def _repr_svg_(self) -> str: return self.svg
 
-    def gatherMetrics(self, callable, *args, **kwargs):
+    def gatherMetrics(self, callable: Any, *args: Any, **kwargs: Any) -> Any:
         t0 = time.time()
         _results_ = callable(*args, **kwargs)
         t1 = time.time()
@@ -90,7 +140,7 @@ class Tile(ExportMixin):
         self.timing_metrics[callable.__name__] += t1 - t0
         return _results_
 
-    def __parseInput__(self, *args, **kwargs):
+    def __parseInput__(self, *args: Any, **kwargs: Unpack[TileKwargs]) -> None:
         _unknown_ = set(kwargs) - self._VALID_KWARGS
         if _unknown_:
             raise TypeError(f'Tile: unexpected keyword argument(s): {sorted(_unknown_)}')
@@ -119,7 +169,7 @@ class Tile(ExportMixin):
 
         self.p2s.assignKwargsWithDefaults(self, _defaults_, kwargs)
 
-    def __validateInput__(self):
+    def __validateInput__(self) -> None:
         if self.svg_list is None:
             raise ValueError('Tile.__validateInput__(): svg_list must be specified')
 
@@ -146,8 +196,8 @@ class Tile(ExportMixin):
     # another tile() call.  A layout with a single row has no vertical gaps to draw (and
     # per_row=1 no horizontal ones), so there the unused half is simply never applied.
     #
-    def __normalizeSpacer__(self, spacer):
-        def _check_(_v_, _side_):
+    def __normalizeSpacer__(self, spacer: Any) -> tuple:
+        def _check_(_v_: bool | int | str, _side_: str) -> int:
             if isinstance(_v_, bool) or not isinstance(_v_, (int, float)):
                 raise ValueError(f'Tile.__validateInput__(): spacer {_side_} must be a number, '
                                  f'got {type(_v_).__name__} {_v_!r}')
@@ -169,12 +219,13 @@ class Tile(ExportMixin):
     #   rows are left-aligned and the canvas is as wide as its widest row (rtsvg's
     #   table() built the same shape by tiling rows of tiles)
     #
-    def __constructGeometry__(self):
+    def __constructGeometry__(self) -> None:
         self.svg_strings = []
         _wh_ = []
-        for _i_, _item_ in enumerate(self.svg_list):
+        # __validateInput__() has already raised if svg_list is None.
+        for _i_, _item_ in enumerate(self.svg_list):  # type: ignore[arg-type]
             if isinstance(_item_, str):
-                _svg_ = _item_
+                _svg_: Any = _item_
             else:
                 _renderer_ = getattr(_item_, '_repr_svg_', None)
                 _svg_      = _renderer_() if callable(_renderer_) else None
@@ -213,7 +264,7 @@ class Tile(ExportMixin):
     # __viewportWxh__() - the requested canvas size, completing a None side from the
     # content's aspect ratio (wxh=(640, None) is "640 wide, as tall as that makes it")
     #
-    def __viewportWxh__(self):
+    def __viewportWxh__(self) -> tuple:
         _cw_, _ch_ = self.content_wxh
         _w_,  _h_  = self.wxh
         if _w_ is None: _w_ = round(_cw_ * _h_ / _ch_) if _ch_ > 0 else _cw_
@@ -231,7 +282,7 @@ class Tile(ExportMixin):
     #   clipped the overflow, so a tile that looked right in a browser exported wrong.
     #   A translate+scale transform renders identically in both.
     #
-    def __viewportTransform__(self):
+    def __viewportTransform__(self) -> tuple:
         _ow_, _oh_ = self.wxh_actual
         _cw_, _ch_ = self.content_wxh
         _scales_   = [_s_ for _s_ in (_ow_ / _cw_ if _cw_ > 0 else None,
@@ -239,7 +290,7 @@ class Tile(ExportMixin):
         _scale_    = min(_scales_) if _scales_ else 1.0
         return _scale_, ((_ow_ - _cw_ * _scale_) / 2, (_oh_ - _ch_ * _scale_) / 2)
 
-    def __renderSVG__(self, rand_id):
+    def __renderSVG__(self, rand_id: int) -> None:
         _ow_, _oh_ = self.wxh_actual
         if len(self.svg_strings) == 0:
             self.svg = self.p2s.placeholderSVG(_ow_, _oh_, message='no data - empty svg_list')

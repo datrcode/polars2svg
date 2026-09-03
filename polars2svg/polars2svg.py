@@ -4,7 +4,8 @@ import logging
 import copy
 
 from enum import Enum
-from typing import Any, Union, TYPE_CHECKING
+from collections.abc import Mapping
+from typing import Any, Union, Unpack, TYPE_CHECKING
 import re
 
 from .exceptions            import Polars2SVGError, InvalidSpecError
@@ -18,14 +19,14 @@ from .p2s_time_mixin        import P2STimeMixin
 from .p2s_interactive_mixin import P2SInteractiveMixin
 from .p2s_legend_mixin      import P2SLegendMixin
 from .p2s_background_mixin  import BackgroundShape as _BackgroundShape_, INHERIT as _INHERIT_
-from .xyp                import XYp
-from .smallp             import Smallp
-from .timep              import Timep
-from .histop             import Histop
-from .piep               import Piep
-from .linkp              import LinkP
-from .spreadlinesp       import SpreadLinesP
-from .tile               import Tile
+from .xyp                import XYp, XYpKwargs
+from .smallp             import Smallp, SmallpKwargs
+from .timep              import Timep, TimepKwargs
+from .histop             import Histop, HistopKwargs
+from .piep               import Piep, PiepKwargs
+from .linkp              import LinkP, LinkPKwargs
+from .spreadlinesp       import SpreadLinesP, SpreadLinesPKwargs
+from .tile               import Tile, TileKwargs
 
 # ChP (chordp.py) needs scipy for its core node-ordering algorithm (unlike the
 # other components, this isn't an optional feature within chordp — every chord
@@ -34,7 +35,7 @@ from .tile               import Tile
 # require scipy; instead it's imported lazily inside chordp()/isTemplate(),
 # and only for static type checking here.
 if TYPE_CHECKING:
-    from .chordp import ChP
+    from .chordp import ChP, ChPKwargs
 
 #
 # _copy_mutable_containers_() - structural copy for template cloning: dict / set / list
@@ -44,11 +45,11 @@ if TYPE_CHECKING:
 # containers terminate; callers must keep the originals alive while it runs (the
 # template's __dict__ does).
 #
-def _copy_mutable_containers_(_value_, _memo_):
+def _copy_mutable_containers_(_value_: Any, _memo_: dict) -> Any:
     _vid_ = id(_value_)
     if _vid_ in _memo_: return _memo_[_vid_]
     if isinstance(_value_, dict):
-        _copied_ = copy.copy(_value_)   # copy.copy preserves dict/set/list subclasses
+        _copied_: Any = copy.copy(_value_)   # copy.copy preserves dict/set/list subclasses
         _memo_[_vid_] = _copied_
         for _k_ in _copied_: _copied_[_k_] = _copy_mutable_containers_(_copied_[_k_], _memo_)
         return _copied_
@@ -71,10 +72,10 @@ def _copy_mutable_containers_(_value_, _memo_):
 # module reload would make isinstance() miss filters added by the old module object.
 #
 class OnceFilter(logging.Filter):
-    def __init__(self, name=''):
+    def __init__(self, name: str = '') -> None:
         super().__init__(name)
-        self.seen_messages = set()
-    def filter(self, record):
+        self.seen_messages: set = set()
+    def filter(self, record: Any) -> bool:
         if record.msg not in self.seen_messages:
             self.seen_messages.add(record.msg)
             return True
@@ -153,7 +154,7 @@ class Polars2SVG(P2SColorsMixin,
     # for it at `import polars2svg` time. 'chordp' is simply absent from both
     # when scipy isn't installed.
     @property
-    def _COMPONENT_KWARGS_(self):
+    def _COMPONENT_KWARGS_(self) -> dict:
         _kwargs_ = {'histop':       Histop._VALID_KWARGS,
                     'timep':        Timep._VALID_KWARGS,
                     'xyp':          XYp._VALID_KWARGS,
@@ -169,7 +170,7 @@ class Polars2SVG(P2SColorsMixin,
         return _kwargs_
 
     @property
-    def _VALID_COMPONENTS_(self):
+    def _VALID_COMPONENTS_(self) -> frozenset:
         return frozenset(self._COMPONENT_KWARGS_)
 
     # Separator used to concatenate multi-field bin / color values into a single
@@ -193,7 +194,7 @@ class Polars2SVG(P2SColorsMixin,
     # nullNodeDisplay() restores a readable '(null)' at every text-display site.
     NULL_NODE_PREFIX     = '\x1fNULL\x1f'
 
-    def __new__(cls):
+    def __new__(cls) -> Any:
         if cls._instance_ is None: cls._instance_ = super().__new__(cls)
         return cls._instance_
 
@@ -311,7 +312,7 @@ class Polars2SVG(P2SColorsMixin,
         TimePeriodicTypeP.PT_M_Sp:         'M_Sp',
         TimePeriodicTypeP.PT_Sp:           'Sp',
     }
-    _SUFFIX_TO_ENUM_ = {}
+    _SUFFIX_TO_ENUM_: dict = {}
     for _k_, _v_ in _ENUM_TO_SUFFIX_.items():
         if _v_ in _SUFFIX_TO_ENUM_: raise Polars2SVGError(f'polars2svg.Polars2SVG() - Collision between enum {_k_} and {_SUFFIX_TO_ENUM_[_v_]}')
         _SUFFIX_TO_ENUM_[_v_] = _k_
@@ -353,17 +354,19 @@ class Polars2SVG(P2SColorsMixin,
             p2s.timep(df, tf)
         '''
         __slots__ = ('column', 'transform')
-        def __new__(cls, column, transform):
+        column:    str   # the real column name
+        transform: Any   # a TimeLinearTypeP / TimePeriodicTypeP member
+        def __new__(cls, column: str, transform: Any) -> Any:
             if not isinstance(column, str): raise TypeError(f'polars2svg.TField(): column must be a string, got {type(column)}')
             if transform not in Polars2SVG._ENUM_TO_SUFFIX_: raise InvalidSpecError(f'polars2svg.tField(): unknown enumeration {transform}')
             _self_ = super().__new__(cls, column + '|' + Polars2SVG._ENUM_TO_SUFFIX_[transform])
             str.__setattr__(_self_, 'column',    column)
             str.__setattr__(_self_, 'transform', transform)
             return _self_
-        def __setattr__(self, k, v): raise AttributeError('TField is immutable')
+        def __setattr__(self, k: str, v: Any) -> None: raise AttributeError('TField is immutable')
         @property
-        def alias(self): return str(self)
-        def __repr__(self): return f'TField({self.column!r}, {self.transform})'
+        def alias(self) -> str: return str(self)
+        def __repr__(self) -> str: return f'TField({self.column!r}, {self.transform})'
 
     #
     # RenderEnumsP - general enums for render options
@@ -433,6 +436,123 @@ class Polars2SVG(P2SColorsMixin,
                                                  # one bucket at the sentinel's position.  Without it, unlisted
                                                  # values are appended in sorted order and keep their identity.
 
+    # ---------------------------------------------------------------------
+    # Enum members bound onto the instance by the setattr() loops in __init__.
+    #
+    # Declarations, not assignments: a bare annotation populates __annotations__
+    # and creates no class attribute, so this block is a no-op at runtime.  It
+    # exists so type checkers can see the p2s.SCALARp / p2s.PT_DoWp / p2s.BARCHARTp
+    # attributes that __init__ binds dynamically -- without it mypy reports 637
+    # false "Polars2SVG has no attribute" errors across the package.
+    #
+    # tests/test_typing_surface.py::TestEnumMemberDeclarations asserts this block
+    # matches the loops exactly, so a member added to an enum above fails the
+    # suite until it is declared here too.
+    # ---------------------------------------------------------------------
+    # FieldTypeP
+    SCALARp: FieldTypeP
+    SETp:    FieldTypeP
+
+    # StatisticP
+    MINp:    StatisticP
+    MEDIANp: StatisticP
+    MEANp:   StatisticP
+    MAXp:    StatisticP
+    STDp:    StatisticP
+    SUMp:    StatisticP
+
+    # ColorTypeP
+    CSETp:              ColorTypeP
+    CSET_MAGNITUDEp:    ColorTypeP
+    CSET_STRETCHEDp:    ColorTypeP
+    CROW_MAGNITUDEp:    ColorTypeP
+    CROW_STRETCHEDp:    ColorTypeP
+    CMAGNITUDE_SUMp:    ColorTypeP
+    CMAGNITUDE_MINp:    ColorTypeP
+    CMAGNITUDE_MEDIANp: ColorTypeP
+    CMAGNITUDE_MEANp:   ColorTypeP
+    CMAGNITUDE_MAXp:    ColorTypeP
+    CSTRETCHED_SUMp:    ColorTypeP
+    CSTRETCHED_MINp:    ColorTypeP
+    CSTRETCHED_MEDIANp: ColorTypeP
+    CSTRETCHED_MEANp:   ColorTypeP
+    CSTRETCHED_MAXp:    ColorTypeP
+
+    # TimeLinearTypeP
+    LT_Yp:             TimeLinearTypeP
+    LT_Y_Qp:           TimeLinearTypeP
+    LT_Y_mp:           TimeLinearTypeP
+    LT_Y_m_dp:         TimeLinearTypeP
+    LT_Y_m_d_Hp:       TimeLinearTypeP
+    LT_Y_m_d_H_Mp:     TimeLinearTypeP
+    LT_Y_m_d_H_M_Sp:   TimeLinearTypeP
+    LT_Y_m_d_4Hp:      TimeLinearTypeP
+    LT_Y_m_d_H_15Mp:   TimeLinearTypeP
+    LT_Y_m_d_H_M_15Sp: TimeLinearTypeP
+
+    # TimePeriodicTypeP
+    PT_Qp:       TimePeriodicTypeP
+    PT_mp:       TimePeriodicTypeP
+    PT_m_dp:     TimePeriodicTypeP
+    PT_m_d_Hp:   TimePeriodicTypeP
+    PT_DoYp:     TimePeriodicTypeP
+    PT_DoWp:     TimePeriodicTypeP
+    PT_DoW_Hp:   TimePeriodicTypeP
+    PT_DoW_H_Mp: TimePeriodicTypeP
+    PT_dp:       TimePeriodicTypeP
+    PT_d_Hp:     TimePeriodicTypeP
+    PT_d_H_Mp:   TimePeriodicTypeP
+    PT_Hp:       TimePeriodicTypeP
+    PT_H_Mp:     TimePeriodicTypeP
+    PT_H_M_Sp:   TimePeriodicTypeP
+    PT_Mp:       TimePeriodicTypeP
+    PT_M_Sp:     TimePeriodicTypeP
+    PT_Sp:       TimePeriodicTypeP
+
+    # RenderEnumsP
+    ROW_COUNTp:                          RenderEnumsP
+    DISTRIBUTION_INSIDEp:                RenderEnumsP
+    DISTRIBUTION_OUTSIDEp:               RenderEnumsP
+    DISTRIBUTION_AUTOBINp:               RenderEnumsP
+    DISTRIBUTION_COLOR_MIN_TO_COLOR_MAX: RenderEnumsP
+    DISTRIBUTION_ZERO_TO_COLOR_MAX:      RenderEnumsP
+    DISTRIBUTION_ALL_MIN_TO_ALL_MAX:     RenderEnumsP
+    DISTRIBUTION_ZERO_TO_ALL_MAX:        RenderEnumsP
+    LINEWIDTH_DOTSIZE_MEAN:              RenderEnumsP
+    LINEWIDTH_DOTSIZE_VARIABLE:          RenderEnumsP
+    LINEWIDTH_DOTSIZE_SPECIFIED:         RenderEnumsP
+    LINESTYLE_SOLID:                     RenderEnumsP
+    LINESTYLE_DOTTED:                    RenderEnumsP
+    LINESTYLE_SPECIFIED:                 RenderEnumsP
+    LINECOLOR_GROUPBY:                   RenderEnumsP
+    LINECOLOR_FIELD:                     RenderEnumsP
+    LINECOLOR_SPECIFIED:                 RenderEnumsP
+    LINEOPACITY_FIELD_MEAN:              RenderEnumsP
+    LINEOPACITY_FIELD_VARIABLE:          RenderEnumsP
+    LINEOPACITY_100:                     RenderEnumsP
+    LINEOPACITY_75:                      RenderEnumsP
+    LINEOPACITY_50:                      RenderEnumsP
+    LINEOPACITY_25:                      RenderEnumsP
+    LINEOPACITY_10:                      RenderEnumsP
+    SM_X:                                RenderEnumsP
+    SM_Y:                                RenderEnumsP
+    SM_COUNT:                            RenderEnumsP
+    SM_COLOR:                            RenderEnumsP
+    BARCHARTp:                           RenderEnumsP
+    BOXPLOTp:                            RenderEnumsP
+    BOXPLOT_W_SWARMp:                    RenderEnumsP
+    STACKEDBARp:                         RenderEnumsP
+    SELECT_CIRCLEp:                      RenderEnumsP
+    SELECT_HORIZONTALp:                  RenderEnumsP
+    SELECT_VERTICALp:                    RenderEnumsP
+    COLOR_BY_NODE_NAME:                  RenderEnumsP
+    PIEp:                                RenderEnumsP
+    DONUTp:                              RenderEnumsP
+    WAFFLEp:                             RenderEnumsP
+    SM_SLICE_ORDERp:                     RenderEnumsP
+    SM_PARTOFWHOLEp:                     RenderEnumsP
+    REMAINDERp:                          RenderEnumsP
+
     def __init__(self) -> None:
         # __new__ caches the singleton but Python still calls __init__ on every
         # Polars2SVG() call -- and every component constructor makes one.  All of
@@ -441,10 +561,12 @@ class Polars2SVG(P2SColorsMixin,
         if getattr(self, '_init_complete_', False): return
 
         if not hasattr(self, '_global_defaults'):
-            self._global_defaults    = {}
-            self._component_defaults = {}
+            self._global_defaults: dict    = {}
+            self._component_defaults: dict = {}
 
-        # Assign all enum members as instance attributes by name
+        # Assign all enum members as instance attributes by name.  One loop name
+        # across six enum types, so it is declared rather than inferred.
+        _m_: Any
         for _m_ in self.FieldTypeP:        setattr(self, _m_.name, _m_)
         for _m_ in self.StatisticP:        setattr(self, _m_.name, _m_)
         for _m_ in self.ColorTypeP:        setattr(self, _m_.name, _m_)
@@ -579,7 +701,7 @@ class Polars2SVG(P2SColorsMixin,
                                 f'{sorted(_unknown_)}')
             self._global_defaults.update(kwargs)
 
-    def reset_defaults(self, component=None):
+    def reset_defaults(self, component: str | None = None) -> None:
         '''reset_defaults() — clear all global and component defaults.
         reset_defaults(component) — clear defaults for a single component only.'''
         if component is None:
@@ -591,12 +713,12 @@ class Polars2SVG(P2SColorsMixin,
             raise ValueError(f'Polars2SVG.reset_defaults(): unknown component "{component}". '
                              f'Valid components: {sorted(self._VALID_COMPONENTS_)}')
 
-    def get_defaults(self):
+    def get_defaults(self) -> dict:
         '''Return a snapshot of current global and per-component defaults.'''
         return {'_global': dict(self._global_defaults),
                 **{k: dict(v) for k, v in self._component_defaults.items()}}
 
-    def _apply_defaults(self, component_name: str, kwargs: dict) -> dict:
+    def _apply_defaults(self, component_name: str, kwargs: Mapping[str, Any]) -> dict:
         '''Merge global defaults, then component defaults, then explicit kwargs.
         Explicit kwargs always win; hardcoded component defaults remain the last fallback.
         Global defaults valid for only some components are filtered to what this
@@ -619,7 +741,7 @@ class Polars2SVG(P2SColorsMixin,
     # __init__ before __parseInput__ runs, and never part of the template snapshot.
     _TEMPLATE_CLONE_SKIP_ = frozenset({'timing_metrics', 't_start', 't_end', 't_overall'})
 
-    def _clone_template_state(self, target, template):
+    def _clone_template_state(self, target: Any, template: Any) -> None:
         '''Copy a template component's resolved state onto a fresh clone.
 
         Replaces the old `target.__dict__.update(template.__dict__)` pattern, which
@@ -635,7 +757,7 @@ class Polars2SVG(P2SColorsMixin,
         treated as immutable by the framework. Aliasing among containers is preserved
         (two attributes referencing one dict reference one copied dict). Attributes in
         _TEMPLATE_CLONE_SKIP_ are per-instance and keep the clone's own fresh values.'''
-        _memo_ = {}
+        _memo_: dict = {}
         for _key_, _value_ in template.__dict__.items():
             if _key_ in self._TEMPLATE_CLONE_SKIP_: continue
             target.__dict__[_key_] = _copy_mutable_containers_(_value_, _memo_)
@@ -653,9 +775,9 @@ class Polars2SVG(P2SColorsMixin,
 
     # Component names whose param spec has already been checked this process; the
     # equality check is invariant per class, so it only needs to run once.
-    _PARAM_SPEC_VERIFIED_ = set()
+    _PARAM_SPEC_VERIFIED_: set = set()
 
-    def assertParamSpecMatches(self, component_name, valid_kwargs, defaults, extra=('df', 'template')):
+    def assertParamSpecMatches(self, component_name: str, valid_kwargs: frozenset, defaults: dict, extra: tuple = ('df', 'template')) -> None:
         '''Structural drift guard: the parameter names in `defaults` plus `extra`
         (the handful of args handled outside the spec — `df`, `template`, and any
         component-specific positionals) must exactly equal `_VALID_KWARGS`. Because
@@ -673,14 +795,15 @@ class Polars2SVG(P2SColorsMixin,
                 f'in defaults/extra only: {sorted(_spec_ - _valid_)}')
         self._PARAM_SPEC_VERIFIED_.add(component_name)
 
-    def assignScratchDefaults(self, target, defaults):
+    def assignScratchDefaults(self, target: Any, defaults: dict) -> None:
         '''From-scratch (non-template) default assignment: write every
         `name -> value` in `defaults` onto `target`. Paired with
         `assignKwargOverrides`, which reads the same mapping.'''
         for _name_, _value_ in defaults.items():
             setattr(target, _name_, _value_)
 
-    def assignKwargOverrides(self, target, defaults, kwargs, skip=()):
+    def assignKwargOverrides(self, target: Any, defaults: dict, kwargs: Mapping[str, Any],
+                             skip: set | tuple = ()) -> None:
         '''Copy any supplied keyword argument over the current attribute value for
         every parameter named in `defaults` (the same mapping `assignScratchDefaults`
         uses). Names in `skip` are handled explicitly by the caller (type coercion or
@@ -689,7 +812,7 @@ class Polars2SVG(P2SColorsMixin,
             if _name_ in skip: continue
             if _name_ in kwargs: setattr(target, _name_, kwargs[_name_])
 
-    def assignKwargsWithDefaults(self, target, defaults, kwargs):
+    def assignKwargsWithDefaults(self, target: Any, defaults: dict, kwargs: Mapping[str, Any]) -> None:
         '''Combined `kwargs.get(name, default)` assignment for components that have
         no from-scratch/template split (smallp): write `kwargs.get(name, default)`
         for every `name -> default` in `defaults`. Same single-source-of-truth
@@ -697,7 +820,7 @@ class Polars2SVG(P2SColorsMixin,
         for _name_, _default_ in defaults.items():
             setattr(target, _name_, kwargs.get(_name_, _default_))
 
-    def webgpuHTML(self, component, border='1px solid #ccc'):
+    def webgpuHTML(self, component: Any, border: str = '1px solid #ccc') -> str:
         '''
         webgpuHTML(component)
 
@@ -713,7 +836,7 @@ class Polars2SVG(P2SColorsMixin,
             raise ValueError('webgpuHTML(): component has no rendered content')
         return standalone_html(_payload_, border=border)
 
-    def xyp(self, *args: Any, **kwargs: Any) -> XYp:
+    def xyp(self, *args: Any, **kwargs: Unpack[XYpKwargs]) -> XYp:
         '''
         xyp(polars.DataFrame, x, y, ...)
 
@@ -1050,7 +1173,7 @@ class Polars2SVG(P2SColorsMixin,
         '''
         return XYp(*args, **kwargs)
 
-    def histop(self, *args: Any, **kwargs: Any) -> Histop:
+    def histop(self, *args: Any, **kwargs: Unpack[HistopKwargs]) -> Histop:
         '''
         histop(polars.DataFrame, bin_by, ...)
 
@@ -1146,7 +1269,7 @@ class Polars2SVG(P2SColorsMixin,
         '''
         return Histop(*args, **kwargs)
 
-    def piep(self, *args: Any, **kwargs: Any) -> Piep:
+    def piep(self, *args: Any, **kwargs: Unpack[PiepKwargs]) -> Piep:
         '''
         piep(polars.DataFrame, bin_by, ...)
 
@@ -1240,7 +1363,7 @@ class Polars2SVG(P2SColorsMixin,
         '''
         return Piep(*args, **kwargs)
 
-    def linkp(self, *args: Any, **kwargs: Any) -> LinkP:
+    def linkp(self, *args: Any, **kwargs: Unpack[LinkPKwargs]) -> LinkP:
         '''
         linkp(polars.DataFrame, relationships, pos, ...)
 
@@ -1462,7 +1585,7 @@ class Polars2SVG(P2SColorsMixin,
         '''
         return LinkP(*args, **kwargs)
 
-    def chordp(self, *args: Any, **kwargs: Any) -> 'ChP':
+    def chordp(self, *args: Any, **kwargs: 'Unpack[ChPKwargs]') -> 'ChP':
         '''
         chordp(polars.DataFrame, relationships, ...)
 
@@ -1584,7 +1707,7 @@ class Polars2SVG(P2SColorsMixin,
             ) from _e_
         return ChP(*args, **kwargs)
 
-    def timep(self, *args: Any, **kwargs: Any) -> Timep:
+    def timep(self, *args: Any, **kwargs: Unpack[TimepKwargs]) -> Timep:
         '''
         timep(polars.DataFrame, time, ...)
 
@@ -1673,7 +1796,7 @@ class Polars2SVG(P2SColorsMixin,
         '''
         return Timep(*args, **kwargs)
 
-    def smallp(self, *args: Any, **kwargs: Any) -> Smallp:
+    def smallp(self, *args: Any, **kwargs: Unpack[SmallpKwargs]) -> Smallp:
         '''
         smallp(polars.DataFrame, sm_template, category_by, ...)
 
@@ -1756,7 +1879,7 @@ class Polars2SVG(P2SColorsMixin,
         '''
         return Smallp(*args, **kwargs)
 
-    def spreadlinesp(self, *args: Any, **kwargs: Any) -> SpreadLinesP:
+    def spreadlinesp(self, *args: Any, **kwargs: Unpack[SpreadLinesPKwargs]) -> SpreadLinesP:
         '''
         spreadlinesp(polars.DataFrame, relationships, ego, time, ...)
 
@@ -1814,7 +1937,7 @@ class Polars2SVG(P2SColorsMixin,
         '''
         return SpreadLinesP(*args, **kwargs)
 
-    def tile(self, *args: Any, **kwargs: Any) -> Tile:
+    def tile(self, *args: Any, **kwargs: Unpack[TileKwargs]) -> Tile:
         '''
         tile(svg_list, ...)
 
@@ -1867,14 +1990,14 @@ class Polars2SVG(P2SColorsMixin,
         '''
         return Tile(*args, **kwargs)
 
-    def __allhex__(self, s):
+    def __allhex__(self, s: str) -> bool:
         return all(c in '0123456789abcdefABCDEF' for c in s)
 
     #
     # isTemplate() - is the argument the template for a small multiple?
     # - add other types as they become available
     #
-    def isTemplate(self, _template_):
+    def isTemplate(self, _template_: Any) -> bool:
         _types_ = [XYp, Timep, Histop, LinkP, SpreadLinesP, Piep]
         try:
             from .chordp import ChP
@@ -1896,7 +2019,7 @@ class Polars2SVG(P2SColorsMixin,
     #   applied, so accepting a t-field would validate then crash at aggregation) and
     #   the graph components' relationship/field checks (node identity, not time).
     #
-    def columnInDataFrame(self, column, df):
+    def columnInDataFrame(self, column: Any, df: pl.DataFrame) -> bool:
         if self.isTField(column, df=df): column, _ = self.tFieldTuple(column)
         return column in df.columns
 
@@ -1928,7 +2051,7 @@ class Polars2SVG(P2SColorsMixin,
     # - call from each component's __validateInput__ so collisions error instead of
     #   silently producing wrong aggregates
     #
-    def checkReservedColumns(self, df, component_name):
+    def checkReservedColumns(self, df: pl.DataFrame | None, component_name: str) -> None:
         if df is None: return
         _bad_ = [c for c in df.columns
                  if self._RESERVED_COLUMN_RE_.match(c)
@@ -1950,7 +2073,7 @@ class Polars2SVG(P2SColorsMixin,
     # turning a confusing failure into a self-explaining one. Returns '' when the value
     # was supplied by keyword (the assignment was explicit, so no dispatch ambiguity).
     #
-    def positionalDispatchHint(self, component, param_name, from_positional):
+    def positionalDispatchHint(self, component: str, param_name: str, from_positional: bool) -> str:
         if not from_positional: return ''
         return (f' (note: {param_name} was inferred from a positional argument to {component}; '
                 f'if this is an argument-order mistake or a value meant for another parameter, '
@@ -1975,7 +2098,7 @@ class Polars2SVG(P2SColorsMixin,
     # x/y specs). None dimensions fall back to a small square so the canvas is
     # always well-formed even before auto-sizing has resolved.
     #
-    def placeholderSVG(self, w, h, message='no data - no DataFrame supplied', notes=()):
+    def placeholderSVG(self, w: int | None, h: int | None, message: str = 'no data - no DataFrame supplied', notes: list | tuple = ()) -> str:
         w = w if isinstance(w, (int, float)) else 256
         h = h if isinstance(h, (int, float)) else 256
         _bg_ = self.colorTyped('background', 'default')
@@ -2007,7 +2130,7 @@ class Polars2SVG(P2SColorsMixin,
     # bool is rejected even though it's an int subclass -- wxh=(True, 256) is a
     # mistake, not a 1-pixel canvas.
     #
-    def normalizeWxh(self, wxh, component_name, allow_none=False):
+    def normalizeWxh(self, wxh: Any, component_name: str, allow_none: bool = False) -> tuple:
         _hint_ = ('a 2-sequence of numbers, one of which may be None' if allow_none
                   else 'a 2-sequence of numbers')
         if isinstance(wxh, (str, bytes)) or not isinstance(wxh, (tuple, list)):
@@ -2016,7 +2139,7 @@ class Polars2SVG(P2SColorsMixin,
         if len(wxh) != 2:
             raise ValueError(f'{component_name}.__validateInput__(): wxh must have exactly two '
                              f'elements, got {len(wxh)} ({wxh!r})')
-        _out_ = []
+        _out_: list = []
         for _i_, _v_ in enumerate(wxh):
             _side_ = 'width' if _i_ == 0 else 'height'
             if _v_ is None:
@@ -2056,7 +2179,7 @@ class Polars2SVG(P2SColorsMixin,
     # than a typo.  normalizeWxh() singles bools out from the other ints for the same
     # reason.
     #
-    def rejectBoolParam(self, value, component_name, param, shape, flag=None):
+    def rejectBoolParam(self, value: Any, component_name: str, param: str, shape: str, flag: str | None = None) -> None:
         if not isinstance(value, bool): return
         _use_ = f'; use {flag}= for that' if flag is not None else ''
         raise TypeError(f'{component_name}: {param}= is {shape}, not an on/off flag'
@@ -2069,7 +2192,7 @@ class Polars2SVG(P2SColorsMixin,
     # separator for any text drawn to the user. A single-field value never contains
     # the separator, so this is a no-op there.
     #
-    def formatMultiFieldValue(self, value):
+    def formatMultiFieldValue(self, value: Any) -> str:
         return str(value).replace(self.MULTI_FIELD_SEP, '|')
 
     #
@@ -2079,19 +2202,19 @@ class Polars2SVG(P2SColorsMixin,
     # NULL_NODE_PREFIX counterpart of formatMultiFieldValue(): the internal name is
     # non-printable, so anything drawn as text goes through it first.
     #
-    def nullNode(self, entity):
+    def nullNode(self, entity: str) -> str:
         return f'{self.NULL_NODE_PREFIX}{entity}'
 
-    def isNullNode(self, value):
+    def isNullNode(self, value: str) -> bool:
         return isinstance(value, str) and value.startswith(self.NULL_NODE_PREFIX)
 
-    def nullNodeDisplay(self, value):
+    def nullNodeDisplay(self, value: str) -> str:
         return '(null)' if self.isNullNode(value) else value
 
     #
     # bgShape() - create a background record
     #
-    def bgShape(self, shape, **fields) -> _BackgroundShape_:
+    def bgShape(self, shape: list | str, **fields: Any) -> _BackgroundShape_:
         '''Build a background entry that carries its own appearance.
 
         ``shape`` is any descriptor ``background=`` already accepts (a shapely geometry,
@@ -2148,7 +2271,7 @@ class Polars2SVG(P2SColorsMixin,
     # - each accepted legacy string emits a one-time (per-process, via the logger's
     #   OnceFilter) deprecation warning pointing at p2s.tField().
     #
-    def isTField(self, column, df=None):
+    def isTField(self, column: Any, df: pl.DataFrame | None = None) -> bool:
         if isinstance(column, self.TField): return True
         if not isinstance(column, str) or '|' not in column: return False
         _suffix_ = column[column.rindex('|')+1:]
@@ -2164,7 +2287,7 @@ class Polars2SVG(P2SColorsMixin,
     #
     # tFieldTuple() - split a transformation field into (column, enum)
     #
-    def tFieldTuple(self, tfield):
+    def tFieldTuple(self, tfield: Any) -> tuple:
         if isinstance(tfield, self.TField): return tfield.column, tfield.transform
         if not isinstance(tfield, str) or '|' not in tfield or tfield[tfield.rindex('|')+1:] not in self.suffix_to_enum:
             raise InvalidSpecError(f'XYp.tFieldTuple(): column is not a t-field {tfield=}')
@@ -2176,14 +2299,14 @@ class Polars2SVG(P2SColorsMixin,
     #
     # polarsOperationForTField() - return a polars expression for a tField string
     #
-    def polarsOperationForTField(self, tfield):
+    def polarsOperationForTField(self, tfield: Any) -> pl.Expr:
         _column_, _enum_ = self.tFieldTuple(tfield)
         return self.polarsOperationForEnum(_column_, _enum_)
 
     #
     # tFieldAccepts() - return what column types (as a set) a transformation field accepts
     #
-    def tFieldAccepts(self, tfield):
+    def tFieldAccepts(self, tfield: Any) -> set:
         _column_, _enum_ = self.tFieldTuple(tfield)
         if isinstance(_enum_, self.TimeLinearTypeP) or isinstance(_enum_, self.TimePeriodicTypeP):
             return {pl.Date, pl.Datetime}
@@ -2194,14 +2317,14 @@ class Polars2SVG(P2SColorsMixin,
     # can itself be a real column in df. The transform still wins (the caller applies it
     # regardless), but a one-time warning flags that the real column is being shadowed.
     #
-    def warnIfTFieldAliasCollides(self, tfield, df, component_name):
+    def warnIfTFieldAliasCollides(self, tfield: Any, df: pl.DataFrame, component_name: str) -> None:
         if df is not None and isinstance(tfield, self.TField) and str(tfield) in df.columns:
             self.logger.warning(f'{component_name}: column {str(tfield)!r} is shadowed by the derived t-field column for {tfield!r}')
 
     #
     # numericColumn - check if a column is numeric (integer or float)
     #
-    def numericColumn(self, df, column):
+    def numericColumn(self, df: pl.DataFrame, column: Any) -> bool:
         return column in df.select(cs.integer()).columns or column in df.select(cs.float()).columns
 
     #
@@ -2220,7 +2343,7 @@ class Polars2SVG(P2SColorsMixin,
     # by default so normal use stays quiet; enable it (logging.getLogger(
     # 'polars2svg_logger').setLevel(logging.INFO) + a handler) to see the choices.
     #
-    def logDtypeKeyedCount(self, component_name, field, is_numeric):
+    def logDtypeKeyedCount(self, component_name: str, field: Any, is_numeric: bool) -> None:
         if is_numeric:
             self.logger.info(f"{component_name}: count={field!r} is numeric -> sum(); "
                              f"pass ('{field}', p2s.SETp) to force distinct-count")
@@ -2228,7 +2351,7 @@ class Polars2SVG(P2SColorsMixin,
             self.logger.info(f"{component_name}: count={field!r} is non-numeric -> n_unique() (distinct-count); "
                              f"pass ('{field}', p2s.SCALARp) to force sum")
 
-    def logDtypeKeyedColor(self, component_name, field, is_numeric):
+    def logDtypeKeyedColor(self, component_name: str, field: Any, is_numeric: bool) -> None:
         if is_numeric:
             self.logger.info(f"{component_name}: color={field!r} is numeric -> magnitude spectrum; "
                              f"pass ('{field}', p2s.CSETp) to force categorical")
@@ -2239,17 +2362,17 @@ class Polars2SVG(P2SColorsMixin,
     #
     # dateColumn - check if a column is a date
     #
-    def dateColumn(self, df, column):
+    def dateColumn(self, df: pl.DataFrame, column: str) -> bool:
         return column in df.select(cs.date()).columns
 
     #
     # timeColumn - check if a column is a time
     #
-    def timeColumn(self, df, column):
+    def timeColumn(self, df: pl.DataFrame, column: str) -> bool:
         return column in df.select(cs.time()).columns
 
     #
     # datetimeColumn - check if a column is a datetime
     #
-    def dateTimeColumn(self, df, column):
+    def dateTimeColumn(self, df: pl.DataFrame, column: str) -> bool:
         return column in df.select(cs.datetime()).columns

@@ -1,3 +1,4 @@
+from typing import Any
 import math
 
 import polars as pl
@@ -27,7 +28,7 @@ _CAPTURE_CAP_     = 64    # max categorical entries captured when max_items is u
 # (None when no legend was requested or there was nothing to legend).
 #
 class LegendInfo:
-    def __init__(self, kind, title=None):
+    def __init__(self, kind: str, title: str | None = None) -> None:
         self.kind       = kind    # 'colorbar' | 'categorical'
         self.title      = title   # resolved title string ('' suppresses)
         # categorical
@@ -39,7 +40,7 @@ class LegendInfo:
         self.vmin_label = None    # formatted tick label for vmin
         self.vmax_label = None    # formatted tick label for vmax
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         if self.kind == 'categorical':
             _n_ = 0 if self.entries is None else len(self.entries)
             return f'LegendInfo(categorical, title={self.title!r}, entries={_n_}, overflow={self.overflow})'
@@ -47,13 +48,41 @@ class LegendInfo:
 
 
 class P2SLegendMixin:
-    def __init__(self):
+    # ---------------------------------------------------------------------
+    # Host-class attributes this mixin reads off `self`.
+    #
+    # A mixin is never instantiated on its own -- these are provided by whatever
+    # class mixes it in (Polars2SVG).  Declared here so a checker
+    # can follow the mixin's own methods; bare annotations, so nothing exists at
+    # runtime and nothing is shadowed.
+    #
+    # Typed `Any` on purpose: the mixin genuinely does not know the concrete type,
+    # and several hosts declare the same name with a narrower type of their own.
+    # ---------------------------------------------------------------------
+    CROW_STRETCHEDp:       Any
+    CSET_STRETCHEDp:       Any
+    CSETp:                 Any
+    CSTRETCHED_MAXp:       Any
+    CSTRETCHED_MEANp:      Any
+    CSTRETCHED_MEDIANp:    Any
+    CSTRETCHED_MINp:       Any
+    CSTRETCHED_SUMp:       Any
+    ColorTypeP:            Any
+    colorSpectrumTuples:   Any
+    colorTyped:            Any
+    colors:                Any
+    cropText:              Any
+    formatMultiFieldValue: Any
+    textLength:            Any
+    unitizeInt:            Any
+
+    def __init__(self) -> None:
         pass
 
     #
     # __p2s_legend_mixin_init__() - initialization via the mixin methodology
     #
-    def __p2s_legend_mixin_init__(self):
+    def __p2s_legend_mixin_init__(self) -> None:
         pass
 
     #
@@ -62,7 +91,7 @@ class P2SLegendMixin:
     #   dict with keys pos/title/fmt/max_items/order (layer 3)
     # - raises InvalidSpecError on anything else so a typo'd position fails fast
     #
-    def legendResolveSpec(self, legend):
+    def legendResolveSpec(self, legend: Any) -> dict | None:
         if legend is None or legend is False:
             return None
         if legend is True:
@@ -103,7 +132,7 @@ class P2SLegendMixin:
     # - CSETp -> categorical swatch list; every other ColorTypeP member maps a value
     #   onto the spectrum -> colorbar; None (flat color / literal hex) -> no legend
     #
-    def legendKind(self, color_mode):
+    def legendKind(self, color_mode: Any) -> str | None:
         if color_mode is None:            return None
         if color_mode == self.CSETp:      return 'categorical'
         if isinstance(color_mode, self.ColorTypeP): return 'colorbar'
@@ -113,7 +142,7 @@ class P2SLegendMixin:
     # legendModeIsStretched() - True for the rank-equalized spectrum modes (the
     # colorbar gradient is then rank-based between the labeled min/max, not linear)
     #
-    def legendModeIsStretched(self, color_mode):
+    def legendModeIsStretched(self, color_mode: Any) -> bool:
         return color_mode in (self.CROW_STRETCHEDp,    self.CSET_STRETCHEDp,
                               self.CSTRETCHED_SUMp,    self.CSTRETCHED_MINp,
                               self.CSTRETCHED_MEDIANp, self.CSTRETCHED_MEANp,
@@ -123,7 +152,7 @@ class P2SLegendMixin:
     # legendFormatValue() - format a numeric tick / category value for display
     # - fmt: None (default humanized), a str.format spec string, or a callable
     #
-    def legendFormatValue(self, value, fmt=None):
+    def legendFormatValue(self, value: float, fmt: str | None = None) -> str:
         if value is None: return ''
         if fmt is not None:
             if callable(fmt): return str(fmt(value))
@@ -144,7 +173,7 @@ class P2SLegendMixin:
     # - weight: optional numeric column summed per key instead of counting rows (used
     #   by components whose df is already aggregated, e.g. histop's df_agg '__count__')
     #
-    def legendCategoricalValueCounts(self, df, column, weight=None):
+    def legendCategoricalValueCounts(self, df: pl.DataFrame, column: str, weight: str | None = None) -> list:
         _n_expr_ = pl.len() if weight is None else pl.col(weight).sum()
         _agg_ = df.group_by(pl.col(column).cast(pl.String).alias('__legend_key__')) \
                   .agg(_n_expr_.alias('__legend_n__'),
@@ -163,7 +192,7 @@ class P2SLegendMixin:
     # - hex_lu: optional {key_str: '#rrggbb'} overriding the default string-hash
     #   colors, for components that colorize the raw (non-string-cast) values
     #
-    def legendInfoCategorical(self, spec, value_counts, title, hex_lu=None):
+    def legendInfoCategorical(self, spec: dict, value_counts: list, title: str, hex_lu: Any = None) -> Any:
         _order_ = spec['order']
         if isinstance(_order_, (list, tuple)):
             _pos_lu_ = {str(_v_): _i_ for _i_, _v_ in enumerate(_order_)}
@@ -191,10 +220,10 @@ class P2SLegendMixin:
     # the shell is created when the component reserves space (domain still unknown);
     # the domain is filled in after the color aggregation has actually run
     #
-    def legendInfoColorbar(self, title):
+    def legendInfoColorbar(self, title: str) -> Any:
         return LegendInfo('colorbar', title)
 
-    def legendInfoColorbarFinalize(self, info, spec, vmin, vmax):
+    def legendInfoColorbarFinalize(self, info: Any, spec: dict, vmin: float, vmax: float) -> Any:
         info.vmin, info.vmax = vmin, vmax
         info.vmin_label = self.legendFormatValue(vmin, spec['fmt'])
         info.vmax_label = self.legendFormatValue(vmax, spec['fmt'])
@@ -208,7 +237,7 @@ class P2SLegendMixin:
     #   unitized tick label; categorical width from the already-captured entry labels
     #   (plus the '... N more' overflow row, which carries no swatch)
     #
-    def legendReserve(self, spec, info, txt_h, wxh):
+    def legendReserve(self, spec: dict, info: Any, txt_h: int, wxh: tuple) -> tuple:
         _pos_ = spec['pos']
         if _pos_ in ('top', 'bottom'):
             _lh_ = min(txt_h + 2 * _PAD_, wxh[1] // 3)
@@ -233,7 +262,7 @@ class P2SLegendMixin:
     # legendSpectrumColor() - Python-side sample of the same spectrum the polars
     # pipeline interpolates (colorSpectrumPolarsOperations); t in [0,1] -> '#rrggbb'
     #
-    def legendSpectrumColor(self, t):
+    def legendSpectrumColor(self, t: float) -> str:
         _tuples_ = self.colorSpectrumTuples()
         t = 0.0 if t is None else min(max(float(t), 0.0), 1.0)
         j = 1
@@ -258,9 +287,10 @@ class P2SLegendMixin:
     #   (spreadlinesp) passes region in *world* units with scale = 1/viewbox_scale
     #   so the legend renders at true pixel size after the root transform
     #
-    def legendRenderDL(self, canvas_wxh, region, spec, info, txt_h, scale=1.0):
+    def legendRenderDL(self, canvas_wxh: tuple, region: tuple, spec: dict | None, info: Any,
+                   txt_h: int, scale: float = 1.0) -> Any:
         _dl_ = DisplayList(canvas_wxh[0], canvas_wxh[1])
-        if info is None or region is None: return _dl_
+        if info is None or region is None or spec is None: return _dl_
         if spec['pos'] in ('top', 'bottom'):
             self.__legendRenderHorizontal__(_dl_, region, info, txt_h, scale)
         else:
@@ -269,11 +299,11 @@ class P2SLegendMixin:
 
     # rect helper: DisplayList.rect() records the GPU op; the SVG string must be
     # supplied by the caller (mirrors how components feed the display list)
-    def __legendRect__(self, _dl_, x, y, w, h, fill):
+    def __legendRect__(self, _dl_: Any, x: float, y: float, w: float, h: float, fill: str) -> None:
         _svg_ = f'<rect x="{x:.2f}" y="{y:.2f}" width="{w:.2f}" height="{h:.2f}" fill="{fill}" />'
         _dl_.rect(x, y, w, h, fill, svg=_svg_)
 
-    def __legendGradientRects__(self, _dl_, x, y, w, h, vertical, k=1.0):
+    def __legendGradientRects__(self, _dl_: Any, x: float, y: float, w: float, h: float, vertical: bool, k: float = 1.0) -> None:
         _len_ = h if vertical else w
         _n_   = min(64, max(8, int(_len_ / k)))
         _seg_ = _len_ / _n_
@@ -284,7 +314,7 @@ class P2SLegendMixin:
             else:         # left = vmin
                 self.__legendRect__(_dl_, x + _i_ * _seg_, y, _seg_ + 0.5 * k, h, self.legendSpectrumColor(_t_))
 
-    def __legendRenderVertical__(self, _dl_, region, info, txt_h, k=1.0):
+    def __legendRenderVertical__(self, _dl_: Any, region: tuple, info: Any, txt_h: int, k: float = 1.0) -> None:
         _x_, _y_, _w_, _h_ = region
         txt_h      = txt_h * k
         _pad_      = _PAD_ * k
@@ -328,7 +358,7 @@ class P2SLegendMixin:
                 _lab_ = self.cropText(f'... {_overflow_} more', txt_h, _w_ - 2 * _pad_)
                 _dl_.text(self, _lab_, _x_ + _pad_, _cy_ + _baseline_, txt_h=txt_h, color=_muted_)
 
-    def __legendRenderHorizontal__(self, _dl_, region, info, txt_h, k=1.0):
+    def __legendRenderHorizontal__(self, _dl_: Any, region: tuple, info: Any, txt_h: int, k: float = 1.0) -> None:
         _x_, _y_, _w_, _h_ = region
         txt_h      = txt_h * k
         _pad_      = _PAD_ * k

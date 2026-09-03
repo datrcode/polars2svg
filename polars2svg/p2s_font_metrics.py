@@ -1648,7 +1648,7 @@ INK_EXTENTS = {
 # does when it has no glyph -- so an out-of-subset character still takes up space rather
 # than silently collapsing to zero width.
 #
-def textAdvance(txt, px_size):
+def textAdvance(txt: str, px_size: int) -> float:
     if not txt: return 0.0
     _units_ = 0
     for _ch_ in txt:
@@ -1672,7 +1672,7 @@ def textAdvance(txt, px_size):
 # (0.0, 0.0).  Anything else the font cannot draw falls back to .notdef's box, the same
 # substitution textAdvance() makes.
 #
-def textInk(txt, px_size):
+def textInk(txt: str, px_size: int) -> tuple:
     if not txt: return 0.0, 0.0
     _above_ = _below_ = 0
     for _ch_ in txt:

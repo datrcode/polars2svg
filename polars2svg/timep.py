@@ -1,3 +1,4 @@
+from typing import Any, TypedDict, Unpack, cast
 import polars as pl
 import polars.selectors as cs
 import time
@@ -7,6 +8,44 @@ import polars2svg
 from polars2svg.p2s_displaylist import DisplayList
 from polars2svg.export import ExportMixin
 from polars2svg.p2s_bin_component_mixin import P2SBinComponentMixin
+
+class TimepKwargs(TypedDict, total=False):
+    """Keyword arguments accepted by ``p2s.timep()`` / ``Timep(...)``.
+
+    Every key is optional (``total=False``); the set is exactly Timep._VALID_KWARGS,
+    which is what the constructor validates at runtime -- a name not listed here
+    raises TypeError.  Declaring it lets a type checker catch the misspelling
+    before the call runs, and gives editors completion over the parameter set.
+
+    Value types are deliberately conservative.  Most parameters are data-drivable
+    (they take a literal *or* a column name *or* a ``(field, enum)`` spec), so they
+    are typed ``Any`` rather than guessed at; the precise ones were each confirmed
+    against how the test suite actually calls them.
+    """
+    color:                   Any
+    color_stat_range_shared: Any
+    count:                   Any
+    count_range:             tuple | None
+    count_range_shared:      tuple | None
+    date_range_shared:       tuple | None
+    df:                      pl.DataFrame | None
+    draw_border:             bool
+    draw_context:            bool
+    insets:                  tuple
+    legend:                  Any
+    min_bar_w:               Any
+    min_label_spacing:       Any
+    remainder_threshold:     Any
+    sm_shared:               set
+    style:                   Any
+    swarm_max_pts:           Any
+    template:                'Timep | None'
+    time:                    Any
+    txt_h:                   Any
+    use_lazy_execution:      bool
+    wxh:                     list | tuple
+    x_time_expand_perc:      Any
+
 
 class Timep(P2SBinComponentMixin, ExportMixin):
 
@@ -20,10 +59,68 @@ class Timep(P2SBinComponentMixin, ExportMixin):
         'date_range_shared', 'min_label_spacing', 'legend', 'x_time_expand_perc',
     })
 
-    def __init__(self, *args, **kwargs):
+    # ---------------------------------------------------------------------
+    # Parameters assigned onto the instance from _defaults_ by
+    # Polars2SVG.assignScratchDefaults() -- setattr(), so no checker can see them.
+    #
+    # Declarations, not assignments: bare annotations populate __annotations__
+    # and create no class attribute, so this block is a no-op at runtime.
+    #
+    # Types are deliberately conservative -- `Any` wherever a parameter is
+    # data-drivable (accepts a literal *or* a column name), which is most of
+    # them.  The job here is to make the attribute VISIBLE; the precise
+    # per-parameter contract lands in the Unpack[TypedDict] work (phase 2),
+    # which is where a caller-facing type belongs.
+    #
+    # tests/test_typing_surface.py::TestComponentAttrDeclarations checks this
+    # block against _VALID_KWARGS, so a new parameter fails the suite until it
+    # is declared here too.
+    # ---------------------------------------------------------------------
+    color:                   Any
+    color_stat_range_shared: Any
+    count:                   Any
+    count_range:             tuple | None
+    count_range_shared:      tuple | None
+    date_range_shared:       tuple | None
+    draw_border:             bool
+    legend:                  bool
+    min_bar_w:               float
+    min_label_spacing:       int
+    remainder_threshold:     float
+    sm_shared:               set
+    swarm_max_pts:           int
+    txt_h:                   int
+    use_lazy_execution:      bool
+    x_time_expand_perc:      float
+
+    # --- state built during __init__/render, not passed in --------------
+    # Initialised to None and filled once the frame is resolved, so a checker
+    # infers `... | None` and flags every later use.  `Any` because these hold
+    # polars frames, display lists and cached statistics whose concrete types
+    # this class does not otherwise name.
+    _color_field_:    Any
+    _color_stat_max_: Any
+    _color_stat_min_: Any
+    _legend_region_:  tuple | None
+    _numeric_field_:  str | None
+    _time_enum_:      Any
+    df:               Any
+    df_orig:          pl.DataFrame | None
+    df_swarm:         Any
+    legend_info:      Any
+    template:         'Timep | None'
+    _dl_:         DisplayList
+    _time_field_: Any
+    insets:       tuple
+    style:        Any
+    svg:          str
+    time:         Any
+    wxh:          list | tuple
+
+    def __init__(self, *args: Any, **kwargs: Unpack[TimepKwargs]) -> None:
         self.t_start        = time.time()
         self.p2s            = polars2svg.Polars2SVG()
-        self.timing_metrics = {}
+        self.timing_metrics: dict = {}
         self.gatherMetrics(self.__parseInput__, *args, **kwargs)
         self.gatherMetrics(self.__validateInput__)
         if self.df is not None:
@@ -35,21 +132,21 @@ class Timep(P2SBinComponentMixin, ExportMixin):
         self.t_end     = time.time()
         self.t_overall = self.t_end - self.t_start
 
-    def _repr_svg_(self): return self.svg
+    def _repr_svg_(self) -> str: return self.svg
 
     #
     # webgpu() - WebGPU payload of the same render (buffers + manifest); the polars
     # compute is shared with the SVG path -- only the serialization differs
     #
-    def webgpu(self):
+    def webgpu(self) -> dict | None:
         if getattr(self, '_dl_', None) is None: return None
         return self._dl_.webgpu_payload(self.p2s.glyphAtlas())
 
     # gpuDisplayList() - consumed by smallp when this component renders as a cell
-    def gpuDisplayList(self):
+    def gpuDisplayList(self) -> Any:
         return getattr(self, '_dl_', None)
 
-    def gatherMetrics(self, callable, *args, **kwargs):
+    def gatherMetrics(self, callable: Any, *args: Any, **kwargs: Any) -> int:
         t0 = time.time()
         _results_ = callable(*args, **kwargs)
         t1 = time.time()
@@ -57,7 +154,7 @@ class Timep(P2SBinComponentMixin, ExportMixin):
         self.timing_metrics[callable.__name__] += t1 - t0
         return _results_
 
-    def __parseInput__(self, *args, **kwargs):
+    def __parseInput__(self, *args: Any, **kwargs: Unpack[TimepKwargs]) -> None:
         _unknown_ = set(kwargs) - self._VALID_KWARGS
         if _unknown_:
             raise TypeError(f'Timep: unexpected keyword argument(s): {sorted(_unknown_)}')
@@ -104,7 +201,7 @@ class Timep(P2SBinComponentMixin, ExportMixin):
             self.p2s.assignScratchDefaults(self, _defaults_)
             # from-scratch builds only — a template clone is an exact snapshot and
             # must not re-apply session defaults (see Polars2SVG._apply_defaults)
-            kwargs = self.p2s._apply_defaults('timep', kwargs)
+            kwargs = cast(TimepKwargs, self.p2s._apply_defaults('timep', kwargs))
 
         # Extract DataFrame
         # Collect any new df from positional args or 'df' kwarg first, so that an
@@ -146,7 +243,7 @@ class Timep(P2SBinComponentMixin, ExportMixin):
         w, h = self.wxh
         self.svg = self.p2s.placeholderSVG(w, h)
 
-    def __validateInput__(self):
+    def __validateInput__(self) -> None:
         # Normalize legend= eagerly so a bad spec fails fast (raises InvalidSpecError).
         self.legend_spec = self.p2s.legendResolveSpec(self.legend)
         if self.df is None: return
@@ -226,7 +323,7 @@ class Timep(P2SBinComponentMixin, ExportMixin):
         if w - 2 * x_ins < 48: self.insets = (0,             self.insets[1])
         if h - 2 * y_ins < 48: self.insets = (self.insets[0], 0            )
 
-    def __addColumnsToDataFrame__(self):
+    def __addColumnsToDataFrame__(self) -> None:
         _ops_ = []
 
         # Periodic Time
@@ -260,7 +357,7 @@ class Timep(P2SBinComponentMixin, ExportMixin):
 
     # ── Duration mapping (LinearTypeP → polars duration string) ───────────
 
-    def __linearDurMap__(self):
+    def __linearDurMap__(self) -> dict:
         return {
             self.p2s.LT_Yp:              '1y',
             self.p2s.LT_Y_Qp:            '1q',
@@ -274,7 +371,7 @@ class Timep(P2SBinComponentMixin, ExportMixin):
             self.p2s.LT_Y_m_d_H_M_Sp:    '1s',
         }
 
-    def __linearTruncMap__(self):
+    def __linearTruncMap__(self) -> dict:
         '''Like __linearDurMap__ but with dt.truncate-compatible strings (no "1q").'''
         return {
             self.p2s.LT_Yp:              '1y',
@@ -289,7 +386,7 @@ class Timep(P2SBinComponentMixin, ExportMixin):
             self.p2s.LT_Y_m_d_H_M_Sp:    '1s',
         }
 
-    def __linearEnumOrder__(self):
+    def __linearEnumOrder__(self) -> list:
         return [
             self.p2s.LT_Yp,
             self.p2s.LT_Y_Qp,
@@ -303,7 +400,7 @@ class Timep(P2SBinComponentMixin, ExportMixin):
             self.p2s.LT_Y_m_d_H_M_Sp,
         ]
 
-    def __dataGranularityCap__(self, sorted_df):
+    def __dataGranularityCap__(self, sorted_df: pl.DataFrame) -> Any:
         '''Return the finest allowable TimeLinearTypeP based on actual data granularity.'''
         if self.p2s.dateColumn(sorted_df, self._time_field_):
             return self.p2s.LT_Y_m_dp   # Date columns have no sub-day component
@@ -325,7 +422,7 @@ class Timep(P2SBinComponentMixin, ExportMixin):
         elif                                   _all_same_s_: return self.p2s.LT_Y_m_d_H_Mp
         else:                                                return self.p2s.LT_Y_m_d_H_M_Sp
 
-    def __autoResolveLinearEnum2__(self):
+    def __autoResolveLinearEnum2__(self) -> Any:
         '''Like __autoResolveLinearEnum__ but avoids sort+group_by_dynamic.
         Counts distinct bins via dt.truncate().n_unique() — no sort required.
         Also checks the spine size (min-to-max range ÷ interval) so that sparse
@@ -412,7 +509,7 @@ class Timep(P2SBinComponentMixin, ExportMixin):
 
     # ── Count aggregate expression ─────────────────────────────────────────
 
-    def __countAggExpr__(self):
+    def __countAggExpr__(self) -> pl.Expr:
         if self.count == self.p2s.ROW_COUNTp:
             return pl.len().alias('__count__')
         elif isinstance(self.count, str):
@@ -430,14 +527,14 @@ class Timep(P2SBinComponentMixin, ExportMixin):
                 return pl.struct(_fields_).n_unique().alias('__count__')
         return pl.len().alias('__count__')
 
-    def __countFields__(self):
+    def __countFields__(self) -> set:
         '''Return the set of column names referenced by self.count.'''
         if self.count == self.p2s.ROW_COUNTp: return set()
         if isinstance(self.count, str):        return {self.count}
         if isinstance(self.count, tuple):      return {_f_ for _f_ in self.count if isinstance(_f_, str)}
         return set()
 
-    def __computeAggregates2__(self):
+    def __computeAggregates2__(self) -> None:
         '''Faster linear aggregation: truncate + group_by + spine join (O(n) vs O(n log n)).
         Periodic branch is unchanged from __computeAggregates__.
         Boxplot style falls back to sort+group_by_dynamic (fill_null(0) is wrong for stats).'''
@@ -761,7 +858,7 @@ class Timep(P2SBinComponentMixin, ExportMixin):
                     self._color_stat_min_ = round(float(_valid_ser_.min()), 3)
                     self._color_stat_max_ = round(float(_valid_ser_.max()), 3)
 
-    def __findNumericCountField__(self):
+    def __findNumericCountField__(self) -> str | None:
         if isinstance(self.count, str) and self.p2s.numericColumn(self.df, self.count):
             return self.count
         elif isinstance(self.count, tuple):
@@ -777,7 +874,7 @@ class Timep(P2SBinComponentMixin, ExportMixin):
     # aggregate); Decision A: a truthy legend with nothing to legend (color=None /
     # boxplot styles, which ignore color=) silently reserves nothing.
     #
-    def __legendPrepare__(self):
+    def __legendPrepare__(self) -> None:
         self.legend_info      = None
         self._legend_region_  = None
         self._legend_reserve_ = (0, 0, 0, 0)
@@ -817,7 +914,7 @@ class Timep(P2SBinComponentMixin, ExportMixin):
         elif _pos_ == 'top':    self._legend_region_ = (0, 0, self.wxh[0], _t_)
         else:                   self._legend_region_ = (0, self.wxh[1] - _b_, self.wxh[0], _b_)
 
-    def __constructGeometry__(self):
+    def __constructGeometry__(self) -> None:
         w, h         = self.wxh
         # Legend strip (if any) comes out of wxh first -- the plot region shrinks,
         # the physical output size does not ("reserve from wxh").
@@ -865,7 +962,7 @@ class Timep(P2SBinComponentMixin, ExportMixin):
         self._bar_w_raw_ = self._plot_w_ / self._n_bins_
         self._bar_w_     = min(self._bar_w_raw_, max(self.min_bar_w, self._bar_w_raw_ - 1.0))
 
-    def __renderSVG__(self, rand_id):
+    def __renderSVG__(self, rand_id: int) -> None:
         w, h          = self.wxh
         _bg_          = self.p2s.colorTyped('background', 'default')
         _axis_color_  = self.p2s.colorTyped('axis',       'default')
@@ -877,10 +974,10 @@ class Timep(P2SBinComponentMixin, ExportMixin):
         _svg_head_ = f'<svg id="timep_{rand_id}" x="0" y="0" width="{w}" height="{h}" font-family="{self.p2s.default_font}" xmlns="http://www.w3.org/2000/svg">'
         _dl_.rect(0, 0, w, h, _bg_, svg=f'<rect x="0" y="0" width="{w}" height="{h}" fill="{_bg_}" />')
 
-        def __binToX__(idx):
+        def __binToX__(idx: int) -> float:
             return self._plot_x0_ + idx * self._bar_w_raw_
 
-        def __countToBarH__(count):
+        def __countToBarH__(count: float) -> float:
             _span_ = max(float(self._count_max_) - float(self._count_min_), 1e-9)
             return max(0.0, self._plot_h_ * (float(count) - float(self._count_min_)) / _span_)
 
@@ -1082,7 +1179,7 @@ class Timep(P2SBinComponentMixin, ExportMixin):
 
         self.svg = _svg_head_ + _dl_.svg() + '</svg>'
 
-    def __linearFormatStr__(self):
+    def __linearFormatStr__(self) -> str:
         return {
             self.p2s.LT_Yp:              '%Y',
             self.p2s.LT_Y_Qp:            '%Y-%m',
@@ -1096,7 +1193,7 @@ class Timep(P2SBinComponentMixin, ExportMixin):
             self.p2s.LT_Y_m_d_H_M_Sp:    '%Y-%m-%d %H:%M:%S',
         }.get(self._time_enum_, '%Y-%m-%d')
 
-    def __linearTopTickLabel__(self, ts):
+    def __linearTopTickLabel__(self, ts: Any) -> str:
         '''Short contextual label for a top-axis tick mark.
         Shows only the component that varies at the current granularity;
         higher-order context (date, month, year) is shown at boundary crossings.'''
@@ -1127,7 +1224,7 @@ class Timep(P2SBinComponentMixin, ExportMixin):
             return ts.strftime('%H:%M')                        # "14:30"
         return ts.strftime('%Y-%m-%d')
 
-    def __linearMajorMarkFn__(self):
+    def __linearMajorMarkFn__(self) -> Any:
         '''Return a predicate ts→bool identifying major context boundaries for the linear time enum.
         Mirrors the modulo logic in rt_temporal_barchart_mixin.drawTemporalContext().'''
         e, p = self._time_enum_, self.p2s
@@ -1143,7 +1240,7 @@ class Timep(P2SBinComponentMixin, ExportMixin):
         elif e == p.LT_Y_m_d_H_M_Sp:     return lambda ts: getattr(ts, 'second', 0) == 0
         else:                             return lambda ts: False
 
-    def __periodicMajorPeriod__(self):
+    def __periodicMajorPeriod__(self) -> int | None:
         '''Return None (every bin is a potential major mark) or an int period P such that
         0-based bin index i is major when i % P == 0.'''
         e, p = self._time_enum_, self.p2s
@@ -1162,7 +1259,7 @@ class Timep(P2SBinComponentMixin, ExportMixin):
             p.PT_M_Sp:     60,
         }.get(e, None)
 
-    def __timeGranularityStr__(self):
+    def __timeGranularityStr__(self) -> str:
         '''Human-readable granularity label for the center position below the axis.'''
         if self._is_periodic_:
             return {
@@ -1198,7 +1295,7 @@ class Timep(P2SBinComponentMixin, ExportMixin):
                 self.p2s.LT_Y_m_d_H_M_Sp:     'by second',
             }.get(self._time_enum_, 'by time')
 
-    def __renderTimeContextBG__(self, _dl_, grid_color):
+    def __renderTimeContextBG__(self, _dl_: Any, grid_color: str) -> None:
         '''Draw context cues inside the chart at the top, in a light color.
         Major marks: full-height solid line + text label near the top.
         Minor marks: short 5px tick from the top only.
@@ -1262,7 +1359,7 @@ class Timep(P2SBinComponentMixin, ExportMixin):
                                   f'x2="{_x_:.1f}" y2="{_tick_y2_:.1f}" '
                                   f'stroke="{grid_color}" stroke-width="0.3" />')
 
-    def __renderTimeContext__(self, _dl_, tick_color, label_color):
+    def __renderTimeContext__(self, _dl_: Any, tick_color: str, label_color: str) -> None:
         _y_lbl_ = self._plot_y1_ + self.txt_h + 2
         _lbl_h_ = self.txt_h * 0.8
         _fmt_   = self.__linearFormatStr__()
@@ -1289,8 +1386,8 @@ class Timep(P2SBinComponentMixin, ExportMixin):
             dl=_dl_,
         )
 
-    def renderSmallMultiples(self, df_all, df_lu, all_key):
-        _kwargs_ = {}
+    def renderSmallMultiples(self, df_all: pl.DataFrame, df_lu: dict, all_key: str) -> dict:
+        _kwargs_: dict[str, Any] = {}
         _needs_ref_ = (self.p2s.SM_COUNT in self.sm_shared or
                        self.p2s.SM_COLOR  in self.sm_shared or
                        self.p2s.SM_X      in self.sm_shared)
@@ -1304,10 +1401,12 @@ class Timep(P2SBinComponentMixin, ExportMixin):
                 _kwargs_['color_stat_range_shared'] = (_ref_._color_stat_min_, _ref_._color_stat_max_)
         return {k: Timep(df=v, template=self, **_kwargs_) for k, v in df_lu.items()}
 
-    def render_with(self, df, **overrides):
+    def render_with(self, df: pl.DataFrame, **overrides: Any) -> Any:
+        # `overrides` cannot be Unpack[TimepKwargs]: PEP 692 rejects a TypedDict
+        # that repeats a named parameter, and `df` is both.
         return Timep(df=df, template=self, **overrides)
 
-    def filterByRectangle(self, bounding_box, remove_records=False):
+    def filterByRectangle(self, bounding_box: tuple, remove_records: bool = False) -> pl.DataFrame:
         _x0_, _y0_, _x1_, _y1_ = bounding_box
         if _x0_ > _x1_: _x0_, _x1_ = _x1_, _x0_
         if _y0_ > _y1_: _y0_, _y1_ = _y1_, _y0_
@@ -1383,7 +1482,7 @@ class Timep(P2SBinComponentMixin, ExportMixin):
             return _df_result_.drop([c for c in ['__p2s_index__', '__bin_key__']
                                      if c in _df_result_.columns])
 
-    def filterByOval(self, oval, remove_records=False):
+    def filterByOval(self, oval: tuple, remove_records: bool = False) -> pl.DataFrame:
         _cx_, _cy_, _rx_, _ry_ = oval
         # A plain click arrives as a zero-radius oval: keep it covering the pixel under the cursor.
         _rx_, _ry_ = max(float(_rx_), 0.5), max(float(_ry_), 0.5)
@@ -1458,7 +1557,7 @@ class Timep(P2SBinComponentMixin, ExportMixin):
             return _df_result_.drop([c for c in ['__p2s_index__', '__bin_key__']
                                      if c in _df_result_.columns])
 
-    def recordsAt(self, xy, shape=None, threshold=2.0):
+    def recordsAt(self, xy: tuple, shape: Any = None, threshold: float = 2.0) -> pl.DataFrame:
         """Return the original records whose bar column contains pixel x.
 
         Only SELECT_VERTICALp is supported: the y coordinate and threshold are
@@ -1485,7 +1584,7 @@ class Timep(P2SBinComponentMixin, ExportMixin):
         _idx_    = int(_offset_ / self._bar_w_raw_) if (self._bar_w_raw_ > 0 and _offset_ >= 0) else -1
 
         # Helper: return a correctly-schemed empty DataFrame
-        def _empty_():
+        def _empty_() -> pl.DataFrame:
             _drop_ = [c for c in ['__p2s_index__', '__time_bin__'] if c in self.df.columns]
             return self.df.drop(_drop_).clear()
 
@@ -1520,7 +1619,7 @@ class Timep(P2SBinComponentMixin, ExportMixin):
     # first visible bin to the end (exclusive) of the last visible bin.
     # - returns None for periodic time or when nothing is rendered
     #
-    def __currentTimeframe__(self):
+    def __currentTimeframe__(self) -> tuple | None:
         if self._is_periodic_: return None
         if not (self.p2s.dateColumn(self.df, self._time_field_) or
                 self.p2s.dateTimeColumn(self.df, self._time_field_)): return None
@@ -1555,7 +1654,7 @@ class Timep(P2SBinComponentMixin, ExportMixin):
     # edge bar.  Returns the new dataframe to push onto the stack, or None when nothing applies /
     # there are no additional rows to bring in.
     #
-    def filterByTimeframe(self, top_df, mode):
+    def filterByTimeframe(self, top_df: pl.DataFrame, mode: str) -> pl.DataFrame | None:
         _tf_ = self.__currentTimeframe__()
         if _tf_ is None: return None
         _t0_, _t1_ = _tf_

@@ -7,6 +7,7 @@
 # Inline "Holten (2006)" comments below (bundle_strength β, Formula 1 blending in
 # _svg_cubic_bspline_) refer to this paper.
 
+from typing import Any, TypedDict, Unpack, cast
 import polars as pl
 import numpy as np
 from scipy.cluster.hierarchy import dendrogram, linkage
@@ -26,7 +27,7 @@ from polars2svg.export import ExportMixin
 from polars2svg.p2s_component_color_mixin import P2SComponentColorMixin
 
 
-def _mst_order(nodes: list, n: int, A_weight) -> list:
+def _mst_order(nodes: list, n: int, A_weight: Any) -> list:
     """
     MST depth-first walk ordering. O(E log E), no convergence issues.
     Builds the minimum spanning tree on inverted weights (so max-weight edges
@@ -43,7 +44,7 @@ def _mst_order(nodes: list, n: int, A_weight) -> list:
     return [nodes[i] for i in order_idx]
 
 
-def _spectral_order(nodes: list, n: int, A_weight) -> list:
+def _spectral_order(nodes: list, n: int, A_weight: Any) -> list:
     """
     Fiedler-vector ordering for large graphs. Uses shift-invert mode (sigma=1e-6)
     so ARPACK finds eigenvalues near zero of the Laplacian efficiently — converges
@@ -165,7 +166,7 @@ def _pos_components_(df: pl.DataFrame, source_col: str = "__fm__", target_col: s
     return [set(nodes[i] for i in range(n) if labels[i] == c) for c in range(n_comps)]
 
 
-def _pos_to_order_angle_(pos: dict, components: list = None) -> list:
+def _pos_to_order_angle_(pos: dict, components: list | None = None) -> list:
     """Sort nodes by polar angle from centroid, respecting connected components.
 
     For disconnected graphs each component is sorted by angle from its own
@@ -186,7 +187,7 @@ def _pos_to_order_angle_(pos: dict, components: list = None) -> list:
         gcx = sum(float(pos[n][0]) for n in all_nodes) / len(all_nodes)
         gcy = sum(float(pos[n][1]) for n in all_nodes) / len(all_nodes)
 
-        def _comp_angle_(comp):
+        def _comp_angle_(comp: set) -> float:
             ns = [n for n in comp if n in pos and pos[n] is not None]
             if not ns:
                 return 0.0
@@ -209,7 +210,7 @@ def _pos_to_order_angle_(pos: dict, components: list = None) -> list:
     return result
 
 
-def _pos_to_order_pca_(pos: dict, components: list = None) -> list:
+def _pos_to_order_pca_(pos: dict, components: list | None = None) -> list:
     """Sort nodes by PC1 projection, respecting connected components.
 
     For disconnected graphs, components are ordered by their mean projection
@@ -235,7 +236,7 @@ def _pos_to_order_pca_(pos: dict, components: list = None) -> list:
         global_pc1 = Vt[0]
         node_idx = {n: i for i, n in enumerate(all_nodes)}
 
-        def _comp_pc1_mean_(comp):
+        def _comp_pc1_mean_(comp: set) -> float:
             ns = [n for n in comp if n in node_idx]
             if not ns:
                 return 0.0
@@ -259,6 +260,61 @@ def _pos_to_order_pca_(pos: dict, components: list = None) -> list:
     return result
 
 
+class ChPKwargs(TypedDict, total=False):
+    """Keyword arguments accepted by ``p2s.chordp()`` / ``ChP(...)``.
+
+    Every key is optional (``total=False``); the set is exactly ChP._VALID_KWARGS,
+    which is what the constructor validates at runtime -- a name not listed here
+    raises TypeError.  Declaring it lets a type checker catch the misspelling
+    before the call runs, and gives editors completion over the parameter set.
+
+    Value types are deliberately conservative.  Most parameters are data-drivable
+    (they take a literal *or* a column name *or* a ``(field, enum)`` spec), so they
+    are typed ``Any`` rather than guessed at; the precise ones were each confirmed
+    against how the test suite actually calls them.
+
+    Keys wrapped in underscores are internal -- smallp sets them when it shares
+    state across small-multiple panels; callers have no reason to pass them.
+    """
+    _shared_view_x_:         list | None
+    _shared_view_y_:         Any
+    bounds_percent:          Any
+    bundle_rings:            Any
+    bundle_strength:         Any
+    color:                   Any
+    color_stat_range_shared: Any
+    count:                   Any
+    count_range_shared:      Any
+    df:                      pl.DataFrame | None
+    draw_border:             bool
+    draw_labels:             bool
+    insets:                  tuple
+    label_only:              Any
+    label_style:             Any
+    legend:                  Any
+    link_opacity:            Any
+    link_shape:              Any
+    link_size:               str
+    link_size_range:         tuple
+    node_color:              Any
+    node_gap:                Any
+    node_labels:             Any
+    node_opacity:            Any
+    node_selection:          set
+    node_size:               str
+    node_size_range:         tuple
+    order:                   Any
+    pos:                     Any
+    relationships:           Any
+    render_skeleton:         bool
+    skeleton_algorithm:      Any
+    sm_shared:               set
+    template:                'ChP | None'
+    txt_h:                   Any
+    txt_offset:              Any
+    wxh:                     list | tuple
+
+
 class ChP(P2SComponentColorMixin, ExportMixin):
 
     _COMPONENT_NAME_ = 'Chordp'   # dtype-keyed log + validation/error message prefix
@@ -278,13 +334,86 @@ class ChP(P2SComponentColorMixin, ExportMixin):
         'draw_border', 'txt_h', 'legend',
     })
 
+    # ---------------------------------------------------------------------
+    # Parameters assigned onto the instance from _defaults_ by
+    # Polars2SVG.assignScratchDefaults() -- setattr(), so no checker can see them.
+    #
+    # Declarations, not assignments: bare annotations populate __annotations__
+    # and create no class attribute, so this block is a no-op at runtime.
+    #
+    # Types are deliberately conservative -- `Any` wherever a parameter is
+    # data-drivable (accepts a literal *or* a column name), which is most of
+    # them.  The job here is to make the attribute VISIBLE; the precise
+    # per-parameter contract lands in the Unpack[TypedDict] work (phase 2),
+    # which is where a caller-facing type belongs.
+    #
+    # tests/test_typing_surface.py::TestComponentAttrDeclarations checks this
+    # block against _VALID_KWARGS, so a new parameter fails the suite until it
+    # is declared here too.
+    # ---------------------------------------------------------------------
+    _shared_view_x_:         list | None
+    bounds_percent:          float
+    color:                   Any
+    color_stat_range_shared: Any
+    count:                   Any
+    count_range_shared:      Any
+    draw_border:             bool
+    draw_labels:             bool
+    insets:                  tuple
+    label_style:             str
+    legend:                  bool
+    link_opacity:            float
+    link_shape:              str
+    link_size:               str
+    link_size_range:         tuple
+    node_color:              Any
+    node_gap:                float
+    node_labels:             Any
+    node_opacity:            float
+    node_selection:          set
+    node_size:               str
+    node_size_range:         tuple
+    skeleton_algorithm:      str
+    sm_shared:               set
+    txt_h:                   int
+    txt_offset:              int
+
+    # --- state built during __init__/render, not passed in --------------
+    # Initialised to None and filled once the frame is resolved, so a checker
+    # infers `... | None` and flags every later use.  `Any` because these hold
+    # polars frames, display lists and cached statistics whose concrete types
+    # this class does not otherwise name.
+    _bundled_skeleton_: Any
+    _color_stat_max_:   float | None
+    _color_stat_min_:   float | None
+    _count_max_:        float | None
+    _count_min_:        float | None
+    _dl_legend_:        DisplayList | None
+    _gpu_dl_:           DisplayList | None
+    _gpu_payload_:      dict | None
+    _legend_region_:    tuple | None
+    _legend_stat_max_:  float | None
+    _legend_stat_min_:  float | None
+    df:                 Any
+    df_link:            pl.DataFrame | None
+    df_orig:            pl.DataFrame | None
+    legend_info:        Any
+    template:           'ChP | None'
+    _link_svg_list_: list
+    cx:              float
+    cy:              float
+    df_node:         pl.DataFrame
+    label_only:      Any
+    svg:             str
+    wxh:             list | tuple
+
     #
     # __init__()
     #
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args: Any, **kwargs: Unpack[ChPKwargs]) -> None:
         self.t_start        = time.time()
         self.p2s            = polars2svg.Polars2SVG()
-        self.timing_metrics = {}
+        self.timing_metrics: dict = {}
         self.gatherMetrics(self.__parseInput__, *args, **kwargs)
         self.gatherMetrics(self.__validateInput__)
         if self.df is not None:
@@ -297,7 +426,7 @@ class ChP(P2SComponentColorMixin, ExportMixin):
         self.t_end     = time.time()
         self.t_overall = self.t_end - self.t_start
 
-    def _repr_svg_(self): return self.svg
+    def _repr_svg_(self) -> str: return self.svg
 
     #
     # webgpu() - WebGPU payload of the same render, extracted from the retained
@@ -306,7 +435,7 @@ class ChP(P2SComponentColorMixin, ExportMixin):
     # arcs become annular quad strips; labels render as glyphs (circular labels
     # are placed per-glyph along the arc).  Lazy + cached.
     #
-    def webgpu(self):
+    def webgpu(self) -> dict | None:
         if getattr(self, '_gpu_payload_', None) is not None: return self._gpu_payload_
         _dl_ = self.gpuDisplayList()
         if _dl_ is None: return None
@@ -317,7 +446,7 @@ class ChP(P2SComponentColorMixin, ExportMixin):
     # gpuDisplayList() - the composed backend-neutral display list (also consumed
     # by smallp when this component renders as a cell)
     #
-    def gpuDisplayList(self):
+    def gpuDisplayList(self) -> Any:
         if self.df is None or getattr(self, 'svg', None) is None: return None
         if getattr(self, '_gpu_dl_', None) is not None: return self._gpu_dl_
         import re
@@ -456,7 +585,7 @@ class ChP(P2SComponentColorMixin, ExportMixin):
     #
     # gatherMetrics()
     #
-    def gatherMetrics(self, callable, *args, **kwargs):
+    def gatherMetrics(self, callable: Any, *args: Any, **kwargs: Any) -> int:
         t0 = time.time()
         _results_ = callable(*args, **kwargs)
         t1 = time.time()
@@ -467,7 +596,7 @@ class ChP(P2SComponentColorMixin, ExportMixin):
     #
     # __parseInput__()
     #
-    def __parseInput__(self, *args, **kwargs):
+    def __parseInput__(self, *args: Any, **kwargs: Unpack[ChPKwargs]) -> None:
         _unknown_ = set(kwargs) - self._VALID_KWARGS
         if _unknown_:
             raise TypeError(f'ChP: unexpected keyword argument(s): {sorted(_unknown_)}')
@@ -546,11 +675,11 @@ class ChP(P2SComponentColorMixin, ExportMixin):
             self._count_max_        = None
             self._color_stat_min_   = None
             self._color_stat_max_   = None
-            self.color_nodes_final  = {}
+            self.color_nodes_final: dict  = {}
             self._render_invalid_   = False
             # from-scratch builds only — a template clone is an exact snapshot and
             # must not re-apply session defaults (see Polars2SVG._apply_defaults)
-            kwargs = self.p2s._apply_defaults('chordp', kwargs)
+            kwargs = cast(ChPKwargs, self.p2s._apply_defaults('chordp', kwargs))
 
         # Extract DataFrame
         _new_df_ = None
@@ -564,7 +693,7 @@ class ChP(P2SComponentColorMixin, ExportMixin):
         if _new_df_ is not None:
             self.df = self.df_orig = _new_df_
 
-        def _is_pos_dict_(arg):
+        def _is_pos_dict_(arg: dict) -> bool:
             return (isinstance(arg, dict) and len(arg) > 0 and
                     all(isinstance(v, (tuple, list, np.ndarray)) and len(v) >= 2 for v in arg.values()))
 
@@ -659,7 +788,7 @@ class ChP(P2SComponentColorMixin, ExportMixin):
     #
     # _createConcatColumn_() - concatenate multiple fields into one string column
     #
-    def _createConcatColumn_(self, df, fields, new_col):
+    def _createConcatColumn_(self, df: pl.DataFrame, fields: tuple, new_col: str) -> pl.DataFrame:
         _parts_ = []
         for i, f in enumerate(fields):
             if i > 0: _parts_.append(pl.lit('|'))
@@ -670,7 +799,7 @@ class ChP(P2SComponentColorMixin, ExportMixin):
     # __countAggExpr__() - return the Polars aggregation expression for counting edges
     # - mirrors the identical method in Timep and Histop
     #
-    def __countAggExpr__(self):
+    def __countAggExpr__(self) -> pl.Expr:
         if self.count == self.p2s.ROW_COUNTp:
             return pl.len().alias('__count__')
         elif isinstance(self.count, str):
@@ -685,7 +814,7 @@ class ChP(P2SComponentColorMixin, ExportMixin):
             else:                                return pl.struct(_fields_).n_unique().alias('__count__')
         return pl.len().alias('__count__')
 
-    def __countFields__(self):
+    def __countFields__(self) -> set:
         if self.count == self.p2s.ROW_COUNTp: return set()
         if isinstance(self.count, str):        return {self.count}
         if isinstance(self.count, tuple):      return {_f_ for _f_ in self.count if isinstance(_f_, str)}
@@ -694,7 +823,7 @@ class ChP(P2SComponentColorMixin, ExportMixin):
     #
     # __validateInput__()
     #
-    def __validateInput__(self):
+    def __validateInput__(self) -> None:
         # Normalize legend= eagerly so a bad spec fails fast (raises InvalidSpecError).
         self.legend_spec = self.p2s.legendResolveSpec(self.legend)
         if self.df is None: return
@@ -736,7 +865,7 @@ class ChP(P2SComponentColorMixin, ExportMixin):
     # __calculateOrder__()
     # - if the order wasn't specified by the caller, determine that here
     #
-    def __calculateOrder__(self):
+    def __calculateOrder__(self) -> None:
         # Collect all nodes from the data & compute their edge weights
         _dfs_ = []
         _node_series_ = []
@@ -794,7 +923,7 @@ class ChP(P2SComponentColorMixin, ExportMixin):
     # columns to String; with a non-String node column (integer ids) the listed values
     # are str()-cast to match, and any node_labels=/label_only= keys must be strings too.
     #
-    def __resolveOrder__(self):
+    def __resolveOrder__(self) -> None:
         _label_    = self.p2s.REMAINDER_LABEL
         _sentinel_ = self.p2s.REMAINDERp
         _listed_   = [_o_ for _o_ in self.order if _o_ is not _sentinel_]
@@ -834,7 +963,7 @@ class ChP(P2SComponentColorMixin, ExportMixin):
     #
     # __calculateGeometry_NONPOLARS__()
     #
-    def __calculateGeometry_NONPOLARS__(self):
+    def __calculateGeometry_NONPOLARS__(self) -> None:
         w,  h  = self.wxh
         xi, yi = self.insets
         # Compute the node sizes
@@ -947,7 +1076,7 @@ class ChP(P2SComponentColorMixin, ExportMixin):
     # _legend_stat_min_/_max_ accumulator.  Decision A: a truthy legend with
     # nothing to legend silently reserves nothing.
     #
-    def __legendPrepare__(self):
+    def __legendPrepare__(self) -> None:
         self.legend_info       = None
         self._legend_region_   = None
         self._legend_reserve_  = (0, 0, 0, 0)
@@ -1002,7 +1131,7 @@ class ChP(P2SComponentColorMixin, ExportMixin):
         elif _pos_ == 'top':    self._legend_region_ = (0, 0, self.wxh[0], _t_)
         else:                   self._legend_region_ = (0, self.wxh[1] - _b_, self.wxh[0], _b_)
 
-    def __calculateGeometry__(self):
+    def __calculateGeometry__(self) -> None:
         # Legend strip (if any) comes out of wxh first -- the plot region shrinks,
         # the physical output size does not ("reserve from wxh").
         self.__legendPrepare__()
@@ -1148,7 +1277,7 @@ class ChP(P2SComponentColorMixin, ExportMixin):
         self.df_node = self.df_node.with_columns(_co_expr_.alias('__nc_hex__'))
 
         # ── 6. SVG path strings via concat_str (no Python row loop) ───────────
-        def _r2_(c): return pl.col(c).round(2)
+        def _r2_(c: str) -> pl.Expr: return pl.col(c).round(2)
         _svg_ops_ = [
             pl.lit('<path d="M '), _r2_('__x0o__'), pl.lit(' '), _r2_('__y0o__'),
             pl.lit(' A '),         _r2_('__r__'),   pl.lit(' '), _r2_('__r__'),
@@ -1179,7 +1308,7 @@ class ChP(P2SComponentColorMixin, ExportMixin):
     # - uses Polars group_by + concat_str to build SVG strings without Python row loops
     # - computes link attachment points from df_node arc geometry
     #
-    def __renderLinks__(self):
+    def __renderLinks__(self) -> None:
         _WIDE_THRESH_ = 6.0   # px arc-length at inner radius to treat a node as "wide"
         _INSET_PX_    = 2.0   # px inset from each edge of a wide node
         _TENSION_     = 1.0   # max Bezier pull toward center (reached when nodes are opposite)
@@ -1433,7 +1562,7 @@ class ChP(P2SComponentColorMixin, ExportMixin):
     # - expects df_link to already have: __fm_x/y__, __to_x/y__, __cp1/2_x/y__,
     #   __arr_{lx,ly,rx,ry,to_x,to_y}__, __lc_hex__, and a stroke_w_expr
     #
-    def _renderLinkShape_curve_(self, df_link, stroke_w_expr):
+    def _renderLinkShape_curve_(self, df_link: pl.DataFrame, stroke_w_expr: pl.Expr) -> pl.DataFrame:
         _r2_ = lambda c: pl.col(c).round(2)
         _path_ops_ = [
             pl.lit('<path d="M '), _r2_('__fm_x__'), pl.lit(' '), _r2_('__fm_y__'),
@@ -1462,7 +1591,7 @@ class ChP(P2SComponentColorMixin, ExportMixin):
     # - contract: every skeleton builder returns a networkx.Graph with 'weight' on every edge
     # - adding a new algorithm: implement _build_<name>_skeleton_() and add a branch below
     #
-    def _build_skeleton_(self):
+    def _build_skeleton_(self) -> Any:
         if self._bundled_skeleton_ is not None:
             return self._bundled_skeleton_
         if   self.skeleton_algorithm == 'hexagonal':
@@ -1483,7 +1612,7 @@ class ChP(P2SComponentColorMixin, ExportMixin):
     # - hex edge length = self.r / bundle_rings; only edges with both endpoints inside
     #   self.r_inner * 0.9 are included; hex-center spokes add extra connectivity
     #
-    def _build_hex_skeleton_(self):
+    def _build_hex_skeleton_(self) -> Any:
         import networkx as nx
         from math import sqrt
 
@@ -1493,10 +1622,10 @@ class ChP(P2SComponentColorMixin, ExportMixin):
         hx_h    = sqrt(hx_e**2 - (hx_e / 2)**2)
         adj_r   = self.r_inner
 
-        def _rnd(pts):
+        def _rnd(pts: list) -> list:
             return [(round(x, 3), round(y, 3)) for x, y in pts]
 
-        def _hx_corners(x, y):
+        def _hx_corners(x: float, y: float) -> list[tuple[float, float]]:
             return _rnd([
                 (x - hx_e,     y        ),
                 (x - hx_e/2,   y + hx_h ),
@@ -1507,7 +1636,7 @@ class ChP(P2SComponentColorMixin, ExportMixin):
                 (x - hx_e,     y        ),  # close
             ])
 
-        def _dist2(ax, ay, bx, by):
+        def _dist2(ax: float, ay: float, bx: float, by: float) -> float:
             return (ax - bx)**2 + (ay - by)**2
 
         G    = nx.Graph()
@@ -1549,7 +1678,7 @@ class ChP(P2SComponentColorMixin, ExportMixin):
     # - circumferential edges on each ring; each node connects to 2 nearest nodes on the
     #   adjacent inner ring; innermost ring connects to center
     #
-    def _build_radial_skeleton_(self):
+    def _build_radial_skeleton_(self) -> Any:
         import networkx as nx
         from math import cos, sin, pi, sqrt
 
@@ -1558,10 +1687,10 @@ class ChP(P2SComponentColorMixin, ExportMixin):
         r_inner = self.r_inner
         G       = nx.Graph()
 
-        def _dist(a, b):
+        def _dist(a: tuple, b: tuple) -> float:
             return sqrt((a[0] - b[0])**2 + (a[1] - b[1])**2)
 
-        def _add_edge(a, b):
+        def _add_edge(a: tuple, b: tuple) -> None:
             G.add_edge(a, b, weight=_dist(a, b))
 
         rings = []
@@ -1601,7 +1730,7 @@ class ChP(P2SComponentColorMixin, ExportMixin):
     # - intra-cluster full connectivity at each stage; circumferential skip connections
     #   at rings 2 and 3
     #
-    def _build_kmeans_skeleton_(self):
+    def _build_kmeans_skeleton_(self) -> Any:
         import networkx as nx
         from math import cos, sin, atan2, sqrt
 
@@ -1611,19 +1740,19 @@ class ChP(P2SComponentColorMixin, ExportMixin):
         N       = self.bundle_rings
         G       = nx.Graph()
 
-        def _dist(a, b):
+        def _dist(a: tuple, b: tuple) -> float:
             return sqrt((a[0] - b[0])**2 + (a[1] - b[1])**2)
 
-        def _add_edge(a, b):
+        def _add_edge(a: tuple, b: tuple) -> None:
             G.add_edge(a, b, weight=_dist(a, b))
 
-        def _circular_mean_angle_(pts):
+        def _circular_mean_angle_(pts: list) -> float:
             """Mean angle of a cluster via unit-vector averaging (handles wrap-around)."""
             sx = sum(cos(atan2(p[1] - cy, p[0] - cx)) for p in pts) / len(pts)
             sy = sum(sin(atan2(p[1] - cy, p[0] - cx)) for p in pts) / len(pts)
             return atan2(sy, sx)
 
-        def _kmeans_(pts, k, iterations=20):
+        def _kmeans_(pts: list, k: int, iterations: int = 20) -> dict:
             """Lloyd's algorithm seeded from input points; returns {center_idx: [pts]}."""
             import random
             pts = list(pts)
@@ -1634,7 +1763,7 @@ class ChP(P2SComponentColorMixin, ExportMixin):
                 return {i: [pts[i]] for i in range(n)}
             rng        = random.Random(42)  # nosec B311 - fixed-seed deterministic clustering, not security sensitive
             centroids  = rng.sample(pts, k)
-            assign     = {}
+            assign: dict     = {}
             for _ in range(iterations):
                 assign = [[] for _ in range(k)]
                 for pt in pts:
@@ -1724,7 +1853,7 @@ class ChP(P2SComponentColorMixin, ExportMixin):
     # - beta=0 → straight chord, beta=1 → full skeleton routing
     # - requires len(pts) >= 2; degenerate n=2 returns a straight line segment
     #
-    def _svg_cubic_bspline_(self, pts, beta):
+    def _svg_cubic_bspline_(self, pts: list, beta: float) -> str:
         n = len(pts)
         if n < 2:
             return ''
@@ -1732,7 +1861,7 @@ class ChP(P2SComponentColorMixin, ExportMixin):
             return f'M {pts[0][0]:.2f} {pts[0][1]:.2f} L {pts[1][0]:.2f} {pts[1][1]:.2f}'
 
         # Holten (2006) Formula 1: q_i = β·p_i + (1−β)·(p_0 + t_i·(p_{n−1} − p_0))
-        def _cp_(i):
+        def _cp_(i: int) -> tuple:
             t  = i / (n - 1)
             dx = pts[0][0] + t * (pts[-1][0] - pts[0][0])
             dy = pts[0][1] + t * (pts[-1][1] - pts[0][1])
@@ -1775,7 +1904,7 @@ class ChP(P2SComponentColorMixin, ExportMixin):
     # - Holten β-blending + B-spline smoothing applied in _svg_cubic_bspline_()
     # - arrowhead direction from the last blended skeleton segment
     #
-    def _renderLinkShape_bundled_(self, df_link, stroke_w_expr):
+    def _renderLinkShape_bundled_(self, df_link: pl.DataFrame, stroke_w_expr: pl.Expr) -> pl.DataFrame:
         import networkx as nx
         from math import sqrt
         _ARROW_LEN_ = 5.0
@@ -1786,7 +1915,7 @@ class ChP(P2SComponentColorMixin, ExportMixin):
         skeleton    = self._build_skeleton_()
         skel_nodes  = list(skeleton.nodes())
 
-        def _nearest(x, y):
+        def _nearest(x: float, y: float) -> tuple:
             best, bd = None, float('inf')
             for nx_, ny_ in skel_nodes:
                 d = (nx_ - x)**2 + (ny_ - y)**2
@@ -1796,7 +1925,7 @@ class ChP(P2SComponentColorMixin, ExportMixin):
 
         df = df_link.with_columns(stroke_w_expr.alias('__sw__'))
 
-        def _make_svg_(row):
+        def _make_svg_(row: dict) -> str:
             fm_x  = row['__fm_x__'];  fm_y = row['__fm_y__']
             to_x  = row['__to_x__'];  to_y = row['__to_y__']
             color = row['__lc_hex__']
@@ -1851,7 +1980,7 @@ class ChP(P2SComponentColorMixin, ExportMixin):
     # - applies proper node_color through _node_color_mode_
     # - generates radial or circular labels controlled by label_style
     #
-    def __renderNodes__(self):
+    def __renderNodes__(self) -> None:
         # ── 1. Node color ──────────────────────────────────────────────────────
         _bg_co_   = self.p2s.colorTyped('background', 'default')
         _data_co_ = self.p2s.colorTyped('data', 'default')
@@ -1871,7 +2000,7 @@ class ChP(P2SComponentColorMixin, ExportMixin):
         self.df_node = self.df_node.with_columns(_co_expr_.alias('__nc_hex__'))
 
         # ── 2. Build closed annulus-sector SVG paths ───────────────────────────
-        def _r2_(c): return pl.col(c).round(2)
+        def _r2_(c: str) -> pl.Expr: return pl.col(c).round(2)
         _svg_ops_ = [
             pl.lit('<path d="M '), _r2_('__x0o__'), pl.lit(' '), _r2_('__y0o__'),
             pl.lit(' A '),         _r2_('__r__'),   pl.lit(' '), _r2_('__r__'),
@@ -1985,7 +2114,7 @@ class ChP(P2SComponentColorMixin, ExportMixin):
     #
     # __renderSVG__()
     #
-    def __renderSVG__(self, rand_id):
+    def __renderSVG__(self, rand_id: int) -> None:
         self._gpu_payload_ = self._gpu_dl_ = None   # invalidate GPU state cached from a template
         self._render_invalid_ = False
 
@@ -2039,7 +2168,7 @@ class ChP(P2SComponentColorMixin, ExportMixin):
     #
     # render_with() - create a new instance with overrides (used by smallp cycle_by mode)
     #
-    def recordsAt(self, xy, shape=None, threshold=2.0):
+    def recordsAt(self, xy: tuple, shape: Any = None, threshold: float = 2.0) -> pl.DataFrame:
         if shape is None: shape = self.p2s.SELECT_CIRCLEp
         if shape != self.p2s.SELECT_CIRCLEp:
             raise ValueError(f'ChP.recordsAt(): only SELECT_CIRCLEp is supported, got {shape}')
@@ -2061,7 +2190,7 @@ class ChP(P2SComponentColorMixin, ExportMixin):
             _mask_ = _mask_ | pl.col(_fm_).cast(pl.String).is_in(_nodes_) | pl.col(_to_).cast(pl.String).is_in(_nodes_)
         return self.df.filter(_mask_)
 
-    def filterByRectangle(self, bounding_box, remove_records=False):
+    def filterByRectangle(self, bounding_box: tuple, remove_records: bool = False) -> pl.DataFrame:
         _x0_, _y0_, _x1_, _y1_ = bounding_box
         if _x0_ > _x1_: _x0_, _x1_ = _x1_, _x0_
         if _y0_ > _y1_: _y0_, _y1_ = _y1_, _y0_
@@ -2091,7 +2220,7 @@ class ChP(P2SComponentColorMixin, ExportMixin):
         if remove_records: _mask_ = ~_mask_
         return self.df.filter(_mask_)
 
-    def filterByOval(self, oval, remove_records=False):
+    def filterByOval(self, oval: tuple, remove_records: bool = False) -> pl.DataFrame:
         _cx_, _cy_, _rx_, _ry_ = oval
         # A plain click arrives as a zero-radius oval: keep it covering the pixel under the cursor.
         _rx_, _ry_ = max(float(_rx_), 0.5), max(float(_ry_), 0.5)
@@ -2121,7 +2250,9 @@ class ChP(P2SComponentColorMixin, ExportMixin):
         if remove_records: _mask_ = ~_mask_
         return self.df.filter(_mask_)
 
-    def render_with(self, df, **overrides):
+    def render_with(self, df: pl.DataFrame, **overrides: Any) -> Any:
+        # `overrides` cannot be Unpack[ChPKwargs]: PEP 692 rejects a TypedDict
+        # that repeats a named parameter, and `df` is both.
         return ChP(df=df, template=self, **overrides)
 
     #
@@ -2130,8 +2261,8 @@ class ChP(P2SComponentColorMixin, ExportMixin):
     # - SM_Y: share the bundled-edge routing skeleton (only meaningful when link_shape='bundled')
     # - SM_COUNT / SM_COLOR: share count / color-stat normalization ranges
     #
-    def renderSmallMultiples(self, df_all, df_lu, all_key):
-        _kwargs_ = {'sm_shared': self.sm_shared}
+    def renderSmallMultiples(self, df_all: Any, df_lu: dict, all_key: Any) -> dict:
+        _kwargs_: dict[str, Any] = {'sm_shared': self.sm_shared}
         _needs_ref_ = (self.p2s.SM_X     in self.sm_shared or
                        self.p2s.SM_Y     in self.sm_shared or
                        self.p2s.SM_COUNT in self.sm_shared or

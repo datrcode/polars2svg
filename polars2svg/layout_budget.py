@@ -43,11 +43,11 @@ class Budget:
             raise ValueError('time_budget must be >= 0')
         self.time_budget = None if time_budget is None else float(time_budget)
         self.should_stop = should_stop
-        self.stopped_at  = None
-        self.note        = None
-        self._t0_        = None
-        self._total_     = None
-        self._done_      = 0
+        self.stopped_at: Optional[int]   = None
+        self.note:       Optional[str]   = None
+        self._t0_:       Optional[float] = None
+        self._total_:    Optional[int]   = None
+        self._done_:     int             = 0
 
     def start(self, total_iterations: int) -> 'Budget':
         '''Begin timing.  Call once, immediately before the loop.'''

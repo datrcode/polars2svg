@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import ipaddress
 import json
 import random
@@ -33,15 +35,40 @@ _GRAPH_LAYOUT_DEPS_MSG_ = (
     "    pip install polars2svg[layouts]"
 )
 
-def _requireGraphLayoutDeps_():
+def _requireGraphLayoutDeps_() -> None:
     if not _HAS_GRAPH_LAYOUT_DEPS_:
         raise ImportError(_GRAPH_LAYOUT_DEPS_MSG_)
 
 class P2SGraphMixin:
-    def __init__(self):
+    # ---------------------------------------------------------------------
+    # Host-class attributes this mixin reads off `self`.
+    #
+    # A mixin is never instantiated on its own -- these are provided by whatever
+    # class mixes it in (Polars2SVG).  Declared here so a checker
+    # can follow the mixin's own methods; bare annotations, so nothing exists at
+    # runtime and nothing is shadowed.
+    #
+    # Typed `Any` on purpose: the mixin genuinely does not know the concrete type,
+    # and several hosts declare the same name with a narrower type of their own.
+    # ---------------------------------------------------------------------
+    NULL_NODE_PREFIX:              Any
+    ROW_COUNTp:                    Any
+    SETp:                          Any
+    closestPointOnSegment:         Any
+    createConcatColumn:            Any
+    flattenTuple:                  Any
+    logDtypeKeyedCount:            Any
+    logger:                        Any
+    numericColumn:                 Any
+    packCircles:                   Any
+    polarsFilterColumnsWithNaNs:   Any
+    positionExtents:               Any
+    smallestEnclosingCircleApprox: Any
+
+    def __init__(self) -> None:
         pass
 
-    def __p2s_graph_mixin_init__(self):
+    def __p2s_graph_mixin_init__(self) -> None:
         pass
 
     # -------------------------------------------------------------------------
@@ -54,7 +81,7 @@ class P2SGraphMixin:
     #   ROW_COUNTp (default) -> pl.len(); numeric field -> sum; non-numeric field or
     #   (field, SETp) -> n_unique; multi-field tuple -> struct then n_unique.
     #
-    def __graphCountAggExpr__(self, df, count):
+    def __graphCountAggExpr__(self, df: pl.DataFrame, count: Any) -> pl.Expr:
         if count == self.ROW_COUNTp:
             return pl.len().alias('__count__')
         elif isinstance(count, str):
@@ -85,7 +112,7 @@ class P2SGraphMixin:
     # would keep e.g. Int64 node names and 5 and '5' would be two different nodes. Columns
     # without nulls are left untouched, dtype included.
     #
-    def nullFillEndpoints(self, df, relationships):
+    def nullFillEndpoints(self, df: pl.DataFrame, relationships: list) -> pl.DataFrame:
         for _rel_ in relationships:
             _fm_, _to_ = _rel_[0], _rel_[1]
             if _fm_ not in df.columns or _to_ not in df.columns: continue
@@ -104,17 +131,19 @@ class P2SGraphMixin:
         return df
 
     def createNetworkXGraph(self,
-                            df,
-                            relationships,
-                            use_digraph = False,
-                            count       = None):
+                            df: pl.DataFrame,
+                            relationships: list,
+                            use_digraph: bool  = False,
+                            count: Any        = None) -> Any:
         _requireGraphLayoutDeps_()
         if count is None: count = self.ROW_COUNTp
 
         nx_g = nx.DiGraph() if use_digraph else nx.Graph()
 
         df = df.clone()
-        new_relationships, i = [], 0
+        # relationships are 2-tuples (fm, to) or 3-tuples (fm, to, weight)
+        new_relationships: list[tuple] = []
+        i = 0
         for _edge_ in relationships:
             _fm_ = _edge_[0]
             _to_ = _edge_[1]
@@ -162,8 +191,8 @@ class P2SGraphMixin:
 
         return nx_g
 
-    def filterDataFrameByGraph(self, df, relationships, g):
-        new_relationships = []
+    def filterDataFrameByGraph(self, df: pl.DataFrame, relationships: list, g: Any) -> pl.DataFrame:
+        new_relationships: list[tuple] = []
         for i in range(len(relationships)):
             _relationship_ = relationships[i]
             _fm_, _to_ = _relationship_[0], _relationship_[1]
@@ -192,7 +221,7 @@ class P2SGraphMixin:
         if   len(_dfs_) == 0: return pl.DataFrame(schema=df.schema)
         else:                 return pl.concat(_dfs_)
 
-    def collapseDataFrameEdgesToOneRow(self, df, relationships, selected=None):
+    def collapseDataFrameEdgesToOneRow(self, df: pl.DataFrame, relationships: list, selected: set | None = None) -> pl.DataFrame:
         """Keep a single representative row for visualized edges, dropping the
         per-edge row overhead while leaving the rendered graph unchanged.
 
@@ -201,7 +230,7 @@ class P2SGraphMixin:
         retain all of their rows.
         """
         _orig_columns_ = df.columns
-        new_relationships = []
+        new_relationships: list[tuple] = []
         for i in range(len(relationships)):
             _relationship_ = relationships[i]
             _fm_, _to_ = _relationship_[0], _relationship_[1]
@@ -233,7 +262,7 @@ class P2SGraphMixin:
     # Ported from rtsvg/rt_graph_layouts_mixin.py (David Trimm, Apache 2.0)
     # -------------------------------------------------------------------------
 
-    def treeMapLayout(self, _graph, pos, bounds_percent=0.1):
+    def treeMapLayout(self, _graph: Any, pos: dict, bounds_percent: float = 0.1) -> dict:
         _requireGraphLayoutDeps_()
         _graph = nx.to_undirected(_graph)
         S = [_graph.subgraph(c).copy() for c in nx.connected_components(_graph)]
@@ -268,7 +297,7 @@ class P2SGraphMixin:
 
         return new_pos
 
-    def circlePackLayout(self, g, pos):
+    def circlePackLayout(self, g: Any, pos: dict) -> tuple:
         _requireGraphLayoutDeps_()
         g_components = [g.subgraph(c) for c in nx.connected_components(g)]
         circles = []
@@ -288,12 +317,12 @@ class P2SGraphMixin:
 
         return _new_pos_, _shapes_
 
-    def rectangularLayout(self, g, nodes, pos=None, bounds=(0, 0, 1, 1)):
+    def rectangularLayout(self, g: Any, nodes: list | set, pos: dict | None = None, bounds: tuple = (0, 0, 1, 1)) -> dict:
         x0, y0, x1, y1 = bounds
         if x0 > x1: x0, x1 = x1, x0
         if y0 > y1: y0, y1 = y1, y0
         dx, dy = float(x1-x0), float(y1-y0)
-        if isinstance(nodes, list) == False: nodes = list(nodes)
+        if not isinstance(nodes, list): nodes = list(nodes)
         if pos is None: pos = {}
         if len(nodes) == 1:
             pos[nodes[0]] = (x0 + dx/2.0, y0 + dy/2.0)
@@ -360,7 +389,7 @@ class P2SGraphMixin:
                                g             : nx.Graph,
                                nodes         : Iterable[str],
                                node_color_lu : dict,
-                               pos           : dict  = None,
+                               pos           : dict | None  = None,
                                collapse      : bool  = False,
                                bounds        : tuple = (0, 0, 1, 1)) -> dict:
         _requireGraphLayoutDeps_()
@@ -396,7 +425,7 @@ class P2SGraphMixin:
     def ipSubnetTreeMapLayout(self,
                               g           : nx.Graph,
                               subnet_mask : int   = 24,
-                              pos         : dict  = None,
+                              pos         : dict | None  = None,
                               collapse     : bool  = False,
                               cell_inset   : float = 0.0,
                               return_cells : bool  = False,
@@ -441,7 +470,7 @@ class P2SGraphMixin:
         _OTHER_       = '__non_ipv4__'
         _OTHER_LABEL_ = 'non-IPv4'
 
-        def _toIPv4_(_node_):
+        def _toIPv4_(_node_: str) -> Any:
             # Accept a bare address ("10.0.0.5") or one carrying a port / CIDR
             # suffix ("10.0.0.5:443", "10.0.0.5/24") by parsing the leading
             # dotted-quad token. Returns an IPv4Address or None.
@@ -512,7 +541,7 @@ class P2SGraphMixin:
     def ipSubnetForceDirectedLayout(self,
                                     g              : nx.Graph,
                                     subnet_mask    : int   = 24,
-                                    pos            : dict  = None,
+                                    pos            : dict | None  = None,
                                     collapse       : bool  = False,
                                     cluster_frac   : float = 0.45,
                                     iterations     : int   = 50,
@@ -553,7 +582,7 @@ class P2SGraphMixin:
 
         _OTHER_ = '__non_ipv4__'
 
-        def _toIPv4_(_node_):
+        def _toIPv4_(_node_: str) -> Any:
             # Accept a bare address ("10.0.0.5") or one carrying a port / CIDR
             # suffix ("10.0.0.5:443", "10.0.0.5/24") by parsing the leading
             # dotted-quad token. Returns an IPv4Address or None.
@@ -629,25 +658,25 @@ class P2SGraphMixin:
         return (pos, _rep_pos_) if return_rep_pos else pos
 
     def neighborhoodLayout(self,
-                           g,
-                           pos              = None,
-                           mode             = 'spatial',
-                           return_cells     = False,
+                           g: Any,
+                           pos: dict | None               = None,
+                           mode: str              = 'spatial',
+                           return_cells: bool      = False,
                            # 'spatial' mode (clustering over the existing layout) controls
-                           spatial_method   = 'hdbscan',
-                           cluster_dist     = None,
-                           min_cluster_size = 5,
-                           min_samples      = None,
-                           cluster_selection_method = 'eom',
+                           spatial_method: str    = 'hdbscan',
+                           cluster_dist: float | None      = None,
+                           min_cluster_size: int  = 5,
+                           min_samples: Any       = None,
+                           cluster_selection_method: str  = 'eom',
                            # 'graph' mode (weighted community detection) controls
-                           resolution       = 1.0,
-                           cluster_frac     = 0.45,
-                           collapse         = False,
-                           iterations       = 50,
-                           seed             = 42,
+                           resolution: float        = 1.0,
+                           cluster_frac: float      = 0.45,
+                           collapse: bool          = False,
+                           iterations: int        = 50,
+                           seed: int              = 42,
                            # shared Voronoi-cell control
-                           cell_pad         = 0.05,
-                           bounds           = (0, 0, 1, 1)) -> dict:
+                           cell_pad: float          = 0.05,
+                           bounds: tuple            = (0, 0, 1, 1)) -> dict:
         """Detect node neighborhoods and (optionally) outline them with a Voronoi background.
 
         Two related layouts selected by ``mode`` -- both end by tessellating the
@@ -841,8 +870,8 @@ class P2SGraphMixin:
         cells = self.__p2sg_voronoiNeighborhoodCells__(pos, _labels_, pad=cell_pad)
         return pos, cells
 
-    def sunflowerSeedLayout(self, g, nodes, pos=None, xy=None, r_max=1.0):
-        if isinstance(nodes, list) == False: nodes = list(nodes)
+    def sunflowerSeedLayout(self, g: Any, nodes: list | set, pos: dict | None = None, xy: tuple | None = None, r_max: float = 1.0) -> dict:
+        if not isinstance(nodes, list): nodes = list(nodes)
         if xy is None: xy = (0, 0)
         n = len(nodes)
 
@@ -863,7 +892,7 @@ class P2SGraphMixin:
                                    xy[1] + _radius_ * np.sin(_angle_))
         return pos
 
-    def linearOptimizedLayout(self, g, nodes, pos, segment=((0.0, 0.0), (1.0, 1.0))):
+    def linearOptimizedLayout(self, g: Any, nodes: list, pos: dict, segment: tuple = ((0.0, 0.0), (1.0, 1.0))) -> dict:
         if len(nodes) == 1: return {nodes[0]: ((segment[0][0]+segment[1][0])/2.0, (segment[0][1]+segment[1][1])/2.0)}
         adj_pos, as_set = {}, set(nodes)
         _externals_, _internals_ = set(), set()
@@ -882,7 +911,7 @@ class P2SGraphMixin:
             perc = i/float(len(nodes)-1)
             _locations_.append((segment[0][0] + dx*perc, segment[0][1] + dy*perc))
 
-        def placeNodeIntoClosestSlot(node_to_place, nodes_xy=None):
+        def placeNodeIntoClosestSlot(node_to_place: str, nodes_xy: tuple | None = None) -> None:
             _closest_ = 0
             if nodes_xy is not None:
                 _closest_pt_ = self.closestPointOnSegment(segment, nodes_xy)[1]
@@ -944,7 +973,7 @@ class P2SGraphMixin:
 
         return adj_pos
 
-    def circularOptimizedLayout(self, g, nodes, pos, xy=(0.0, 0.0), r=1.0):
+    def circularOptimizedLayout(self, g: Any, nodes: list, pos: dict, xy: tuple = (0.0, 0.0), r: float = 1.0) -> dict:
         adj_pos, as_set  = {}, set(nodes)
 
         _externals_, _internals_ = set(), set()
@@ -963,7 +992,7 @@ class P2SGraphMixin:
             _angulars_.append(_angle_)
             _angular_locations_.append((xy[0] + r * cos(_angle_), xy[1] + r * sin(_angle_)))
 
-        def placeNodeIntoClosestSlot(node_to_place, nodes_xy=None):
+        def placeNodeIntoClosestSlot(node_to_place: int | str, nodes_xy: tuple | None = None) -> None:
             _closest_ = 0
             if nodes_xy is None: _closest_ = random.randint(0, len(_angulars_)-1)  # nosec B311 - non-cryptographic layout slot pick
             else:
@@ -1024,7 +1053,7 @@ class P2SGraphMixin:
 
         return adj_pos
 
-    def circularNodeColorLayout(self, g, nodes, pos, node_color_lu, xy=(0.0, 0.0), r=1.0, gap=1.0):
+    def circularNodeColorLayout(self, g: Any, nodes: list, pos: dict, node_color_lu: dict, xy: tuple = (0.0, 0.0), r: float = 1.0, gap: float = 1.0) -> dict:
         """Circular layout that keeps same-colored nodes together on the circumference.
 
         Same circle as :meth:`circularOptimizedLayout` (center ``xy``, radius
@@ -1046,7 +1075,7 @@ class P2SGraphMixin:
         own color) this falls back to :meth:`circularOptimizedLayout`.
         """
         _requireGraphLayoutDeps_()
-        if isinstance(nodes, list) == False: nodes = list(nodes)
+        if not isinstance(nodes, list): nodes = list(nodes)
         if len(nodes) == 0: return {}
         _default_color_ = '#4988b6'
 
@@ -1066,7 +1095,7 @@ class P2SGraphMixin:
         # outside the selection anchor it (they aren't moving); otherwise the node
         # keeps the direction it is already in.  None = no opinion.
         as_set = set(nodes)
-        def preferredAngle(node):
+        def preferredAngle(node: int | str) -> float | None:
             _x_sum_, _y_sum_, _samples_ = 0.0, 0.0, 0
             if node in g:
                 for _nbor_ in g.neighbors(node):
@@ -1125,7 +1154,7 @@ class P2SGraphMixin:
             if _mean_ is None:
                 _ordered_ = sorted(_members_, key=lambda n: str(n))
             else:
-                def _within_(n):
+                def _within_(n: int | str) -> tuple:
                     _a_ = _angle_of_[n]
                     if _a_ is None: return (1, 0.0, str(n))
                     return (0, (_a_ - _mean_ + pi) % (2 * pi) - pi, str(n))
@@ -1136,7 +1165,7 @@ class P2SGraphMixin:
 
         return adj_pos
 
-    def hyperTreeLayout(self, _graph, roots=None, bounds_percent=0.1):
+    def hyperTreeLayout(self, _graph: Any, roots: list | set | None = None, bounds_percent: float = 0.1) -> dict:
         """Radial ("hypertree") layout of each component's minimum spanning tree.
 
         Implements the *annulus wedge* radial tree drawing of Eades, "Drawing
@@ -1194,7 +1223,7 @@ class P2SGraphMixin:
             # are disjoint. Children are then confined to the tangent cone of the
             # node's own circle so their edges cannot leave the sector -- see the
             # docstring; both halves are needed for a crossing-free drawing.
-            def placeSubtree(_parent, _node, _depth, _start, _end):
+            def placeSubtree(_parent: int | str | None, _node: int | str, _depth: int, _start: float, _end: float) -> None:
                 _r   = _depth * _R_ / _max_depth
                 _mid = (_start + _end) / 2.0
                 pos[_node] = (_r * cos(_mid), _r * sin(_mid))
@@ -1221,9 +1250,9 @@ class P2SGraphMixin:
         if len(S) > 1: return self.treeMapLayout(_graph, pos, bounds_percent)
         else:          return pos
 
-    def hyperTreeDonutLayout(self, _graph, roots=None, bounds_percent=0.1,
-                             inner_frac=0.55, parent_gap_frac=0.12,
-                             return_cells=False):
+    def hyperTreeDonutLayout(self, _graph: Any, roots: list | set | None = None, bounds_percent: float = 0.1,
+                             inner_frac: float = 0.55, parent_gap_frac: float = 0.12,
+                             return_cells: bool = False) -> dict | tuple:
         """Donut-chart variant of :meth:`hyperTreeLayout`.
 
         Internal (non-leaf) nodes are placed on the inner disk by depth, exactly
@@ -1299,7 +1328,7 @@ class P2SGraphMixin:
 
             # Pack a group of leaves into the annular sector [r_inner, r_outer] x
             # [a_start, a_end], roughly square cells, filling the band's thickness.
-            def packLeaves(_leaves, _a_start, _a_end, _r_inner, _r_outer):
+            def packLeaves(_leaves: list, _a_start: float, _a_end: float, _r_inner: float, _r_outer: float) -> None:
                 _n = len(_leaves)
                 if _n == 0: return
                 _dtheta = _a_end   - _a_start
@@ -1320,7 +1349,7 @@ class P2SGraphMixin:
             # Place a leaf-parent at the center of its donut wedge, then pack its
             # leaves across the band and push any leaf landing within _clear_ of the
             # parent out to that clearance boundary -- leaving the parent distinct.
-            def packLeavesAndParent(_node, _leaves, _a_start, _a_end, _r_inner, _r_outer):
+            def packLeavesAndParent(_node: str, _leaves: list, _a_start: float, _a_end: float, _r_inner: float, _r_outer: float) -> None:
                 _r_mid = (_r_inner + _r_outer) / 2.0
                 _a_mid = (_a_start + _a_end) / 2.0
                 pos[_node] = (_r_mid * cos(_a_mid), _r_mid * sin(_a_mid))
@@ -1338,7 +1367,7 @@ class P2SGraphMixin:
             # Top-down wedge assignment (as in hyperTreeLayout). Internal children
             # recurse within the inner disk; leaf children of a node are packed as
             # one group into the ring band over the wedge that remains for them.
-            def placeSubtree(_parent, _node, _depth, _start, _end):
+            def placeSubtree(_parent: str | None, _node: str, _depth: int, _start: float, _end: float) -> None:
                 _mid      = (_start + _end) / 2.0
                 children  = [x for x in G[_node] if x != _parent]
                 inner_ch  = [c for c in children if any(x != _node for x in G[c])]
@@ -1387,7 +1416,7 @@ class P2SGraphMixin:
         cells = self.__p2sg_buildDonutCells__(_cell_specs_, pos, None)
         return pos, cells
 
-    def __p2sg_buildDonutCells__(self, cell_specs, pos_local, new_pos):
+    def __p2sg_buildDonutCells__(self, cell_specs: list, pos_local: dict, new_pos: dict | None) -> dict:
         """Resolve donut-slice wedge specs into shapely polygons.
 
         ``new_pos is None`` -> single component, polygons are built directly in
@@ -1399,7 +1428,7 @@ class P2SGraphMixin:
         from shapely.geometry  import Polygon
         from shapely.affinity  import affine_transform
 
-        def _annular_sector_(_a0, _a1, _r_in, _r_out, _steps=32):
+        def _annular_sector_(_a0: float, _a1: float, _r_in: float, _r_out: float, _steps: int = 32) -> Any:
             # Donut-edge slice: outer arc a0->a1, then inner arc a1->a0 back.
             _n_   = max(2, _steps)
             _pts_ = []
@@ -1411,7 +1440,8 @@ class P2SGraphMixin:
                 _pts_.append((_r_in * cos(_a_), _r_in * sin(_a_)))
             return Polygon(_pts_)
 
-        def _affine_(_nodes_):
+        def _affine_(_nodes_: set) -> list | None:
+            if new_pos is None: return None      # never happens; see the call site
             # Solve an axis-aligned affine (sx, sy, tx, ty) from local -> final
             # positions: final_x = sx*local_x + tx, final_y = sy*local_y + ty.
             _ns_ = [n for n in _nodes_ if n in pos_local and n in new_pos]
@@ -1446,7 +1476,7 @@ class P2SGraphMixin:
     # fraction of the nodes (floored at 2 points). Robust band [0.02, 0.05].
     _P2SG_MIN_CLUSTER_FRAC = 0.02
 
-    def __p2sg_singleLinkageGap__(self, pts):
+    def __p2sg_singleLinkageGap__(self, pts: np.ndarray) -> float:
         """Auto distance-threshold for single-linkage spatial neighborhoods.
 
         Single-linkage merges == the edges of the points' minimum spanning tree,
@@ -1494,7 +1524,7 @@ class P2SGraphMixin:
             return inf  # cut only peels strays -> no real divide
         return _thr_
 
-    def __p2sg_voronoiFinitePolygons2D__(self, points, radius=None):
+    def __p2sg_voronoiFinitePolygons2D__(self, points: np.ndarray, radius: Any = None) -> tuple:
         """Reconstruct finite Voronoi regions in 2D (standard recipe).
 
         ``scipy.spatial.Voronoi`` leaves boundary regions open (vertices at
@@ -1546,7 +1576,7 @@ class P2SGraphMixin:
 
         return new_regions, np.asarray(new_vertices)
 
-    def __p2sg_voronoiNeighborhoodCells__(self, pos, node_labels, pad=0.05):
+    def __p2sg_voronoiNeighborhoodCells__(self, pos: dict, node_labels: dict, pad: float = 0.05) -> dict:
         """Tessellate node positions into one polygon per neighborhood.
 
         Each node's (clipped) Voronoi cell is assigned to its neighborhood label;
@@ -1602,7 +1632,7 @@ class P2SGraphMixin:
 
     # --- private helpers for hyperTreeLayout ---
 
-    def __p2sg_countSubTreeNodes__(self, _graph, _node, _ignore, _child_count):
+    def __p2sg_countSubTreeNodes__(self, _graph: Any, _node: Any, _ignore: Any, _child_count: dict) -> int:
         if _node in _child_count.keys():
             return _child_count[_node] + 1
         _sum = 0
@@ -1612,7 +1642,7 @@ class P2SGraphMixin:
         if _child_count is not None: _child_count[_node] = _sum
         return _sum + 1
 
-    def __p2sg_totalLeaves__(self, _graph, _parent, _node, _leaf_count):
+    def __p2sg_totalLeaves__(self, _graph: Any, _parent: int | str | None, _node: int | str, _leaf_count: dict) -> int:
         children = [x for x in _graph[_node] if x != _parent]
         if not children:
             _leaf_count[_node] = 0
@@ -1621,17 +1651,17 @@ class P2SGraphMixin:
         _leaf_count[_node] = _sum
         return _sum
 
-    def __p2sg_treeDepth__(self, _graph, _parent, _node):
+    def __p2sg_treeDepth__(self, _graph: Any, _parent: int | str | None, _node: int | str) -> int:
         children = [x for x in _graph[_node] if x != _parent]
         if not children:
             return 1
         return 1 + max(self.__p2sg_treeDepth__(_graph, _node, x) for x in children)
 
-    def savePositions(self, filename, linkp):
+    def savePositions(self, filename: str, linkp: Any) -> None:
         with open(filename, "w") as f:
             json.dump(linkp.pos, f, indent=2)
 
-    def loadPositions(self, filename, linkp=None):
+    def loadPositions(self, filename: str, linkp: Any = None) -> dict:
         with open(filename, "r") as f:
             pos = json.load(f)
         if linkp is not None and hasattr(linkp, 'all_nodes'):

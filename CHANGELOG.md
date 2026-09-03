@@ -116,6 +116,93 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The typing migration is finished: strict mypy is the package-wide floor and no
+  error code is disabled.** The strict-promotion backlog (PLANNING.md §11) is empty —
+  the last **11 modules and 67 errors** are cleared — so `[tool.mypy]` drops the
+  seven-code `disable_error_code` list, moves `disallow_untyped_defs` /
+  `disallow_incomplete_defs` / `check_untyped_defs` up into the global block, and
+  reduces `[[tool.mypy.overrides]]` to the single `interactive_controller` exemption.
+  `uvx mypy polars2svg` now means what it says. It previously passed with
+  `attr-defined`, `var-annotated`, `assignment`, `has-type`, `misc`, `dict-item` and
+  `return-value` switched off for every unpromoted module — the categories that catch
+  a typo'd attribute, a wrong assignment and a wrong return — which is a green that
+  reports on the checks that were left running rather than on the code.
+
+  Two thirds of the 67 were mechanical: empty containers that needed an annotation
+  (`X = {}` → `X: dict = {}`, 19 of them) and int-inferred locals that later hold a
+  float (14). The rest were per-site, and four are worth reading as findings rather
+  than as config work:
+
+  - **`xyp.__toScreen__()` returns `None` on a zero-width axis range, and not every
+    caller knew.** The linear renderer's `__line__` already guarded it
+    (`if _offset_ is None: return`); the periodic-time renderer's did not, and its
+    `__distanceBetweenLines__` computed `abs(None - None)`. Both degenerate paths
+    raised `TypeError`. They now skip the line and report zero spacing respectively,
+    the latter falling through to the coarsest tick granularity.
+  - **`chordp._kmeans_()` initialised its cluster accumulator to `{}` and replaced it
+    with a list of lists on the first iteration.** At `iterations <= 0` the trailing
+    `assign[i]` indexed the dict and raised `KeyError`; it is now seeded with the
+    empty clusters it means and typed `list`.
+  - **`spreadlinesp`'s connector shim forwarded `*args, **kwargs` into a call that
+    already passes `dl=`.** All three call sites pass four positional coordinates, so
+    nothing collided at runtime, but the signature admitted it could. `_connect_` now
+    takes the four coordinates it actually accepts.
+  - **`isHexColor()` is now a `TypeGuard[str]`.** `isinstance(x, HexColorString)` is a
+    metaclass predicate over strings, not a base-class test, so a checker narrowed the
+    value to `HexColorString` and then refused to return it where `str` was declared.
+    The two `spreadlinesp` sites that needed narrowing call the predicate directly;
+    the other 24 `isinstance(…, HexColorString)` sites are unchanged and can adopt it
+    as they need to.
+
+  Three `p2s_graph_mixin` layouts that return `(pos, extra)` when asked
+  (`ipSubnetTreeMapLayout`, `ipSubnetForceDirectedLayout`, `neighborhoodLayout`) are
+  annotated `-> dict | tuple`, matching `hyperTreeDonutLayout`, which already was; and
+  six helpers that could return `None` (`__shapelyToSVGPath__` on xyp and linkp,
+  `linkp.nodeColor`, `piep.__fitLabel__`, `xyp.__timeColumn__`,
+  `p2s_geometry_mixin`'s two intersection helpers) say so. `TestRatchetConfigConsistency`
+  was rewritten for the inverted config — it now asserts that strict checking is
+  global, that nothing is disabled tree-wide, and that the relaxed set is exactly
+  `PERMANENTLY_RELAXED` — and `TestAnnotationSanity`'s Optional-return check learned
+  two more real None paths (a one-argument `.get()`, and `best = None` … `return best`)
+  that it had been reporting as annotation artifacts.
+
+- **`render_with()` and `legendInfoColorbar()` now return their real types, not `Any`.**
+  All seven components' `render_with()` returns a new instance of that component and was
+  annotated `-> Any`, which silently switched checking off for everything downstream of
+  `p2s.xyp(df, ...).render_with(df2)`. Now `-> 'XYp'` and so on, so a typo on the result is
+  caught at the call site. `P2SLegendMixin.legendInfoColorbar()` was the same shape and now
+  returns `LegendInfo`.
+
+- **Typed 14 component parameters from their own documented vocabularies.** The factory
+  docstrings already spell out what several parameters accept; the `Kwargs` TypedDicts said
+  `Any` anyway. Applied where the documentation and the suite's actual usage agree:
+
+  | Parameter | Was | Now |
+  |---|---|---|
+  | `background_label_color`, `background_stroke` (xyp, linkp) | `Any` | `str \| dict \| None` |
+  | `background_opacity`, `background_stroke_w` (xyp, linkp) | `Any` | `float \| dict \| None` |
+  | `spectral_similarity` (xyp), `link_shape` (linkp), `skeleton_algorithm` (chordp) | `Any` | `str` |
+  | `link_size` (linkp) | `Any` | `str \| float \| None` |
+  | `bundle_rings` (chordp) | `Any` | `int` |
+  | `donut_ratio` (piep) | `Any` | `float` |
+
+  Every documented form was checked to still pass — and to still *run*; three that a reading
+  of the docstring alone would have gotten wrong were caught by that check:
+
+  - **`background_stroke_w` — the two documents disagree.** The class docstring says
+    `1.0 | {key: float, ...}`; the `_defaults_` comment says `None / number / dict`. The
+    union (`float | dict | None`) is what shipped.
+  - **`smallp(sm_template=...)` — the docstring is stale.** It lists `XYp | Timep | Histop`,
+    but *seven* components implement `renderSmallMultiples()`. Typing it as documented would
+    have rejected working code, so it stays `Any`.
+  - **`histop(bin_by=)` / `timep(time=)` were false positives** — the "vocabulary" is prose
+    containing a slash ("can be specified as a string / i.e., not a keyword argument").
+
+  Bare `Any` is now 799 of 3,906 annotations (20.5%), from 967 (24.8%) when the review
+  started. What remains is either correct (mixin host attributes, `*args`/`**kwargs`, the
+  genuinely data-drivable `color=`/`count=`/`dot_size=`) or blocked behind guard work
+  recorded in `PLANNING.md`.
+
 - **Narrowed 114 component attribute declarations from `Any` to their real types.**
   A review of the finished migration flagged the `Any` count — 967 bare `Any`, 24.8% of
   all annotations — as higher than it should be. Most of the component class declarations

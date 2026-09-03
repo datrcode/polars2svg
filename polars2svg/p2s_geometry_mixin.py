@@ -97,7 +97,7 @@ class P2SGeometryMixin:
         return (c0[0] + uv[0]*x + pp[0] * (a/2.0), c0[1] + uv[1]*x + pp[1] * (a/2.0)), \
                (c0[0] + uv[0]*x - pp[0] * (a/2.0), c0[1] + uv[1]*x - pp[1] * (a/2.0))
 
-    def intersectionPoint(self, line1: tuple, line2: tuple) -> tuple:
+    def intersectionPoint(self, line1: tuple, line2: tuple) -> tuple | None:
         def floatify(line: tuple) -> tuple: return (float(line[0][0]), float(line[0][1])), (float(line[1][0]), float(line[1][1]))
         line1, line2 = floatify(line1), floatify(line2)
         xdiff = (line1[0][0] - line1[1][0], line2[0][0] - line2[1][0])
@@ -110,7 +110,7 @@ class P2SGeometryMixin:
         y = det(d, ydiff) / div
         return x, y
 
-    def lineSegmentIntersectionPoint(self, line: tuple, segment: tuple) -> tuple:
+    def lineSegmentIntersectionPoint(self, line: tuple, segment: tuple) -> tuple | None:
         def floatify(line: tuple) -> tuple: return (float(line[0][0]), float(line[0][1])), (float(line[1][0]), float(line[1][1]))
         line, segment = floatify(line), floatify(segment)
         results = self.intersectionPoint(line, segment)
@@ -238,7 +238,7 @@ class SmallestEnclosingCircle(object):
         return ((ux, uy), r)
 
     def _furthest_pair_circle(self, points: list) -> tuple:
-        max_dist = 0
+        max_dist: float = 0
         pair = (points[0], points[1])
         for i in range(len(points)):
             for j in range(i + 1, len(points)):

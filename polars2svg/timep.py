@@ -1401,7 +1401,7 @@ class Timep(P2SBinComponentMixin, ExportMixin):
                 _kwargs_['color_stat_range_shared'] = (_ref_._color_stat_min_, _ref_._color_stat_max_)
         return {k: Timep(df=v, template=self, **_kwargs_) for k, v in df_lu.items()}
 
-    def render_with(self, df: pl.DataFrame, **overrides: Any) -> Any:
+    def render_with(self, df: pl.DataFrame, **overrides: Any) -> 'Timep':
         # `overrides` cannot be Unpack[TimepKwargs]: PEP 692 rejects a TypedDict
         # that repeats a named parameter, and `df` is both.
         return Timep(df=df, template=self, **overrides)

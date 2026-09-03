@@ -34,10 +34,10 @@ class LinkPKwargs(TypedDict, total=False):
     _shared_view_y_:          Any
     background:               Any
     background_fill:          Any
-    background_label_color:   Any
-    background_opacity:       Any
-    background_stroke:        Any
-    background_stroke_w:      Any
+    background_label_color:   str | dict | None
+    background_opacity:       float | dict | None
+    background_stroke:        str | dict | None
+    background_stroke_w:      float | dict | None
     bounds_percent:           Any
     color:                    Any
     color_stat_range_shared:  Any
@@ -65,8 +65,8 @@ class LinkPKwargs(TypedDict, total=False):
     link_arrows:              bool
     link_labels:              Any
     link_opacity:             Any
-    link_shape:               Any
-    link_size:                Any
+    link_shape:               str
+    link_size:                str | float | None
     link_size_range:          tuple
     node_color:               Any
     node_labels:              Any
@@ -284,7 +284,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
                 if self.link_size == 'vary':
                     _lc_min_, _lc_max_ = self.__countMinMax__(_sub_['__count__'])
                     _sub_  = _sub_.with_columns(self.__interpolatedSizeExpr__(self.link_size_range, _lc_min_, _lc_max_).alias('__w_f__'))
-                    _w_arg_ = '__w_f__'
+                    _w_arg_: str | float = '__w_f__'
                 else:
                     _w_arg_ = _lk_w_
                 if self.link_shape in ('curve', 'flowmap'):
@@ -2323,7 +2323,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
     # - background= is the only feature that needs shapely, so the import is
     #   deferred here rather than paid by every linkp render.
     #
-    def __shapelyToSVGPath__(self, shape: Any) -> str:
+    def __shapelyToSVGPath__(self, shape: Any) -> str | None:
         try:
             from shapely.geometry import Polygon, MultiPolygon, LineString, MultiLineString, GeometryCollection
         except ImportError as _e_:
@@ -2333,9 +2333,11 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
                 "    pip install polars2svg[layouts]"
             ) from _e_
         if isinstance(shape, MultiPolygon):
-            return ' '.join(self.__shapelyToSVGPath__(subpoly) for subpoly in shape.geoms)
+            _parts_ = [self.__shapelyToSVGPath__(subpoly) for subpoly in shape.geoms]
+            return ' '.join(_p_ for _p_ in _parts_ if _p_ is not None)
         elif isinstance(shape, MultiLineString):
-            return ' '.join(self.__shapelyToSVGPath__(subline) for subline in shape.geoms)
+            _parts_ = [self.__shapelyToSVGPath__(subline) for subline in shape.geoms]
+            return ' '.join(_p_ for _p_ in _parts_ if _p_ is not None)
         elif isinstance(shape, LineString):
             coords = shape.coords
             path_str = f'M {coords[0][0]} {coords[0][1]}'
@@ -2470,7 +2472,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
     #
     # render_with() - create a new instance with overrides (used by smallp cycle_by mode)
     #
-    def render_with(self, df: pl.DataFrame, **overrides: Any) -> Any:
+    def render_with(self, df: pl.DataFrame, **overrides: Any) -> 'LinkP':
         # `overrides` cannot be Unpack[LinkPKwargs]: PEP 692 rejects a TypedDict
         # that repeats a named parameter, and `df` is both.
         return LinkP(df=df, template=self, **overrides)
@@ -2628,7 +2630,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
         _keep_ = [c for c in self.df_orig.columns if c in _out_.columns]
         return _out_.select(_keep_)
 
-    def nodeColor(self, node: int | str) -> str:
+    def nodeColor(self, node: int | str) -> str | None:
         # color_nodes_final is keyed by the stringified node names (__nm__), but entitiesAtPoint()
         # / overlappingEntities() hand back the original pos keys -- which aren't strings when the
         # node ids are ints.  Fall back to the string form so those callers resolve a color.

@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, TypeGuard
 import polars as pl
 
 _HEX_DIGITS_ = frozenset('0123456789abcdefABCDEF')
@@ -16,8 +16,14 @@ _HEX_DIGITS_ = frozenset('0123456789abcdefABCDEF')
 #   (accepted anything) and the background-shape code required an exact len == 7. The
 #   result: '#ff000080' was a field name to xyp but a color to linkp. Every component
 #   now routes through this one function via isinstance(x, HexColorString).
+# - It is typed `TypeGuard[str]` because HexColorString is a *virtual* class: its
+#   metaclass __instancecheck__ delegates here, so isinstance(x, HexColorString) is a
+#   predicate over strings rather than a base-class test, and a checker seeing only the
+#   isinstance narrows the value to HexColorString -- which is then not a `str` and
+#   cannot be returned where one is declared. Call isHexColor() directly at any site
+#   whose result has to satisfy a `str` annotation.
 #
-def isHexColor(value: Any) -> bool:
+def isHexColor(value: Any) -> TypeGuard[str]:
     if not isinstance(value, str) or len(value) < 4 or value[0] != '#':
         return False
     _body_ = value[1:]
@@ -39,7 +45,7 @@ class P2SColorsMixin:
     #
     class HexColorStringMeta(type):
         def __instancecheck__(cls, instance: Any) -> bool:
-            return isHexColor(instance)
+            return bool(isHexColor(instance))
 
     class HexColorString(metaclass=HexColorStringMeta):
         pass
@@ -51,9 +57,9 @@ class P2SColorsMixin:
         # to_color_lu holds only base hash-derived colors (never override results),
         # so it can persist across re-inits without going stale when overrides change.
         if not hasattr(self, 'to_color_lu'):
-            self.to_color_lu = {}
+            self.to_color_lu: dict = {}
         if not hasattr(self, 'color_overrides_lu'):
-            self.color_overrides_lu = {}
+            self.color_overrides_lu: dict = {}
         self.color_type_lu = {
             ('background',    'default'):   '#ffffff',
             ('data',          'default'):   "#3939ff",
@@ -177,9 +183,8 @@ class P2SColorsMixin:
     # - silently ignores keys that are not present
     #
     def removeColorOverrides(self, keys: list | str) -> None:
-        if isinstance(keys, str):
-            keys = (keys,)
-        for _k_ in keys:
+        _keys_ = [keys] if isinstance(keys, str) else keys
+        for _k_ in _keys_:
             self.color_overrides_lu.pop(_k_, None)
 
     #

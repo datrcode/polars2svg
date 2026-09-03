@@ -36,7 +36,7 @@ class PiepKwargs(TypedDict, total=False):
     count_range_shared:      Any
     descending:              bool
     df:                      pl.DataFrame | None
-    donut_ratio:             Any
+    donut_ratio:             float
     draw_border:             bool
     draw_context:            bool
     draw_labels:             bool
@@ -959,7 +959,7 @@ class Piep(ExportMixin):
         _dl_.text(self.p2s, _title_, self.cx, self._plot_y0_ + self._plot_h_ + self.txt_h,
                   txt_h=self.txt_h, anchor='middle', color=_label_color_)
 
-    def __fitLabel__(self, txt: str, avail_w: float) -> str:
+    def __fitLabel__(self, txt: str, avail_w: float) -> str | None:
         '''Crop txt to avail_w; return None if not even one real character fits.'''
         _s_ = self.p2s.formatMultiFieldValue(txt)
         if self.p2s.textLength(_s_, self.txt_h) <= avail_w:
@@ -1113,7 +1113,7 @@ class Piep(ExportMixin):
 
     # ── smallp integration ───────────────────────────────────────────────────
 
-    def render_with(self, df: pl.DataFrame, **overrides: Any) -> Any:
+    def render_with(self, df: pl.DataFrame, **overrides: Any) -> 'Piep':
         # `overrides` cannot be Unpack[PiepKwargs]: PEP 692 rejects a TypedDict
         # that repeats a named parameter, and `df` is both.
         return Piep(df=df, template=self, **overrides)

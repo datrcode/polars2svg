@@ -51,10 +51,10 @@ class XYpKwargs(TypedDict, total=False):
     aspect:                        Any
     background:                    dict | None
     background_fill:               Any
-    background_label_color:        Any
-    background_opacity:            Any
-    background_stroke:             Any
-    background_stroke_w:           Any
+    background_label_color:        str | dict | None
+    background_opacity:            float | dict | None
+    background_stroke:             str | dict | None
+    background_stroke_w:           float | dict | None
     color:                         Any
     color_magnitude_max:           float | None
     color_magnitude_min:           float | None
@@ -76,7 +76,7 @@ class XYpKwargs(TypedDict, total=False):
     sm_shared:                     set
     spectral_by:                   str | None
     spectral_normalize:            bool
-    spectral_similarity:           Any
+    spectral_similarity:           str
     spectral_weight:               Any
     template:                      'XYp | None'
     txt_h:                         Any
@@ -1806,7 +1806,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     # - background= is the only feature that needs shapely, so the import is
     #   deferred here rather than paid by every xyp render.
     #
-    def __shapelyToSVGPath__(self, shape: Any) -> str:
+    def __shapelyToSVGPath__(self, shape: Any) -> str | None:
         try:
             from shapely.geometry import Polygon, MultiPolygon, LineString, MultiLineString, GeometryCollection
         except ImportError as _e_:
@@ -1818,12 +1818,14 @@ class XYp(P2SBackgroundMixin, ExportMixin):
         if isinstance(shape, MultiPolygon):
             parts = []
             for subpoly in shape.geoms:
-                parts.append(self.__shapelyToSVGPath__(subpoly))
+                _p_ = self.__shapelyToSVGPath__(subpoly)
+                if _p_ is not None: parts.append(_p_)
             return ' '.join(parts)
         elif isinstance(shape, MultiLineString):
             parts = []
             for subline in shape.geoms:
-                parts.append(self.__shapelyToSVGPath__(subline))
+                _p_ = self.__shapelyToSVGPath__(subline)
+                if _p_ is not None: parts.append(_p_)
             return ' '.join(parts)
         elif isinstance(shape, LineString):
             coords = shape.coords
@@ -2195,7 +2197,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
         _color_inner_   = self.p2s.colorTyped('axis', 'inner')
         _svg_           = []
         # Render a line in the correct orientation
-        def __line__(_offset_: float, _world_: float, _color_: str = _color_inner_, _width_: float = 0.4) -> None:
+        def __line__(_offset_: float | None, _world_: float, _color_: str = _color_inner_, _width_: float = 0.4) -> None:
             if _offset_ is None: return
             # Calculate the endpoints (and ensure that they within the plot itself)
             if x_axis:
@@ -2214,7 +2216,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
             _svg_.append(self.p2s.svgText(f'{_world_}', x1, y1, color=self.p2s.colorTyped('axis', 'inner'), txt_h=self.txt_h*0.6, rotation=_rot_))
             if dl is not None: dl.text(self.p2s, f'{_world_}', x1, y1, color=self.p2s.colorTyped('axis', 'inner'), txt_h=self.txt_h*0.6, rotation=_rot_, svg='')
         # Convert to screen coordinates
-        def __toScreen__(_world_: float) -> float:
+        def __toScreen__(_world_: float) -> float | None:
             if abs(_max_ - _min_) < 1e-6: return None
             else:                         return _dim_ * (_world_ - _min_) / (_max_ - _min_)
         # If the origin is in the range, center on that
@@ -2249,11 +2251,14 @@ class XYp(P2SBackgroundMixin, ExportMixin):
         xw, yh         = plot_wxh
         _svg_          = []
         # Convert to screen coordinates
-        def __toScreen__(_world_: float) -> float:
+        def __toScreen__(_world_: float) -> float | None:
             if abs(_max_world_ - _min_world_) < 1e-6: return None
             else:                                     return _dim_ * (_world_ - _min_world_) / (_max_world_ - _min_world_)
         # Distance between two world coordinates in pixels
-        def __distanceBetweenLines__(_line1_: int, _line2_: float) -> float: return abs(__toScreen__(_line1_) - __toScreen__(_line2_))
+        def __distanceBetweenLines__(_line1_: int, _line2_: float) -> float:
+            _s1_, _s2_ = __toScreen__(_line1_), __toScreen__(_line2_)
+            if _s1_ is None or _s2_ is None: return 0.0   # degenerate range -- no room between lines
+            return abs(_s1_ - _s2_)
         # Add a description
         def __addDescription__(_desc_: Any, _num_: int, _out_of_: int) -> None: _svg_.append(f'<!-- xyp.__renderContext_periodicTime__(): {_desc_}|{_num_}|{_out_of_} -->')
         # Render a line in the correct orientation
@@ -2265,6 +2270,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
             elif _type_ == 'subtick': _color_, _width_, _txt_h_ = self.p2s.colorTyped('axis', 'inner'),  0.8, round(self.txt_h*0.4,1)
             # Determine the coordinates of the grid line
             _offset_ = __toScreen__(_world_)
+            if _offset_ is None: return
             if _type_ == 'major' or _type_ == 'minor':
                 if x_axis: x1, y1, x2, y2 = xo+_offset_,  yo-yh,        xo+_offset_,       yo
                 else:      x1, y1, x2, y2 = xo,           yo-_offset_,  xo+xw,             yo-_offset_
@@ -3078,7 +3084,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
         # Dash phase: SVG runs stroke-dasharray continuously along the whole <path>, so
         # each segment needs the arc length of the polyline preceding it -- without this
         # every vertex restarts the pattern.  Only computed when the stroke is dashed.
-        _phase_ = 0.0
+        _phase_: str | float = 0.0
         if dash is not None:
             _len_ = (((pl.col('__x2__') - pl.col('__xpx__')) ** 2 +
                       (pl.col('__y2__') - pl.col('__ypx__')) ** 2).sqrt()).alias('__seg_len__')
@@ -3595,7 +3601,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     #
     def renderSmallMultiples(self, df_all: pl.DataFrame, df_lu: dict, all_key: str | None) -> dict:
         _kwargs_shared_ = {}   # kwargs for ALL instances (including all_key)
-        _kwargs_subset_ = {}   # kwargs for non-all instances only (SM_COUNT / SM_COLOR)
+        _kwargs_subset_: dict = {}   # kwargs for non-all instances only (SM_COUNT / SM_COLOR)
 
         # SM_X / SM_Y: compute global axis ranges from a reference instance built on df_all.
         if (self.p2s.SM_X in self.sm_shared or self.p2s.SM_Y in self.sm_shared):
@@ -3702,7 +3708,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
         # No SM_COUNT or SM_COLOR: single pass (possibly with shared x/y ranges)
         return {k: self.p2s.xyp(df=v, template=self, **_kwargs_shared_) for k, v in df_lu.items()}
 
-    def render_with(self, df: pl.DataFrame, **overrides: Any) -> Any:
+    def render_with(self, df: pl.DataFrame, **overrides: Any) -> 'XYp':
         # `overrides` cannot be Unpack[XYpKwargs]: PEP 692 rejects a TypedDict
         # that repeats a named parameter, and `df` is both.
         return self.p2s.xyp(df=df, template=self, **overrides)
@@ -3804,7 +3810,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     #
     # __timeColumn__() - the raw source column backing a single-column time x-axis (else None)
     #
-    def __timeColumn__(self) -> str:
+    def __timeColumn__(self) -> str | None:
         if self.x_clean is None or len(self.x_clean) != 1: return None
         _c_ = self.x_clean[0]
         return _c_ if isinstance(_c_, str) else None

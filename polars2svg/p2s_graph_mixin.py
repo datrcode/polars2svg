@@ -396,7 +396,7 @@ class P2SGraphMixin:
         if pos is None: pos = {}
         _default_color_ = '#4988b6'
 
-        _color_to_nodes_ = {}
+        _color_to_nodes_: dict = {}
         for _node_ in nodes:
             _color_ = node_color_lu.get(_node_, _default_color_)
             if _color_ not in _color_to_nodes_: _color_to_nodes_[_color_] = set()
@@ -429,7 +429,7 @@ class P2SGraphMixin:
                               collapse     : bool  = False,
                               cell_inset   : float = 0.0,
                               return_cells : bool  = False,
-                              bounds       : tuple = (0, 0, 1, 1)) -> dict:
+                              bounds       : tuple = (0, 0, 1, 1)) -> dict | tuple:
         """Treemap layout that groups nodes by IPv4 subnet.
 
         Nodes are split into two groups:
@@ -482,7 +482,7 @@ class P2SGraphMixin:
                     continue
             return None
 
-        _group_to_nodes_ = {}
+        _group_to_nodes_: dict = {}
         for _node_ in g.nodes():
             _ip_  = _toIPv4_(_node_)
             _key_ = str(ipaddress.ip_network(f'{_ip_}/{subnet_mask}', strict=False)) if _ip_ is not None else _OTHER_
@@ -547,7 +547,7 @@ class P2SGraphMixin:
                                     iterations     : int   = 50,
                                     seed           : int   = 42,
                                     return_rep_pos : bool  = False,
-                                    bounds         : tuple = (0, 0, 1, 1)) -> dict:
+                                    bounds         : tuple = (0, 0, 1, 1)) -> dict | tuple:
         """Force-directed layout that groups nodes by IPv4 subnet.
 
         Like :meth:`ipSubnetTreeMapLayout`, nodes are bucketed by the network
@@ -596,8 +596,8 @@ class P2SGraphMixin:
 
         # Bucket every node into its subnet representative and keep the inverse
         # mapping so member nodes can be placed around their rep afterwards.
-        _node_to_rep_  = {}
-        _rep_to_nodes_ = {}
+        _node_to_rep_          = {}
+        _rep_to_nodes_ : dict  = {}
         for _node_ in g.nodes():
             _ip_  = _toIPv4_(_node_)
             _key_ = str(ipaddress.ip_network(f'{_ip_}/{subnet_mask}', strict=False)) if _ip_ is not None else _OTHER_
@@ -676,7 +676,7 @@ class P2SGraphMixin:
                            seed: int              = 42,
                            # shared Voronoi-cell control
                            cell_pad: float          = 0.05,
-                           bounds: tuple            = (0, 0, 1, 1)) -> dict:
+                           bounds: tuple            = (0, 0, 1, 1)) -> dict | tuple:
         """Detect node neighborhoods and (optionally) outline them with a Voronoi background.
 
         Two related layouts selected by ``mode`` -- both end by tessellating the
@@ -858,13 +858,13 @@ class P2SGraphMixin:
             _radius_ = cluster_frac * min(_bx1_ - _bx0_, _by1_ - _by0_) / 2.0
 
         _labels_ = {}
-        for _key_, _nodes_ in _rep_to_nodes_.items():
+        for _key_, _members_ in _rep_to_nodes_.items():
             _cx_, _cy_ = _rep_pos_[_key_]
             if collapse:
-                for _node_ in _nodes_: pos[_node_] = (_cx_, _cy_)
+                for _node_ in _members_: pos[_node_] = (_cx_, _cy_)
             else:
-                self.sunflowerSeedLayout(g, _nodes_, pos=pos, xy=(_cx_, _cy_), r_max=_radius_)
-            for _node_ in _nodes_: _labels_[_node_] = _key_
+                self.sunflowerSeedLayout(g, _members_, pos=pos, xy=(_cx_, _cy_), r_max=_radius_)
+            for _node_ in _members_: _labels_[_node_] = _key_
 
         if not return_cells: return pos
         cells = self.__p2sg_voronoiNeighborhoodCells__(pos, _labels_, pad=cell_pad)
@@ -905,7 +905,8 @@ class P2SGraphMixin:
             if _node_ not in _externals_: _internals_.add(_node_)
 
         dx, dy = segment[1][0] - segment[0][0], segment[1][1] - segment[0][1]
-        _filled_with_, _locations_ = [], []
+        _filled_with_ : list = []
+        _locations_   : list = []
         for i in range(len(nodes)):
             _filled_with_.append(None)
             perc = i/float(len(nodes)-1)
@@ -985,7 +986,9 @@ class P2SGraphMixin:
                         break
             if _node_ not in _externals_: _internals_.add(_node_)
 
-        _filled_with_, _angulars_, _angular_locations_ = [], [], []
+        _filled_with_       : list = []
+        _angulars_          : list = []
+        _angular_locations_ : list = []
         for i in range(len(nodes)):
             _angle_ = i * 2 * pi / len(nodes)
             _filled_with_.append(None)
@@ -1079,7 +1082,7 @@ class P2SGraphMixin:
         if len(nodes) == 0: return {}
         _default_color_ = '#4988b6'
 
-        _color_to_nodes_ = {}
+        _color_to_nodes_: dict = {}
         for _node_ in nodes:
             _color_ = node_color_lu.get(_node_) or _default_color_
             if _color_ not in _color_to_nodes_: _color_to_nodes_[_color_] = []
@@ -1213,7 +1216,7 @@ class P2SGraphMixin:
                     f.remove_nodes_from(to_be_removed)
                 my_root = list(f)[0]
 
-            _leaf_count = {}
+            _leaf_count: dict = {}
             self.__p2sg_totalLeaves__(G, None, my_root, _leaf_count)
             _max_depth = self.__p2sg_treeDepth__(G, None, my_root)
 
@@ -1293,7 +1296,7 @@ class P2SGraphMixin:
         # subgraph's node set so its polygon can ride the treeMapLayout transform.
         _cell_specs_ = []
 
-        pos = {}
+        pos: dict = {}
         for _subgraph in S:
             G = nx.to_undirected(nx.minimum_spanning_tree(_subgraph))
 
@@ -1318,7 +1321,7 @@ class P2SGraphMixin:
                     f.remove_nodes_from(to_be_removed)
                 my_root = list(f)[0]
 
-            _leaf_count = {}
+            _leaf_count: dict = {}
             self.__p2sg_totalLeaves__(G, None, my_root, _leaf_count)
             _max_depth = self.__p2sg_treeDepth__(G, None, my_root)
 
@@ -1398,7 +1401,7 @@ class P2SGraphMixin:
                     if return_cells:
                         _slice_wedges_.append((_node, _cur, _end, _inner_, _R_))
 
-            _slice_wedges_ = []
+            _slice_wedges_: list = []
             placeSubtree(None, my_root, 0, 0.0, 2.0 * pi)
             if return_cells and _slice_wedges_:
                 _cell_specs_.append((set(G.nodes()), _slice_wedges_))
@@ -1542,7 +1545,7 @@ class P2SGraphMixin:
         if radius is None: radius = np.ptp(vor.points, axis=0).max() * 2.0
 
         # Map each input point to the ridges (and their vertices) around it.
-        all_ridges = {}
+        all_ridges: dict = {}
         for (p1, p2), (v1, v2) in zip(vor.ridge_points, vor.ridge_vertices):
             all_ridges.setdefault(p1, []).append((p2, v1, v2))
             all_ridges.setdefault(p2, []).append((p1, v1, v2))
@@ -1604,7 +1607,7 @@ class P2SGraphMixin:
         _px_, _py_ = _spanx_ * pad, _spany_ * pad
         _bbox_ = _box_(_minx_ - _px_, _miny_ - _py_, _maxx_ + _px_, _maxy_ + _py_)
 
-        _label_to_polys_ = {}
+        _label_to_polys_: dict = {}
         _use_voronoi_ = len(np.unique(_pts_, axis=0)) >= 4
         if _use_voronoi_:
             try:
@@ -1618,7 +1621,7 @@ class P2SGraphMixin:
 
         if not _use_voronoi_:
             _buf_ = 0.05 * (_spanx_ + _spany_) / 2.0
-            _grp_ = {}
+            _grp_: dict = {}
             for i in range(len(_nodes_)): _grp_.setdefault(_labels_[i], []).append(_pts_[i])
             for _lab_, _ps_ in _grp_.items():
                 _hull_ = MultiPoint([tuple(p) for p in _ps_]).buffer(_buf_).intersection(_bbox_)

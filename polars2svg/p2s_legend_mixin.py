@@ -32,7 +32,7 @@ class LegendInfo:
         self.kind       = kind    # 'colorbar' | 'categorical'
         self.title      = title   # resolved title string ('' suppresses)
         # categorical
-        self.entries    = None    # ordered [(label, '#rrggbb'), ...]
+        self.entries: list | None = None    # ordered [(label, '#rrggbb'), ...]
         self.overflow   = 0       # count of categories beyond the captured entries
         # colorbar
         self.vmin       = None    # numeric domain minimum (post-aggregation)
@@ -220,7 +220,7 @@ class P2SLegendMixin:
     # the shell is created when the component reserves space (domain still unknown);
     # the domain is filled in after the color aggregation has actually run
     #
-    def legendInfoColorbar(self, title: str) -> Any:
+    def legendInfoColorbar(self, title: str) -> LegendInfo:
         return LegendInfo('colorbar', title)
 
     def legendInfoColorbarFinalize(self, info: Any, spec: dict, vmin: float, vmax: float) -> Any:
@@ -314,7 +314,7 @@ class P2SLegendMixin:
             else:         # left = vmin
                 self.__legendRect__(_dl_, x + _i_ * _seg_, y, _seg_ + 0.5 * k, h, self.legendSpectrumColor(_t_))
 
-    def __legendRenderVertical__(self, _dl_: Any, region: tuple, info: Any, txt_h: int, k: float = 1.0) -> None:
+    def __legendRenderVertical__(self, _dl_: Any, region: tuple, info: Any, txt_h: float, k: float = 1.0) -> None:
         _x_, _y_, _w_, _h_ = region
         txt_h      = txt_h * k
         _pad_      = _PAD_ * k
@@ -358,7 +358,7 @@ class P2SLegendMixin:
                 _lab_ = self.cropText(f'... {_overflow_} more', txt_h, _w_ - 2 * _pad_)
                 _dl_.text(self, _lab_, _x_ + _pad_, _cy_ + _baseline_, txt_h=txt_h, color=_muted_)
 
-    def __legendRenderHorizontal__(self, _dl_: Any, region: tuple, info: Any, txt_h: int, k: float = 1.0) -> None:
+    def __legendRenderHorizontal__(self, _dl_: Any, region: tuple, info: Any, txt_h: float, k: float = 1.0) -> None:
         _x_, _y_, _w_, _h_ = region
         txt_h      = txt_h * k
         _pad_      = _PAD_ * k

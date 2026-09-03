@@ -279,7 +279,7 @@ class ChPKwargs(TypedDict, total=False):
     _shared_view_x_:         list | None
     _shared_view_y_:         Any
     bounds_percent:          Any
-    bundle_rings:            Any
+    bundle_rings:            int
     bundle_strength:         Any
     color:                   Any
     color_stat_range_shared: Any
@@ -307,7 +307,7 @@ class ChPKwargs(TypedDict, total=False):
     pos:                     Any
     relationships:           Any
     render_skeleton:         bool
-    skeleton_algorithm:      Any
+    skeleton_algorithm:      str
     sm_shared:               set
     template:                'ChP | None'
     txt_h:                   Any
@@ -485,7 +485,7 @@ class ChP(P2SComponentColorMixin, ExportMixin):
                              pl.lit(float(self.link_size_range[1] - self.link_size_range[0])) *
                              (pl.col('__count__').cast(pl.Float64) - _lc_min_) /
                              (0.01 + _lc_max_ - _lc_min_)).alias('__w_f__'))
-                        _w_arg_ = '__w_f__'
+                        _w_arg_: str | float = '__w_f__'
                     else:
                         _w_arg_ = _lk_w_
                     _seg_ = cubicBezierSegmentsTable(_sub_, '__fm_x__', '__fm_y__',
@@ -1763,7 +1763,7 @@ class ChP(P2SComponentColorMixin, ExportMixin):
                 return {i: [pts[i]] for i in range(n)}
             rng        = random.Random(42)  # nosec B311 - fixed-seed deterministic clustering, not security sensitive
             centroids  = rng.sample(pts, k)
-            assign: dict     = {}
+            assign: list     = [[] for _ in range(k)]
             for _ in range(iterations):
                 assign = [[] for _ in range(k)]
                 for pt in pts:
@@ -1915,7 +1915,7 @@ class ChP(P2SComponentColorMixin, ExportMixin):
         skeleton    = self._build_skeleton_()
         skel_nodes  = list(skeleton.nodes())
 
-        def _nearest(x: float, y: float) -> tuple:
+        def _nearest(x: float, y: float) -> tuple | None:
             best, bd = None, float('inf')
             for nx_, ny_ in skel_nodes:
                 d = (nx_ - x)**2 + (ny_ - y)**2
@@ -2250,7 +2250,7 @@ class ChP(P2SComponentColorMixin, ExportMixin):
         if remove_records: _mask_ = ~_mask_
         return self.df.filter(_mask_)
 
-    def render_with(self, df: pl.DataFrame, **overrides: Any) -> Any:
+    def render_with(self, df: pl.DataFrame, **overrides: Any) -> 'ChP':
         # `overrides` cannot be Unpack[ChPKwargs]: PEP 692 rejects a TypedDict
         # that repeats a named parameter, and `df` is both.
         return ChP(df=df, template=self, **overrides)

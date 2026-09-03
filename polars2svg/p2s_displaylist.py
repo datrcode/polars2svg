@@ -95,8 +95,8 @@ def hexToRGBA(color: str | None, opacity: float = 1.0) -> tuple:
             return (0.5, 0.5, 0.5, opacity)
         return (r/255.0, g/255.0, b/255.0, (a/255.0) * opacity)
     if color in _NAMED_COLORS_:
-        r, g, b = _NAMED_COLORS_[color]
-        return (r, g, b, opacity)
+        _r_, _g_, _b_ = _NAMED_COLORS_[color]
+        return (_r_, _g_, _b_, opacity)
     return (0.5, 0.5, 0.5, opacity)
 
 #
@@ -155,7 +155,8 @@ def triangulatePolygon(pts: list) -> list:
 #
 def flattenPathD(d: str, samples_per_curve: int = 16) -> list:
     _tokens_ = d.replace(',', ' ').split()
-    _subpaths_, _cur_ = [], []
+    _subpaths_ : list = []
+    _cur_      : list = []
     i = 0
     while i < len(_tokens_):
         _t_ = _tokens_[i]
@@ -334,7 +335,7 @@ def svgToDisplayList(svg_str: str, dl: Any, p2s: Any) -> None:
     def _TX_(x: float) -> float: return x * _scale_ + _tx_
     def _TY_(y: float) -> float: return y * _scale_ + _ty_
     def _TL_(l: float) -> float: return l * _scale_
-    def _TDASH_(d: tuple | None) -> tuple: return None if d is None else (d[0] * _scale_, d[1] * _scale_)
+    def _TDASH_(d: tuple | None) -> tuple | None: return None if d is None else (d[0] * _scale_, d[1] * _scale_)
     _s_ = re.sub(r'<defs>.*?</defs>', '', svg_str, flags=re.DOTALL)
     _elem_re_ = re.compile(r'<(rect|circle|line|polygon|path|text|use)\b([^>]*?)(/>|>)', re.DOTALL)
     _attr_re_ = re.compile(r'([\w-]+)="([^"]*)"')
@@ -436,8 +437,8 @@ class DisplayList:
     def __init__(self, w: int, h: int, bg: str = '#ffffff') -> None:
         self.w, self.h = w, h
         self.bg        = bg
-        self._svg_     = []   # ordered svg strings (svg() output = join)
-        self._ops_     = []
+        self._svg_     : list = []   # ordered svg strings (svg() output = join)
+        self._ops_     : list = []
 
     # ── scalar emitters ──────────────────────────────────────────────────
     def _record_(self, kind: str, values: list, svg: str | None, scissor: tuple | None = None) -> str:
@@ -681,11 +682,11 @@ class DisplayList:
     # - returns a JSON-safe dict: buffers are base64-encoded little-endian float32/uint32
     #
     def webgpu_payload(self, atlas: Any = None) -> dict:
-        _chunks_   = {k: [] for k in FLOATS_PER_INSTANCE}   # per-kind list of np arrays
+        _chunks_   : dict = {k: [] for k in FLOATS_PER_INSTANCE}   # per-kind list of np arrays
         _tri_v_, _tri_i_ = [], []
         _counts_   = {k: 0 for k in FLOATS_PER_INSTANCE}    # instances emitted so far per kind
         _tri_vtx_count_, _tri_idx_count_ = 0, 0
-        _manifest_ = []
+        _manifest_ : list = []
         _has_text_ = False
 
         def _scissor_list_(sc: tuple | None) -> list | None:

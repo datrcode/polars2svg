@@ -1,5 +1,8 @@
-from typing import Any
+from typing import Any, TYPE_CHECKING
 import html
+
+if TYPE_CHECKING:
+    from polars2svg.p2s_glyph_atlas import GlyphAtlas
 
 
 #
@@ -81,7 +84,7 @@ class P2STextMixin:
     #
     def __p2s_text_mixin_init__(self) -> None:
         self.default_font = "'Noto Sans', sans-serif"
-        self._glyph_atlas_ = None
+        self._glyph_atlas_: 'GlyphAtlas | None' = None
 
     #
     # svgEscape() / svgUnescape() - method routes onto the module-level door above, for the
@@ -205,6 +208,8 @@ class P2STextMixin:
     def __SignXDivUnit__(self, x: float) -> tuple:
         _sign_ = '-' if x < 0 else ''
         x      = abs(x)
+        _div_  : float
+        _unit_ : str
         if   x < 10e2:  _div_, _unit_ = 1,     ''
         elif x < 10e5:  _div_, _unit_ = 10e2,  'K'
         elif x < 10e8:  _div_, _unit_ = 10e5,  'M'

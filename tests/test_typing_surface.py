@@ -87,11 +87,12 @@ class TestPublicSurfaceAnnotations(unittest.TestCase):
 #
 # The typing ratchet.
 #
-# As of 2026-09-02 polars2svg is being annotated module by module (see the
-# [tool.mypy] comment in pyproject.toml).  These tests are the half of that
-# ratchet the test suite owns: they assert that annotation coverage only ever
-# improves, and that the dynamic attribute surface stays declared.  mypy owns
-# the other half via [[tool.mypy.overrides]].
+# polars2svg was annotated module by module over 2026-09-02/03 and strict mypy
+# checking is now the package-wide default (see the [tool.mypy] comment in
+# pyproject.toml).  These tests are the half of that ratchet the test suite
+# owns: they assert that annotation coverage only ever improves, and that the
+# dynamic attribute surface stays declared.  mypy owns the other half, and now
+# owns it for every module rather than for a graduating list.
 #
 class TestEnumMemberDeclarations(unittest.TestCase):
     '''Polars2SVG.__init__ flattens six nested Enums onto the instance with
@@ -155,8 +156,10 @@ class TestAnnotationCoverageRatchet(unittest.TestCase):
     function raises one and fails here.  That is the enforcement behind "new code
     arrives typed".
 
-    When you annotate a module, lower its number.  When it reaches 0, also add it
-    to the [[tool.mypy.overrides]] ratchet in pyproject.toml.'''
+    When you annotate a module, lower its number.  Strict mypy checking no longer
+    has to be switched on per module -- it is the global default in
+    pyproject.toml, and the only module exempt from it is the one in
+    PERMANENTLY_RELAXED below.'''
 
     # The one module deliberately outside the annotation target.  It builds its
     # widget classes at runtime with type('LINKPI', (ReactiveHTML,), {...}) and
@@ -260,30 +263,57 @@ class TestAnnotationCoverageRatchet(unittest.TestCase):
 
 
 class TestRatchetConfigConsistency(unittest.TestCase):
-    '''The two halves of the ratchet must agree: a module held to strict mypy
-    checking in pyproject.toml has to actually be fully annotated.'''
+    '''The two halves of the ratchet must agree.  During the migration that meant
+    "a module listed in [[tool.mypy.overrides]] must be fully annotated"; strict
+    checking is now the package-wide default, so it runs the other way: every
+    module is held to disallow_untyped_defs unless the config relaxes it by name,
+    and the relaxed set may only ever be PERMANENTLY_RELAXED.'''
 
-    def test_strict_modules_are_fully_annotated(self):
-        _root_ = Path(__file__).resolve().parent.parent
-        _toml_ = _root_ / 'pyproject.toml'
-        if not _toml_.is_file():
-            self.skipTest('pyproject.toml not present (installed-wheel test run)')
-        _cfg_ = tomllib.loads(_toml_.read_text())
-        _overrides_ = _cfg_.get('tool', {}).get('mypy', {}).get('overrides', [])
-        _strict_ = []
-        for _o_ in _overrides_:
-            if not _o_.get('disallow_untyped_defs'): continue
+    @staticmethod
+    def _mypy_cfg():
+        _toml_ = Path(__file__).resolve().parent.parent / 'pyproject.toml'
+        if not _toml_.is_file(): return None
+        return tomllib.loads(_toml_.read_text()).get('tool', {}).get('mypy', {})
+
+    def test_strict_checking_is_the_global_default(self):
+        _cfg_ = self._mypy_cfg()
+        if _cfg_ is None: self.skipTest('pyproject.toml not present (installed-wheel test run)')
+        for _flag_ in ('disallow_untyped_defs', 'disallow_incomplete_defs', 'check_untyped_defs'):
+            with self.subTest(setting=_flag_):
+                self.assertTrue(_cfg_.get(_flag_),
+                                f'[tool.mypy] {_flag_} must be on: strict checking is the floor '
+                                'for every module, not a list modules opt into')
+        self.assertFalse(_cfg_.get('disable_error_code'),
+                         'no error code may be disabled package-wide -- the migration-era '
+                         f'disable list is gone: {_cfg_.get("disable_error_code")}')
+
+    def test_relaxed_set_is_exactly_the_documented_one(self):
+        _cfg_ = self._mypy_cfg()
+        if _cfg_ is None: self.skipTest('pyproject.toml not present (installed-wheel test run)')
+        _relaxed_ = []
+        for _o_ in _cfg_.get('overrides', []):
             _m_ = _o_.get('module', [])
-            _strict_.extend([_m_] if isinstance(_m_, str) else _m_)
-        self.assertTrue(_strict_, 'no strict module overrides found in pyproject.toml')
+            _relaxed_.extend([_m_] if isinstance(_m_, str) else _m_)
+        _stems_ = {n.rsplit('.', 1)[-1] for n in _relaxed_}
+        self.assertEqual(_stems_, set(TestAnnotationCoverageRatchet.PERMANENTLY_RELAXED),
+                         'the [[tool.mypy.overrides]] block may only carry the permanently '
+                         f'relaxed module(s); found: {sorted(_stems_)}')
 
+    def test_strictly_checked_modules_are_fully_annotated(self):
+        _cfg_ = self._mypy_cfg()
+        if _cfg_ is None: self.skipTest('pyproject.toml not present (installed-wheel test run)')
+        _relaxed_ = []
+        for _o_ in _cfg_.get('overrides', []):
+            _m_ = _o_.get('module', [])
+            _relaxed_.extend([_m_] if isinstance(_m_, str) else _m_)
+        _stems_ = {n.rsplit('.', 1)[-1] for n in _relaxed_}
         _ceilings_ = TestAnnotationCoverageRatchet.MAX_UNANNOTATED
+        _strict_ = sorted(set(_ceilings_) - _stems_)
+        self.assertTrue(_strict_, 'no strictly checked modules found -- MAX_UNANNOTATED is empty?')
         for _name_ in _strict_:
-            _stem_ = _name_.rsplit('.', 1)[-1]
             with self.subTest(module=_name_):
-                self.assertIn(_stem_, _ceilings_, f'{_name_} is not tracked in MAX_UNANNOTATED')
-                self.assertEqual(_ceilings_[_stem_], 0,
-                                 f'{_name_} is held to disallow_untyped_defs in pyproject.toml '
+                self.assertEqual(_ceilings_[_name_], 0,
+                                 f'{_name_} is held to disallow_untyped_defs by [tool.mypy] '
                                  'but is not fully annotated')
 
 
@@ -479,15 +509,36 @@ class TestAnnotationSanity(unittest.TestCase):
                     yield _f_.name, _n_
 
     @staticmethod
-    def _own_returns(fn):
-        '''`return` statements belonging to fn itself, not to a nested def.'''
+    def _own_nodes(fn):
+        '''Nodes belonging to fn itself -- nested defs and lambdas are theirs.'''
         _out_ = []
         def _walk_(node):
             for _c_ in ast.iter_child_nodes(node):
                 if isinstance(_c_, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)): continue
-                if isinstance(_c_, ast.Return): _out_.append(_c_)
+                _out_.append(_c_)
                 _walk_(_c_)
         _walk_(fn)
+        return _out_
+
+    @classmethod
+    def _own_returns(cls, fn):
+        '''`return` statements belonging to fn itself, not to a nested def.'''
+        return [_n_ for _n_ in cls._own_nodes(fn) if isinstance(_n_, ast.Return)]
+
+    @classmethod
+    def _none_bound_names(cls, fn):
+        '''Locals fn assigns the None literal to, `a, b = None, x` included.'''
+        _out_ = set()
+        for _a_ in cls._own_nodes(fn):
+            if not isinstance(_a_, ast.Assign): continue
+            for _t_ in _a_.targets:
+                _ts_ = list(_t_.elts) if isinstance(_t_, ast.Tuple) else [_t_]
+                _vs_ = list(_a_.value.elts) if isinstance(_a_.value, ast.Tuple) else [_a_.value]
+                if len(_ts_) != len(_vs_): continue
+                for _tt_, _vv_ in zip(_ts_, _vs_):
+                    if (isinstance(_tt_, ast.Name) and isinstance(_vv_, ast.Constant)
+                            and _vv_.value is None):
+                        _out_.add(_tt_.id)
         return _out_
 
     def test_none_defaults_are_optional(self):
@@ -536,10 +587,22 @@ class TestAnnotationSanity(unittest.TestCase):
             # expression that mentions None -- `return x or None`,
             # `return a if b else None`.  Anything less strict flags those as
             # artifacts, which they are not.
-            _nones_ = [r for r in _rs_
-                       if r.value is None
-                       or any(isinstance(c, ast.Constant) and c.value is None
-                              for c in ast.walk(r.value))]
+            #
+            # Two shapes yield None with no literal in the `return` itself, and
+            # both are real rather than trace artifacts: a one-argument
+            # `.get(key)`, which is None when the key is absent, and the
+            # accumulator pattern -- `best = None` ... `return best` -- where the
+            # None is the initial binding.  Missing either produced a false
+            # positive on code whose callers demonstrably guard for None.
+            _none_names_ = self._none_bound_names(_n_)
+            def _yields_none_(r):
+                if r.value is None: return True
+                if any(isinstance(c, ast.Constant) and c.value is None
+                       for c in ast.walk(r.value)): return True
+                if (isinstance(r.value, ast.Call) and isinstance(r.value.func, ast.Attribute)
+                        and r.value.func.attr == 'get' and len(r.value.args) == 1): return True
+                return isinstance(r.value, ast.Name) and r.value.id in _none_names_
+            _nones_ = [r for r in _rs_ if _yields_none_(r)]
             _last_ = _n_.body[-1]
             _falls_off_ = not isinstance(_last_, (ast.Return, ast.Raise, ast.While,
                                                   ast.For, ast.Try, ast.If, ast.With))

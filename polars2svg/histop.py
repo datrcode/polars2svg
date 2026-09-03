@@ -1125,7 +1125,7 @@ class Histop(P2SBinComponentMixin, ExportMixin):
                 _kwargs_['color_stat_range_shared'] = (_ref_._color_stat_min_, _ref_._color_stat_max_)
         return {k: Histop(df=v, template=self, **_kwargs_) for k, v in df_lu.items()}
 
-    def render_with(self, df: pl.DataFrame, **overrides: Any) -> Any:
+    def render_with(self, df: pl.DataFrame, **overrides: Any) -> 'Histop':
         # `overrides` cannot be Unpack[HistopKwargs]: PEP 692 rejects a TypedDict
         # that repeats a named parameter, and `df` is both.
         return Histop(df=df, template=self, **overrides)

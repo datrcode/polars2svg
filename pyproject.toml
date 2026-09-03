@@ -165,109 +165,39 @@ Repository = "https://github.com/datrcode/polars2svg"
 testpaths = ["tests"]
 
 # polars2svg ships a py.typed marker so downstream type checkers read the type
-# hints the package carries.  The public surface (Polars2SVG.__init__, the component
-# factory methods, tField, panelize, the exported layout classes) has always been
-# annotated; as of 2026-09-02 the internals are being annotated too, module by
-# module, and new code is expected to arrive fully typed.
+# hints the package carries.  Every module in the package is annotated and
+# strictly checked: `disallow_untyped_defs` and `check_untyped_defs` apply
+# package-wide and no error code is disabled, so a green `uvx mypy polars2svg`
+# means what it says.
 #
-# THE DIRECTION HAS CHANGED.  This block used to say the internals were dynamically
-# typed on purpose and that annotating them would be "boiling the ocean".  That
-# stance was retired after an audit: with the setattr()-bound attribute surface
-# simply *declared* (see the enum block in polars2svg.py and the per-component
-# blocks that follow it), 72% of what mypy reports on this package evaporates
-# without a single function signature changing.  The ocean turned out to be a pond.
+# THE DIRECTION CHANGED TWICE, and the second change is finished.  This block
+# used to say the internals were dynamically typed on purpose and that
+# annotating them would be "boiling the ocean".  An audit retired that stance:
+# with the setattr()-bound attribute surface simply *declared* (see the enum
+# block in polars2svg.py and the per-component blocks that follow it), 72% of
+# what mypy reported on this package evaporated without a single function
+# signature changing.  The ocean turned out to be a pond.
 #
-# How the migration runs:
+# Two scaffolds carried the migration and are now gone (2026-09-03):
 #
-#   - The settings below are the FLOOR -- what every module must satisfy today.
-#     They stay permissive so the tree is always green.
-#   - A module that has been fully annotated graduates into the [[tool.mypy.overrides]]
-#     ratchet at the bottom of this file, which holds it to strict checking and
-#     re-enables the error codes disabled here.  Modules are added to that list;
-#     they are never removed from it.
-#   - tests/test_typing_surface.py enforces the same ratchet from the test suite,
-#     so annotation coverage cannot regress even where mypy is not run.
+#   - a `disable_error_code` list that silenced seven codes tree-wide
+#     (`attr-defined`, `var-annotated`, `assignment`, `has-type`, `misc`,
+#     `dict-item`, `return-value`) for modules that had not graduated yet, and
+#   - a `[[tool.mypy.overrides]]` ratchet that re-enabled them, module by
+#     module, as each was promoted -- 3 modules at the start, 43 at the end.
 #
-# When the ratchet list covers every module, these disables and this comment go
-# away and the settings move up into the global block.  Until then: do not weaken
-# an annotation to satisfy this config, and do not add a module to the ratchet
-# without running `uvx mypy polars2svg` first.
+# The settings that used to live in the ratchet are the global settings below.
+# Promotion was one-way then and the floor is one-way now: do not weaken an
+# annotation to satisfy this config, and do not add a module to the exemption
+# beneath it.  A module that has to come off strict checking is a regression,
+# not a config change.  tests/test_typing_surface.py enforces annotation
+# coverage from the test suite as well, so it cannot regress where mypy is not
+# run.
 [tool.mypy]
-ignore_missing_imports = true
-# Disabled only for modules that have not yet graduated to the ratchet below.
-# Each entry is a dynamic idiom that the annotation work removes module by module;
-# the goal is an empty list.  `index` and `func-returns-value` were dropped on
-# 2026-09-02 after measuring zero occurrences of either.
-disable_error_code = [
-  "attr-defined",       # instance attrs bound via setattr(); being replaced by declaration blocks
-  "var-annotated",      # untyped module/class-level containers built imperatively
-  "assignment",         # narrowing reassignments in polars expression building
-  "has-type",           # forward-referenced attrs set across mixins
-  "misc",               # dynamic base/enum construction
-  "dict-item",          # heterogeneous wrapper-dispatch tables
-  "return-value",       # helpers that return polars Collections typed as dict
-]
-
-# --- The typing ratchet ------------------------------------------------------
-# Modules that have been fully annotated graduate to this list and are then held
-# to strict checking, with every error code disabled above re-enabled for them.
-#
-# Annotating a module and promoting it here are TWO steps, and the second is the
-# expensive one.  Annotating gets its ceiling in tests/test_typing_surface.py to
-# zero; promotion additionally turns on check_untyped_defs and the strict error
-# codes, which reaches every local and attribute in the module and reliably turns
-# up latent findings (the first three modules cost five real fixes; wave A's
-# twelve cost thirty-five).  So a module can be fully annotated and legitimately
-# not yet listed here -- as seven of wave B's mixins are.
-#
-# NEVER remove a module from this list: one that has to come off is a regression,
-# not a config change.  Run `uvx mypy polars2svg` before adding.
-#
-# When every module is listed, delete this section and move the settings into
-# [tool.mypy] above.  Progress is also asserted from the test suite --
-# see tests/test_typing_surface.py::TestAnnotationCoverageRatchet.
-[[tool.mypy.overrides]]
-module = [
-  # wave A (leaf modules), 2026-09-02
-  "polars2svg._seriation",
-  "polars2svg.exceptions",
-  "polars2svg.circle_packer",
-  "polars2svg.export",
-  "polars2svg.interactive_treatments",
-  "polars2svg.laguerre_voronoi",
-  "polars2svg.layout_budget",
-  "polars2svg.layout_protocol",
-  "polars2svg.mds_at_scale",
-  "polars2svg.p2s_bin_component_mixin",
-  "polars2svg.p2s_font_metrics",
-  "polars2svg.p2s_glyph_atlas",
-  "polars2svg.p2s_polars_mixin",
-  "polars2svg.p2s_webgpu_runtime",
-  "polars2svg.tfdp_layout",
-  "polars2svg.tile",
-  # wave B (mixins) -- the three that were strict-clean on arrival
-  "polars2svg.p2s_background_mixin",
-  "polars2svg.p2s_render_mixin",
-  "polars2svg.p2s_time_mixin",
-  # wave C (core + layouts), 2026-09-02 -- all five promoted
-  "polars2svg.flow_field_background",
-  "polars2svg.ncp_layout",
-  "polars2svg.od_flow_layout",
-  "polars2svg.polars2svg",
-  "polars2svg.udist_scatterplots_via_sectors_tile_opt",
-  # wave D (components), 2026-09-03 -- the three that were strict-clean on arrival.
-  # xyp / linkp / chordp / piep / spreadlinesp are fully annotated but not yet
-  # promoted: 19 errors between them, mostly return types that need widening plus
-  # the caller guards that widening then demands.
-  "polars2svg.histop",
-  "polars2svg.smallp",
-  "polars2svg.timep",
-  # wave E (interactive), 2026-09-03 -- all three in scope; see the note below
-  # about interactive_controller, which is deliberately not one of them.
-  "polars2svg.p2s_interactive_mixin",
-  "polars2svg.spreadlinepi",
-  "polars2svg.stack_control",
-]
+ignore_missing_imports   = true
+disallow_untyped_defs    = true
+disallow_incomplete_defs = true
+check_untyped_defs       = true
 
 # --- interactive_controller.py: permanently relaxed --------------------------
 # The one module the annotation migration deliberately does not cover, decided
@@ -284,10 +214,15 @@ module = [
 # benefit. Its 145 functions are excluded from the coverage target (see
 # TestAnnotationCoverageRatchet.PERMANENTLY_RELAXED); its ceiling still holds, so
 # the file cannot get *worse*, and new code in it is still expected to be typed.
-disallow_untyped_defs    = true
-disallow_incomplete_defs = true
-check_untyped_defs       = true
-enable_error_code = [
+#
+# This is the whole of the package's typing debt, and it is the only entry that
+# may ever appear here.
+[[tool.mypy.overrides]]
+module = ["polars2svg.interactive_controller"]
+disallow_untyped_defs    = false
+disallow_incomplete_defs = false
+check_untyped_defs       = false
+disable_error_code = [
   "attr-defined", "var-annotated", "assignment",
   "has-type", "misc", "dict-item", "return-value",
 ]

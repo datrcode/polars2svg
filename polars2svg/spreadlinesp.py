@@ -876,12 +876,12 @@ class SpreadLinesP(ExportMixin):
         if self.node_color is None or self.node_color == self.p2s.COLOR_BY_NODE_NAME:
             _c_ = self._node_color_lu_.get(_ns_)
             return _c_ if _c_ is not None else self.p2s.color(_ns_)
-        elif isinstance(self.node_color, self.p2s.HexColorString):
+        elif self.p2s.isHexColor(self.node_color):
             return self.node_color
         elif isinstance(self.node_color, dict):
             _v_ = self.node_color.get(_ns_)
             if _v_ is None: return self.p2s.colorTyped('axis', 'default')
-            return _v_ if isinstance(_v_, self.p2s.HexColorString) else self.p2s.color(str(_v_))
+            return _v_ if self.p2s.isHexColor(_v_) else self.p2s.color(str(_v_))
         elif _ns_ in self._node_color_lu_:
             return self._node_color_lu_[_ns_]
         else:
@@ -1776,10 +1776,11 @@ class SpreadLinesP(ExportMixin):
         # ── Direct connects and channel end-connectors ─────────────────────────
         # Each connect goes to its own DisplayList so the compose step can replay them
         # in the order svg.insert(0) leaves them in (newest underneath).
-        def _connect_(*args: Any, **kwargs: Any) -> str:
+        def _connect_(x0: float, y0: float, x1: float, y1: float,
+                      color: str = '#000000', width: float = 1.0) -> str:
             _d_ = _mkdl_()
             _dl_connects_.append(_d_)
-            return self.svgCrossConnect(*args, dl=_d_, **kwargs)
+            return self.svgCrossConnect(x0, y0, x1, y1, color=color, width=width, dl=_d_)
 
         for i in range(len(_bins_) - 1):
             _b0_, _b1_ = _bins_[i], _bins_[i + 1]
@@ -1994,8 +1995,8 @@ class SpreadLinesP(ExportMixin):
         _dl_body_ = _mkdl_()
         _dl_body_.rect(self.vx0, self.vy0, _vw_, _vh_, _bg_co_, svg='')
         _dl_body_.extend(_dl_ego_line_)
-        for _d_ in reversed(_dl_zigzags_):  _dl_body_.extend(_d_)
-        for _d_ in reversed(_dl_connects_): _dl_body_.extend(_d_)
+        for _dl_part_ in reversed(_dl_zigzags_):  _dl_body_.extend(_dl_part_)
+        for _dl_part_ in reversed(_dl_connects_): _dl_body_.extend(_dl_part_)
         _dl_body_.extend(_dl_bins_)
         _dl_body_.extend(_dl_channels_)
         _dl_body_.extend(_dl_anno_)
@@ -2021,7 +2022,7 @@ class SpreadLinesP(ExportMixin):
     def renderSmallMultiples(self, df_all: Any, df_lu: dict, all_key: Any) -> dict:
         return {k: SpreadLinesP(df=v, template=self) for k, v in df_lu.items()}
 
-    def render_with(self, df: pl.DataFrame, **overrides: Any) -> Any:
+    def render_with(self, df: pl.DataFrame, **overrides: Any) -> 'SpreadLinesP':
         # `overrides` cannot be Unpack[SpreadLinesPKwargs]: PEP 692 rejects a TypedDict
         # that repeats a named parameter, and `df` is both.
         return SpreadLinesP(df=df, template=self, **overrides)

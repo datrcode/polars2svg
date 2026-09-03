@@ -201,6 +201,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
     df_link:                pl.DataFrame | None
     df_orig:                pl.DataFrame | None
     legend_info:            Any
+    relationships_orig:     Any
     template:               'LinkP | None'
     view_window_orig:       Any
     _link_label_svg_:  list
@@ -629,7 +630,19 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
         if '__p2s_index__' not in self.df.columns:
             self.df = self.df.with_row_index('__p2s_index__')
 
-        # Expand tuple-based node fields into concatenated columns
+        # Expand tuple-based node fields into concatenated columns.
+        #
+        # A template clone (render_with(), the interactive stack) inherits the template's
+        # ALREADY-expanded relationships, whose tuple endpoints are plain '__fm0__' /
+        # '__to0__' strings by then.  Re-running the loop over those is a no-op, so the
+        # clone's fresh df never gets the synthetic columns and __validateInput__ fails on
+        # a field that "isn't in the DataFrame" -- the clone's own expansion output.
+        # Restart from the pristine spec instead, unless this construction supplied a
+        # relationships= of its own (which is pristine already).
+        if (self.template is not None
+                and not self._relationships_from_positional_ and 'relationships' not in kwargs
+                and getattr(self, 'relationships_orig', None) is not None):
+            self.relationships = self.relationships_orig
         self.relationships_orig = self.relationships
         self.relationships, i = [], 0
         for _edge_ in self.relationships_orig:

@@ -103,14 +103,27 @@ def _nodes_in_rect(spread: Any, vx0: float, vy0: float, vx1: float, vy1: float) 
 
 
 def _filter_out_nodes(spread: Any, df: pl.DataFrame, nodes: set) -> pl.DataFrame:
-    """Filter df to remove rows where any relationship column contains a node in nodes."""
-    for _rel_ in spread.relationships:
+    """Filter df to remove rows where any relationship column contains a node in nodes.
+
+    Reads relationships_orig, not relationships: SpreadLinesP rewrites a tuple endpoint
+    into a synthetic '|'-joined '__fm{i}__' column that exists only on its own render
+    frame, and the only caller passes df_orig -- the caller's untouched columns.  The
+    join is redone here (same separator) so the names compared against `nodes` are the
+    ones the view actually selected."""
+    _orig_cols_ = df.columns
+    for _i_, _rel_ in enumerate(spread.relationships_orig):
         _fm_col_, _to_col_ = _rel_[0], _rel_[1]
+        if isinstance(_fm_col_, tuple):
+            _fm_col_ = f'__fm{_i_}__'
+            if _fm_col_ not in df.columns: df = spread.p2s.createConcatColumn(df, _rel_[0], _fm_col_)
+        if isinstance(_to_col_, tuple):
+            _to_col_ = f'__to{_i_}__'
+            if _to_col_ not in df.columns: df = spread.p2s.createConcatColumn(df, _rel_[1], _to_col_)
         df = df.filter(
             ~pl.col(_fm_col_).cast(pl.String).is_in(nodes) &
             ~pl.col(_to_col_).cast(pl.String).is_in(nodes)
         )
-    return df
+    return df.select(_orig_cols_)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

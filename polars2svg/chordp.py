@@ -398,6 +398,7 @@ class ChP(P2SComponentColorMixin, ExportMixin):
     df_link:            pl.DataFrame | None
     df_orig:            pl.DataFrame | None
     legend_info:        Any
+    relationships_orig: Any
     template:           'ChP | None'
     _link_svg_list_: list
     cx:              float
@@ -754,7 +755,18 @@ class ChP(P2SComponentColorMixin, ExportMixin):
         if '__p2s_index__' not in self.df.columns:
             self.df = self.df.with_row_index('__p2s_index__')
 
-        # Expand tuple-based node fields into concatenated columns
+        # Expand tuple-based node fields into concatenated columns.
+        #
+        # A template clone inherits the template's ALREADY-expanded relationships, whose
+        # tuple endpoints are plain '__fm0__' / '__to0__' strings by then.  Re-running the
+        # loop over those is a no-op, so the clone's fresh df never gets the synthetic
+        # columns and __validateInput__ fails on a field that "isn't in the DataFrame" --
+        # the clone's own expansion output.  Restart from the pristine spec instead, unless
+        # this construction supplied a relationships= of its own (which is pristine already).
+        if (self.template is not None
+                and _rel_from_pos_ is None and 'relationships' not in kwargs
+                and getattr(self, 'relationships_orig', None) is not None):
+            self.relationships = self.relationships_orig
         self.relationships_orig = self.relationships
         self.relationships, i = [], 0
         for _edge_ in self.relationships_orig:
@@ -829,17 +841,17 @@ class ChP(P2SComponentColorMixin, ExportMixin):
         if self.df is None: return
         self.p2s.checkReservedColumns(self.df, 'ChP')
         if self.relationships is None or len(self.relationships) == 0:
-            raise ValueError('LinkP.__validateInput__(): relationships must be specified')
+            raise ValueError('ChP.__validateInput__(): relationships must be specified')
         for _rel_ in self.relationships:
             for _field_ in _rel_[:2]:
                 if _field_ not in self.df.columns:
-                    raise ValueError(f'LinkP.__validateInput__(): field "{_field_}" not found in DataFrame')
+                    raise ValueError(f'ChP.__validateInput__(): field "{_field_}" not found in DataFrame')
         for _field_ in self.__countFields__():
             if _field_ not in self.df.columns:
-                raise ValueError(f'LinkP.__validateInput__(): count field "{_field_}" not found in DataFrame')
+                raise ValueError(f'ChP.__validateInput__(): count field "{_field_}" not found in DataFrame')
         if self.color == self.p2s.COLOR_BY_NODE_NAME:
             raise ValueError(
-                'LinkP.__validateInput__(): color=p2s.COLOR_BY_NODE_NAME is not valid for the '
+                'ChP.__validateInput__(): color=p2s.COLOR_BY_NODE_NAME is not valid for the '
                 'color parameter; use node_color=p2s.COLOR_BY_NODE_NAME instead'
             )
         self.__validateColorSpec__(self.node_color, 'node_color', allow_dict=True)

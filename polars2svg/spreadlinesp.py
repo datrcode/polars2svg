@@ -183,6 +183,7 @@ class SpreadLinesP(ExportMixin):
     df:               Any
     df_orig:          pl.DataFrame | None
     legend_info:      Any
+    relationships_orig: Any
     template:         'SpreadLinesP | None'
     vx0:              Any
     vx1:              Any
@@ -338,6 +339,7 @@ class SpreadLinesP(ExportMixin):
             self.df = self.df_orig = _new_df_
 
         # Relationships from positional
+        _rel_from_pos_ = False
         for _arg_ in args:
             if   isinstance(_arg_, pl.DataFrame):  pass
             elif isinstance(_arg_, SpreadLinesP):   pass
@@ -345,6 +347,7 @@ class SpreadLinesP(ExportMixin):
                   and all(isinstance(t, tuple) and len(t) >= 2 for t in _arg_)):
                 if 'relationships' not in kwargs:
                     self.relationships = _arg_
+                    _rel_from_pos_     = True
             else:
                 raise ValueError(f'SpreadLinesP: unrecognised positional arg {type(_arg_).__name__}')
 
@@ -388,7 +391,18 @@ class SpreadLinesP(ExportMixin):
         if '__p2s_index__' not in self.df.columns:
             self.df = self.df.with_row_index('__p2s_index__')
 
-        # Expand compound field specs
+        # Expand compound field specs.
+        #
+        # A template clone inherits the template's ALREADY-expanded relationships, whose
+        # tuple endpoints are plain '__fm0__' / '__to0__' strings by then.  Re-running the
+        # loop over those is a no-op, so the clone's fresh df never gets the synthetic
+        # columns and validation fails on a field that "isn't in the DataFrame" -- the
+        # clone's own expansion output.  Restart from the pristine spec instead, unless
+        # this construction supplied a relationships= of its own (pristine already).
+        if (self.template is not None
+                and not _rel_from_pos_ and 'relationships' not in kwargs
+                and getattr(self, 'relationships_orig', None) is not None):
+            self.relationships = self.relationships_orig
         self.relationships_orig = self.relationships
         self.relationships, _i_ = [], 0
         for _edge_ in self.relationships_orig:

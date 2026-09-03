@@ -1530,7 +1530,15 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
         self.dfs        = [_linkp_.df_orig]
         self.dfs_layout = [_linkp_]
         self.df_level   = 0
-        self.graphs     = [self.rt_self.createNetworkXGraph(_linkp_.df_orig, _linkp_.relationships)]
+        # relationships_orig, NOT relationships: LinkP rewrites a tuple endpoint -- e.g.
+        # [(('src_ip','src_port'), 'dst_ip')] -- into a synthetic '|'-joined '__fm0__'
+        # column, and that column exists ONLY on its private render frame (linkp.df).
+        # Everything on this side works against df_orig and the stack frames derived from
+        # it, which carry the caller's columns and nothing else, so the pristine spec is
+        # the one that matches.  createNetworkXGraph() / filterDataFrameByGraph() /
+        # collapseDataFrameEdgesToOneRow() each do their own expansion from tuples, using
+        # the same '|' join, so node names still line up with what linkp drew.
+        self.graphs     = [self.rt_self.createNetworkXGraph(_linkp_.df_orig, _linkp_.relationships_orig)]
 
         self.selected_entities = set()
         self.sticky_labels     = set(_linkp_.label_only) if _linkp_.label_only else set()
@@ -1542,7 +1550,10 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
                 (bool(_linkp_.draw_node_labels), bool(_linkp_.draw_link_labels)), 'no labels')
 
         self.ln_params = {
-            'relationships': _linkp_.relationships,
+            # pristine spec -- see the createNetworkXGraph() note above.  Every consumer of
+            # this entry (pushStack, replaceBaseDataframe, the edge filter/collapse/unfilter
+            # ops) pairs it with a df_orig-shaped stack frame.
+            'relationships': _linkp_.relationships_orig,
             'pos':           _linkp_.pos,
             'draw_node_labels': _linkp_.draw_node_labels,
             'draw_link_labels': _linkp_.draw_link_labels,
@@ -1814,10 +1825,20 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
     #
     # _extractNodes_() - collect all node names visible in a filtered DataFrame
     #
+    # - a tuple endpoint has to be joined here the same way createNetworkXGraph() joins it,
+    #   or the names handed back would not be the graph's node names.  Without that, the
+    #   `if fm in df.columns` guard turned a tuple spec into an empty set -- no exception,
+    #   just every node looking absent, which reads to the caller as "nothing is visible".
     def _extractNodes_(_self_, df):
         nodes = set()
-        for rel in _linkp_.relationships:
+        for i, rel in enumerate(_self_.ln_params['relationships']):
             fm, to = rel[0], rel[1]
+            if isinstance(fm, tuple):
+                fm = f'__fm{i}__'
+                if fm not in df.columns: df = _self_.rt_self.createConcatColumn(df, rel[0], fm)
+            if isinstance(to, tuple):
+                to = f'__to{i}__'
+                if to not in df.columns: df = _self_.rt_self.createConcatColumn(df, rel[1], to)
             if fm in df.columns: nodes.update(df[fm].drop_nulls().unique().to_list())
             if to in df.columns: nodes.update(df[to].drop_nulls().unique().to_list())
         return nodes

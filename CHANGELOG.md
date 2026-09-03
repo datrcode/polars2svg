@@ -435,6 +435,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A tuple relationship endpoint rendered fine on its own but broke the moment it
+  was interactive.** `p2s.linkp(df, [(('module','class'),'param')])` drew correctly,
+  then `panelize()` raised `ColumnNotFoundError: unable to find column "__fm0__"`.
+  A tuple endpoint is expanded into a synthetic `'|'`-joined `__fm{i}__` column and
+  the component rewrites its own `relationships` to name it — but that column exists
+  only on the private render frame (`linkp.df`), never on `df_orig`. `linkpi()` built
+  its graph, and stocked `ln_params`, from `df_orig` paired with the *rewritten*
+  spec. The pristine spec was already being saved as `relationships_orig` and simply
+  had no reader; it does now, on both the graph build and every stack operation
+  (`pushStack`, `replaceBaseDataframe`, edge filter / collapse / unfilter). Node
+  names still line up because `createNetworkXGraph()` joins with the same separator.
+  All-string relationships were never affected, which is why this went unnoticed.
+- **`_extractNodes_()` returned an empty set for a tuple endpoint** — no exception,
+  just every node looking absent, which reads downstream as "nothing is visible". It
+  now joins tuple endpoints the way the graph does before matching.
+- **`render_with()` was broken for a tuple endpoint on linkp, chordp and
+  spreadlinesp**, independently of `panelize()`: a template clone inherited the
+  template's already-rewritten `relationships`, whose endpoints are plain
+  `'__fm0__'` strings by then, so re-running the expansion was a no-op and the
+  clone's fresh frame never got the column — `field "__fm0__" not found in
+  DataFrame`. Clones now re-expand from the pristine spec (an explicit
+  `relationships=` override still wins).
+- **`spreadlinepi`'s `'x'` (filter out selection) had the same pairing error** in
+  `_filter_out_nodes()`: rewritten relationships against `_spread_.df_orig`. It also
+  leaked the scratch join column into the pushed frame; the frame is now returned
+  with the caller's columns.
+- **Four `ChP.__validateInput__()` errors identified themselves as `LinkP`.**
 - **`stack_control.sketchHtml()` was annotated `-> str` but returns
   `self.mod_inner or None`** — and `None` is the documented "defer to
   `_repr_svg_()`" signal in the `SketchRepresentable` protocol.

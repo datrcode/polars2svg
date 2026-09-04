@@ -33,6 +33,7 @@ pip install polars2svg[export]      # component.save('chart.png')
 pip install polars2svg[mlx]         # MLX-accelerated t-FDP layout (Apple silicon / Metal)
 pip install polars2svg[mlx-cpu]     # ... the same layout on Linux, CPU backend
 pip install polars2svg[mlx-cuda]    # ... the same layout on Linux + NVIDIA (CUDA 12)
+pip install polars2svg[mlx-cuda13]  # ... the same layout on Linux + NVIDIA (CUDA 13)
 pip install polars2svg[all]         # everything above (plain [mlx]; see the Linux note below)
 ```
 
@@ -64,7 +65,10 @@ MLX only when MLX works.
 
 `TFDPLayout` runs the same MLX code on either GPU backend — Metal on Apple silicon,
 CUDA on NVIDIA. Check which one you got with `polars2svg.gpu_backend()` (`'metal'`,
-`'cuda'`, or `'cpu'`). The CUDA wheels are Linux-only and need NVIDIA SM ≥ 7.5
+`'cuda'`, or `'cpu'`). That name is exported **only when MLX imports successfully**, so
+on the broken-Linux install above it is absent rather than reporting `'cpu'` —
+`hasattr(polars2svg, 'gpu_backend')` is itself the "did MLX load?" check, and
+`import polars2svg` keeps working either way. The CUDA wheels are Linux-only and need NVIDIA SM ≥ 7.5
 (Turing or newer), driver ≥ 550.54.14, and glibc ≥ 2.35. Outside that envelope MLX
 falls back to the CPU device — `TFDPLayout` still works, just slower.
 
@@ -163,9 +167,28 @@ fields to encode.
 | **spreadlinesp** | `p2s.spreadlinesp(df, ...)` | Egocentric radial "spread" rings for influence/propagation. |
 | **smallp** | `p2s.smallp(df, ...)` | Small multiples — a grid of one template component faceted by a field. |
 
-Interactive, cross-linked variants share the same signatures via
-`p2s.xypi(...)`, `p2s.linkpi(...)`, etc., and are composed into a dashboard with
-`p2s.panelize(layout)`. Pass `use_webgpu=True` to render through WebGPU.
+Seven of the eight have an interactive, cross-linked variant — `xypi`, `histopi`,
+`timepi`, `linkpi`, `chordpi`, `piepi` and `smallpi` (there is no `spreadlinespi`).
+Each one **wraps a rendering rather than a DataFrame**, and `p2s.panelize()`
+composes them into a dashboard as a list of rows, sharing one selection across
+every view in it:
+
+```python
+df = pl.DataFrame({
+    "x":     [1, 2, 3, 4, 5, 6],
+    "y":     [3, 1, 4, 1, 5, 9],
+    "group": ["a", "b", "a", "b", "a", "b"],
+})
+
+xi = p2s.xypi(p2s.xyp(df, "x", "y", color="group", wxh=(400, 300)))
+hi = p2s.histopi(p2s.histop(df, "group", wxh=(400, 300)))
+
+p2s.panelize([[xi, hi]])      # one row — brushing either view filters both
+p2s.panelize([[xi], [hi]])    # two rows, stacked
+```
+
+`panelize()` also accepts bare static components and wraps them for you. Pass
+`use_webgpu=True` to an interactive variant to render it through WebGPU.
 
 Finished renderings compose into a single static SVG with `p2s.tile(...)` — the one
 method that takes renderings rather than a DataFrame:
@@ -194,9 +217,9 @@ The aggregation rule is shared by every component that takes `count=`:
 
 | `count=` spec | Aggregation |
 |---------------|-------------|
-| `ROW_COUNTp` *(default)* | `pl.len()` — number of rows |
+| `p2s.ROW_COUNTp` *(default)* | `pl.len()` — number of rows |
 | a numeric field | `sum` of that field |
-| a non-numeric field, or `('field', SETp)` | `n_unique` (distinct count) |
+| a non-numeric field, or `('field', p2s.SETp)` | `n_unique` (distinct count) |
 | a multi-field tuple | struct the fields, then `n_unique` |
 
 What `count=` visibly does depends on the component. At default settings it is
@@ -226,9 +249,9 @@ uv pip install -e . --group dev                     # + test/dev tooling
 ```
 
 After changing framework files, re-run `uv pip install -e .` before testing.
-Regenerate the README gallery images with
-`.venv/bin/python docs/generate_images.py` (requires Google Chrome for headless
-SVG→PNG rasterization).
+
+`tests/test_readme.py` executes every Python block on this page and resolves every
+API name and asset path it mentions, so a snippet here cannot drift from the code.
 
 ## References
 

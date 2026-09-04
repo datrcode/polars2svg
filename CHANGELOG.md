@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`tests/test_readme.py` -- README.md is now executable documentation.** It was
+  the project's highest-traffic artifact and the only one with no test behind it,
+  which is how it came to carry five defects at once (see *Fixed*). Every fenced
+  Python block on the page is executed in document order in a shared namespace
+  -- so the page is checked as a reader actually works through it, not as isolated
+  fragments -- and every `p2s.<name>` / `polars2svg.<name>` it mentions must
+  resolve, **including names that appear only in prose**, which is where three of
+  the five defects lived. Relative links, anchor links, hosted image paths and
+  documented `pip install polars2svg[...]` extras are resolved too.
+
+  Two details carry most of the value. The counter-example block is asserted to
+  keep *failing*: if anyone ever adds a `display_svg`, the anti-hallucination
+  section silently becomes the wrong answer to a question people arrive with, and
+  this test fires first. And asset paths are resolved against **the repo the test
+  runs in** -- README.md is ported byte-identical to production while `docs/` is
+  deliberately excluded from the port, so a path that resolves in `_dev` can still
+  404 on PyPI. That check is expected to be red in production until the three
+  gallery images are committed there.
+
 - **Typed keyword arguments: `p2s.xyp(...)` and friends now catch a misspelled
   parameter before the call runs.** Every component takes `**kwargs` validated at
   runtime against `_VALID_KWARGS`, which meant a downstream user got a correct
@@ -434,6 +453,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   block, so the "cloud present" path stays covered.
 
 ### Fixed
+
+- **README.md documented an interactive API that raised `TypeError` if you
+  followed it, and four smaller claims that were never true.** The page carries a
+  section rebutting a hallucinated `from polars2svg import display_svg` snippet
+  that circulates in search results -- while asserting, in prose no code block
+  demonstrated, that the interactive variants "share the same signatures" as the
+  static components. They do not: `p2s.xypi(df, "x", "y")` raises
+  `TypeError: xypi() takes 2 positional arguments but 4 were given`, because
+  `xypi` wraps an already-rendered component rather than a DataFrame. That section
+  now names the seven variants that exist (there is no `spreadlinespi`, which the
+  old "etc." over an eight-row table implied), shows the real
+  `p2s.panelize([[xi, hi]])` composition, and is self-contained so it works when
+  reached through the page's own `#components` anchor. Also fixed: three hero
+  images that 404 from the public repo and therefore from the PyPI project page;
+  `polars2svg.gpu_backend()` recommended for diagnosing the broken-Linux MLX
+  install, without noting that its import guard makes it *absent* in exactly that
+  case; a maintainer script named at a path that exists in only one of the two
+  repos; a missing `[mlx-cuda13]` line; and `ROW_COUNTp`/`SETp` written bare in
+  the `count=` table though both are instance attributes.
 
 - **histop cropped its bin labels at half the bar's width.** The per-bin label is
   drawn inside the plot at the left edge, so the whole bar row is available to it,

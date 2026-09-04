@@ -1,3 +1,4 @@
+import re
 import unittest
 import polars as pl
 from polars2svg import Polars2SVG
@@ -100,6 +101,46 @@ class TestHistopBasic(unittest.TestCase):
         '''draw_labels defaults True on histop, so bin labels survive draw_context=False.'''
         t_noctx = self.p2s.histop(self.df, 'cat', draw_context=False)
         self.assertIn('<text', t_noctx._repr_svg_())
+
+    # ── bin label width budget ───────────────────────────────────────────────
+    # The bin label is drawn inside the plot at the left edge, so the whole bar row
+    # is its budget.  It used to be cropped at half the plot width, which truncated
+    # names that had ample room to render in full.
+
+    def test_bin_label_uses_full_plot_width(self):
+        '''A bin label wider than half the row -- but comfortably inside the whole
+        row -- renders untruncated.'''
+        _txt_h_, _w_ = 12, 256
+        _plot_w_ = _w_ - 2 * 2                      # insets; no right strip w/o context
+        _name_   = 'ww'
+        while self.p2s.textLength(_name_, _txt_h_) <= _plot_w_ * 0.6:
+            _name_ += 'w'
+        self.assertGreater(self.p2s.textLength(_name_, _txt_h_), _plot_w_ * 0.5)
+        self.assertLess(self.p2s.textLength(_name_, _txt_h_), _plot_w_ - 4)
+        _df_  = pl.DataFrame({'cat': [_name_, 'b']})
+        _svg_ = self.p2s.histop(_df_, 'cat', wxh=(_w_, 128), txt_h=_txt_h_,
+                                draw_context=False)._repr_svg_()
+        self.assertIn(f'>{_name_}</text>', _svg_)
+        self.assertNotIn('...', _svg_)
+
+    def test_bin_label_crop_stays_inside_plot(self):
+        '''A label too long for the row is cropped so that the appended ellipsis
+        still lands inside the plot rather than overhanging its right edge.'''
+        _txt_h_ = 12
+        _df_    = pl.DataFrame({'cat': ['a really really long bin name ' * 3, 'b']})
+        for _w_ in (64, 96, 128, 192, 256, 384):
+            with self.subTest(w=_w_):
+                _t_     = self.p2s.histop(_df_, 'cat', wxh=(_w_, 128), txt_h=_txt_h_,
+                                          draw_context=False)
+                _svg_   = _t_._repr_svg_()
+                _right_ = _t_._plot_x0_ + _t_._plot_w_
+                _labels_ = re.findall(r'<text x="([\d.]+)"[^>]*>([^<]*)</text>', _svg_)
+                self.assertTrue(_labels_, 'no bin labels rendered')
+                self.assertTrue(any(_l_.endswith('...') for _, _l_ in _labels_),
+                                'expected the long bin name to be cropped')
+                for _x_, _lbl_ in _labels_:
+                    self.assertLessEqual(float(_x_) + self.p2s.textLength(_lbl_, _txt_h_),
+                                         _right_)
 
     def test_custom_txt_h(self):
         for txt_h in [8, 10, 12, 16]:

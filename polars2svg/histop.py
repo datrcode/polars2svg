@@ -954,11 +954,28 @@ class Histop(P2SBinComponentMixin, ExportMixin):
 
         # ── BIN LABELS (inside plot, left edge, baseline at bar bottom) ──
         # Per-bin (per-entity) labels -- gated on draw_labels, not draw_context.
-        _lbl_max_w_ = self._plot_w_ * 0.5
+        #
+        # The label runs from the left edge of the plot to its right edge, inset by
+        # _lbl_pad_ on both sides -- the whole bar row is the budget.  (It used to be
+        # self._plot_w_ * 0.5, which threw away half the available width and cropped
+        # names that had ample room to render in full.)
+        #
+        # cropText() overhangs the width it is given by the ellipsis it appends, so the
+        # fit test and the crop take different budgets: measure the untruncated label
+        # against the full span, and only when it does not fit crop it against the span
+        # less the ellipsis.  Handing cropText() the reduced width directly would instead
+        # truncate labels that fit the row perfectly well.
+        _lbl_pad_   = 2
+        _lbl_max_w_ = self._plot_w_ - 2 * _lbl_pad_
+        _ell_w_     = self.p2s.textLength('...', self.txt_h)
         for _i_, _bin_ in enumerate(_visible_bins_) if self.draw_labels else []:
-            _lbl_ = self.p2s.cropText(self.p2s.formatMultiFieldValue(_bin_), self.txt_h, _lbl_max_w_)
+            _lbl_full_ = self.p2s.formatMultiFieldValue(_bin_)
+            if self.p2s.textLength(_lbl_full_, self.txt_h) <= _lbl_max_w_:
+                _lbl_ = _lbl_full_
+            else:
+                _lbl_ = self.p2s.cropText(_lbl_full_, self.txt_h, _lbl_max_w_ - _ell_w_)
             _ly_  = self._plot_y0_ + _i_ * self._slot_h_ + self.bar_h + _y_v_ - 2
-            _dl_.text(self.p2s, _lbl_, self._plot_x0_ + 2, _ly_,
+            _dl_.text(self.p2s, _lbl_, self._plot_x0_ + _lbl_pad_, _ly_,
                       txt_h=self.txt_h, anchor='start', color=_label_color_)
 
         # ── MORE ROWS INDICATOR ───────────────────────────────────────────

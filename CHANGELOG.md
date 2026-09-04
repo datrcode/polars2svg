@@ -435,6 +435,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **histop cropped its bin labels at half the bar's width.** The per-bin label is
+  drawn inside the plot at the left edge, so the whole bar row is available to it,
+  but `_lbl_max_w_` was `self._plot_w_ * 0.5` -- half the row was thrown away and
+  names with ample room came out as `'cinderell...'`.  The budget is now the full
+  plot width less a 2px pad on each side.  Because `cropText()` overhangs the width
+  it is given by the ellipsis it appends, the fit test and the crop take different
+  budgets: the untruncated label is measured against the whole span, and only when
+  it does not fit is it cropped against the span less the ellipsis -- so a cropped
+  label lands inside the plot border instead of over it, and a label that fits the
+  row is never truncated.  No golden changed (none carried a cropped label), so two
+  tests in `test_histop_basic.py` now cover both halves.
+
 - **A tuple relationship endpoint rendered fine on its own but broke the moment it
   was interactive.** `p2s.linkp(df, [(('module','class'),'param')])` drew correctly,
   then `panelize()` raised `ColumnNotFoundError: unable to find column "__fm0__"`.

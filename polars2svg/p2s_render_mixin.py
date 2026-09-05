@@ -177,9 +177,20 @@ class P2SRenderMixin:
         else: raise InvalidSpecError(f'colorizeBar(): unknown count type {count=}')
 
         # Order segments: global order if color_order provided, else local sort by count
+        #
+        # Two null details in the rank join, repeated at each of the three sites below.
+        # The color column's dtype is pinned from `df` rather than inferred from
+        # color_order: a category list that is *entirely* null infers as Null, which
+        # cannot be a join key against a String column
+        # ("datatypes of join keys don't match"), so a component whose color field held
+        # only nulls could not render at all.  And nulls_equal=True, because null is a
+        # legitimate category: without it a declared null category never matched its own
+        # rank row and fell through to the fill_null() bucket reserved for values the
+        # order does not mention.
         if color_order is not None:
-            _rank_df_ = pl.DataFrame({color: color_order, '__rank__': list(range(len(color_order)))})
-            df_gb = df_gb.join(_rank_df_, on=color, how='left') \
+            _rank_df_ = pl.DataFrame({color: color_order, '__rank__': list(range(len(color_order)))},
+                                      schema_overrides={color: df_gb.schema[color]})
+            df_gb = df_gb.join(_rank_df_, on=color, how='left', nulls_equal=True) \
                         .with_columns(pl.col('__rank__').fill_null(len(color_order))) \
                         .sort(['__rank__', '__sum__', color], descending=[False, True, True]) \
                         .drop('__rank__')
@@ -232,8 +243,8 @@ class P2SRenderMixin:
         if color_order is not None:
             _n_colors_ = len(color_order)
             _rank_df_  = pl.DataFrame({color: color_order, '__rank__': list(range(_n_colors_))},
-                                       schema_overrides={'__rank__': pl.Int64})
-            df = df.join(_rank_df_, on=color, how='left') \
+                                       schema_overrides={color: df.schema[color], '__rank__': pl.Int64})
+            df = df.join(_rank_df_, on=color, how='left', nulls_equal=True) \
                    .with_columns(pl.col('__rank__').fill_null(_n_colors_))
         else:
             _totals_   = df.group_by(color).agg(pl.col('__count__').sum().alias('__ct__')) \
@@ -241,7 +252,7 @@ class P2SRenderMixin:
                            .with_columns(pl.int_range(pl.len()).alias('__rank__')) \
                            .drop('__ct__')
             _n_colors_ = len(_totals_)
-            df = df.join(_totals_, on=color, how='left') \
+            df = df.join(_totals_, on=color, how='left', nulls_equal=True) \
                    .with_columns(pl.col('__rank__').fill_null(_n_colors_))
 
         # 2. Per-bin total → per-bin bar height → per-segment pixel height  (all window ops)
@@ -318,8 +329,8 @@ class P2SRenderMixin:
         if color_order is not None:
             _n_colors_ = len(color_order)
             _rank_df_  = pl.DataFrame({color: color_order, '__rank__': list(range(_n_colors_))},
-                                       schema_overrides={'__rank__': pl.Int64})
-            df = df.join(_rank_df_, on=color, how='left') \
+                                       schema_overrides={color: df.schema[color], '__rank__': pl.Int64})
+            df = df.join(_rank_df_, on=color, how='left', nulls_equal=True) \
                    .with_columns(pl.col('__rank__').fill_null(_n_colors_))
         else:
             _totals_   = df.group_by(color).agg(pl.col('__count__').sum().alias('__ct__')) \
@@ -327,7 +338,7 @@ class P2SRenderMixin:
                            .with_columns(pl.int_range(pl.len()).alias('__rank__')) \
                            .drop('__ct__')
             _n_colors_ = len(_totals_)
-            df = df.join(_totals_, on=color, how='left') \
+            df = df.join(_totals_, on=color, how='left', nulls_equal=True) \
                    .with_columns(pl.col('__rank__').fill_null(_n_colors_))
 
         # 2. Per-bin total → per-bin bar width → per-segment pixel width  (all window ops)

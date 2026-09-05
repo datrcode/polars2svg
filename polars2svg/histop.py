@@ -1147,6 +1147,30 @@ class Histop(P2SBinComponentMixin, ExportMixin):
         # that repeats a named parameter, and `df` is both.
         return Histop(df=df, template=self, **overrides)
 
+    # ── Bin → record selection ──────────────────────────────────────────────
+    #
+    # Every interactive filter (rectangle, oval, substring, brush) resolves to a
+    # list of bins and then pulls the records belonging to them.  Both steps go
+    # through here so the join lives in one place -- in particular
+    # `nulls_equal=True`.  A null in the bin field is a bin like any other
+    # (polars' group_by gives it its own group, and it renders as the "None"
+    # bar), but polars joins treat null as unequal to itself by default: the
+    # inner join returned no rows and the anti join removed none of them, so the
+    # "None" bar could neither be selected nor filtered out.
+    #
+    def __dropInternal__(self, df: pl.DataFrame) -> pl.DataFrame:
+        _to_drop_ = [c for c in ['__p2s_index__'] if c in df.columns]
+        if self._bin_col_ == '__bin__' and '__bin__' in df.columns:
+            _to_drop_.append('__bin__')
+        return df.drop(_to_drop_)
+
+    def __recordsForBins__(self, bins: list, remove: bool = False) -> pl.DataFrame:
+        _bin_dtype_   = self.df_agg[self._bin_col_].dtype
+        _selected_df_ = pl.DataFrame({self._bin_col_: bins}, schema={self._bin_col_: _bin_dtype_})
+        _how_         = 'anti' if remove else 'inner'
+        return self.__dropInternal__(
+            self.df.join(_selected_df_, on=self._bin_col_, how=_how_, nulls_equal=True))
+
     def filterByRectangle(self, bounding_box: tuple, remove_records: bool = False) -> pl.DataFrame:
         _x0_, _y0_, _x1_, _y1_ = bounding_box
         if _x0_ > _x1_: _x0_, _x1_ = _x1_, _x0_
@@ -1208,19 +1232,10 @@ class Histop(P2SBinComponentMixin, ExportMixin):
 
         _selected_bins_ = list(dict.fromkeys(_selected_bins_))
 
-        _bin_dtype_   = self.df_agg[self._bin_col_].dtype
-        _selected_df_ = pl.DataFrame({self._bin_col_: _selected_bins_},
-                                      schema={self._bin_col_: _bin_dtype_})
-
-        # inner: records whose bin was selected by the rectangle
-        # anti:  remove selected visible bins; unrendered bins are automatically kept
-        #        because _selected_df_ only contains bins from _visible_bins_
-        _how_       = 'anti' if remove_records else 'inner'
-        _df_result_ = self.df.join(_selected_df_, on=self._bin_col_, how=_how_)
-        _to_drop_   = [c for c in ['__p2s_index__'] if c in _df_result_.columns]
-        if self._bin_col_ == '__bin__' and '__bin__' in _df_result_.columns:
-            _to_drop_.append('__bin__')
-        return _df_result_.drop(_to_drop_)
+        # remove_records=False: records whose bin was selected by the rectangle
+        # remove_records=True:  remove selected visible bins; unrendered bins are automatically
+        #                       kept because _selected_bins_ only holds bins from _visible_bins_
+        return self.__recordsForBins__(_selected_bins_, remove=remove_records)
 
     def filterByOval(self, oval: tuple, remove_records: bool = False) -> pl.DataFrame:
         _cx_, _cy_, _rx_, _ry_ = oval
@@ -1285,31 +1300,17 @@ class Histop(P2SBinComponentMixin, ExportMixin):
 
         _selected_bins_ = list(dict.fromkeys(_selected_bins_))
 
-        _bin_dtype_   = self.df_agg[self._bin_col_].dtype
-        _selected_df_ = pl.DataFrame({self._bin_col_: _selected_bins_},
-                                      schema={self._bin_col_: _bin_dtype_})
-
-        _how_       = 'anti' if remove_records else 'inner'
-        _df_result_ = self.df.join(_selected_df_, on=self._bin_col_, how=_how_)
-        _to_drop_   = [c for c in ['__p2s_index__'] if c in _df_result_.columns]
-        if self._bin_col_ == '__bin__' and '__bin__' in _df_result_.columns:
-            _to_drop_.append('__bin__')
-        return _df_result_.drop(_to_drop_)
+        return self.__recordsForBins__(_selected_bins_, remove=remove_records)
 
     def filterBySubstring(self, substring: str, remove_bins: bool = False) -> pl.DataFrame:
         _sub_ = substring.lower()
         # Match against the display form ('|'-joined) so a user's 'A|x' still matches a
         # multi-field bin whose internal key uses the non-printable MULTI_FIELD_SEP.
+        # A null bin is matched on its rendered label ('None'), the same text the
+        # user reads off the bar, so '/none' selects it like any other bin.
         _matching_bins_ = [b for b in self._sorted_bins_
                            if _sub_ in self.p2s.formatMultiFieldValue(b).lower()]
-        _bin_dtype_   = self.df_agg[self._bin_col_].dtype
-        _selected_df_ = pl.DataFrame({self._bin_col_: _matching_bins_}, schema={self._bin_col_: _bin_dtype_})
-        _how_         = 'anti' if remove_bins else 'inner'
-        _df_result_   = self.df.join(_selected_df_, on=self._bin_col_, how=_how_)
-        _to_drop_     = [c for c in ['__p2s_index__'] if c in _df_result_.columns]
-        if self._bin_col_ == '__bin__' and '__bin__' in _df_result_.columns:
-            _to_drop_.append('__bin__')
-        return _df_result_.drop(_to_drop_)
+        return self.__recordsForBins__(_matching_bins_, remove=remove_bins)
 
     def recordsAt(self, xy: tuple, shape: Any = None, threshold: float = 2.0) -> pl.DataFrame:
         """Return the original records whose bin row contains pixel y.
@@ -1344,10 +1345,7 @@ class Histop(P2SBinComponentMixin, ExportMixin):
 
         # Helper: return a correctly-schemed empty DataFrame
         def _empty_() -> pl.DataFrame:
-            _drop_ = [c for c in ['__p2s_index__'] if c in self.df.columns]
-            if self._bin_col_ == '__bin__':
-                _drop_ += [c for c in ['__bin__'] if c in self.df.columns]
-            return self.df.drop(_drop_).clear()
+            return self.__dropInternal__(self.df).clear()
 
         if self._dist_h_ > 0 and self._dist_bins_lu_:
             _strip_y0_ = self._dist_strip_y0_
@@ -1359,14 +1357,7 @@ class Histop(P2SBinComponentMixin, ExportMixin):
                 _strip_bins_ = self._dist_bins_lu_.get(_bi_, [])
                 if not _strip_bins_:
                     return _empty_()
-                _bin_dtype_  = self.df_agg[self._bin_col_].dtype
-                _selected_   = pl.DataFrame({self._bin_col_: _strip_bins_},
-                                            schema={self._bin_col_: _bin_dtype_})
-                _df_result_  = self.df.join(_selected_, on=self._bin_col_, how='inner')
-                _to_drop_    = [c for c in ['__p2s_index__'] if c in _df_result_.columns]
-                if self._bin_col_ == '__bin__' and '__bin__' in _df_result_.columns:
-                    _to_drop_.append('__bin__')
-                return _df_result_.drop(_to_drop_)
+                return self.__recordsForBins__(_strip_bins_)
 
         # Map pixel y to a display index using the full slot height as the hit area.
         # Compute the offset first: y values above _plot_y0_ (negative offset) must
@@ -1379,12 +1370,4 @@ class Histop(P2SBinComponentMixin, ExportMixin):
         if _i_ >= _n_visible_:
             return _empty_()
 
-        _bin_       = self._sorted_bins_[_i_]
-        _bin_dtype_ = self.df_agg[self._bin_col_].dtype
-        _selected_  = pl.DataFrame({self._bin_col_: [_bin_]},
-                                    schema={self._bin_col_: _bin_dtype_})
-        _df_result_ = self.df.join(_selected_, on=self._bin_col_, how='inner')
-        _to_drop_   = [c for c in ['__p2s_index__'] if c in _df_result_.columns]
-        if self._bin_col_ == '__bin__' and '__bin__' in _df_result_.columns:
-            _to_drop_.append('__bin__')
-        return _df_result_.drop(_to_drop_)
+        return self.__recordsForBins__([self._sorted_bins_[_i_]])

@@ -454,6 +454,117 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The interactive histogram's "None" bar could be neither selected nor filtered
+  out.** A null in the `bin_by` column is a bin like any other -- polars' `group_by`
+  gives it its own group, and histop draws it as a normal bar labelled `None` -- but
+  every one of histop's bin-to-record paths resolved the selection through a join on
+  the bin column, and polars joins treat null as *unequal to itself* by default. So
+  the inner join returned zero rows and the anti join removed none of them: in
+  `histopi` the bar swallowed drag selections, brushed nothing, ignored `/none`, and
+  survived every attempt to filter it out -- the two failure directions the user
+  sees are one missing `nulls_equal=True`. `filterByRectangle()`, `filterByOval()`,
+  `filterBySubstring()` and `recordsAt()` (both the bar and the distribution-strip
+  branch) now share one `__recordsForBins__()` helper, so the null-aware join and
+  the internal-column cleanup they each repeated live in a single place. Also
+  covered: numeric bin columns, and tuple `bin_by`, where `pl.concat_str` nulls the
+  whole `__bin__` value if any field is null.
+
+- **The interactive pie/donut/waffle's "None" slice, same root cause plus a second
+  defect underneath it.** `Piep.__binsForBins__()` needed the same
+  `nulls_equal=True`, but fixing only that would have left click and brush dead on
+  the "None" slice while a *drag* across it worked: `__binAtAngleDist__()` and
+  `__binAtWaffleXY__()` returned `None` to mean "no slice under this pixel" -- the
+  same value as the null bin itself -- and every caller resolved the ambiguity in
+  favour of "miss", while the drag path reads `s['bin']` straight off the slice
+  list and so never asked. The two hit-testers now return a `_NO_BIN_` sentinel,
+  which is what makes the null slice expressible at all. A null bin folded into the
+  synthetic `(other)` slice is reachable through it as well.
+
+  An audit of the remaining components found the same shape of bug in two more, both
+  now fixed below (chordp, smallp). xyp, timep and linkp are clear -- they join on
+  `__p2s_index__` or on computed pixel/time bins, never on a user value, and linkp's
+  `null_nodes=True` already materializes nulls as real string node names for exactly
+  this reason.
+
+- **chordp deleted rows that a null endpoint had nothing to do with, and could not
+  be built at all with one.** Three defects over the same idea, which chordp had
+  already committed to and then not carried through: a chord needs two endpoints, so
+  a row missing one is not in the diagram -- `__calculateOrder__` has always built
+  its node set with `drop_nulls()`.
+
+  1. **Construction raised `TypeError`.** `df_edge_weights` was built with a plain
+     `group_by`, which keeps a null group, so `None` reached `leafWalkFromEdges`'
+     `sorted(node_set)` and raised
+     *"'<' not supported between instances of 'str' and 'NoneType'"*. Only an
+     explicit `order=` got past it. Edges now drop when either endpoint is missing,
+     so the weights agree with the node set. A frame with null endpoints renders
+     **byte-identically** to the same frame with those rows deleted.
+  2. **Selection lost rows.** `is_in()` yields *null* for a null endpoint, Kleene
+     logic carried it through the `&`/`|` chain, and `filter()` drops a null mask
+     row -- as does the complement, since `~null` is null. So `remove_records=True`
+     deleted every null-endpoint row from **both** halves: on a 5-row frame,
+     select-all returned 3 and remove-all returned 0, and the interactive stack then
+     held the truncated frame. The mask is `fill_null(False)` now, so select and
+     remove partition the frame for every query.
+  3. **A three-part relationship crashed every selection method.** `(fm, to, weight)`
+     is accepted at construction, but `recordsAt()`, `filterByRectangle()` and
+     `filterByOval()` all unpacked it as a pair and raised *"too many values to
+     unpack"* -- a hard failure on the first drag in `chordpi`. They index the
+     relationship instead of unpacking it.
+
+  All three now go through one `__maskForNodes__()` helper.  `recordsAt()` keeps its
+  *either*-endpoint contract, where the rectangle and oval are the *both*-endpoint
+  one, so a row with one null endpoint is still brushable through the endpoint it
+  has; that difference is deliberate and is now asserted.
+
+- **smallp's "None" facet was a permanently empty tile, and its rows fell out of the
+  remainder as well.** The quietest of the four, because everything *looked* right:
+  a null `category_by` value gets its own group from `group_by`, so the tile was
+  created, laid out and labelled `None` like any other -- but `__filterForKey__()`
+  populated it with `pl.col(c) == key[0]`, and comparing to `None` yields null for
+  every row, which `filter()` then drops. polars had been saying so on every render
+  (*"Comparisons with None always result in null. Consider using `.is_null()`"*).
+  The multi-column form did not get that far: a key holding a null types its struct
+  literal as `Null`, so `is_in` raised `InvalidOperationError`.
+
+  The remainder tile had the same defect from the other side. It was built as
+  `~col.is_in(visible)`, and since `is_in` yields null for a null value and `~null`
+  is null, rows with a null category were dropped from the remainder too -- present
+  in the frame and drawn in **no tile at all**, which is why the empty facet was easy
+  to read as "there is nothing there".
+
+  Both paths go through a new `__predicateForKey__()` built on `eq_missing()`: null
+  equals itself and the result is never null, so the `&`/`|`/`~` over it stay total.
+  Tested as a coverage invariant -- every row lands in exactly one tile, its own
+  facet or the remainder, at every canvas size -- rather than against one expected
+  layout.
+
+- **A null in a *color* field crashed timep, and an all-null one crashed histop too.**
+  The tail of the same sweep, on the axis the four fixes above did not touch: not
+  selection, but whether the component can be built at all.
+
+  `Timep.__computeAggregates2__()` ordered its stacked-bar categories with a plain
+  `sorted()`, which compares `None` against the other values --
+  *"'<' not supported between instances of 'NoneType' and 'str'"* -- so a stacked
+  timep whose color field held a single null could not be constructed. (Same shape as
+  the chordp crash above, and the last `sorted()` over user values in the package that
+  was not already guarded.) It sorts on `(v is None, v)` now: nulls last, and the
+  non-null order bit-for-bit what it was. Worth noting for whoever reads this next:
+  `_color_categories_` is assigned at three places in timep and **read nowhere** in the
+  package, the tests, or the notebooks -- the crash was in computing a value nothing
+  consumes, and deleting it is probably the better fix.
+
+  Underneath that, `p2s_render_mixin`'s rank join built its lookup frame by inferring
+  the dtype from the category list, and a list that is entirely null infers as `Null`,
+  which cannot be a join key against `String` or `Int64`
+  (*"datatypes of join keys don't match"*). Both **timep and histop** -- everything
+  going through `colorizeBar()` / `colorizeAllBarsVertical()` / `colorizeAllBarsHorizontal()`
+  -- therefore failed to render a frame whose color column was all null, for both
+  dtypes. The lookup now pins the column's dtype from the frame it joins against, and
+  the join takes `nulls_equal=True` so a declared null category gets its declared rank
+  instead of falling through to the bucket meant for unmentioned values. Every golden
+  stayed green, which is the evidence that the change is inert without nulls.
+
 - **README.md documented an interactive API that raised `TypeError` if you
   followed it, and four smaller claims that were never true.** The page carries a
   section rebutting a hallucinated `from polars2svg import display_svg` snippet

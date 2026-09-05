@@ -10,6 +10,13 @@ import polars2svg
 from polars2svg.p2s_displaylist import DisplayList
 from polars2svg.export import ExportMixin
 
+# Sentinel for "no slice under this pixel".  It cannot be None: None is a legal
+# bin value -- a null in the bin_by column gets its own group from polars and is
+# drawn as the "None" slice -- so a hit-test that returned None for a miss made
+# the null slice and empty space indistinguishable, and every caller resolved
+# the ambiguity in favour of "miss".
+_NO_BIN_: Any = object()
+
 class PiepKwargs(TypedDict, total=False):
     """Keyword arguments accepted by ``p2s.piep()`` / ``Piep(...)``.
 
@@ -1157,7 +1164,7 @@ class Piep(ExportMixin):
             else:                _out_.append(_b_)
         return list(dict.fromkeys(_out_))
 
-    def __sliceForBin__(self, bin_value: str, how: str = 'inner') -> pl.DataFrame:
+    def __sliceForBin__(self, bin_value: Any, how: str = 'inner') -> pl.DataFrame:
         return self.__binsForBins__([bin_value], remove=(how == 'anti'))
 
     def __dropInternal__(self, df: pl.DataFrame) -> pl.DataFrame:
@@ -1173,12 +1180,16 @@ class Piep(ExportMixin):
         _bin_dtype_   = self.df_agg[self._bin_col_].dtype
         _selected_df_ = pl.DataFrame({self._bin_col_: _bins_}, schema={self._bin_col_: _bin_dtype_})
         _how_         = 'anti' if remove else 'inner'
-        return self.__dropInternal__(self.df.join(_selected_df_, on=self._bin_col_, how=_how_))
+        # nulls_equal=True: polars joins treat null as unequal to itself by default,
+        # which left the "None" slice unable to be selected (inner -> no rows) or
+        # filtered out (anti -> nothing removed).
+        return self.__dropInternal__(self.df.join(_selected_df_, on=self._bin_col_,
+                                                  how=_how_, nulls_equal=True))
 
-    def __binAtAngleDist__(self, angle_deg: float, dist: float) -> str | None:
-        '''Return the bin whose wedge/annulus contains (angle_deg, dist), or None.'''
-        if self.style == self.p2s.WAFFLEp: return None
-        if dist < self.r_inner or dist > self.r: return None
+    def __binAtAngleDist__(self, angle_deg: float, dist: float) -> Any:
+        '''Return the bin whose wedge/annulus contains (angle_deg, dist), or _NO_BIN_.'''
+        if self.style == self.p2s.WAFFLEp: return _NO_BIN_
+        if dist < self.r_inner or dist > self.r: return _NO_BIN_
         _a_ = angle_deg
         for s in self._slices_:
             _a0_, _a1_ = s['a0'], s['a1']
@@ -1188,9 +1199,9 @@ class Piep(ExportMixin):
             while _t_ >= _a0_ + 360: _t_ -= 360.0
             if _a0_ <= _t_ <= _a1_:
                 return s['bin']
-        return None
+        return _NO_BIN_
 
-    def __binAtWaffleXY__(self, x: float, y: float) -> str | None:
+    def __binAtWaffleXY__(self, x: float, y: float) -> Any:
         _n_    = max(1, int(self.waffle_n))
         _side_ = min(self._plot_w_, self._plot_h_)
         _cell_ = _side_ / _n_
@@ -1198,7 +1209,7 @@ class Piep(ExportMixin):
         _oy_   = self.cy - _side_ / 2.0
         _col_  = int((x - _ox_) / _cell_)
         _rowv_ = int((y - _oy_) / _cell_)
-        if _col_ < 0 or _col_ >= _n_ or _rowv_ < 0 or _rowv_ >= _n_: return None
+        if _col_ < 0 or _col_ >= _n_ or _rowv_ < 0 or _rowv_ >= _n_: return _NO_BIN_
         _row_  = _n_ - 1 - _rowv_          # invert: row 0 is the bottom
         _idx_  = _row_ * _n_ + _col_
         _bins_counts_ = [(s['bin'], s.get('count_all', s['count'])) for s in self._slices_]
@@ -1207,7 +1218,7 @@ class Piep(ExportMixin):
         for _b_, _cnt_ in _alloc_:
             if _idx_ < _acc_ + _cnt_: return _b_
             _acc_ += _cnt_
-        return None
+        return _NO_BIN_
 
     def recordsAt(self, xy: tuple, shape: Any = None, threshold: float = 2.0) -> pl.DataFrame:
         '''Records whose slice contains the pixel xy (SELECT_CIRCLEp).'''
@@ -1222,7 +1233,7 @@ class Piep(ExportMixin):
             _dist_     = sqrt(_dx_ * _dx_ + _dy_ * _dy_)
             _ang_      = atan2(_dy_, _dx_) * 180.0 / pi
             _bin_      = self.__binAtAngleDist__(_ang_, _dist_)
-        if _bin_ is None:
+        if _bin_ is _NO_BIN_:
             return self.__dropInternal__(self.df.clear())
         return self.__sliceForBin__(_bin_)
 
@@ -1241,7 +1252,7 @@ class Piep(ExportMixin):
         if self.style == self.p2s.WAFFLEp:
             # click / small box: the cell under the rectangle center
             _center_bin_ = self.__binAtWaffleXY__(_cxr_, _cyr_)
-            if _center_bin_ is not None:
+            if _center_bin_ is not _NO_BIN_:
                 _selected_.append(_center_bin_)
             # drag box: any slice with a cell centroid inside the rectangle
             _n_    = max(1, int(self.waffle_n))
@@ -1267,7 +1278,7 @@ class Piep(ExportMixin):
             _dxr_, _dyr_ = _cxr_ - self.cx, _cyr_ - self.cy
             _center_bin_ = self.__binAtAngleDist__(atan2(_dyr_, _dxr_) * 180.0 / pi,
                                                    sqrt(_dxr_ * _dxr_ + _dyr_ * _dyr_))
-            if _center_bin_ is not None:
+            if _center_bin_ is not _NO_BIN_:
                 _selected_.append(_center_bin_)
             # drag box: any wedge whose area is touched by the rectangle.  Sample the
             # wedge across angle x radius and test each sample against the rect.
@@ -1307,7 +1318,7 @@ class Piep(ExportMixin):
         if self.style == self.p2s.WAFFLEp:
             # click: the cell under the oval center
             _center_bin_ = self.__binAtWaffleXY__(_cxr_, _cyr_)
-            if _center_bin_ is not None:
+            if _center_bin_ is not _NO_BIN_:
                 _selected_.append(_center_bin_)
             # drag: any slice with a cell centroid inside the oval
             _n_    = max(1, int(self.waffle_n))
@@ -1333,7 +1344,7 @@ class Piep(ExportMixin):
             _dxr_, _dyr_ = _cxr_ - self.cx, _cyr_ - self.cy
             _center_bin_ = self.__binAtAngleDist__(atan2(_dyr_, _dxr_) * 180.0 / pi,
                                                    sqrt(_dxr_ * _dxr_ + _dyr_ * _dyr_))
-            if _center_bin_ is not None:
+            if _center_bin_ is not _NO_BIN_:
                 _selected_.append(_center_bin_)
             # drag: any wedge whose area is touched by the oval.  Sample the wedge across
             # angle x radius and test each sample against the ellipse.

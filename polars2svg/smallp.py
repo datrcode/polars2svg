@@ -395,14 +395,28 @@ class Smallp(ExportMixin):
             raise ValueError('Smallp.__computeOrderingStats__(): Unknown category_by type: ' + str(type(self.category_by)))
         self._num_categories_ = len(self._sorted_category_keys_)
 
+    #
+    # __predicateForKey__() - rows belonging to one category tile.
+    #
+    # eq_missing() rather than == or a struct is_in(): a null category value gets its
+    # own group from group_by, so it becomes a tile labelled "None" like any other,
+    # but `pl.col(c) == None` is *null* for every row (polars says so out loud:
+    # "Comparisons with None always result in null") and filter() drops them all, so
+    # that tile rendered permanently empty -- and the multi-column form raised
+    # InvalidOperationError outright, because a key with a null types its struct
+    # literal as Null.  eq_missing() treats null as a value that equals itself, and
+    # never returns null, so the &/|/~ built on it below stay total.
+    #
+    def __predicateForKey__(self, key: tuple) -> pl.Expr:
+        _cat_cols_ = [self.category_by] if isinstance(self.category_by, str) else list(self.category_by)
+        _pred_ = None
+        for _c_, _v_ in zip(_cat_cols_, key):
+            _eq_   = pl.col(_c_).eq_missing(_v_)
+            _pred_ = _eq_ if _pred_ is None else (_pred_ & _eq_)
+        return pl.lit(True) if _pred_ is None else _pred_
+
     def __filterForKey__(self, key: tuple) -> pl.DataFrame:
-        if isinstance(self.category_by, str):
-            return self.df.filter(pl.col(self.category_by) == key[0])
-        else:
-            _cat_cols_ = list(self.category_by)
-            _struct_   = pl.struct([pl.col(c) for c in _cat_cols_])
-            _target_   = {c: v for c, v in zip(_cat_cols_, key)}
-            return self.df.filter(_struct_.is_in([_target_]))
+        return self.df.filter(self.__predicateForKey__(key))
 
     def __constructGeometry__(self) -> None:
         _tiles_needed_ = self._num_categories_
@@ -463,7 +477,6 @@ class Smallp(ExportMixin):
 
         self.category_by_dict = {}
         if isinstance(self.category_by, (str, tuple)):
-            _cat_cols_     = [self.category_by] if isinstance(self.category_by, str) else list(self.category_by)
             _visible_keys_ = self._sorted_category_keys_[:_max_visible_]
             for key in _visible_keys_:
                 _sub_df_ = self.__filterForKey__(key)
@@ -472,13 +485,14 @@ class Smallp(ExportMixin):
                 self.category_by_dict[key] = _sub_df_
                 __increment__()
             if _needs_remainder_ and self.collate_remainder:
-                if isinstance(self.category_by, str):
-                    _visible_raw_  = [k[0] for k in _visible_keys_]
-                    _remainder_df_ = self.df.filter(~pl.col(self.category_by).is_in(_visible_raw_))
-                else:
-                    _struct_          = pl.struct([pl.col(c) for c in _cat_cols_])
-                    _visible_structs_ = [{c: v for c, v in zip(_cat_cols_, k)} for k in _visible_keys_]
-                    _remainder_df_    = self.df.filter(~_struct_.is_in(_visible_structs_))
+                # The complement of what the visible tiles took, built from the same
+                # predicate so it stays exact.  is_in() yielded null for a null category
+                # value and ~null is null, so those rows were dropped from the remainder
+                # too -- they belonged to no tile at all.
+                _visible_pred_ = pl.lit(False)
+                for _k_ in _visible_keys_:
+                    _visible_pred_ = _visible_pred_ | self.__predicateForKey__(_k_)
+                _remainder_df_ = self.df.filter(~_visible_pred_)
                 self.category_to_xy['__remainder__'] = (_x_offset_, _y_offset_)
                 self.category_to_df['__remainder__'] = _remainder_df_
             else:

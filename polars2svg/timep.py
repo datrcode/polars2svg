@@ -9,6 +9,20 @@ from polars2svg.p2s_displaylist import DisplayList
 from polars2svg.export import ExportMixin
 from polars2svg.p2s_bin_component_mixin import P2SBinComponentMixin
 
+
+#
+# _sortedCategories_() - sort a color column's distinct values, nulls last.
+#
+# A null is a legitimate category: group_by gives it its own group and the rows are
+# counted into df_agg like any other.  Plain sorted() then compares None against the
+# other values and raises "'<' not supported between instances of 'NoneType' and
+# 'str'", so a stacked timep could not be constructed at all when its color field
+# held a null.  The (v is None, v) key never compares None with anything -- the bool
+# decides first -- so the order of the non-null values is exactly what it was.
+#
+def _sortedCategories_(values: list) -> list:
+    return sorted(values, key=lambda _v_: (_v_ is None, _v_))
+
 class TimepKwargs(TypedDict, total=False):
     """Keyword arguments accepted by ``p2s.timep()`` / ``Timep(...)``.
 
@@ -703,7 +717,7 @@ class Timep(P2SBinComponentMixin, ExportMixin):
                 self.df_agg = (_partial_
                                .rename({'__bin__': self._time_field_})
                                .sort([self._time_field_, self._color_field_]))
-                self._color_categories_ = sorted(self.df_agg[self._color_field_].unique().to_list())
+                self._color_categories_ = _sortedCategories_(self.df_agg[self._color_field_].unique().to_list())
                 self._agg_type_ = 'stacked'
 
             # Simple barchart (row count, numeric sum, or numeric spectrum colour)
@@ -808,7 +822,7 @@ class Timep(P2SBinComponentMixin, ExportMixin):
                         .group_by(['__time_bin__', self._color_field_])
                         .agg(pl.col('__count__').sum())
                         .sort(['__time_bin__', self._color_field_]))
-                self._color_categories_ = sorted(self.df_agg[self._color_field_].unique().to_list())
+                self._color_categories_ = _sortedCategories_(self.df_agg[self._color_field_].unique().to_list())
                 self._agg_type_ = 'stacked'
 
             # Simple barchart (row count, numeric sum, or numeric spectrum colour)

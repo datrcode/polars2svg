@@ -874,6 +874,12 @@ class ChP(P2SComponentColorMixin, ExportMixin):
             )
 
     #
+    # __dropNullEdges__() - rows where both endpoints of `rel` are present.
+    #
+    def __dropNullEdges__(self, rel: tuple) -> pl.DataFrame:
+        return self.df.filter(pl.col(rel[0]).is_not_null() & pl.col(rel[1]).is_not_null())
+
+    #
     # __calculateOrder__()
     # - if the order wasn't specified by the caller, determine that here
     #
@@ -881,17 +887,23 @@ class ChP(P2SComponentColorMixin, ExportMixin):
         # Collect all nodes from the data & compute their edge weights
         _dfs_ = []
         _node_series_ = []
+        # A null endpoint is not a node: the node series below has always dropped nulls,
+        # so the edge weights have to be built from the same rows or the two disagree.
+        # They did -- group_by keeps a null group -- which put None in df_edge_weights and
+        # blew up leafWalkFromEdges' sorted(node_set) with
+        # "'<' not supported between instances of 'str' and 'NoneType'".  A chord needs
+        # two endpoints, so an edge missing one is dropped whole.
         if self.count is None or self.count == self.p2s.ROW_COUNTp:
             for _rel_ in self.relationships:
                 _node_series_ += [self.df[_rel_[0]].drop_nulls(), self.df[_rel_[1]].drop_nulls()]
                 _norm_names_ = {_rel_[0]:'__fm__', _rel_[1]:'__to__', 'len':'__count__'}
-                _df_ = self.df.group_by(_rel_).len().rename(_norm_names_)
+                _df_ = self.__dropNullEdges__(_rel_).group_by(_rel_).len().rename(_norm_names_)
                 _dfs_.append(_df_)
         else:
             for _rel_ in self.relationships:
                 _node_series_ += [self.df[_rel_[0]].drop_nulls(), self.df[_rel_[1]].drop_nulls()]
                 _count_agg_ = self.__countAggExpr__()
-                _df_ = (self.df.group_by(_rel_)
+                _df_ = (self.__dropNullEdges__(_rel_).group_by(_rel_)
                                .agg(_count_agg_)
                                .rename({_rel_[0]: '__fm__', _rel_[1]: '__to__'}))
                 _dfs_.append(_df_)
@@ -2180,6 +2192,30 @@ class ChP(P2SComponentColorMixin, ExportMixin):
     #
     # render_with() - create a new instance with overrides (used by smallp cycle_by mode)
     #
+    # ── Interactivity (panelize / brushing) ─────────────────────────────────
+    #
+    # __maskForNodes__() - rows touching `nodes`.  both=True requires BOTH endpoints of a
+    # relationship to be selected (the filterByRectangle / filterByOval contract);
+    # both=False accepts either one (the recordsAt brush contract).
+    #
+    # Two things here are load-bearing.  `fill_null(False)`: is_in() yields *null* for a
+    # null endpoint and Kleene logic propagates it through & / |, so the row's mask was
+    # null -- dropped by filter(), and dropped again by the complement, because ~null is
+    # null.  A remove_records=True selection therefore deleted every row with a null
+    # endpoint from BOTH halves of the partition.  A row missing an endpoint has no arc in
+    # the diagram, so it can never be selected; saying so explicitly makes the halves total
+    # again.  And `rel[0]/rel[1]` rather than unpacking: a relationship may carry a third
+    # element, which made all three methods raise "too many values to unpack".
+    def __maskForNodes__(self, nodes: list, both: bool) -> pl.Expr:
+        _mask_ = None
+        for _rel_ in self.relationships:
+            _fm_in_ = pl.col(_rel_[0]).cast(pl.String).is_in(nodes)
+            _to_in_ = pl.col(_rel_[1]).cast(pl.String).is_in(nodes)
+            _rel_mask_ = (_fm_in_ & _to_in_) if both else (_fm_in_ | _to_in_)
+            _mask_ = _rel_mask_ if _mask_ is None else (_mask_ | _rel_mask_)
+        if _mask_ is None: return pl.lit(False)
+        return _mask_.fill_null(False)
+
     def recordsAt(self, xy: tuple, shape: Any = None, threshold: float = 2.0) -> pl.DataFrame:
         if shape is None: shape = self.p2s.SELECT_CIRCLEp
         if shape != self.p2s.SELECT_CIRCLEp:
@@ -2197,10 +2233,7 @@ class ChP(P2SComponentColorMixin, ExportMixin):
             ['__nm__'].cast(pl.String).to_list()
         )
         if not _nodes_: return self.df.head(0)
-        _mask_ = pl.lit(False)
-        for _fm_, _to_ in self.relationships:
-            _mask_ = _mask_ | pl.col(_fm_).cast(pl.String).is_in(_nodes_) | pl.col(_to_).cast(pl.String).is_in(_nodes_)
-        return self.df.filter(_mask_)
+        return self.df.filter(self.__maskForNodes__(list(_nodes_), both=False))
 
     def filterByRectangle(self, bounding_box: tuple, remove_records: bool = False) -> pl.DataFrame:
         _x0_, _y0_, _x1_, _y1_ = bounding_box
@@ -2221,14 +2254,7 @@ class ChP(P2SComponentColorMixin, ExportMixin):
         )
         if not _nodes_:
             return self.df.head(0) if not remove_records else self.df
-        _masks_ = []
-        for _fm_, _to_ in self.relationships:
-            _masks_.append(
-                pl.col(_fm_).cast(pl.String).is_in(_nodes_) &
-                pl.col(_to_).cast(pl.String).is_in(_nodes_)
-            )
-        _mask_ = _masks_[0]
-        for _m_ in _masks_[1:]: _mask_ = _mask_ | _m_
+        _mask_ = self.__maskForNodes__(list(_nodes_), both=True)
         if remove_records: _mask_ = ~_mask_
         return self.df.filter(_mask_)
 
@@ -2251,14 +2277,7 @@ class ChP(P2SComponentColorMixin, ExportMixin):
         )
         if not _nodes_:
             return self.df.head(0) if not remove_records else self.df
-        _masks_ = []
-        for _fm_, _to_ in self.relationships:
-            _masks_.append(
-                pl.col(_fm_).cast(pl.String).is_in(_nodes_) &
-                pl.col(_to_).cast(pl.String).is_in(_nodes_)
-            )
-        _mask_ = _masks_[0]
-        for _m_ in _masks_[1:]: _mask_ = _mask_ | _m_
+        _mask_ = self.__maskForNodes__(list(_nodes_), both=True)
         if remove_records: _mask_ = ~_mask_
         return self.df.filter(_mask_)
 

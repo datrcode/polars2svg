@@ -103,6 +103,33 @@ _BACKGROUND_OP_MENU_ = [
     ('x', 'clear background'),
 ]
 
+# ---------------------------------------------------------------------------
+# Bounds on work a keystroke can start
+#
+# Three defaults for operations that are driven from the browser and otherwise
+# grow or run with no ceiling.  Deliberately generous -- past any interactive
+# workflow, short of where the kernel is in trouble -- and each is exposed as an
+# instance attribute so a caller who genuinely needs more can raise it (see
+# InteractionController.__init__ / LINKPI's __init__).
+#
+# _REGEX_MAX_PATTERN_ / _REGEX_MATCH_BUDGET_S_ bound the '/.../' form of the
+# search box.  re.search() cannot be interrupted once it is inside a match, so
+# the deadline is checked where control does come back to us: between subjects.
+# That is enough in practice because catastrophic backtracking is exponential in
+# the length of the SUBJECT, and node names are short -- the reachable
+# pathological case is a bad pattern re-run over many nodes, not one node taking
+# forever.  The length cap is the other half: a pattern needs room to be written.
+#
+# _MAX_STACK_DEPTH_ bounds the dataframe stack.  Each level retains a DataFrame,
+# a rendered view and (in linkpi) a networkx graph, and 'x' / ctrl-shift-x / 'f'
+# / 'F' each push one per keystroke with nothing above ever popping them.  This
+# is PLANNING.md section 10's T4b (prevent) rather than T4c (confirm): a gate a
+# repeat keystroke redeems still leaves the depth unbounded.
+# ---------------------------------------------------------------------------
+_REGEX_MAX_PATTERN_    = 512     # characters in one search-box pattern
+_REGEX_MATCH_BUDGET_S_ = 2.0     # seconds for one whole scan, not for one match
+_MAX_STACK_DEPTH_      = 64      # dataframe stack levels, base level included
+
 
 class _ContractedLayoutView_:
     """Lightweight stand-in for a LinkNode that overrides ``.pos`` with the
@@ -134,6 +161,8 @@ class InteractionController(object):
         self.view_stack = {}   # {id(view): 'stack_name'}
         self.links      = {}   # {(id(source), event_type): [target_views]}
         self.view_refs  = {}   # {id(view): view} — reverse lookup for brush propagation
+        # T4b bound on stack growth; raise it on the instance for a workflow that needs more.
+        self.max_stack_depth = _MAX_STACK_DEPTH_
     # addStack()
     def addStack(self, name, df):
         self.stacks[name] = {'dfs': [df], 'index': 0}
@@ -173,14 +202,25 @@ class InteractionController(object):
             for view in ([caller] + [v for v in _targets_ if v is not caller]):
                 await view.display(s['dfs'][s['index']], s['dfs'], s['index'])
     # pushStack()
+    # Refuses at max_stack_depth (T4b) rather than growing forever: every level holds a
+    # whole DataFrame, levels are pushed one per keystroke, and nothing above ever pops
+    # them.  The oldest level cannot be the one dropped -- dfs[0] IS the unfiltered base
+    # that stackTopDataFrame() hands back and that every widening works against -- so the
+    # bound has to refuse the new level.  Returns True when pushed, False when refused.
     async def pushStack(self, caller, df):
         s = self.stacks[self.view_stack[id(caller)]]
         if s['index'] != len(s['dfs']) - 1: s['dfs'] = s['dfs'][:s['index']+1]
+        if len(s['dfs']) >= self.max_stack_depth:
+            logging.getLogger('polars2svg_logger').warning(
+                'pushStack(): the stack is at its %d-level limit and the push was refused. '
+                'Pop levels first, or raise <controller>.max_stack_depth.', self.max_stack_depth)
+            return False
         s['dfs'].append(df)
         s['index'] += 1
         _targets_ = self.links.get((id(caller), 'stack'), [])
         for view in ([caller] + [v for v in _targets_ if v is not caller]):
             await view.display(s['dfs'][s['index']], s['dfs'], s['index'])
+        return True
     # setStackIndex()
     async def setStackIndex(self, caller, index):
         s = self.stacks[self.view_stack[id(caller)]]
@@ -1611,6 +1651,11 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
 
         self.previous_layouts = []
         self.max_undo_levels  = 20
+        # T4b bounds on browser-driven work; the module constants carry the reasoning.
+        # Instance attributes so a caller can raise them for a workflow that needs it.
+        self.max_stack_depth    = _MAX_STACK_DEPTH_
+        self.regex_max_pattern  = _REGEX_MAX_PATTERN_
+        self.regex_match_budget = _REGEX_MATCH_BUDGET_S_
         # T4c state.  _confirm_armed_ holds the key of the one operation whose next
         # identical request runs without asking again; _last_cost_note_ is what the gate
         # last did, surfaced in info_str the way FlowFieldBackground surfaces budget_note.
@@ -1765,7 +1810,9 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
                     _self_._reconcileStack(dfs, dfs_index)
                 else:
                     while _self_.df_level < dfs_index:
-                        _self_.pushStack(dfs[_self_.df_level + 1])
+                        # enforce_limit=False: the MVC stack already bounded itself, this
+                        # level exists on it, and a refusal here would never terminate.
+                        _self_.pushStack(dfs[_self_.df_level + 1], enforce_limit=False)
                     while _self_.df_level > dfs_index:
                         _self_.popStack()
 
@@ -1849,14 +1896,31 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
     # - invalid patterns (e.g. an unbalanced group typed into a live search box) are
     #   skipped rather than raised, so they just contribute no matches
     #
+    # Bounded, because the pattern comes from the search box rather than from calling
+    # code: an over-long one is refused (regex_max_pattern) and the scan as a whole runs
+    # under a deadline (regex_match_budget).  A catastrophically backtracking pattern --
+    # '(a+)+$' is the one-line example -- otherwise wedges the event loop for the whole
+    # session, which is a hang the person who typed it suffers too.  The deadline sits
+    # BETWEEN subjects, not around a match: re.search() cannot be interrupted once it has
+    # started.  That bounds the reachable case, since backtracking blows up with the
+    # length of the subject and node names are short.  Both stops are partial-result:
+    # returning the matches found so far and saying so beats returning nothing.
+    #
     def _matchNodesByRegex_(_self_, patterns, all_nodes, ignore_case=True):
         if isinstance(patterns, str): _patterns_ = set([patterns])
         else:                         _patterns_ = set(patterns)
         _flags_    = re.IGNORECASE if ignore_case else 0
         _compiled_ = []
+        _rejected_ = 0
         for _pattern_ in _patterns_:
+            if len(_pattern_) > _self_.regex_max_pattern:
+                _rejected_ += 1
+                continue
             try:             _compiled_.append(re.compile(_pattern_, _flags_))
             except re.error: pass # invalid regex -- contributes no matches
+
+        _deadline_  = time.monotonic() + _self_.regex_match_budget
+        _abandoned_ = False
 
         _set_ = set()
         _node_labels_ = _linkp_.node_labels or {}
@@ -1864,11 +1928,28 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
         for _regex_ in _compiled_:
             if _node_labels_:
                 for _label_key_ in _node_labels_.keys():
+                    if time.monotonic() >= _deadline_:
+                        _abandoned_ = True
+                        break
                     _actual_node_ = str_to_node.get(str(_label_key_))
                     if _actual_node_ is not None and _regex_.search(str(_node_labels_[_label_key_])):
                         _set_.add(_actual_node_)
             for _node_ in all_nodes:
+                if time.monotonic() >= _deadline_:
+                    _abandoned_ = True
+                    break
                 if _regex_.search(str(_node_)): _set_.add(_node_)
+            if _abandoned_: break
+
+        if _rejected_ or _abandoned_:
+            _why_ = ('abandoned at the %gs time budget' % _self_.regex_match_budget) if _abandoned_ \
+                    else ('pattern over %d characters' % _self_.regex_max_pattern)
+            _self_._last_cost_note_ = f'regex search: {_why_}, partial match set'
+            logging.getLogger('polars2svg_logger').warning(
+                'linkpi regex search: %s -- returning %d match(es) from an incomplete scan.',
+                _why_, len(_set_))
+        elif (_self_._last_cost_note_ or '').startswith('regex search:'):
+            _self_._last_cost_note_ = None   # our own stale note; anyone else's stands
         return _set_
 
     #
@@ -1981,6 +2062,38 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
             return _set_
         else:
             return set(self.selected_entities)
+
+    #
+    # _copyToClipboard_() - ctrl-C's copy of the selection, guarded
+    #
+    # pyperclip reaches the clipboard of the machine the KERNEL runs on, which is the
+    # user's own machine only when the notebook is local.  On a headless host -- a remote
+    # JupyterHub, a served Panel app -- there is no copy mechanism, and pyperclip.copy()
+    # raises PyperclipException from inside an async watcher, where Panel logs it and
+    # leaves the widget wedged.  Degrade instead: say so on the canvas and log the names,
+    # so the selection is still recoverable from wherever the kernel's log goes.
+    #
+    # Returns True when the clipboard took it, False when it was written to the log.
+    #
+    def _copyToClipboard_(self, entities: Any) -> bool:
+        _lines_ = [str(_e_) for _e_ in entities]   # node names need not be strings
+        _text_  = '\n'.join(_lines_)
+        try:
+            pyperclip.copy(_text_)
+            self.setAnimation(f'<text x="5" y="15" fill="black"> copied {len(_lines_)} '
+                              f'to the clipboard </text>')
+            return True
+        except Exception as _e_:
+            # Bare Exception on purpose: pyperclip raises PyperclipException when it finds
+            # no mechanism, but the backend it did pick can raise anything of its own, and
+            # none of it is worth taking the widget down for.
+            logging.getLogger('polars2svg_logger').warning(
+                'linkpi: clipboard unavailable (%s) -- this kernel has no copy mechanism, '
+                'which is normal on a headless or remote host. The %d selected entities '
+                'were not copied; they follow.\n%s', _e_, len(_lines_), _text_)
+            self.setAnimation('<text x="5" y="15" fill="black"> clipboard unavailable -- '
+                              'selection written to the log </text>')
+            return False
 
     #
     # updateLinkNodeParam() - update a param & refresh the views
@@ -2740,7 +2853,29 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
     #
     # pushStack() - push a dataframe onto the stack
     #
-    def pushStack(self, df, g=None):
+    # Refuses at max_stack_depth (T4b).  Every level retains a DataFrame, a rendered LinkP
+    # and a networkx graph, and 'x' / ctrl-shift-x / 'f' / 'F' each push one per keystroke
+    # with nothing above ever popping them.  The oldest level cannot be the one dropped --
+    # dfs[0] IS the unfiltered base that 'f'/'F' widen against and that popStack calls
+    # TOP -- so the bound refuses the new level rather than rolling the old one off the
+    # way max_undo_levels does.
+    #
+    # enforce_limit=False is for display()'s replay of the shared MVC stack: that stack is
+    # authoritative, the level already exists on it, and refusing there would both
+    # desynchronise this view from its peers and spin the level-walk loop forever (the
+    # loop advances by calling this).  Every user-driven push enforces.
+    #
+    # Returns True when the level was pushed, False when it was refused.
+    #
+    def pushStack(self, df, g=None, enforce_limit=True):
+        # df_level+1 is the depth AFTER the forward-history truncation below, so a push
+        # from the middle of a full stack is bounded by where it lands rather than by
+        # what it is about to discard.
+        if enforce_limit and (self.df_level + 1) >= self.max_stack_depth:
+            self._last_cost_note_ = f'push stack: at the {self.max_stack_depth}-level limit'
+            self.setAnimation(f'<text x="5" y="15" fill="black"> stack is at its '
+                              f'{self.max_stack_depth} level limit -- pop (X) to make room </text>')
+            return False
         if g is None: g = self.rt_self.createNetworkXGraph(df, self.ln_params['relationships'])
 
         _ln_ = self.__renderView__(df)
@@ -2764,6 +2899,7 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
         self.__refreshView__()
 
         self.setAnimation(f'<text x="5" y="15" fill="black"> pushStack [{len(self.dfs)}]</text>')
+        return True
 
     #
     # applyKeyOp() - apply specified key operation
@@ -2942,9 +3078,9 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
                             for x in self.selected_entities:
                                 if 'node_labels' in self.ln_params and x in self.ln_params['node_labels']: _list_.append(self.ln_params['node_labels'][x])
                                 else:                                                                      _list_.append(x)
-                            pyperclip.copy('\n'.join(list(_list_)))
+                            self._copyToClipboard_(_list_)
                         else: # copy the nodes as they are named within the dataframe
-                            pyperclip.copy('\n'.join(list(self.selected_entities)))
+                            self._copyToClipboard_(self.selected_entities)
                 elif self.key_op_finished == 'C': # recenter on the selected entities & neighbors
                     if len(self.selected_entities) > 0:
                         _new_set_ = set(self.selected_entities)
@@ -3125,8 +3261,7 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
             # the graph as nodes the pushed view does not draw, and invert-selection would
             # hand back names with nothing on screen behind them.
             _g_.remove_nodes_from(set(_g_.nodes()) - self._extractNodes_(_df_))
-            self.pushStack(_df_, g=_g_)
-            return True
+            return self.pushStack(_df_, g=_g_)
         return False
 
     def apply_pop(self):
@@ -3141,8 +3276,7 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
         _df_ = self.rt_self.collapseDataFrameEdgesToOneRow(
             _df_orig_, self.ln_params['relationships'], self.selected_entities)
         if _df_ is not None and len(_df_) > 0 and len(_df_) < len(_df_orig_):
-            self.pushStack(_df_)
-            return True
+            return self.pushStack(_df_)
         return False
 
     def _refilter_union_(self, _op_g_):
@@ -3161,8 +3295,7 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
         _cur_kept_  = _cur_.join(_cur_op_, on=_cols_, how='anti', nulls_equal=True)                    # the rest of the current view
         _result_    = pl.concat([_cur_kept_, _from_base_])
         if len(_result_) > len(_cur_):                          # rows were actually recovered
-            self.pushStack(_result_)
-            return True
+            return self.pushStack(_result_)
         return False
 
     def apply_edge_unfilter(self):
@@ -3764,6 +3897,7 @@ z . | select node under mouse by color (shift, ctrl, and ctrl-shift apply)
         'selectEntities':                     selectEntities,
         'selectedEntities':                   selectedEntities,
         'selectedNodes':                      selectedNodes,
+        '_copyToClipboard_':                  _copyToClipboard_,
         'updateLinkNodeParam':                updateLinkNodeParam,
         '_applyLabelStateAcrossStack_':       _applyLabelStateAcrossStack_,
         'labelModeCycle':                     labelModeCycle,

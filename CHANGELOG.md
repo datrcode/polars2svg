@@ -135,6 +135,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`SECURITY.md` now states the deployment the threat model assumes.** The
+  document drew its line between row *data* (untrusted, escaped) and caller
+  *configuration* (trusted, not sanitized), which is the right line for one person
+  in a notebook and says nothing about how many people share the process. A new
+  **Deployment Model** section names that third axis: one trusted person, one
+  process. It records that the interactive views' Panel parameters synchronise in
+  both directions with no notion of a user behind them, so a client that can write
+  them can do whatever the keyboard can; that `Polars2SVG()` is a process-wide
+  singleton, so `set_defaults()` / `setColorOverrides()` reach every render in the
+  process rather than one session's; and that the interactive bounds (regex, stack
+  depth, confirm gate, payload warning) are **cost** bounds, not trust boundaries.
+  Two entries join the trusted-configuration list — the values the widgets
+  synchronise back from the browser, and `tile()`'s `svg_list`, which is embedded
+  verbatim by design — and serving several mutually untrusting users from one
+  process is now an explicit non-goal. No behaviour changes; this is the policy
+  catching up with what the code has always done.
+
 - **The typing migration is finished: strict mypy is the package-wide floor and no
   error code is disabled.** The strict-promotion backlog (PLANNING.md §11) is empty —
   the last **11 modules and 67 errors** are cleared — so `[tool.mypy]` drops the
@@ -453,6 +470,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   block, so the "cloud present" path stays covered.
 
 ### Fixed
+
+- **Ctrl-C in `linkpi` took the widget down on any kernel without a clipboard.**
+  `pyperclip.copy()` reaches the clipboard of the machine the *kernel* runs on,
+  which is the user's own machine only when the notebook is local. On a headless
+  host -- a remote JupyterHub is the ordinary case, not an exotic one -- there is no
+  copy mechanism and it raises `PyperclipException` from inside an async `param`
+  watcher, where Panel logs the traceback and leaves the widget wedged with
+  `key_op_finished` still set. The copy now degrades instead: the canvas says the
+  clipboard is unavailable and the selected names go to `polars2svg_logger` at
+  WARNING, so the thing the user actually asked for is still recoverable. Node
+  names are also stringified on the way out, which the previous `'\n'.join()` would
+  have raised on for the integer-node case the rest of `linkpi` supports.
+
+- **A regex typed into `linkpi`'s search box could hang the session.** The `/.../`
+  form compiles a browser-supplied pattern and runs it against every node;
+  `re.error` was caught, but catastrophic backtracking is not an error -- `(a+)+$`
+  simply never returns, and it takes the asyncio event loop with it, so the widget
+  stops repainting and every other keystroke queues behind it. Two bounds now
+  apply: patterns over `regex_max_pattern` characters (512) are refused, and the
+  scan as a whole runs under `regex_match_budget` seconds (2.0). The deadline is
+  checked **between subjects** rather than around a match, because `re.search()`
+  cannot be interrupted once it has started -- which bounds the reachable case,
+  since backtracking blows up with the length of the subject and node names are
+  short. Both stops return the matches found so far and say so in the info line,
+  rather than returning nothing.
+
+- **The dataframe stacks grew without a bound.** `x` / `ctrl-shift-x` / `f` / `F`
+  each push a level per keystroke, every level retains a whole DataFrame (plus, in
+  `linkpi`, a rendered `LinkP` and a networkx graph), and nothing above ever popped
+  them -- an afternoon of filtering was an unbounded retention of every intermediate
+  frame. Both `InteractionController` and `linkpi` now refuse past
+  `max_stack_depth` (64) and say so. Refusing the *new* level is the only available
+  shape: `max_undo_levels` can roll its oldest entry off, but `dfs[0]` is the
+  unfiltered base that every widening works against and that `popStack` calls TOP.
+  `display()`'s replay of the shared MVC stack is exempt (`enforce_limit=False`) --
+  that stack is authoritative, its levels already exist, and since the replay loop
+  *advances by calling* `pushStack`, a refusal inside it would never terminate.
+  `apply_push_selected()` / `apply_collapse_edges()` / `_refilter_union_()` now
+  return whether the push happened rather than an unconditional `True`.
 
 - **The interactive histogram's "None" bar could be neither selected nor filtered
   out.** A null in the `bin_by` column is a bin like any other -- polars' `group_by`

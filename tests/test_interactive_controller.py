@@ -41,6 +41,29 @@ def _make_pos():
     return {'a': [0.0, 0.0], 'b': [1.0, 0.0], 'c': [0.5, 0.866]}
 
 
+class _UnfilteredLoggerMixin:
+    """Strips the process-global OnceFilter for the duration of each test.
+
+    Polars2SVG installs a per-message OnceFilter on 'polars2svg_logger', so the second
+    and later emissions of one message are dropped -- across tests, since the logger is
+    process-global. Any test that asserts on a warning another test also triggers has to
+    take the filter off first."""
+
+    def setUp(self):
+        super().setUp()
+        self._logger        = logging.getLogger('polars2svg_logger')
+        self._saved_filters = list(self._logger.filters)
+        for _f_ in self._saved_filters:
+            self._logger.removeFilter(_f_)
+
+    def tearDown(self):
+        for _f_ in list(self._logger.filters):
+            self._logger.removeFilter(_f_)
+        for _f_ in self._saved_filters:
+            self._logger.addFilter(_f_)
+        super().tearDown()
+
+
 # ---------------------------------------------------------------------------
 # MockView — minimal stand-in for a Panel reactive widget
 # ---------------------------------------------------------------------------
@@ -2133,7 +2156,7 @@ class TestLINKPITimingSpacingPicker(unittest.TestCase):
 
 
 @unittest.skipUnless(PANEL_AVAILABLE, 'panel not installed')
-class TestLINKPICopyToClipboard(unittest.TestCase):
+class TestLINKPICopyToClipboard(_UnfilteredLoggerMixin, unittest.TestCase):
     """ctrl-C copies the current selection to the clipboard via 'pyperclip',
     a required top-level import in interactive_controller.py (part of the
     `interactive` extra, same as panel/param)."""
@@ -2157,6 +2180,75 @@ class TestLINKPICopyToClipboard(unittest.TestCase):
         ctrl = self._make_ctrl()
         ctrl.selected_entities = set()
         self._press_ctrl_c(ctrl)  # should not raise
+
+    def test_copies_the_selection(self):
+        from unittest.mock import patch
+        from polars2svg import interactive_controller as ic
+        ctrl = self._make_ctrl()
+        ctrl.selected_entities = {'a', 'b'}
+        _copied_ = []
+        with patch.object(ic.pyperclip, 'copy', _copied_.append):
+            self._press_ctrl_c(ctrl)
+        self.assertEqual(len(_copied_), 1)
+        self.assertEqual(set(_copied_[0].split('\n')), {'a', 'b'})
+
+    def test_unavailable_clipboard_does_not_raise(self):
+        # A headless kernel (remote JupyterHub, served Panel app) has no copy
+        # mechanism and pyperclip raises.  Inside an async watcher that leaves the
+        # widget wedged, so the failure is logged and the keystroke survives it.
+        from unittest.mock import patch
+        from polars2svg import interactive_controller as ic
+
+        def _boom(text):
+            raise RuntimeError('Pyperclip could not find a copy/paste mechanism')
+
+        ctrl = self._make_ctrl()
+        ctrl.selected_entities = {'a', 'b'}
+        with patch.object(ic.pyperclip, 'copy', _boom):
+            with self.assertLogs('polars2svg_logger', level='WARNING') as _log_:
+                self._press_ctrl_c(ctrl)          # must not raise
+        self.assertIn('clipboard unavailable', '\n'.join(_log_.output))
+
+    def test_unavailable_clipboard_logs_the_names(self):
+        # The selection is the thing the user asked for; if it cannot reach the
+        # clipboard it has to remain recoverable somewhere.
+        from unittest.mock import patch
+        from polars2svg import interactive_controller as ic
+
+        def _boom(text):
+            raise RuntimeError('no mechanism')
+
+        ctrl = self._make_ctrl()
+        ctrl.selected_entities = {'a', 'b'}
+        with patch.object(ic.pyperclip, 'copy', _boom):
+            with self.assertLogs('polars2svg_logger', level='WARNING') as _log_:
+                self._press_ctrl_c(ctrl)
+        _text_ = '\n'.join(_log_.output)
+        self.assertIn('a', _text_)
+        self.assertIn('b', _text_)
+
+    def test_returns_false_when_clipboard_unavailable(self):
+        from unittest.mock import patch
+        from polars2svg import interactive_controller as ic
+
+        def _boom(text):
+            raise RuntimeError('no mechanism')
+
+        ctrl = self._make_ctrl()
+        with patch.object(ic.pyperclip, 'copy', _boom):
+            with self.assertLogs('polars2svg_logger', level='WARNING'):
+                self.assertFalse(ctrl._copyToClipboard_(['a']))
+
+    def test_non_string_node_names_are_stringified(self):
+        # Node names need not be strings (integer node ids are a supported case),
+        # and ''.join() over them would raise before pyperclip ever saw them.
+        from unittest.mock import patch
+        from polars2svg import interactive_controller as ic
+        ctrl = self._make_ctrl()
+        _copied_ = []
+        with patch.object(ic.pyperclip, 'copy', _copied_.append):
+            self.assertTrue(ctrl._copyToClipboard_([1, 2]))
+        self.assertEqual(_copied_[0], '1\n2')
 
 
 @unittest.skipUnless(PANEL_AVAILABLE, 'panel not installed')
@@ -2232,7 +2324,7 @@ class TestLINKPITimingMarksCycle(unittest.TestCase):
         self.assertNotIn('stroke-width="1.5"', ctrl.mod_inner)
 
 
-class TestPanelizePayloadGuard(unittest.TestCase):
+class TestPanelizePayloadGuard(_UnfilteredLoggerMixin, unittest.TestCase):
     '''panelize() warns (with the measured MB) when the composed SVG document would
     exceed the Bokeh WebSocket message limit -- the size condition behind the browser's
     "SyntaxError: Unexpected end of JSON input". The guard operates on the embedded
@@ -2245,21 +2337,6 @@ class TestPanelizePayloadGuard(unittest.TestCase):
 
     def _view(self, nbytes):
         return self._FakeView('x' * nbytes)
-
-    def setUp(self):
-        # Polars2SVG installs a per-message OnceFilter on the process-global logger,
-        # which would dedup identical warnings across tests; strip it so assertLogs /
-        # assertNoLogs see each emission, and restore it afterwards.
-        self._logger = logging.getLogger('polars2svg_logger')
-        self._saved_filters = list(self._logger.filters)
-        for _f_ in self._saved_filters:
-            self._logger.removeFilter(_f_)
-
-    def tearDown(self):
-        for _f_ in list(self._logger.filters):
-            self._logger.removeFilter(_f_)
-        for _f_ in self._saved_filters:
-            self._logger.addFilter(_f_)
 
     def test_estimate_sums_template_bytes(self):
         from polars2svg import interactive_controller as ic
@@ -2294,6 +2371,245 @@ class TestPanelizePayloadGuard(unittest.TestCase):
         with self.assertLogs('polars2svg_logger', level='WARNING'):
             ic._warnOversizePanelPayload_([self._view(5 * 1024 * 1024)],    # 5 MB
                                           websocket_max_message_size=4 * 1024 * 1024)
+
+
+@unittest.skipUnless(PANEL_AVAILABLE, 'panel not installed')
+class TestLINKPIRegexSearchBounds(_UnfilteredLoggerMixin, unittest.TestCase):
+    """The '/.../' search form compiles a pattern typed in the browser and runs it
+    over every node.  It is bounded by a pattern-length cap and a whole-scan deadline
+    so that a catastrophically backtracking pattern cannot wedge the event loop."""
+
+    def _make_ctrl(self):
+        from polars2svg.interactive_controller import linkpi
+        p2s   = Polars2SVG()
+        linkp = p2s.linkp(_make_link_df(), relationships=[('fm', 'to')], pos=_make_pos())
+        return linkpi(linkp)
+
+    def _nodes(self, ctrl):
+        return set(ctrl.graphs[ctrl.df_level].nodes())
+
+    def test_defaults_are_the_module_constants(self):
+        from polars2svg import interactive_controller as ic
+        ctrl = self._make_ctrl()
+        self.assertEqual(ctrl.regex_max_pattern,  ic._REGEX_MAX_PATTERN_)
+        self.assertEqual(ctrl.regex_match_budget, ic._REGEX_MATCH_BUDGET_S_)
+
+    def test_ordinary_pattern_still_matches(self):
+        ctrl = self._make_ctrl()
+        self.assertEqual(ctrl._matchNodesByRegex_('^a$', self._nodes(ctrl)), {'a'})
+
+    def test_ordinary_pattern_leaves_no_cost_note(self):
+        ctrl = self._make_ctrl()
+        ctrl._matchNodesByRegex_('^a$', self._nodes(ctrl))
+        self.assertIsNone(ctrl._last_cost_note_)
+
+    def test_over_long_pattern_is_refused(self):
+        ctrl = self._make_ctrl()
+        ctrl.regex_max_pattern = 8
+        with self.assertLogs('polars2svg_logger', level='WARNING'):
+            _set_ = ctrl._matchNodesByRegex_('a' * 64, self._nodes(ctrl))
+        self.assertEqual(_set_, set())
+        self.assertIn('regex search:', ctrl._last_cost_note_)
+
+    def test_pattern_at_the_cap_is_still_compiled(self):
+        ctrl = self._make_ctrl()
+        ctrl.regex_max_pattern = 2
+        self.assertEqual(ctrl._matchNodesByRegex_('^a', self._nodes(ctrl)), {'a'})
+
+    def test_expired_budget_abandons_the_scan(self):
+        # A zero budget expires before the first subject, which is the same code path a
+        # runaway pattern reaches after the first few -- the deadline is checked between
+        # subjects, because re.search() cannot be interrupted once it is inside a match.
+        ctrl = self._make_ctrl()
+        ctrl.regex_match_budget = 0.0
+        with self.assertLogs('polars2svg_logger', level='WARNING'):
+            _set_ = ctrl._matchNodesByRegex_('.', self._nodes(ctrl))
+        self.assertEqual(_set_, set())
+        self.assertIn('time budget', ctrl._last_cost_note_)
+
+    def test_stale_note_is_cleared_by_a_clean_scan(self):
+        ctrl = self._make_ctrl()
+        ctrl.regex_match_budget = 0.0
+        with self.assertLogs('polars2svg_logger', level='WARNING'):
+            ctrl._matchNodesByRegex_('.', self._nodes(ctrl))
+        ctrl.regex_match_budget = 2.0
+        ctrl._matchNodesByRegex_('^a$', self._nodes(ctrl))
+        self.assertIsNone(ctrl._last_cost_note_)
+
+    def test_another_operations_note_is_left_alone(self):
+        ctrl = self._make_ctrl()
+        ctrl._last_cost_note_ = 'spring nx: 40 of 200 iterations'
+        ctrl._matchNodesByRegex_('^a$', self._nodes(ctrl))
+        self.assertEqual(ctrl._last_cost_note_, 'spring nx: 40 of 200 iterations')
+
+    def test_invalid_pattern_still_contributes_nothing(self):
+        ctrl = self._make_ctrl()
+        self.assertEqual(ctrl._matchNodesByRegex_('(unbalanced', self._nodes(ctrl)), set())
+
+    def test_search_op_reaches_the_bound(self):
+        # End to end from the param the browser writes.
+        ctrl = self._make_ctrl()
+        ctrl.regex_match_budget = 0.0
+        ctrl.search_str = '/./'
+        with self.assertLogs('polars2svg_logger', level='WARNING'):
+            asyncio.run(ctrl.applySearchOp(None))
+        self.assertEqual(ctrl.selected_entities, set())
+
+
+class TestControllerStackDepthLimit(_UnfilteredLoggerMixin, unittest.TestCase):
+    """InteractionController.pushStack() refuses at max_stack_depth instead of
+    growing forever -- every level retains a whole DataFrame and levels are pushed
+    one per keystroke."""
+
+    def setUp(self):
+        super().setUp()
+        self.df  = pl.DataFrame({'a': [1, 2, 3], 'b': [4, 5, 6]})
+        self.mvc = InteractionController()
+        self.mvc.addStack('default', self.df)
+        self.view = MockView()
+        self.mvc.link(self.view, [], on='stack', stack='default')
+
+    def _push(self, n):
+        return pl.DataFrame({'a': [n], 'b': [n]})
+
+    def test_default_limit_is_the_module_constant(self):
+        from polars2svg import interactive_controller as ic
+        self.assertEqual(self.mvc.max_stack_depth, ic._MAX_STACK_DEPTH_)
+
+    def test_push_under_the_limit_returns_true(self):
+        self.assertTrue(asyncio.run(self.mvc.pushStack(self.view, self._push(1))))
+
+    def test_stack_stops_growing_at_the_limit(self):
+        self.mvc.max_stack_depth = 3
+        for i in range(10):
+            asyncio.run(self.mvc.pushStack(self.view, self._push(i)))
+        self.assertEqual(len(self.mvc.stacks['default']['dfs']), 3)
+
+    def test_refused_push_returns_false(self):
+        self.mvc.max_stack_depth = 2
+        asyncio.run(self.mvc.pushStack(self.view, self._push(1)))
+        with self.assertLogs('polars2svg_logger', level='WARNING'):
+            self.assertFalse(asyncio.run(self.mvc.pushStack(self.view, self._push(2))))
+
+    def test_refused_push_leaves_the_index_alone(self):
+        self.mvc.max_stack_depth = 2
+        asyncio.run(self.mvc.pushStack(self.view, self._push(1)))
+        with self.assertLogs('polars2svg_logger', level='WARNING'):
+            asyncio.run(self.mvc.pushStack(self.view, self._push(2)))
+        self.assertEqual(self.mvc.stacks['default']['index'], 1)
+
+    def test_refused_push_does_not_notify_views(self):
+        self.mvc.max_stack_depth = 2
+        asyncio.run(self.mvc.pushStack(self.view, self._push(1)))
+        _before_ = len(self.view.display_calls)
+        with self.assertLogs('polars2svg_logger', level='WARNING'):
+            asyncio.run(self.mvc.pushStack(self.view, self._push(2)))
+        self.assertEqual(len(self.view.display_calls), _before_)
+
+    def test_popping_makes_room_again(self):
+        self.mvc.max_stack_depth = 2
+        asyncio.run(self.mvc.pushStack(self.view, self._push(1)))
+        with self.assertLogs('polars2svg_logger', level='WARNING'):
+            asyncio.run(self.mvc.pushStack(self.view, self._push(2)))
+        asyncio.run(self.mvc.popStack(self.view))
+        self.assertTrue(asyncio.run(self.mvc.pushStack(self.view, self._push(3))))
+
+    def test_base_level_survives(self):
+        # The bound refuses the new level rather than rolling the oldest one off:
+        # dfs[0] is the unfiltered base every widening works against.
+        self.mvc.max_stack_depth = 2
+        asyncio.run(self.mvc.pushStack(self.view, self._push(1)))
+        with self.assertLogs('polars2svg_logger', level='WARNING'):
+            asyncio.run(self.mvc.pushStack(self.view, self._push(2)))
+        self.assertIs(self.mvc.stackTopDataFrame(self.view), self.df)
+
+
+@unittest.skipUnless(PANEL_AVAILABLE, 'panel not installed')
+class TestLINKPIStackDepthLimit(_UnfilteredLoggerMixin, unittest.TestCase):
+    """linkpi's own stack (dfs / dfs_layout / graphs) is bounded the same way, with
+    one exemption: display()'s replay of the authoritative MVC stack."""
+
+    def _make_ctrl(self):
+        from polars2svg.interactive_controller import linkpi
+        p2s   = Polars2SVG()
+        linkp = p2s.linkp(_make_link_df(), relationships=[('fm', 'to')], pos=_make_pos())
+        return linkpi(linkp)
+
+    def _level(self, ctrl, keep):
+        return ctrl.dfs[0].filter(pl.col('fm').is_in(keep))
+
+    def test_default_limit_is_the_module_constant(self):
+        from polars2svg import interactive_controller as ic
+        self.assertEqual(self._make_ctrl().max_stack_depth, ic._MAX_STACK_DEPTH_)
+
+    def test_push_under_the_limit_returns_true(self):
+        ctrl = self._make_ctrl()
+        self.assertTrue(ctrl.pushStack(self._level(ctrl, ['a', 'b'])))
+
+    def test_push_at_the_limit_returns_false(self):
+        ctrl = self._make_ctrl()
+        ctrl.max_stack_depth = 2
+        ctrl.pushStack(self._level(ctrl, ['a', 'b']))
+        self.assertFalse(ctrl.pushStack(self._level(ctrl, ['a'])))
+
+    def test_stack_stops_growing_at_the_limit(self):
+        ctrl = self._make_ctrl()
+        ctrl.max_stack_depth = 2
+        for _keep_ in (['a', 'b'], ['a'], ['b'], ['c']):
+            ctrl.pushStack(self._level(ctrl, _keep_))
+        self.assertEqual(len(ctrl.dfs), 2)
+        self.assertEqual(ctrl.df_level, 1)
+
+    def test_refusal_leaves_a_cost_note(self):
+        ctrl = self._make_ctrl()
+        ctrl.max_stack_depth = 1
+        ctrl.pushStack(self._level(ctrl, ['a', 'b']))
+        self.assertIn('level limit', ctrl._last_cost_note_)
+
+    def test_apply_push_selected_reports_the_refusal(self):
+        # The 'x' key's helper promises in its docstring that it pushed; at the limit
+        # it has to say so rather than return an unconditional True.
+        ctrl = self._make_ctrl()
+        ctrl.max_stack_depth = 1
+        ctrl.selected_entities = {'a'}
+        self.assertFalse(ctrl.apply_push_selected())
+
+    def test_popping_makes_room_again(self):
+        ctrl = self._make_ctrl()
+        ctrl.max_stack_depth = 2
+        ctrl.pushStack(self._level(ctrl, ['a', 'b']))
+        self.assertFalse(ctrl.pushStack(self._level(ctrl, ['a'])))
+        ctrl.popStack()
+        self.assertTrue(ctrl.pushStack(self._level(ctrl, ['b'])))
+
+    def test_replay_path_is_exempt(self):
+        ctrl = self._make_ctrl()
+        ctrl.max_stack_depth = 1
+        self.assertTrue(ctrl.pushStack(self._level(ctrl, ['a', 'b']), enforce_limit=False))
+
+    def test_display_walk_terminates_past_the_limit(self):
+        # The regression this exemption exists for: display() advances by CALLING
+        # pushStack, so a refusal inside that loop never terminates.  Run it off the
+        # main thread so a regression fails the test instead of hanging the suite.
+        import threading
+        ctrl = self._make_ctrl()
+        ctrl.max_stack_depth = 1
+        _dfs_ = [ctrl.dfs[0],
+                 self._level(ctrl, ['a', 'b']),
+                 self._level(ctrl, ['a']),
+                 self._level(ctrl, ['b'])]
+        _done_ = []
+
+        def _run():
+            asyncio.run(ctrl.display(_dfs_[3], _dfs_, 3))
+            _done_.append(True)
+
+        _t_ = threading.Thread(target=_run, daemon=True)
+        _t_.start()
+        _t_.join(timeout=60)
+        self.assertTrue(_done_, "display()'s level walk did not terminate against the "
+                                "stack depth limit")
+        self.assertEqual(ctrl.df_level, 3)
 
 
 if __name__ == '__main__':

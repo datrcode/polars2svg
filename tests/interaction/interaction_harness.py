@@ -684,8 +684,27 @@ class InteractivePage:
         return _d_.strip().startswith('M -100 -100')
 
     def expect_selected(self, n: int) -> None:
-        """Wait for the component to report *and draw* a selection of n entities."""
+        """Wait for the component to report *and draw* a selection of n entities.
+
+        Both halves are *waited* for, and the second one has to be.  ``__refreshView__``
+        writes ``info_str`` before ``selectionpath``, so the count can reach the browser
+        and be applied before the marks do -- asserting on the drawing the instant the
+        text matches is a race, and it fires perhaps one full-suite run in several.
+
+        It was not always.  While ``info_str`` was a ReactiveHTML child (PLANNING.md
+        U5), writing it rebuilt the whole subtree, and the rebuild re-ran ``render``,
+        which reset ``#selectionlayer`` from ``data.selectionpath`` -- so the two could
+        not be seen disagreeing.  Fixing U5 made ``info_str`` update in place and left
+        this ordering visible.  Anything else in this class that reads one param's
+        rendering after waiting on another's is the same hazard.
+        """
         expect(self.el('infostr')).to_contain_text(f'{n} Selected', timeout=self.timeout_ms)
+        _deadline_ = time.monotonic() + self.timeout_ms / 1000.0
+        while time.monotonic() < _deadline_:
+            _drawn_ = 0 if self.has_no_selection() else self.selection_mark_count()
+            if _drawn_ == n:
+                return
+            time.sleep(0.05)
         if n == 0:
             assert self.has_no_selection(), (
                 f'#infostr reports 0 selected but #selectionlayer still draws '

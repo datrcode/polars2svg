@@ -148,3 +148,81 @@ jobs:
         # kaggle-backed t-field tests need network/credentials. Both excluded,
         # matching must-do #9.
         run: python -m pytest tests/ -q --ignore=tests/test_performance.py -k 'not tfield'
+
+  # The browser-driven interaction suite (tests/interaction/, PLANNING.md 2.1).
+  #
+  # Everything it covers is JavaScript that no Python test can reach: the keydown
+  # handlers, the picker-menu state machine, the preventDefault guards, the brush,
+  # and the WGSL shaders. It found ten defects during development, seven of which
+  # were invisible to the rest of the suite. Until now it had never run anywhere
+  # except by hand.
+  browser-interaction:
+    name: Browser interaction suite (Playwright)
+    runs-on: ubuntu-latest
+
+    # Deliberately NOT the python:3.13-slim container the clean-room job uses.
+    # Chromium needs a system library stack that image does not carry, and that
+    # job exists to prove the built *wheel* installs — driving a browser inside it
+    # would blur what a failure there means.
+    #
+    # Skipped on tag builds. release.yml gates a publish by calling this whole
+    # workflow (`uses: ./.github/workflows/ci.yml`) from a `v*` tag push, and a
+    # published version is burned forever — so until this suite has a track record
+    # on a GitHub runner, a flaky browser test must not be able to block, or worse
+    # wave through, a release. `github.ref_type` rather than `github.event_name`:
+    # a called workflow inherits the *caller's* event, so event_name is never
+    # "workflow_call" and gating on it silently does nothing.
+    #
+    # Promote it into the release gate by deleting this line, once it has been
+    # green here for long enough to trust.
+    if: github.ref_type != 'tag'
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install the package and the suite's dependencies
+        # Resolved through the project rather than re-listed, for the reason the
+        # clean-room job spells out: a hand-kept list drifts from
+        # [project.optional-dependencies] and the drift shows up as collection
+        # errors, not as a missing package.
+        #
+        # `export` is deliberately absent. It is the svglib/reportlab/rlPyCairo
+        # rasterization chain, which nothing here uses — and on Linux pycairo
+        # compiles from sdist, so pulling it in would mean a C toolchain and
+        # cairo's headers for no coverage. Pillow, which the WebGPU pixel
+        # assertions do need, is a *core* dependency and arrives regardless; if
+        # that ever changes, test_webgpu_render.py's `importorskip('PIL')` would
+        # skip all 16 of its tests silently rather than failing.
+        #
+        # pytest-playwright is named explicitly because it is deliberately not in
+        # [dependency-groups] dev — the browser tooling stays opt-in for local
+        # work, so `uv sync` installs nothing new.
+        run: |
+          pip install --no-cache-dir ".[interactive,layouts]"
+          pip install --no-cache-dir pytest pytest-playwright
+
+      - name: Install chromium
+        # --with-deps pulls the shared libraries chromium needs on a bare runner.
+        # This installs both the full `chromium` build and `chromium-headless-shell`;
+        # the WebGPU tests need the former (`channel='chromium'`), because
+        # headless-shell exposes navigator.gpu but returns a null adapter, which
+        # would make every GPU test skip for a reason that looks like hardware.
+        run: python -m playwright install --with-deps chromium
+
+      - name: Run the interaction suite
+        # --interaction is the opt-in gate; without it every test here skips, which
+        # is why `pytest tests/` in the clean-room job above stays unaffected.
+        #
+        # No Xvfb, on purpose, and it costs exactly three tests. The clipboard
+        # round-trips need a display and a selection owner and will skip. Adding
+        # Xvfb to recover them would *lose* the 14 WebGPU tests instead: the
+        # webgpu_browser fixture reads DISPLAY as "there is a real GPU here" and
+        # switches to `--use-vulkan=native`, which finds no adapter on a runner.
+        # Without DISPLAY it takes the headless SwiftShader path, which works. The
+        # real fix is for that fixture to try native and fall back rather than
+        # branching on DISPLAY; until it does, this trade buys 14 tests for 3.
+        run: python -m pytest tests/interaction --interaction -q

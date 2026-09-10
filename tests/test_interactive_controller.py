@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 import unittest
 from datetime import datetime, timedelta
 
@@ -399,6 +400,126 @@ class TestSketchLeafResolution(unittest.TestCase):
     def test_webgpu_flag_harmless_for_non_gpu_leaf(self):
         # A snapshot-only widget ignores the flag and still returns its snapshot.
         self.assertEqual(_sketch_leaf_html(self.SnapshotLeaf(), True), '<svg id="snapshot"/>')
+
+
+#: Chords Chrome reserves at the **browser-chrome** level on Windows/Linux.  These are
+#: not page shortcuts: the keystroke is consumed by the browser and the page is never
+#: shown it, so `event.preventDefault()` cannot reclaim them the way it reclaims ctrl-s
+#: or ctrl-l.  The three marked *measured* were confirmed by real XTEST keystrokes into a
+#: headed Chromium on Linux (`tools/ctrl_chord_audit.py`, 2026-09-10); the rest are the
+#: rest of the same documented family and are listed so nobody has to rediscover them.
+_RESERVED_BROWSER_CHORDS_ = {
+    'ctrl-t':       'opens a new tab (measured)',
+    'ctrl-n':       'opens a new window (measured)',
+    'ctrl-shift-w': 'CLOSES THE WINDOW (measured -- this was U10)',
+    'ctrl-w':       'closes the tab',
+    'ctrl-shift-t': 'reopens the last closed tab',
+    'ctrl-shift-n': 'opens an incognito window',
+    'ctrl-shift-q': 'quits the browser',
+}
+
+
+def _ctrl_chords_required_by(script):
+    """Every chord a clause in `script` *requires ctrl for*, e.g. {'ctrl-shift-w'}.
+
+    Splits on `||` and `else if`, which is exactly how the handlers are written -- one
+    binding per clause -- then keeps only clauses that test `event.ctrlKey` positively.
+    That distinction is the whole point: plain `t` is a legitimate binding that ctrl-t
+    also reaches, harmlessly, because off macOS the browser eats the chord before the
+    page sees it.  What must never exist is a binding that *needs* ctrl to fire and
+    names a reserved chord, because that binding can never run at all.
+
+    An uppercase key literal implies shift -- `event.key === 'W'` is shift-w.
+    """
+    _src_ = re.sub(r'//[^\n]*', '', script)             # comments mention chords too
+    _found_ = set()
+    for _clause_ in re.split(r'\|\||else\s+if', _src_):
+        if not re.search(r'(?<!!)\bevent\.ctrlKey\b', _clause_):
+            continue
+        for _key_ in re.findall(r"""event\.key\s*===?\s*['"](.)['"]""", _clause_):
+            _shift_ = _key_.isupper() or re.search(r'(?<!!)\bevent\.shiftKey\b', _clause_)
+            _found_.add(f'ctrl-{"shift-" if _shift_ else ""}{_key_.lower()}')
+    return _found_
+
+
+@unittest.skipUnless(PANEL_AVAILABLE, 'panel not installed')
+class TestNoReservedBrowserChords(unittest.TestCase):
+    """No binding may require a chord the browser reserves (PLANNING.md U2, U10).
+
+    This is a *source-level* guard, and it exists because the behaviour it protects
+    cannot be tested any other way.  The browser suite drives keys over CDP
+    (`Input.dispatchKeyEvent`), which injects below browser chrome -- a synthesized
+    ctrl-shift-w reaches the page handler and the window stays open, so a Playwright
+    test would pass against the very defect U10 was.  The XTEST audit that *can* see it
+    needs Linux, X11 and a headed browser, so it cannot run in CI either.  Reading the
+    shipped JS is what is left, and it runs everywhere in milliseconds.
+
+    Two real defects of this shape have already shipped: ctrl-t for vertical collapse
+    (U2) and ctrl-shift-W for reverse-cycling the operation picker (U10), the latter
+    closing the browser window outright.  Both were invisible on macOS, which is where
+    this is developed.
+    """
+
+    def _components(self):
+        _p2s_ = Polars2SVG()
+        _ldf_ = _make_link_df()
+        _df_  = _make_df()
+        return {
+            'LINKPI':  _p2s_.linkpi(_p2s_.linkp(_ldf_, relationships=[('fm', 'to')], pos=_make_pos())),
+            'XYPI':    _p2s_.xypi(_p2s_.xyp(_df_, 'x', 'y')),
+            'HISTOPI': _p2s_.histopi(_p2s_.histop(_df_, 'cat')),
+            'TIMEPI':  _p2s_.timepi(_p2s_.timep(_df_, 'ts')),
+        }
+
+    def test_no_binding_requires_a_reserved_chord(self):
+        _offences_ = []
+        for _name_, _component_ in self._components().items():
+            for _script_name_, _script_ in type(_component_)._scripts.items():
+                _text_ = '\n'.join(_script_ if isinstance(_script_, list) else [_script_])
+                for _chord_ in sorted(_ctrl_chords_required_by(_text_)):
+                    if _chord_ in _RESERVED_BROWSER_CHORDS_:
+                        _offences_.append(
+                            f'{_name_}._scripts[{_script_name_!r}] requires {_chord_}, which '
+                            f'{_RESERVED_BROWSER_CHORDS_[_chord_]} -- the binding can never run '
+                            f'off macOS.  Give the operation a modifier-free key instead; see '
+                            f'PLANNING.md U2 and U10.')
+        self.assertEqual(_offences_, [], '\n'.join([''] + _offences_))
+
+    def test_the_scan_actually_finds_ctrl_chords(self):
+        """Guard the guard: a scanner that silently matches nothing would pass forever.
+
+        LINKPI really does bind ctrl chords -- ctrl-l, ctrl-o, ctrl-a, ctrl-p all open
+        and reverse-cycle their pickers, and the audit measured every one of them as
+        page-interceptable -- so finding none would mean the parser broke, not that the
+        bindings went away.
+        """
+        _linkpi_ = self._components()['LINKPI']
+        _found_ = set()
+        for _script_ in type(_linkpi_)._scripts.values():
+            _text_ = '\n'.join(_script_ if isinstance(_script_, list) else [_script_])
+            _found_ |= _ctrl_chords_required_by(_text_)
+        self.assertIn('ctrl-l', _found_)
+        self.assertIn('ctrl-p', _found_)
+
+    def test_the_scan_would_catch_a_reintroduced_chord(self):
+        """The U10 binding, verbatim, must be reported -- otherwise this file is theatre."""
+        _u10_ = ("else if (event.key === 'ArrowUp' || event.key === 'k' ||\n"
+                 "         (event.key === 'W' && state.menu_kind === 'operation' && event.ctrlKey)) {")
+        self.assertIn('ctrl-shift-w', _ctrl_chords_required_by(_u10_))
+
+    def test_a_plain_key_that_ctrl_also_reaches_is_not_reported(self):
+        """`t` is bound and ctrl-t reaches it; that is fine and must not be flagged.
+
+        The defect is a binding that *requires* ctrl, not one a reserved chord happens
+        to land on -- flagging the latter would make the guard unusable.
+        """
+        self.assertEqual(_ctrl_chords_required_by(
+            'else if (event.key == "t") { data.key_op_finished = \'t\'; }'), set())
+
+    def test_a_negated_ctrl_test_is_not_a_requirement(self):
+        """`!event.ctrlKey` keeps the deleted chords inert; it is not a ctrl binding."""
+        self.assertEqual(_ctrl_chords_required_by(
+            "(event.key === 'W' && state.menu_kind === 'operation' && !event.ctrlKey)"), set())
 
 
 # ===========================================================================
@@ -1124,7 +1245,9 @@ class TestLINKPIConfirmGate(unittest.TestCase):
         # D6: the gate has no honest seconds estimate to quote, so it must not invent one.
         ctrl = self._lower_threshold(self._ctrl(), 'spring nx')
         ctrl.apply_layout_operation(ctrl.SPRING_NX)
-        _msg_ = ctrl.animation_inner + ' ' + (ctrl._last_cost_note_ or '')
+        # The overlay that used to carry this was removed with U4; the note is now the
+        # refusal's only channel, which is why it has to say the size itself.
+        _msg_ = ctrl._last_cost_note_ or ''
         self.assertIn('nodes', _msg_)
         for _duration_word_ in ('second', 'minute', 'hour', 'estimated', '~'):
             self.assertNotIn(_duration_word_, _msg_)
@@ -1133,7 +1256,7 @@ class TestLINKPIConfirmGate(unittest.TestCase):
         ctrl = self._lower_threshold(self._ctrl(), 'spring nx')
         ctrl.apply_layout_operation(ctrl.SPRING_NX)
         ctrl.__refreshView__(comp=False, all_ents=False, sel_ents=False)
-        self.assertIn('awaiting confirm', ctrl.info_str)
+        self.assertIn('repeat to run', ctrl.info_str)
 
     def test_spring_nx_spends_full_iterations_on_a_small_graph(self):
         import networkx as nx, unittest.mock as mock
@@ -1222,21 +1345,23 @@ class TestLINKPIOffLoopExecution(unittest.TestCase):
         # the assertion is only that the loop was not starved.
         self.assertGreater(len(ticks), 10, 'the event loop was blocked by the operation')
 
-    def test_setAnimation_from_a_worker_thread_is_deferred_then_flushed(self):
-        # D3: params are written only on the loop.  The confirm gate calls setAnimation
-        # from inside a helper that now runs off-loop, so the queue is what keeps that
-        # from being a cross-thread param write.
+    def test_a_cost_note_from_a_worker_thread_is_deferred_then_flushed(self):
+        # D3: params are written only on the loop.  The confirm gate raises its note from
+        # inside a helper that runs off-loop -- two of its three call paths do -- so the
+        # deferral is what keeps that from being a cross-thread param write.  This is the
+        # same property the removed setAnimation queue had; only the payload changed.
         ctrl = self._ctrl()
         _seen_ = {}
 
         def _work_():
-            ctrl.setAnimation('<text>from the worker</text>')
-            _seen_['during'] = ctrl.animation_inner
+            ctrl._last_cost_note_ = 'from the worker'
+            ctrl._surfaceCostNote_()
+            _seen_['during'] = ctrl.info_str
             return True
 
         asyncio.run(ctrl._run_offloop_(_work_))
         self.assertNotIn('from the worker', _seen_['during'], 'should not write mid-flight')
-        self.assertIn('from the worker', ctrl.animation_inner, 'should flush afterwards')
+        self.assertIn('from the worker', ctrl.info_str, 'should flush afterwards')
 
     def test_offloop_depth_returns_to_zero_even_when_the_work_raises(self):
         ctrl = self._ctrl()
@@ -1247,19 +1372,13 @@ class TestLINKPIOffLoopExecution(unittest.TestCase):
         with self.assertRaises(ValueError):
             asyncio.run(ctrl._run_offloop_(_boom_))
         self.assertEqual(ctrl._offloop_depth_, 0,
-                         'a leaked depth would silently swallow every later setAnimation')
+                         'a leaked depth would silently swallow every later cost note')
 
-    def test_a_note_is_painted_before_the_work_starts(self):
-        ctrl = self._ctrl()
-        _seen_ = {}
-
-        def _work_():
-            _seen_['during'] = ctrl.animation_inner
-            return True
-
-        asyncio.run(ctrl._run_offloop_(_work_, note='working...'))
-        self.assertIn('working...', _seen_['during'],
-                      'the indicator must be up before the thing it describes runs')
+    # There is no longer a test that a progress indicator is up before slow work starts.
+    # _run_offloop_(note=...) painted one into the operation overlay, and that overlay
+    # never rendered (U4) -- so the indicator was invisible for as long as it existed.
+    # Both were removed together.  If progress feedback is wanted back, the info line is
+    # the channel that demonstrably works; see _surfaceCostNote_.
 
     def test_escape_while_nothing_is_running_does_not_arm_a_cancel(self):
         # Otherwise an idle Escape would silently cancel whatever the user asked for next.
@@ -1342,7 +1461,6 @@ class TestLINKPIRejectWhileBusy(unittest.TestCase):
         _baseline_ = len(_calls_)
         self._while_locked(ctrl, lambda: ctrl.applyKeyOp(None))
         self.assertEqual(len(_calls_), _baseline_, 'the busy guard let the operation run')
-        self.assertIn('busy', ctrl.animation_inner)
 
     def test_every_dropped_callback_clears_its_own_trigger(self):
         # The trigger params fire on CHANGE.  A dropped event that left its trigger set
@@ -1380,7 +1498,11 @@ class TestLINKPIRejectWhileBusy(unittest.TestCase):
                 await ctrl.display(_df2_, [_df2_], 0)
             await asyncio.gather(_hold_(), _peer_())
         asyncio.run(_drive_())
-        self.assertNotIn('busy', ctrl.animation_inner)
+        # Asserted on the outcome rather than on a "busy" notice: that notice went into
+        # the operation overlay, which never rendered (U4) and has been removed.  What
+        # matters is that the peer's frame actually landed.
+        self.assertIs(ctrl.dfs[ctrl.df_level], _df2_,
+                      'the mvc display was dropped by the busy guard')
 
 
 @unittest.skipUnless(PANEL_AVAILABLE, 'panel not installed')

@@ -29,3 +29,18 @@ def _reset_global_color_overrides():
     _SHARED_COLOR_OVERRIDES.clear()
     yield
     _SHARED_COLOR_OVERRIDES.clear()
+
+
+def pytest_addoption(parser):
+    """--interaction: run the browser-driven suite under tests/interaction/.
+
+    Declared here rather than in tests/interaction/conftest.py because pytest only
+    honours pytest_addoption from *initial* conftests -- those on the path from the
+    rootdir down to the arguments.  Defined one level down, `pytest tests/
+    --interaction` dies with "unrecognized arguments" and only `pytest
+    tests/interaction --interaction` works, which is a trap rather than a gate.
+    The option is consumed by tests/interaction/conftest.py, which owns the skip
+    logic and the fixtures.
+    """
+    parser.addoption('--interaction', action='store_true', default=False,
+                     help='run the browser-driven interaction tests (require chromium)')

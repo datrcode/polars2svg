@@ -163,6 +163,12 @@ Repository = "https://github.com/datrcode/polars2svg"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# The browser-driven suite under tests/interaction/ is opt-in: it boots a Panel
+# server and drives Chromium, so it is skipped unless `--interaction` is passed
+# (or P2S_INTERACTION=1 is set).  The gate lives in tests/interaction/conftest.py,
+# which also applies this marker; declaring it here keeps `-m interaction` usable
+# and silences PytestUnknownMarkWarning.
+markers = ["interaction: browser-driven Playwright tests (require chromium)"]
 
 # polars2svg ships a py.typed marker so downstream type checkers read the type
 # hints the package carries.  Every module in the package is annotated and

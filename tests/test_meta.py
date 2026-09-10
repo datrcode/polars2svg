@@ -6,6 +6,12 @@ import unittest
 
 class TestNoBareFunctions(unittest.TestCase):
     def test_no_bare_test_functions(self):
+        # The glob is deliberately NOT recursive.  tests/interaction/ is a browser
+        # suite whose tests take pytest fixtures (`page`, and the harness fixtures
+        # built on it), and a unittest.TestCase method cannot receive one -- so those
+        # files are plain pytest functions by necessity, not by drift.  Making this
+        # recursive would flag every one of them; exclude that directory explicitly if
+        # you ever do.
         test_dir = os.path.dirname(os.path.abspath(__file__))
         test_files = sorted(glob.glob(os.path.join(test_dir, 'test_*.py')))
         violations = []

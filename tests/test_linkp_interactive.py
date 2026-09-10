@@ -929,6 +929,86 @@ class TestCommunityDetection(unittest.TestCase):
 
 
 @unittest.skipUnless(_PANEL_AVAILABLE_, 'panel not installed')
+class TestCollapseKeyDispatch(unittest.TestCase):
+    """The 't' / 'T' / 'v' collapse matrix, at the applyKeyOp dispatch (PLANNING.md U2).
+
+    'v' is the modifier-free vertical collapse. Its old chord, ctrl-t, is reserved as
+    new-tab off macOS, and preventDefault() cannot reclaim a browser-chrome shortcut, so
+    on Windows/Linux the chord never reaches the page at all. ctrl-t still works where
+    the browser allows it, which is asserted here too.
+
+    Worth knowing before trying to cover this in the browser suite instead: it cannot be.
+    Playwright dispatches keys over CDP, which bypasses browser chrome entirely -- a
+    synthesized Cmd-T reaches the page handler and opens no tab -- so no Playwright run,
+    on any platform, can observe the reservation that makes 'v' necessary.
+    """
+
+    def setUp(self):
+        self.p2s = Polars2SVG()
+        self.df  = pl.DataFrame({'fm': ['a', 'b', 'c'], 'to': ['b', 'c', 'a']})
+        self.pos = {'a': (0.0, 0.0), 'b': (1.0, 0.0), 'c': (0.5, 1.0)}
+        self.lp  = self.p2s.linkp(self.df, relationships=[('fm', 'to')], pos=dict(self.pos))
+        self.ctrl = self.p2s.linkpi(self.lp)
+        self.ctrl.selected_entities = {'a', 'b', 'c'}
+        self.ctrl.x_mouse, self.ctrl.y_mouse = 128, 96
+
+    def _press(self, key, shift=False, ctrl=False):
+        self.ctrl.shiftkey        = shift
+        self.ctrl.ctrlkey         = ctrl
+        self.ctrl.key_op_finished = key
+        asyncio.run(self.ctrl.applyKeyOp(None))
+
+    def _positions(self):
+        _ln_ = self.ctrl.dfs_layout[self.ctrl.df_level]
+        return {_e_: _ln_.pos[_e_] for _e_ in ('a', 'b', 'c')}
+
+    def test_v_collapses_vertically_without_any_modifier(self):
+        """One x for everyone, and the y's left alone -- which is what tells a vertical
+        collapse apart from the other two cells rather than merely from doing nothing."""
+        _before_ = self._positions()
+        self._press('v')
+        _after_ = self._positions()
+
+        self.assertEqual(len({round(_xy_[0], 6) for _xy_ in _after_.values()}), 1,
+                         'v should put every selected node on one x')
+        self.assertEqual({_e_: round(_xy_[1], 6) for _e_, _xy_ in _after_.items()},
+                         {_e_: round(_xy_[1], 6) for _e_, _xy_ in _before_.items()},
+                         'v must leave y untouched -- otherwise it is a point collapse')
+
+    def test_v_matches_ctrl_t_exactly(self):
+        """The point of the rebinding: same operation, reachable without the chord."""
+        self._press('v')
+        _via_v_ = self._positions()
+
+        self.lp.pos.update(self.pos)                    # back to the starting layout
+        self.ctrl.dfs_layout[self.ctrl.df_level].pos.update(self.pos)
+        self._press('t', ctrl=True)
+        self.assertEqual({_e_: (round(_x_, 6), round(_y_, 6)) for _e_, (_x_, _y_) in self._positions().items()},
+                         {_e_: (round(_x_, 6), round(_y_, 6)) for _e_, (_x_, _y_) in _via_v_.items()})
+
+    def test_v_ignores_shift_rather_than_collapsing_horizontally(self):
+        """shift-v cannot arrive from a browser -- it arrives as 'V', which is unbound --
+        so if the param ever says otherwise the axis must still be the one 'v' names."""
+        self._press('v', shift=True)
+        self.assertEqual(len({round(_xy_[0], 6) for _xy_ in self._positions().values()}), 1)
+        self.assertGreater(len({round(_xy_[1], 6) for _xy_ in self._positions().values()}), 1)
+
+    def test_plain_t_still_collapses_to_a_point(self):
+        self._press('t')
+        _after_ = self._positions()
+        self.assertEqual(len({(round(_x_, 6), round(_y_, 6)) for _x_, _y_ in _after_.values()}), 1)
+
+    def test_shift_t_still_collapses_horizontally(self):
+        _before_ = self._positions()
+        self._press('T', shift=True)
+        _after_ = self._positions()
+        self.assertEqual(len({round(_xy_[1], 6) for _xy_ in _after_.values()}), 1,
+                         'shift-t should put every selected node on one y')
+        self.assertEqual({_e_: round(_xy_[0], 6) for _e_, _xy_ in _after_.items()},
+                         {_e_: round(_xy_[0], 6) for _e_, _xy_ in _before_.items()},
+                         'shift-t must leave x untouched')
+
+
 class TestStickyLabelsAcrossStack(unittest.TestCase):
     """Tests for the 's' family — sticky labels (label_only) and label-mode
     (draw_node_labels) must be applied to EVERY stack layer, including dfs_layout[0]

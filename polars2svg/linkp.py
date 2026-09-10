@@ -2168,7 +2168,14 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
             _df_labels_ = self.df_node.filter(pl.col('__nodes__') == 1)
 
             if self.label_only and len(self.label_only) > 0:
-                _df_labels_ = _df_labels_.filter(pl.col('__first__').is_in(self.label_only))
+                # __first__ holds the STRINGIFIED node name, while label_only comes from
+                # the controller's selection, which keeps the original ids -- ints on an
+                # integer-id graph.  Comparing the two raises InvalidOperationError
+                # ("'is_in' cannot check for List(Int64) values in String data") and kills
+                # the render, so stringify to match, as __renderNodes__ already does for
+                # node_labels two lines below and as nodesWithColor()/entity lookups do.
+                _df_labels_ = _df_labels_.filter(
+                    pl.col('__first__').is_in([str(_e_) for _e_ in self.label_only]))
 
             if self.node_labels is not None and len(self.node_labels) > 0:
                 _label_map_ = {str(k): str(v) for k, v in self.node_labels.items()}

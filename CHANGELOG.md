@@ -9,6 +9,173 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`tests/interaction/` -- the interactive JavaScript now executes under test.**
+  Roughly 3,800 lines of JS live as Python strings inside the `type()` class
+  factories in `interactive_controller.py`, and until now nothing ran any of it:
+  the three tests that "covered" it were substring matches against the source
+  string, which pass just as happily if the JS has a syntax error, if the branch
+  is unreachable behind an earlier `else if`, or if the handler was never wired to
+  the element. The Python keyboard tests set the *output* of the JS keydown handler
+  (`key_op_finished`) and called the consumer, so focus handling, the
+  `preventDefault` guards, modifier capture and the websocket round-trip were all
+  bypassed. The 29 JS-only `state.*` variables -- the menu state machine, the
+  drag-select rectangle, the `/` search buffer, the brush cursor -- cross into
+  Python at no point and were verified by reading them.
+
+  A Playwright harness (`interaction_harness.py`) now serves a real `panelize()`d
+  component and drives Chromium against it. Assertions are at the DOM layer by
+  design: the bug class this exists to catch is *handler fires, does nothing,
+  reports success*, which a test reading controller state can only catch if it
+  already knows the answer, and which a test counting rendered selection marks
+  catches as a plain mismatch. The validation case presses `z` over a node of an
+  integer-id graph and asserts the same-coloured nodes **draw** as selected; two of
+  the nine `preventDefault` guards execute for the first time, asserting both halves
+  (the browser default suppressed *and* the handler still fired).
+
+  **Opt-in, so nothing about a normal run changes.** `pytest tests/` skips the 11
+  tests and is no slower; `--interaction` (or `P2S_INTERACTION=1`) runs them in
+  ~3.1s. Playwright is deliberately not in the `dev` dependency group -- it is the
+  first Node dependency in the repo -- so it installs only when asked:
+
+  ```sh
+  uv pip install --python "$PWD/.venv/bin/python" pytest-playwright
+  ./.venv/bin/python -m playwright install chromium
+  ./.venv/bin/python -m pytest tests/interaction --interaction -q
+  ```
+
+  Five runtime behaviours had to be discovered by running a browser, each of which
+  fails *silently* -- an empty selector or a timeout, never an error. Bokeh refuses
+  the websocket from `127.0.0.1` (it allows only the `localhost` origin it
+  advertises, and the component then never renders). The component sits three open
+  shadow roots deep, which Playwright locators pierce but `document.querySelector`
+  does not. Panel suffixes every template id per model, so `#svgparent` matches
+  nothing and the real id is `svgparent-p1015`. `myOnKeyDown` opens with
+  `event.stopPropagation()`, so a `preventDefault` probe on an ancestor records
+  nothing and looks like a focus failure. And Panel rebuilds the whole subtree on
+  every re-render, detaching any handle held across an operation *and dropping
+  keyboard focus* -- which fails intermittently rather than consistently, since an
+  update landing just before the swap is still visible on the stale node.
+
+  A sixth belongs to the suite rather than the browser: Playwright's *sync* API runs
+  its asyncio loop in the calling thread and pytest-playwright's fixture is
+  session-scoped, so once a browser test has run, every later `asyncio.run()` in the
+  session raises *"cannot be called from a running event loop"*. `tests/interaction`
+  sorts before `tests/test_*.py`, so the default order was the broken one -- the
+  first `pytest tests/ --interaction` was 167 failed / 3177 passed. The browser
+  tests are now moved to the end of the run, and that same command is 3336 passed /
+  35 skipped.
+
+  A seventh is the one that would have made the suite untrustworthy rather than
+  merely broken: `myOnMouseOver` gives the SVG keyboard focus, but that handler runs
+  *after* Playwright's `mouse.move()` returns, so a keystroke issued in the gap lands
+  on whatever had focus before and the component never sees it. It is invisible on an
+  idle machine and fatal on a busy one -- 18 consecutive clean runs, then 3 failures
+  in 4 once the machine was under load. Hovering now waits for focus; 8 of 8 clean
+  under a deliberate 10-way CPU load afterwards.
+
+  All seven are written down in the harness module docstring, in
+  `tests/interaction/conftest.py` and in PLANNING.md 2.1, because each is a trap for
+  the next test as much as it was for the first.
+
+  **The suite is now 110 tests** covering the nine `preventDefault` guards, the
+  picker-menu state machine, `/` search mode, the radius brush, and the primary
+  effects of the key bindings (PLANNING.md 2.1 phase 2; mouse gestures and the
+  generic `_interactivep` components remain). It found four defects in the
+  interaction layer, **three of which no Python test could ever have caught** --
+  written up as U3, U4 and U5 in PLANNING.md, and each pinned by a test asserting the
+  current wrong behaviour so that a fix turns it red:
+
+  - **A released modifier races the handler** (U3). `myOnKeyUp` clears
+    `data.ctrlkey` unconditionally, so a tapped ctrl-c can reach Python with the
+    modifier already gone and run the unmodified branch -- **zooming the view instead
+    of copying to the clipboard**, silently. Every binding that reads
+    `self.ctrlkey` / `self.shiftkey` is exposed.
+  - **No `setAnimation()` message is ever visible** (U4). The template's
+    `<animate dur="2s">` has no `begin`, so it runs on the SVG document timeline and
+    is *already finished* when Panel re-inserts it; it fires `endEvent` after 84ms and
+    the handler wipes the message before a frame is drawn. "3 communities", "copied 3
+    to the clipboard", the confirm-gate prompts -- none of them have ever been seen.
+    It compounds with D4: a keystroke arriving mid-operation is deliberately dropped,
+    and the "busy -- ignored" notice explaining that is one of the messages that never
+    renders.
+  - **A one-off re-render 2.05s after load destroys all JS-only UI state** (U5), the
+    downstream half of U4. Open a picker menu in the first two seconds, take a moment
+    to read it, and it vanishes without applying anything.
+
+  Three harness lessons are encoded rather than left to each test: a keystroke must
+  wait for the controller to be idle or D4 drops it; "idle" means the lock stays free
+  *and* the render stops changing, because a stack operation gives the lock back and
+  then takes it again; and `bounding_box()` returns None mid-rebuild, so hovering has
+  to wait for a real layout box.
+
+  **The suite is now 170 tests**, covering LINKPI and the generic
+  `xyp`/`timep`/`histop` components in SVG mode: LINKPI's nine `preventDefault`
+  guards, the eight-menu picker state machine, `/` search, the radius brush, the key
+  bindings, the mouse gestures (rubber band, moves, layout gestures, wheel and
+  middle-drag), the generic components' shared handler and per-kind brush sequences,
+  and the cross-component brush fan-out.
+
+  **The suite reached its last surfaces at 201 tests**: `SMALLPI`, `SLPI`/`spreadlinepi`
+  and the stack control (which contributes three more `preventDefault` sites), the
+  context-menu guard, and -- for the first time in the project -- the **GPU render
+  path**, where no shader had ever executed under test (PLANNING.md V2). Components are
+  served through `panelize(..., use_webgpu=True)` and asserted to compile and draw,
+  with one test checking that ink lands where the SVG renderer independently puts it.
+  Two environment facts made that possible and are written down where the next person
+  will need them: Playwright's default `chromium-headless-shell` has no WebGPU adapter
+  (the full `chromium` channel does), and `navigator.gpu` is absent outside a secure
+  context, so probing on `about:blank` reports "no WebGPU" on a browser that has it.
+
+  **208 tests, and the open items are closed bar two.** `f`/`F` are covered — they
+  needed fixtures built around what makes them do anything at all (`f` refills an edge
+  whose rows were thinned while the edge stayed visible; `F` pulls back a node removed
+  while a neighbour remained), since on an ordinary frame both correctly do nothing.
+  All three of V2's specific visual claims were taken up: the link-label `<textPath>`
+  approximation holds (each label's ink is oriented within a few degrees of its edge's
+  chord, across three deliberately distinct angles), `spreadlinesp`'s nodes are painted
+  where the SVG renderer computes them, and the viewBox mapping the GPU applies is
+  pinned by contradiction against the wrong one.
+
+  Two things surfaced along the way that are worth knowing rather than fixing.
+  **svglib does not implement `<textPath>`**, so the SVG twin of a labelled link plot
+  rasterises with no labels at all — link labels have never been covered by an image
+  test in either renderer, the PNG-RMS goldens included. And **dash-phase continuity
+  remains unasserted**: the discriminating test is whether the polyline's vertices are
+  inked (a per-segment reset inks all of them), but neither counting dashes nor
+  rasterising the SVG as a reference gives a trustworthy oracle — svglib and Chromium
+  disagree about dash rendering far more than the two phase behaviours differ from each
+  other. What ships is the weaker claim that the dashed path draws, and draws broken;
+  PLANNING.md V2 records what a real assertion needs.
+
+  Only that, and the Linux ctrl-key audit, remain; the latter needs a non-macOS host by
+  definition.
+
+  Of the defects the suite found, **U1, U8 and the `label_only` crash are fixed**.
+  U3, U6 and U7 are open decisions rather than oversights. **U4/U5 were attempted and
+  are not the simple fix they appear to be**: the feedback message is demonstrably
+  painted into the DOM and then cleared 3-4ms later, and that clear survives removing
+  the `endEvent` handler, giving the `<animate>` an explicit `begin`, *and* removing the
+  template binding entirely -- with no JS writing the param, the empty value still
+  arrives from the client. It is Panel's own reconciliation of script-written DOM, not
+  anything in this template; PLANNING.md U4 records the measurements so the next attempt
+  does not repeat them.
+
+  Three more defects surfaced, none of them reachable from Python:
+
+  - **The `g` / `y` layout gestures are hold-to-arm, but the on-screen help says
+    press-then-drag** (U6). Following the help runs a *rubber-band selection* where a
+    layout was asked for -- the nodes do not move and the selection quietly changes.
+  - **Brush results are applied in completion order, not issue order** (U7). Two moves
+    in quick succession put two broadcasts in flight; measured directly, a single move
+    produced `brushUpdate(2 records)` followed by a `brushClear` belonging to an
+    *earlier* pointer position, wiping it. Linked views are left showing the wrong
+    records.
+  - **The drag band's shift colours are dead code** (U8) -- `myUpdateDragRect` tests
+    `data.shftkey`, and the param is `shiftkey`. A shift-drag (subtract) draws the
+    black no-modifier band and shift-ctrl (intersect) draws the green ctrl band, so
+    the only cue about which set-operation is about to run says the wrong one. The
+    operations themselves are correct, which is why nothing else noticed.
+
 - **`tests/test_readme.py` -- README.md is now executable documentation.** It was
   the project's highest-traffic artifact and the only one with no test behind it,
   which is how it came to carry five defects at once (see *Fixed*). Every fenced
@@ -133,7 +300,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Polars2SVG()` plus a component call, so there is correct indexable text competing
   with the invented version.
 
+### Removed
+
+- **The operation-feedback overlay is gone.** `setAnimation()` announced sixteen things
+  -- stack pushes, community counts, clipboard results, a progress note before slow work
+  -- through an SVG overlay that **never displayed**, and had not for as long as the code
+  existed. Measured: the message was painted into the DOM and cleared 3-4ms later, and
+  the clear survived every attempt to prevent it (removing the `endEvent` handler, giving
+  the `<animate>` an explicit `begin`, removing the template binding). With no JS writing
+  the param and no binding, the empty value still arrived from the client -- it was
+  Panel's own reconciliation of script-written DOM. Removing the feature cost nothing
+  that worked.
+
+  Gone: the `animation_inner` param, `setAnimation` / `setAnimationAsync`, the
+  `_pending_animation_` queue, the `<animate>` / `#opanimation` block, and the `note=`
+  progress indicator on `_run_offloop_`.
+
+  **One message was load-bearing and was kept.** The confirm gate's refusal is a prompt,
+  not a notice -- an operation over its size threshold declines and asks to be repeated
+  to confirm -- and all three callers return without refreshing, so a refusal used to
+  produce *nothing at all* on screen and the gesture was undiscoverable. It now goes to
+  the info line, which demonstrably renders, keeping the worker-thread deferral the old
+  queue had (two of the gate's three paths run off-loop, and params are written only on
+  the event loop).
+
+  Now silent, all of which were already invisible: the "busy -- ignored" notice when a
+  keystroke is dropped mid-operation, the progress note before a slow layout, and the
+  stack / community / arrow status lines.
+
+  Note this did **not** stop the component re-rendering itself once a couple of seconds
+  after load -- that still happens with the overlay entirely gone, so the param write
+  seen just before it was a correlate rather than its cause.
+
 ### Changed
+
+- **The keyboard help now describes the layout gestures correctly.** `g` and `y` are
+  hold-to-arm -- `myOnKeyUp` clears the arming on release -- but the help read "layout
+  upon next mouse drag", which describes press-then-drag. Following it ran a rubber-band
+  selection where a layout was asked for. The behaviour is intended (holding a
+  left-hand key while the right hand drags is the same idiom as shift/ctrl); the text
+  now reads "hold and drag to lay out" and "hold and drag for a line layout".
 
 - **`SECURITY.md` now states the deployment the threat model assumes.** The
   document drew its line between row *data* (untrusted, escaped) and caller
@@ -470,6 +676,76 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   block, so the "cloud present" path stays covered.
 
 ### Fixed
+
+- **A tapped ctrl-binding ran the unmodified branch.** `myOnKeyUp` writes
+  `data.ctrlkey = event.ctrlKey` unconditionally, so releasing Control set it back to
+  false -- and `applyKeyOp` runs asynchronously behind a lock, so it frequently read
+  the post-keyup value. A tapped ctrl-c zoomed the view instead of copying: the wrong
+  operation, silently. A human usually still holds the key when the server catches up,
+  which is why it went unnoticed, but a keystroke queued behind a slow layout would
+  not. `myOnKeyUp` now holds the modifiers while an operation is in flight,
+  clearing them only once `key_op_finished` is empty -- Python empties it when the
+  operation is done, so the next keyup resumes normally. Applies to LINKPI and the
+  generic `xyp`/`timep`/`histop`/`chordp`/`piep` wrapper alike. (A first attempt used a
+  separate keydown snapshot param; it worked in the browser and broke 10 Python tests,
+  because the synchronous helpers are a documented non-browser entry point and set
+  `ctrlkey` directly. One source of truth, fixed at the point it was being cleared, is
+  both smaller and more honest.)
+
+- **The brush cleared itself the moment the pointer reached a node.** `myOnMouseOut`
+  was bound to three *sibling* hit layers that cover one another, so moving from the
+  plot background onto a node fired mouseout on the layer being left -- which the
+  handler read as "the mouse left the component". Brushing a node destroyed the brush;
+  the same path also committed an open picker menu. It now returns early when
+  `event.relatedTarget` is still inside the component (a null one, meaning the pointer
+  left the window, is still a real leave).
+
+  Alongside it, brush results are no longer applied in completion order. `_doBrushAt`
+  runs outside the controller lock, so two moves in quick succession had two broadcasts
+  in flight and the slower one won -- measured, a single move produced
+  `brushUpdate(2 records)` followed by a `brushClear` belonging to an earlier position.
+  Each op now takes a ticket and only the newest may broadcast, in all three components
+  that brush, with the leave handlers bumping the ticket so a straggler cannot re-brush
+  a component the pointer has left.
+
+- **The drag band named the wrong set-operation.** `myUpdateDragRect` tested
+  `data.shftkey`; the param is `shiftkey`, so the misspelling read undefined and both
+  shift branches were dead code. A shift-drag (subtract) drew the black no-modifier
+  band instead of red, and shift-ctrl (intersect) drew the green ctrl band instead of
+  blue -- so the only cue about which of the four set-operations a release would
+  perform actively pointed at the wrong one. The operations themselves were always
+  correct, because `myOnMouseUp` reads `event.shiftKey` off the event; nothing but a
+  browser could have caught it. `tests/interaction/test_mouse_gestures.py` now asserts
+  all four band colours, and the two shift cases fail against the unfixed tree.
+
+- **LINKPI let the browser context menu interrupt a ctrl-drag selection.** On macOS
+  ctrl+click *is* the secondary click, so holding ctrl to add to a rectangular
+  selection raised the browser popup mid-drag and lost the drag. The header TODO
+  recorded a previous fix that "did not hold"; the browser suite showed why it looked
+  that way -- the fix had gone in on the generic `_interactivep` components and been
+  missed on LINKPI, the component with by far the most dragging in it. LINKPI now
+  installs the same `contextmenu` listener. `tests/interaction/test_context_menu.py`
+  asserts the guard on all four component families, and its LINKPI case fails against
+  the unfixed tree.
+
+- **`labelOnly()` crashed the render on a graph with integer node ids.**
+  `__renderNodes__` filtered `pl.col('__first__').is_in(self.label_only)`, but
+  `__first__` holds the *stringified* node name while a selection carries the
+  original ids -- so on an integer-id graph polars raised
+  `InvalidOperationError: 'is_in' cannot check for List(Int64) values in String data`
+  and `renderSVG()` died. In the interactive controller that took the whole widget
+  down: the exception escaped through `applyKeyOp` into the Panel callback, so
+  pressing ctrl-s (sticky labels) simply stopped the component updating, with nothing
+  in the browser to say why.
+
+  Same root as the `nodeColor()` / `nodesWithColor()` `str()` fallbacks a few hundred
+  lines away, and the fix matches their shape. It was the one uncast `is_in` in
+  `linkp.py` -- the two others there, and the equivalents in `chordp.py` and
+  `spreadlinesp.py`, already cast.
+
+  Found by the new browser suite and reduced to a two-line repro with no browser in
+  it; the regression test lives in `tests/test_linkp_labels.py`, where it belongs.
+
 
 - **Ctrl-C in `linkpi` took the widget down on any kernel without a clipboard.**
   `pyperclip.copy()` reaches the clipboard of the machine the *kernel* runs on,

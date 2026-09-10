@@ -193,5 +193,53 @@ class TestMultilineLabelSVG(unittest.TestCase):
         self.assertNotIn('Carol', lp.svg)
 
 
+class TestLabelOnlyWithIntegerNodeIds(unittest.TestCase):
+    """label_only must accept the node ids the caller actually holds.
+
+    ``__first__`` stores the *stringified* node name, while a selection carries the
+    original ids -- ints on an integer-id graph.  Filtering one against the other used
+    to raise ``InvalidOperationError: 'is_in' cannot check for List(Int64) values in
+    String data``, which killed renderSVG() outright.  In the interactive controller
+    that surfaced as ctrl-s (sticky labels) taking the whole widget down: the
+    exception escaped through applyKeyOp into the Panel callback, so the component
+    simply stopped updating with no message in the browser.
+
+    Found by the browser suite (tests/interaction); it reduces to no browser at all.
+    Same root as the nodeColor()/nodesWithColor() str() fallbacks a few hundred lines
+    away, which is why the fix matches their shape.
+    """
+
+    def _int_id_linkp(self):
+        p2s = Polars2SVG()
+        df  = pl.DataFrame({'fm': [1, 2, 3], 'to': [2, 3, 1]})
+        lp  = p2s.linkp(df, relationships=[('fm', 'to')], draw_node_labels=True, wxh=(300, 200))
+        lp._repr_svg_()
+        return lp
+
+    def test_integer_ids_do_not_raise(self):
+        lp = self._int_id_linkp()
+        lp.labelOnly({1, 2})
+        lp.renderSVG()          # used to raise InvalidOperationError
+
+    def test_integer_ids_label_only_the_named_nodes(self):
+        lp = self._int_id_linkp()
+        lp.labelOnly({1, 2})
+        svg = lp.renderSVG()
+        self.assertIn('>1<', svg)
+        self.assertIn('>2<', svg)
+        self.assertNotIn('>3<', svg)
+
+    def test_string_ids_are_unaffected(self):
+        p2s = Polars2SVG()
+        df  = pl.DataFrame({'fm': ['a', 'b', 'c'], 'to': ['b', 'c', 'a']})
+        lp  = p2s.linkp(df, relationships=[('fm', 'to')], draw_node_labels=True, wxh=(300, 200))
+        lp._repr_svg_()
+        lp.labelOnly({'a', 'b'})
+        svg = lp.renderSVG()
+        self.assertIn('>a<', svg)
+        self.assertIn('>b<', svg)
+        self.assertNotIn('>c<', svg)
+
+
 if __name__ == '__main__':
     unittest.main()

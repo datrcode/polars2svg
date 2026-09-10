@@ -411,7 +411,7 @@ def _interactivep(_plot_, kind, **kwargs):
     def __renderView__(self, df):
         return getattr(self.template.p2s, render_fn)(df=df, template=self.template)
     # Core brush logic: call recordsAt and broadcast to peers
-    async def _doBrushAt(self, xy, state_idx):
+    async def _doBrushAt(self, xy, state_idx, seq=None):
         state_def = BRUSH_STATES[state_idx]
         shape     = getattr(self._plot_.p2s, state_def[0])
         threshold = state_def[1]
@@ -422,6 +422,8 @@ def _interactivep(_plot_, kind, **kwargs):
                 filtered = self._plot_.recordsAt(xy, shape=getattr(self._plot_.p2s, fallback_shape), threshold=threshold)
             except Exception:
                 return
+        if seq is not None and seq != self._brush_seq_:
+            return                      # superseded while recordsAt() was running (U7)
         if len(filtered) == 0:
             await self.mvc.brushClear(self)
         else:
@@ -471,13 +473,20 @@ def _interactivep(_plot_, kind, **kwargs):
             if _df_ is not None and len(_df_) > 0: await self.mvc.pushStack(self, _df_)
     # Callbacks - applyBrushOp() — fires on mouse move (when brush active) or on brush state change
     async def applyBrushOp(self, event):
+        # Brush ops compute outside the lock, so several can be in flight at once and
+        # their results land in completion order rather than issue order -- a stale
+        # "nothing here" from an earlier pointer position routinely arrived after a
+        # fresh update and wiped it, leaving linked views showing the wrong records
+        # (PLANNING.md U7).  Each op takes a ticket; only the newest may broadcast.
         async with self.lock:
             _state_ = self.brush_state
             _xy_    = (self.x_mouse, self.y_mouse)
+            self._brush_seq_ = _seq_ = getattr(self, '_brush_seq_', 0) + 1
         if _state_ == 0:
+            if _seq_ != self._brush_seq_: return
             await self.mvc.brushClear(self)
         else:
-            await self._doBrushAt(_xy_, _state_)
+            await self._doBrushAt(_xy_, _state_, _seq_)
     # Callbacks - applyBrushLeave() — fires when mouse leaves the component while brush is active
     async def applyBrushLeave(self, event):
         async with self.lock:
@@ -486,6 +495,10 @@ def _interactivep(_plot_, kind, **kwargs):
                 self.brush_leave_done = False
                 return
             self.brush_leave_done = False
+            # Supersede anything still in flight: leaving is the newest intent, and a
+            # brush result landing after it would re-brush a component the pointer has
+            # already left.
+            self._brush_seq_ = getattr(self, '_brush_seq_', 0) + 1
         await self.mvc.brushClear(self)
     # Callbacks - applySearchOp() — fires when user commits a '/' search string
     async def applySearchOp(self, event):
@@ -605,7 +618,7 @@ R . | cycle brush shape{_z_key_cmd_}{_search_cmd_}{_time_key_cmd_}
 
     _search_text_elem_ = (
         f'<text id="searchtext" x="{_w_//2}" y="{_h_-2}" text-anchor="middle" '
-        f'fill="#0000cc" font-size="11px" font-family="monospace"></text>'
+        f'fill="#0000cc" font-size="11px" font-family="monospace" pointer-events="none"></text>'
     ) if has_search else ''
 
     # Template: in GPU mode the plot renders on a canvas underneath the (transparent)
@@ -613,8 +626,8 @@ R . | cycle brush shape{_z_key_cmd_}{_search_cmd_}{_time_key_cmd_}
     _svg_root_ = f"""
 <svg id="{svg_parent}" width="{_w_}" height="{_h_}" tabindex="0" onkeydown="${{script('myOnKeyDown')}}" onkeyup="${{script('myOnKeyUp')}}"{' style="position:absolute;left:0;top:0;"' if use_webgpu else ''}>
     <svg id="mod" width="{_w_}" height="{_h_}"> ${{mod_inner}} </svg>
-    <g   id="brushindicator"></g>
-    <g   id="brushmodelabel"></g>
+    <g   id="brushindicator" pointer-events="none"></g>
+    <g   id="brushmodelabel" pointer-events="none"></g>
     <g   id="keyboardhelp" transform="translate(${{keyboardhelp_x}} 0)">{_keyboard_help_svg_}</g>
     <rect id="drag"   x="-10" y="-10" width="5"     height="5" stroke="#000000" stroke-width="2" fill="none" />
     <ellipse id="dragoval" cx="-10" cy="-10" rx="0" ry="0" stroke="#000000" stroke-width="2" fill="none" display="none" />
@@ -622,7 +635,7 @@ R . | cycle brush shape{_z_key_cmd_}{_search_cmd_}{_time_key_cmd_}
           onmouseover="${{script('myOnMouseOver')}}"  onmouseout="${{script('myOnMouseOut')}}"
           onmousedown="${{script('downSelect')}}"     onmousemove="${{script('myOnMouseMove')}}"
           onmouseup="${{script('myOnMouseUp')}}" />
-    <text id="infostr" x="5" y="{_h_-3}" fill="#000000" font-size="10px"> ${{info_str}} </text>
+    <text id="infostr" x="5" y="{_h_-3}" fill="#000000" font-size="10px" pointer-events="none"></text>
     {_search_text_elem_}
     <g id="pickermenu" pointer-events="none"></g>
 </svg>
@@ -665,6 +678,9 @@ R . | cycle brush shape{_z_key_cmd_}{_search_cmd_}{_time_key_cmd_}
         # Panel Params
         #
         'mod_inner':         param.String(default=_svg_),
+        # Not bound as ${info_str} in _template, on purpose -- a content binding makes
+        # it a ReactiveHTML child and every write then rebuilds the subtree, killing
+        # the JS-only interaction state.  See the long note on LINKPI's info_str.
         'info_str':          param.String(default=''),
         'keyboardhelp_x':    param.Integer(default=-1000),
         'x0_middle':         param.Integer(default=0),
@@ -844,8 +860,30 @@ R . | cycle brush shape{_z_key_cmd_}{_search_cmd_}{_time_key_cmd_}
             """,
             # key events don't have access to event.offsetX/Y
             'myOnKeyUp':"""
-                data.shiftkey = event.shiftKey;
-                data.ctrlkey  = event.ctrlKey;
+                // Hold the modifiers while a key operation is still in flight.  applyKeyOp
+                // runs asynchronously behind a lock and reads ctrlkey / shiftkey when it gets
+                // there, so clearing them the instant the user let go made a *tapped*
+                // ctrl-<key> arrive with the modifier already gone -- the handler took the
+                // unmodified branch, and ctrl-c zoomed the view instead of copying (U3).
+                //
+                // The release is not discarded, it is deferred: the key_op_finished script
+                // applies it as soon as Python reports the operation done.  Simply skipping
+                // the clear would leave the modifier stuck on until the next keydown, and the
+                // drag band -- which reads these to colour itself -- would name the wrong
+                // set-operation.
+                if (data.key_op_finished === '') {
+                    data.shiftkey = event.shiftKey;
+                    data.ctrlkey  = event.ctrlKey;
+                } else {
+                    state.pending_mods = [event.ctrlKey, event.shiftKey];
+                }
+            """,
+            'key_op_finished':"""
+                if (data.key_op_finished === '' && state.pending_mods) {
+                    data.ctrlkey  = state.pending_mods[0];
+                    data.shiftkey = state.pending_mods[1];
+                    state.pending_mods = null;
+                }
             """,
             'myOnMouseMove':"""
                 state.cur_mouse_x = event.offsetX;
@@ -1085,9 +1123,17 @@ def smallpi(_smallp_, **kwargs):
     async def applyBrushOp(self, event):
         if not self.brush_on:
             return
+        # Brush ops compute outside the lock, so several can be in flight at once and
+        # their results land in completion order rather than issue order -- a stale
+        # "nothing here" from an earlier pointer position routinely arrived after a
+        # fresh update and wiped it, leaving linked views showing the wrong records
+        # (PLANNING.md U7).  Each op takes a ticket; only the newest may broadcast.
         async with self.lock:
             cx, cy = self.x_mouse, self.y_mouse
+            self._brush_seq_ = _seq_ = getattr(self, '_brush_seq_', 0) + 1
         key = _tile_at_(self._plot_, cx, cy)
+        if _seq_ != self._brush_seq_:
+            return                      # superseded while the tile lookup ran (U7)
         if key is not None:
             tile_df = self._plot_.category_to_df.get(key)
             if tile_df is not None and len(tile_df) > 0:
@@ -1096,6 +1142,7 @@ def smallpi(_smallp_, **kwargs):
         await self.mvc.brushClear(self)
 
     async def applyBrushLeave(self, event):
+        self._brush_seq_ = getattr(self, '_brush_seq_', 0) + 1   # supersede in-flight ops
         await self.mvc.brushClear(self)
 
     async def applyDragOp(self, event):
@@ -1664,9 +1711,11 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
         # Guards the link_shape picker reset in applySizeChoice against re-entering its
         # own watcher; see the comment there.
         self._suppress_shape_watcher_ = False
-        # >0 while a helper is running on a worker thread; see _run_offloop_/setAnimation.
+        # >0 while a helper is running on a worker thread; see _run_offloop_.
         self._offloop_depth_     = 0
-        self._pending_animation_ = None
+        # Set by the confirm gate when it refuses from a worker thread; _run_offloop_
+        # turns it into an info-line refresh once back on the loop.
+        self._pending_cost_note_ = False
         # T1a cancel.  Set from the browser (Escape) and polled by whichever layout is
         # running; a thread cannot be interrupted, so the loop has to be asked to look.
         self._cancel_requested_  = False
@@ -2080,8 +2129,6 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
         _text_  = '\n'.join(_lines_)
         try:
             pyperclip.copy(_text_)
-            self.setAnimation(f'<text x="5" y="15" fill="black"> copied {len(_lines_)} '
-                              f'to the clipboard </text>')
             return True
         except Exception as _e_:
             # Bare Exception on purpose: pyperclip raises PyperclipException when it finds
@@ -2091,8 +2138,6 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
                 'linkpi: clipboard unavailable (%s) -- this kernel has no copy mechanism, '
                 'which is normal on a headless or remote host. The %d selected entities '
                 'were not copied; they follow.\n%s', _e_, len(_lines_), _text_)
-            self.setAnimation('<text x="5" y="15" fill="black"> clipboard unavailable -- '
-                              'selection written to the log </text>')
             return False
 
     #
@@ -2428,8 +2473,7 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
     async def applyBackgroundChoice(self, *events):
         # Off-loop for the same reason as the layout ops: a flow field over a netflow-scale
         # frame is not a fast operation, and it is one picker commit away.
-        await self._run_offloop_(self.applyBackgroundOperation,
-                                 note=f'{self.background_operation}...')
+        await self._run_offloop_(self.applyBackgroundOperation)
 
     #
     # __backgroundStateLabel__() - human-readable label for the current background state
@@ -2566,11 +2610,14 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
             self._last_cost_note_ = f'{key}: confirmed at {size:,} {unit}'
             return True
         self._confirm_armed_  = key
-        self._last_cost_note_ = f'{key}: {size:,} {unit}, awaiting confirm'
-        self.setAnimation(
-            f'<text x="5" y="15" fill="black"> {key}: {size:,} {unit} is over the '
-            f'{_limit_:,} this operation asks about -- repeat to run </text>'
-        )
+        # The note carries the *gesture*, not just the state.  This is the refusal's only
+        # channel: the operation returns having done nothing, so without a visible
+        # "repeat to run" the keystroke reads as ignored and the confirmation is
+        # undiscoverable.  It used to be said twice, here and in an overlay -- but the
+        # overlay never rendered (U4) and is gone, which makes this line load-bearing.
+        self._last_cost_note_ = (f'{key}: {size:,} {unit} over the {_limit_:,} '
+                                 f'this operation asks about -- repeat to run')
+        self._surfaceCostNote_()
         return False
 
     def __layoutOperation__(self, _layout_op_, _ln_, _g_, _sel_):
@@ -2667,21 +2714,17 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
                 self.wheel_op_finished = False
                 self.wheel_rots        = 0
 
+    # _surfaceCostNote_() - put _last_cost_note_ onto the info line.
     #
-    # setAnimation() - set the animation string (and thus the SVG view)
+    # Deferred when called from a worker thread (D3: params are written only on the
+    # loop); _run_offloop_ flushes it when the await resolves.  The confirm gate is the
+    # caller that needs this -- two of its three paths run inside _run_offloop_.
     #
-    def setAnimation(self, animation):
-        # Called from a worker thread (D3: params are written only on the event loop), the
-        # write is queued instead and _run_offloop_ flushes it when the await resolves.
-        # Without this the confirm gate's message -- reached from inside a helper that now
-        # runs off-loop -- would be a param write from the wrong thread.
+    def _surfaceCostNote_(self):
         if self._offloop_depth_ > 0:
-            self._pending_animation_ = animation
+            self._pending_cost_note_ = True
             return
-        time.sleep(0.001) 
-        self.animation_inner = ''
-        time.sleep(0.001) 
-        self.animation_inner = animation
+        self.__refreshView__(comp=False, all_ents=False, sel_ents=False)
 
     #
     # _busy_() - D4.  While an operation is running, a further user action is DROPPED
@@ -2699,7 +2742,6 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
     def _busy_(self):
         if not self.lock.locked():
             return False
-        self.setAnimation('<text x="5" y="15" fill="black"> busy -- ignored </text>')
         return True
 
     #
@@ -2711,7 +2753,6 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
         if self._offloop_depth_ == 0:
             return                      # nothing running; do not arm a cancel for later
         self._cancel_requested_ = True
-        await self.setAnimationAsync('<text x="5" y="15" fill="black"> cancelling... </text>')
 
     #
     # _cancelRequested_() / _armCancel_() - T1a's cancel signal.
@@ -2731,20 +2772,6 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
         self._cancel_requested_ = False
 
     #
-    # setAnimationAsync() - setAnimation without blocking the event loop.
-    #
-    # The blank-then-write is what makes the same message re-trigger the browser-side
-    # animation; the sync version spaces the two writes with time.sleep, which on the
-    # event loop stalls every other callback.  Yielding does the same job and lets Panel
-    # actually flush the first write.
-    #
-    async def setAnimationAsync(self, animation):
-        self.animation_inner = ''
-        await asyncio.sleep(0)
-        self.animation_inner = animation
-        await asyncio.sleep(0)
-
-    #
     # _run_offloop_() - run a synchronous helper on a worker thread so the widget keeps
     # repainting while it works.
     #
@@ -2756,24 +2783,24 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
     #
     # The lock is still held across the await by the calling callback, so no second
     # operation can interleave and there is nothing to synchronise inside `fn`.  `fn`
-    # writes no params -- see setAnimation above for the one path that used to.
+    # writes no params; the confirm gate defers its info-line refresh instead.
     #
-    async def _run_offloop_(self, fn, *args, note=None):
+    async def _run_offloop_(self, fn, *args):
         self._armCancel_()
         for _lp_ in self.dfs_layout:
             _lp_._flowmap_should_stop_ = self._cancelRequested_
-        if note is not None:
-            # Written and flushed BEFORE the work starts, or the indicator would only
-            # appear once the thing it describes had already finished.
-            await self.setAnimationAsync(f'<text x="5" y="15" fill="black"> {note} </text>')
         self._offloop_depth_ += 1
         try:
             return await asyncio.to_thread(fn, *args)
         finally:
             self._offloop_depth_ -= 1
-            if self._pending_animation_ is not None:
-                _queued_, self._pending_animation_ = self._pending_animation_, None
-                self.setAnimation(_queued_)
+            # Flush a cost note raised by `fn`.  D3: params are written only on the loop
+            # and `fn` ran on a worker thread, so the confirm gate defers its refresh
+            # rather than writing info_str from there.  Same deferral the removed
+            # deferral, kept for the one message that still needs it.
+            if self._pending_cost_note_:
+                self._pending_cost_note_ = False
+                self.__refreshView__(comp=False, all_ents=False, sel_ents=False)
 
     #
     # _refreshViewOffloop_() - __refreshView__ with the render moved off the event loop.
@@ -2782,10 +2809,10 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
     # force layout, so a comp refresh can be the most expensive thing in the widget.  The
     # SVG is built on a worker and only assigned to the param here, on the loop.
     #
-    async def _refreshViewOffloop_(self, note=None, **kwargs):
+    async def _refreshViewOffloop_(self, **kwargs):
         if kwargs.get('comp', True) and not use_webgpu:
             _ln_ = self.dfs_layout[self.df_level]
-            self.mod_inner = await self._run_offloop_(_ln_.renderSVG, note=note)
+            self.mod_inner = await self._run_offloop_(_ln_.renderSVG)
             self.mvc.positionsUpdate(self, _ln_.pos)
             kwargs['comp'] = False
         self.__refreshView__(**kwargs)
@@ -2815,8 +2842,6 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
     #
     def popStack(self):
         if self.df_level == 0:
-            at_top = 'TOP' if self.df_level == 0 else ''
-            self.setAnimation(f'<text x="5" y="15" fill="black"> popStack [{len(self.dfs)} @ {self.df_level}] {at_top} </text>')
             return
 
         self.df_level -= 1
@@ -2831,8 +2856,6 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
 
         self.__refreshView__()
 
-        at_top = 'TOP' if self.df_level == 0 else ''
-        self.setAnimation(f'<text x="5" y="15" fill="black"> popStack [{len(self.dfs)} @ {self.df_level}] {at_top} </text>')
 
     #
     # setStackPosition() - set to a specific position
@@ -2848,7 +2871,6 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
 
         self.__refreshView__()
 
-        self.setAnimation(f'<text x="5" y="15" fill="black"> setStackPosition [{len(self.dfs)} @ {self.df_level}] </text>')
 
     #
     # pushStack() - push a dataframe onto the stack
@@ -2873,8 +2895,6 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
         # what it is about to discard.
         if enforce_limit and (self.df_level + 1) >= self.max_stack_depth:
             self._last_cost_note_ = f'push stack: at the {self.max_stack_depth}-level limit'
-            self.setAnimation(f'<text x="5" y="15" fill="black"> stack is at its '
-                              f'{self.max_stack_depth} level limit -- pop (X) to make room </text>')
             return False
         if g is None: g = self.rt_self.createNetworkXGraph(df, self.ln_params['relationships'])
 
@@ -2898,7 +2918,6 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
         self.setSelectedEntitiesAndNotifyOthers(self.selected_entities & g.nodes())
         self.__refreshView__()
 
-        self.setAnimation(f'<text x="5" y="15" fill="black"> pushStack [{len(self.dfs)}]</text>')
         return True
 
     #
@@ -2983,9 +3002,15 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
             #
             # "T" - Collapse (to a point, horizontal line, or vertical line)
             #
-            elif len(self.selected_entities) > 0 and (self.key_op_finished == 't' or self.key_op_finished == 'T'):
+            elif len(self.selected_entities) > 0 and self.key_op_finished in ('t', 'T', 'v'):
                 self.__cacheNodePositions__()
-                self.apply_collapse_to(self.x_mouse, self.y_mouse, self.shiftkey, self.ctrlkey)
+                if self.key_op_finished == 'v':
+                    # 'v' *is* the vertical collapse, so it names the axis outright rather
+                    # than routing through a modifier.  ctrl-t still reaches the same place
+                    # below, on the platforms whose browser lets the chord through.
+                    self.apply_collapse_to(self.x_mouse, self.y_mouse, False, True)
+                else:
+                    self.apply_collapse_to(self.x_mouse, self.y_mouse, self.shiftkey, self.ctrlkey)
                 self.__refreshView__(info=False)
 
             elif self.key_op_finished == 'u' and len(self.previous_layouts) > 0:
@@ -3007,13 +3032,11 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
                 if self.key_op_finished == 'D':
                     self.community_colors = None
                     self.updateLinkNodeParam('node_color', self._orig_node_color_)
-                    self.setAnimation('<text x="5" y="15" fill="black"> communities: cleared </text>')
                 else:
                     # Mirrors the 'w' layout branch: an algorithm failure leaves the
                     # view untouched rather than killing the callback.
                     try:
-                        _node_color_ = await self._run_offloop_(self.apply_community_detection,
-                                                                note='detecting communities...')
+                        _node_color_ = await self._run_offloop_(self.apply_community_detection)
                     except (MemoryError, KeyboardInterrupt):
                         raise
                     except Exception:
@@ -3021,8 +3044,6 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
                         _node_color_ = None
                     if _node_color_ is not None:
                         self.updateLinkNodeParam('node_color', _node_color_)
-                        _communities_found_ = len(set(_node_color_.values()))
-                        self.setAnimation(f'<text x="5" y="15" fill="black"> {_communities_found_} communities </text>')
 
             #
             # "A" - Cycle link arrows x timing marks. With a time field available the four
@@ -3035,7 +3056,6 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
                 if self._timing_time_ is None:
                     _new_arrows_ = not _arrows_on_
                     self.updateLinkNodeParam('link_arrows', _new_arrows_)
-                    self.setAnimation(f'<text x="5" y="15" fill="black"> link arrows: {"on" if _new_arrows_ else "off"} </text>')
                 else:
                     _marks_on_ = getattr(_ln_, '_time_field_', None) is not None
                     _encode_   = {(False, False): 0, (True, False): 1, (True, True): 2, (False, True): 3}
@@ -3043,7 +3063,6 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
                     _na_, _nm_ = _decode_[(_encode_[(_arrows_on_, _marks_on_)] + 1) % 4]
                     if   _na_ != _arrows_on_: self.updateLinkNodeParam('link_arrows', _na_)
                     elif _nm_ != _marks_on_:  self.updateLinkNodeParam('time', self._timing_time_ if _nm_ else None)
-                    self.setAnimation(f'<text x="5" y="15" fill="black"> arrows: {"on" if _na_ else "off"} | timing marks: {"on" if _nm_ else "off"} </text>')
 
             #
             # "Z" - Select nodes with the same color as the one that the mouse is over
@@ -3171,8 +3190,7 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
                 # view window across every stack level (it invalidates them all too).
                 # Off-loop so the widget keeps repainting: this is the single most
                 # expensive keystroke in the component.
-                if await self._run_offloop_(self.apply_layout_operation,
-                                            note=f'{self.layout_operation}...'):
+                if await self._run_offloop_(self.apply_layout_operation):
                     # Sync the (possibly new) layout background onto the active view
                     # without an extra refresh; the refresh below repaints it.
                     self.__applyBackgroundState__(refresh=False)
@@ -3513,7 +3531,7 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
     # _doBrushAt() - hit-test the current layout at screen xy and broadcast the matched
     # rows (nearest edges/nodes within the state's radius) to the stack peers.
     #
-    async def _doBrushAt(self, xy, state_idx):
+    async def _doBrushAt(self, xy, state_idx, seq=None):
         _state_def_ = BRUSH_STATES[state_idx]
         _shape_     = getattr(self.rt_self, _state_def_[0])
         _threshold_ = _state_def_[1]
@@ -3525,6 +3543,8 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
                 _filtered_ = _ln_.recordsAt(xy, shape=self.rt_self.SELECT_CIRCLEp, threshold=_threshold_)
             except Exception:
                 return
+        if seq is not None and seq != self._brush_seq_:
+            return                      # superseded while recordsAt() was running (U7)
         if _filtered_ is None or len(_filtered_) == 0:
             await self.mvc.brushClear(self)
         else:
@@ -3534,13 +3554,20 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
     # applyBrushOp() - fires on mouse move (when brush active) or on brush state change.
     #
     async def applyBrushOp(self, event):
+        # Brush ops compute outside the lock, so several can be in flight at once and
+        # their results land in completion order rather than issue order -- a stale
+        # "nothing here" from an earlier pointer position routinely arrived after a
+        # fresh update and wiped it, leaving linked views showing the wrong records
+        # (PLANNING.md U7).  Each op takes a ticket; only the newest may broadcast.
         async with self.lock:
             _state_ = self.brush_state
             _xy_    = (self.x_mouse, self.y_mouse)
+            self._brush_seq_ = _seq_ = getattr(self, '_brush_seq_', 0) + 1
         if _state_ == 0:
+            if _seq_ != self._brush_seq_: return
             await self.mvc.brushClear(self)
         else:
-            await self._doBrushAt(_xy_, _state_)
+            await self._doBrushAt(_xy_, _state_, _seq_)
 
     #
     # applyBrushLeave() - fires when the mouse leaves the component while brush is active.
@@ -3555,6 +3582,10 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
                 self.brush_leave_done = False
                 return
             self.brush_leave_done = False
+            # Supersede anything still in flight: leaving is the newest intent, and a
+            # brush result landing after it would re-brush peers for a component the
+            # pointer has already left (U7).
+            self._brush_seq_ = getattr(self, '_brush_seq_', 0) + 1
         await self.mvc.brushClear(self)
 
     #
@@ -3697,8 +3728,7 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
             # Off-loop: switching TO flowmap is the one picker commit that can start the
             # force layout, which is the most expensive thing this component does.
             self.__setLinkNodeParam__('link_shape', event.new)
-            await self._refreshViewOffloop_(
-                note=('laying out flow map...' if event.new == 'flowmap' else None))
+            await self._refreshViewOffloop_()
             return
         elif event.name == 'timing_spacing_choice':
             try:                            _sp_ = float(event.new)
@@ -3706,6 +3736,7 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
             self.updateLinkNodeParam('timing_marks_spacing', _sp_)
 
     _keyboard_commands_ = """
+in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closes
 / . | search: type substring + Enter (prefix +add -remove &intersect); Escape to cancel
 a . | cycle link arrows / timing marks (arrows-only when no time field)
  .. | shift-a ........ | open timing-mark spacing picker (px); ctrl-a reverses
@@ -3721,8 +3752,8 @@ e . | expand selection | shift-e follows directed edges
  .. | ctrl-e ......... | expand along reversed directed edges
 f . | edge unfilter: add rows on visible edges into the view (selected: scope to edges among selected)
  .. | shift-f ........ | node expansion: add rows incident to visible nodes into the view (selected: scope to selected)
-g . | layout upon next mouse drag
- .. | shift-g ........ | open layout-mode picker: mnemonic key selects; ctrl-g reverses
+g . | hold and drag to lay out (shape comes from the layout-mode picker)
+ .. | shift-g ........ | open layout-mode picker: mnemonic key selects
 h . | toggle help display
 l . | open link shape picker (line | curve | flowmap); l cycles
  .. | shift-l ........ | open link size picker (ctrl-l reverses)
@@ -3737,14 +3768,15 @@ s . | set sticky labels
  .. | shift-s ........ | remove sticky labels from selected
  .. | ctrl-s ......... | add selected to sticky labels
  .. | ctrl-shift-s ... | cycle labels (none | node | node+link | link | sticky)
-t . | consolidate .... | shift-t (horizontal) | ctrl-t (vertical)
+t . | consolidate .... | shift-t (horizontal)
 u . | undo last layout action (limited undo's)
+v . | consolidate vertically (ctrl-t also, where the browser allows)
 w . | apply layout operation to [selected] nodes
- .. | shift-w ........ | open layout-operation picker; ctrl-w reverses
+ .. | shift-w ........ | open layout-operation picker
 x   | remove selected nodes (push stack)
  .. | shift-x ........ | pop stack
  .. | ctrl-shift-x ... | collapse edges to one row (selected-adjacent, or all)
-y . | line layout ...  | shift-y (horizontal) | ctrl-y (vertical)
+y . | hold and drag for a line layout | shift-y (horizontal) | ctrl-y (vertical)
 z . | select node under mouse by color (shift, ctrl, and ctrl-shift apply)
 1-6 | select numbered degree
 7 . | select degree 7 -> 20
@@ -3774,10 +3806,6 @@ z . | select node under mouse by color (shift, ctrl, and ctrl-shift apply)
 <svg id="svgparent" width="{_w_}" height="{_h_}" tabindex="0" style="user-select:none;{' position:absolute;left:0;top:0;' if use_webgpu else ''}" onkeydown="${{script('myOnKeyDown')}}" onkeyup="${{script('myOnKeyUp')}}">
     <svg id="mod" width="{_w_}" height="{_h_}"> ${{mod_inner}} </svg>
     <g id="keyboardhelp" transform="translate(${{keyboardhelp_x}} 0)">{_keyboard_help_svg_}</g>
-    <g fill-opacity="0.0">
-      <g id="opanimation"> ${{animation_inner}} </g>
-      <animate id="myanimate" attributeName="fill-opacity" values="0.0;1.0;1.0;0.0" dur="2s" repeatCount="1" />
-    </g>
     <rect id="drag" x="-10" y="-10" width="5" height="5" stroke="#000000" stroke-width="2" fill="none" />
     <line   id="layoutline"      x1="-10" y1="-10" x2="-10"    y2="-10"    stroke="#000000" stroke-width="2" />
     <rect   id="layoutrect"      x="-10"  y="-10"  width="10"  height="10" stroke="#000000" stroke-width="2" />
@@ -3787,7 +3815,7 @@ z . | select node under mouse by color (shift, ctrl, and ctrl-shift apply)
           onmouseover="${{script('myOnMouseOver')}}"      onmouseout="${{script('myOnMouseOut')}}"
           onmousedown="${{script('downSelect')}}"         onmousemove="${{script('myOnMouseMove')}}"
           onmouseup="${{script('myOnMouseUp')}}" />
-    <text id="infostr" x="5"   y="{_h_-2}" fill="#000000" font-size="10px"> ${{info_str}} </text>
+    <text id="infostr" x="5"   y="{_h_-2}" fill="#000000" font-size="10px" pointer-events="none"></text>
     <path id="allentitieslayer" d="" fill="#000000" fill-opacity="0.01" stroke="none"
           onmouseover="${{script('myOnMouseOver')}}"      onmouseout="${{script('myOnMouseOut')}}"
           onmousedown="${{script('downAllEntities')}}"    onmousemove="${{script('myOnMouseMove')}}"
@@ -3796,7 +3824,7 @@ z . | select node under mouse by color (shift, ctrl, and ctrl-shift apply)
           onmouseover="${{script('myOnMouseOver')}}"      onmouseout="${{script('myOnMouseOut')}}"
           onmousedown="${{script('downMove')}}"           onmousemove="${{script('myOnMouseMove')}}"
           onmouseup="${{script('myOnMouseUp')}}" />
-    <text id="searchtext" x="{_w_//2}" y="{_h_-2}" text-anchor="middle" fill="#0000cc" font-size="11px" font-family="monospace"></text>
+    <text id="searchtext" x="{_w_//2}" y="{_h_-2}" text-anchor="middle" fill="#0000cc" font-size="11px" font-family="monospace" pointer-events="none"></text>
     <g id="brushindicator" pointer-events="none"></g>
     <g id="brushmodelabel" pointer-events="none"></g>
     <g id="pickermenu" pointer-events="none"></g>
@@ -3918,8 +3946,7 @@ z . | select node under mouse by color (shift, ctrl, and ctrl-shift apply)
         '_armCancel_':                         _armCancel_,
         'applyCancel':                        applyCancel,
         '_busy_':                             _busy_,
-        'setAnimation':                       setAnimation,
-        'setAnimationAsync':                  setAnimationAsync,
+        '_surfaceCostNote_':                  _surfaceCostNote_,
         '_run_offloop_':                      _run_offloop_,
         '_refreshViewOffloop_':               _refreshViewOffloop_,
         '__setLinkNodeParam__':               __setLinkNodeParam__,
@@ -3961,9 +3988,28 @@ z . | select node under mouse by color (shift, ctrl, and ctrl-shift apply)
         #
     'mod_inner'                   : param.String(default=_svg_),
     **({'gpu_payload': param.Dict(default=_gpu_payload_default_), 'gpu_error': param.String(default='')} if use_webgpu else {}),
-    'animation_inner'             : param.String(default='<rect x="0" y="0" width="10" height="10" fill="none" stroke="none"/>'),
     'allentitiespath'             : param.String(default="M -100 -100 l 10 0 l 0 10 l -10 0 l 0 -10 Z"),
     'selectionpath'               : param.String(default="M -100 -100 l 10 0 l 0 10 l -10 0 l 0 -10 Z"),
+    # info_str is deliberately NOT bound as ${info_str} in _template, and putting it
+    # back re-opens PLANNING.md U5.  A content binding -- ${p} between tags, as opposed
+    # to an attribute binding inside a tag -- registers the param as a ReactiveHTML
+    # *child*, and panel's _update_model then takes the `prop in child_params` branch
+    # (reactive.py ~2208): it sets new_children[prop], which re-renders the whole
+    # subtree.  Every JS-only variable dies with it -- an open picker menu loses
+    # menu_open/menu_index, the search buffer empties, brush_state resets to 0 -- and
+    # because Python rewrites info_str after almost every operation, that was happening
+    # constantly.  Unbound, info_str is an ordinary data param: the 'info_str' script
+    # below still writes infostr.innerHTML, so the line displays exactly as before, and
+    # nothing rebuilds.
+    #
+    # mod_inner cannot get the same treatment, which is why it is still bound.  Unbound
+    # params take the `isinstance(v, str)` branch instead (reactive.py ~2243) and are
+    # run through panel's HTML_SANITIZER, which strips SVG markup to the empty string --
+    # the plot would simply never draw.  Being a child is what exempts mod_inner from
+    # that, so it keeps both the exemption and the rebuild.  The rebuild is tolerable
+    # there because mod_inner only changes when the plot genuinely redraws.  Only a
+    # non-string carrier (param.Dict, as gpu_payload already does) would buy the same
+    # exemption without the rebuild; that is a wider change than U5 needs.
     'info_str'                    : param.String(default=" | | grid"),
     'layout_mode'                 : param.String(default="grid"),
     'layout_operation'            : param.String(default="spring nx"),
@@ -4021,7 +4067,6 @@ z . | select node under mouse by color (shift, ctrl, and ctrl-shift apply)
         'render': _menu_init_js_ + """
             mod.innerHTML            = data.mod_inner;
             infostr.innerHTML        = data.info_str;
-            opanimation.innerHTML    = data.animation_inner;
             allentitieslayer.setAttribute("d", data.allentitiespath);
             selectionlayer.setAttribute("d", data.selectionpath);
             state.x0_drag            = state.y0_drag = -10;
@@ -4054,8 +4099,6 @@ z . | select node under mouse by color (shift, ctrl, and ctrl-shift apply)
             state.brush_defs         = [null,['circle',5],['circle',15]];
             state.brush_names        = ['','circ r=5','circ r=15'];
 
-            myanimate.addEventListener("endEvent", () => { data.animation_inner = ""; opanimation.innerHTML = data.animation_inner; });
-
             var _wheelFn_ = function(event) {
                 event.preventDefault();
                 data.wheel_x = event.offsetX; data.wheel_y = event.offsetY;
@@ -4065,6 +4108,19 @@ z . | select node under mouse by color (shift, ctrl, and ctrl-shift apply)
             screen.addEventListener('wheel', _wheelFn_, {passive: false});
             allentitieslayer.addEventListener('wheel', _wheelFn_, {passive: false});
             selectionlayer.addEventListener('wheel', _wheelFn_, {passive: false});
+
+            // On macOS ctrl+click is a secondary click, so the browser raises a
+            // contextmenu (popup) during ctrl / shift-ctrl rectangular drags, which
+            // interrupts the drag and loses the selection (U1).  The generic
+            // _interactivep components have swallowed it since the original fix went
+            // in; LINKPI was missed -- which is why the bug outlived that fix, and on
+            // the component with by far the most dragging in it.
+            //
+            // Confirmed in a browser rather than argued about: contextmenu fires on
+            // both families, and arrived defaultPrevented only on the generic ones.
+            svgparent.addEventListener('contextmenu', function(event) {
+                event.preventDefault();
+            });
 """ + _gpu_render_block_ + """
         """,
 
@@ -4093,6 +4149,18 @@ z . | select node under mouse by color (shift, ctrl, and ctrl-shift apply)
         """,
 
         'myOnMouseOut':"""
+                // Ignore moves between this component's own hit layers.  #screen,
+                // #allentitieslayer and #selectionlayer are siblings that cover each
+                // other, so putting the pointer on a node fires mouseout on the layer
+                // being left -- which this handler read as "the mouse left the
+                // component".  The brush was therefore cleared at the very moment the
+                // pointer reached something worth brushing, and an open picker menu
+                // committed itself for the same reason (PLANNING.md U7).
+                //
+                // relatedTarget is where the pointer went; if that is still inside the
+                // component, nothing has been left.  It is null when the pointer leaves
+                // the window entirely, which is a real leave.
+                if (event.relatedTarget && svgparent.contains(event.relatedTarget)) { return; }
                 data.has_focus = false;
                 brushindicator.innerHTML = '';
                 if (data.brush_state > 0) { data.brush_leave_done = true; }
@@ -4212,6 +4280,9 @@ z . | select node under mouse by color (shift, ctrl, and ctrl-shift apply)
                 var _items_ = state.menu_items[state.menu_kind];
                 if      (event.key === 'Escape') { self.menuClose();  }
                 else if (event.key === 'Enter')  { self.menuCommit(); }
+                // !ctrlKey on W and G below is deliberate even though nothing tests ctrlKey
+                // for them any more: it keeps the chords deleted in U10 *inert* rather than
+                // silently cycling forward, which is the opposite of what they used to do.
                 else if (event.key === 'ArrowDown' || event.key === 'j' ||
                          (event.key === 'W' && state.menu_kind === 'operation'    && !event.ctrlKey) ||
                          (event.key === 'G' && state.menu_kind === 'mode'         && !event.ctrlKey) ||
@@ -4223,9 +4294,17 @@ z . | select node under mouse by color (shift, ctrl, and ctrl-shift apply)
                     state.menu_index = (state.menu_index + 1) % _items_.length;
                     self.menuRender(); self.menuArmTimer();
                 }
+                // ctrl-shift-W and ctrl-shift-G used to reverse-cycle here and are gone
+                // (PLANNING.md U10).  ctrl-shift-W is a reserved chrome-level accelerator
+                // off macOS -- it CLOSES THE BROWSER WINDOW, and preventDefault() cannot
+                // reclaim what the page is never shown; ctrl-shift-G worked but went with
+                // it so the pure-reverse chords are gone as a class rather than leaving one
+                // survivor.  Nothing was lost: ArrowUp / k reverse every menu, which is what
+                // the generic _interactivep components have always done.  The clauses that
+                // remain below pair with a *ctrl entry point* (ctrl-l opens the link-size
+                // picker and steps back through it), and the audit measured all four as
+                // page-interceptable.
                 else if (event.key === 'ArrowUp' || event.key === 'k' ||
-                         (event.key === 'W' && state.menu_kind === 'operation'    && event.ctrlKey) ||
-                         (event.key === 'G' && state.menu_kind === 'mode'         && event.ctrlKey) ||
                          (event.key === 'l' && state.menu_kind === 'link_size'    && event.ctrlKey) ||
                          (event.key === 'o' && state.menu_kind === 'link_opacity' && event.ctrlKey) ||
                          (event.key === 'a' && state.menu_kind === 'timing_spacing' && event.ctrlKey) ||
@@ -4304,6 +4383,10 @@ z . | select node under mouse by color (shift, ctrl, and ctrl-shift apply)
             else if (event.key == "t") { data.key_op_finished = 't';  } // Collapse selected to a single point
             else if (event.key == "T") { data.key_op_finished = 'T';  } // Horizontally collapse selected
             else if (event.key == "u") { data.key_op_finished = 'u';  } // Undo last layout
+            // Vertical collapse.  It lives on an unmodified key because its old chord,
+            // ctrl-t, is reserved as new-tab off macOS and preventDefault() cannot
+            // reclaim a browser-chrome shortcut -- see PLANNING.md U2.
+            else if (event.key == "v") { data.key_op_finished = 'v';  } // Vertically collapse selected
             else if (event.key == "w") { data.key_op_finished = 'w';  } // Apply layout operation
             else if (event.key == "W") { state.menu_kind = 'operation'; self.menuOpen(); } // Open the layout-operation picker menu
             else if (event.key == "x") { data.key_op_finished = 'x';  } // push the stack (remove the selected from the current graph)
@@ -4336,10 +4419,37 @@ z . | select node under mouse by color (shift, ctrl, and ctrl-shift apply)
         'myOnKeyUp':"""
             event.stopPropagation();
             if (state.menu_open) { return; }
-            data.ctrlkey  = event.ctrlKey;
-            data.shiftkey = event.shiftKey;
+            // Hold the modifiers while a key operation is still in flight.  applyKeyOp
+            // runs asynchronously behind a lock and reads ctrlkey / shiftkey when it gets
+            // there, so clearing them the instant the user let go made a *tapped*
+            // ctrl-<key> arrive with the modifier already gone -- the handler took the
+            // unmodified branch, and ctrl-c zoomed the view instead of copying (U3).
+            //
+            // The release is not discarded, it is deferred: the key_op_finished script
+            // applies it as soon as Python reports the operation done.  Simply skipping
+            // the clear would leave the modifier stuck on until the next keydown, and the
+            // drag band -- which reads these to colour itself -- would name the wrong
+            // set-operation.
+            if (data.key_op_finished === '') {
+                data.ctrlkey  = event.ctrlKey;
+                data.shiftkey = event.shiftKey;
+            } else {
+                state.pending_mods = [event.ctrlKey, event.shiftKey];
+            }
             if (event.key == "g" || event.key == "y" || event.key == "Y") { state.layout_op = state.layout_line_flag = false; }
         """,
+        'key_op_finished':"""
+            // Python empties this when it has finished the operation; that is the moment
+            // a modifier release deferred by myOnKeyUp can safely be applied.  If a
+            // re-render has wiped state in between the release is simply lost, and the
+            // next keydown sets the modifiers correctly anyway.
+            if (data.key_op_finished === '' && state.pending_mods) {
+                data.ctrlkey  = state.pending_mods[0];
+                data.shiftkey = state.pending_mods[1];
+                state.pending_mods = null;
+            }
+        """,
+
         'myOnMouseMove':"""
             state.cur_mouse_x = event.offsetX;
             state.cur_mouse_y = event.offsetY;
@@ -4505,9 +4615,6 @@ z . | select node under mouse by color (shift, ctrl, and ctrl-shift apply)
             mod.innerHTML       = data.mod_inner;
             infostr.innerHTML   = data.info_str;
         """,
-        'animation_inner':"""
-            opanimation.innerHTML = data.animation_inner;
-        """,
         'allentitiespath':"""
             allentitieslayer.setAttribute("d", data.allentitiespath);
         """,
@@ -4526,8 +4633,15 @@ z . | select node under mouse by color (shift, ctrl, and ctrl-shift apply)
                 h = Math.abs(state.y1_drag - state.y0_drag)
                 drag.setAttribute('x',x);     drag.setAttribute('y',y);
                 drag.setAttribute('width',w); drag.setAttribute('height',h);
-                if      (data.shftkey && data.ctrlkey)  drag.setAttribute('stroke','#0000ff');
-                else if (data.shftkey)                  drag.setAttribute('stroke','#ff0000');
+                // shiftkey, not shftkey: the misspelling read undefined, so both shift
+                // branches were dead and the band drew the wrong colour for two of the
+                // four set-operations -- black for subtract and green for intersect,
+                // i.e. it named the operation the user was *not* about to perform
+                // (PLANNING.md U8).  The operations themselves were always correct;
+                // myOnMouseUp reads event.shiftKey off the event, which is why nothing
+                // else noticed.
+                if      (data.shiftkey && data.ctrlkey)  drag.setAttribute('stroke','#0000ff');
+                else if (data.shiftkey)                  drag.setAttribute('stroke','#ff0000');
                 else if (                data.ctrlkey)  drag.setAttribute('stroke','#00ff00');
                 else                                    drag.setAttribute('stroke','#000000');
             } else {

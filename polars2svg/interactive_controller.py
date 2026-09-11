@@ -1610,8 +1610,7 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
         _mvc_ = kwargs.pop('mvc', mvc)   # allow override via kwargs, fall back to closure mvc
         super(_cls_ref_[0], self).__init__(**kwargs)
 
-        from .polars2svg import Polars2SVG
-        self.rt_self   = Polars2SVG()
+        self.rt_self   = _linkp_.p2s
         self.w, self.h = _w_, _h_
 
         self.dfs        = [_linkp_.df_orig]

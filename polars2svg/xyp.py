@@ -203,9 +203,14 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     #
     # __init__()
     #
-    def __init__(self, *args: Any, **kwargs: Unpack[XYpKwargs]) -> None:
+    def __init__(self, *args: Any, p2s: 'polars2svg.Polars2SVG | None' = None,
+                 **kwargs: Unpack[XYpKwargs]) -> None:
         self.t_start             = time.time()
-        self.p2s                 = polars2svg.Polars2SVG()
+        # p2s=: the instance whose factory method built this component, so the render
+        # resolves defaults / color overrides against its own caller.  None means direct
+        # construction -- that gets a fresh, unconfigured instance of its own, so pass
+        # p2s= explicitly to build against a configured one.
+        self.p2s                 = p2s if p2s is not None else polars2svg.Polars2SVG()
         # use_lazy_execution is a normal parameter, resolved in __parseInput__ via the
         # shared spec (so a global set_defaults('xyp', use_lazy_execution=...) is now
         # honoured — it used to be read here from raw kwargs, bypassing the merge).

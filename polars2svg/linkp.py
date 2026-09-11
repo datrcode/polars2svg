@@ -216,9 +216,14 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
     #
     # __init__()
     #
-    def __init__(self, *args: Any, **kwargs: Unpack[LinkPKwargs]) -> None:
+    def __init__(self, *args: Any, p2s: 'polars2svg.Polars2SVG | None' = None,
+                 **kwargs: Unpack[LinkPKwargs]) -> None:
         self.t_start        = time.time()
-        self.p2s            = polars2svg.Polars2SVG()
+        # p2s=: the instance whose factory method built this component, so the render
+        # resolves defaults / color overrides against its own caller.  None means direct
+        # construction -- that gets a fresh, unconfigured instance of its own, so pass
+        # p2s= explicitly to build against a configured one.
+        self.p2s            = p2s if p2s is not None else polars2svg.Polars2SVG()
         self.timing_metrics: dict = {}
         self.gatherMetrics(self.__parseInput__, *args, **kwargs)
         self.gatherMetrics(self.__validateInput__)
@@ -2477,7 +2482,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
                        self.p2s.SM_COUNT in self.sm_shared or
                        self.p2s.SM_COLOR in self.sm_shared)
         if _needs_ref_:
-            _ref_ = LinkP(df=df_all, template=self, **{k: v for k, v in _kwargs_.items()
+            _ref_ = LinkP(df=df_all, template=self, p2s=self.p2s, **{k: v for k, v in _kwargs_.items()
                                                         if k == 'view_window'})
             if self.p2s.SM_X in self.sm_shared:
                 _kwargs_['_shared_view_x_'] = (_ref_.wx0, _ref_.wx1)
@@ -2487,7 +2492,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
                 _kwargs_['count_range_shared'] = (_ref_._count_min_, _ref_._count_max_)
             if self.p2s.SM_COLOR in self.sm_shared and _ref_._color_stat_min_ is not None:
                 _kwargs_['color_stat_range_shared'] = (_ref_._color_stat_min_, _ref_._color_stat_max_)
-        return {k: LinkP(df=v, template=self, **_kwargs_) for k, v in df_lu.items()}
+        return {k: LinkP(df=v, template=self, p2s=self.p2s, **_kwargs_) for k, v in df_lu.items()}
 
     #
     # render_with() - create a new instance with overrides (used by smallp cycle_by mode)
@@ -2495,7 +2500,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
     def render_with(self, df: pl.DataFrame, **overrides: Any) -> 'LinkP':
         # `overrides` cannot be Unpack[LinkPKwargs]: PEP 692 rejects a TypedDict
         # that repeats a named parameter, and `df` is both.
-        return LinkP(df=df, template=self, **overrides)
+        return LinkP(df=df, template=self, p2s=self.p2s, **overrides)
 
     # -------------------------------------------------------------------------
     # Interactive methods — called by linkpi() on dfs_layout entries

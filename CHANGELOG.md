@@ -334,6 +334,87 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **BREAKING — `Polars2SVG()` is no longer a singleton.** Every call used to return one
+  cached instance, so `set_defaults()` / `reset_defaults()` / `setColorOverrides()`
+  reached every figure in the process. `__new__` no longer caches: each call builds an
+  independent instance carrying its own `_global_defaults`, `_component_defaults`,
+  `to_color_lu` and `color_overrides_lu`.
+
+  *"Configure once and every figure follows"* still holds — it is now scoped to the
+  instance rather than to the process. Configure a `Polars2SVG` once and everything you
+  render **from that instance** shares the style; build a second instance when you want a
+  second style, or a second user's session, that the first cannot reach. The common
+  pattern is unaffected, because it already named the instance it configured:
+
+  ```python
+  p2s = Polars2SVG()
+  p2s.set_defaults(txt_h=14)
+  p2s.xyp(df, 'x', 'y')        # follows p2s's configuration, as before
+  ```
+
+  What changes is code that *re-derived* the instance instead of holding onto it — a
+  second `Polars2SVG()` in another cell or another module now starts unconfigured rather
+  than inheriting. Constructing a component directly (`XYp(df, ...)`) likewise gets a
+  fresh, unconfigured instance; pass `p2s=` to hand it a configured one. Nothing inside
+  the package re-derives an instance any more: the nine direct-construction fallbacks are
+  the only `Polars2SVG()` calls left in the package, and
+  `tests/test_instance_plumbing.py` fails if a tenth appears — an instance built inside a
+  render path has nobody's configuration, and the resulting figure gives no sign of it.
+
+  Follow-on removals, all of which existed only to make one shared object behave:
+  `_instance_`, the `_init_complete_` early return and the `hasattr` guards around the
+  mutable stores (`__init__` now runs exactly once per object, because there is exactly
+  one `__init__` per object); and `tests/conftest.py`'s autouse fixture, which cleared
+  the shared `color_overrides_lu` between tests to stop `setColorOverrides()` in one test
+  from poisoning later ones. That isolation is structural now. `tests/test_singleton_init.py`
+  becomes `tests/test_instance_init.py` and pins the inverse contract: instances are
+  independent, none of the mutable stores is shared by reference, and the one thing they
+  *do* share — the module-global `polars2svg_logger` — stays clean across them.
+
+- **A component now renders against the instance that built it, not against whatever
+  `Polars2SVG()` returns.** Every component constructor opened with
+  `self.p2s = polars2svg.Polars2SVG()` — it reached the framework by *re-constructing*
+  it, so the instance whose `_global_defaults`, `_component_defaults` and
+  `color_overrides_lu` a render resolved against was "whichever one this process has"
+  rather than "the one whose factory method I was called on". That is invisible while
+  the singleton stands, and silently wrong the moment it does not: with the cache
+  disabled, `p2s.set_defaults(...)` and `p2s.setColorOverrides(...)` stopped reaching
+  any render at all — 49 tests, none of them with a visible symptom beyond a figure
+  that quietly ignored its configuration.
+
+  Each factory method now hands the component its own instance (`XYp(*args, p2s=self,
+  **kwargs)`), and the component-level clone helpers — `render_with()` /
+  `renderSmallMultiples()`, which construct their class directly and so have no factory
+  frame to inherit from — pass `self.p2s` at 18 sites. `p2s=` is keyword-only and
+  deliberately outside `_VALID_KWARGS`, so it stays out of `_COMPONENT_KWARGS_` and
+  `set_defaults('xyp', p2s=…)` remains the error it should be. Constructing a component
+  directly (`XYp(df, ...)`, the documented alternative to `p2s.xyp(df, ...)`) passes no
+  instance and falls back to the shared one, so that path is unchanged.
+
+  **This step changed no behaviour on its own** — with the singleton still in place
+  every instance was the same object, and the suite was identical at 3337 passed. What it
+  changed is what the singleton was *load-bearing for*: with the cache disabled the suite
+  went from 49 failures to 3, and those three were the tests asserting the singleton
+  itself. That is what made removing it (the entry above) a small change rather than "a
+  change to every component's `__init__`" — which is exactly how **A2** in `PLANNING.md`
+  had it blocked.
+
+  Two details the change had to settle rather than inherit:
+
+  - **`p2s` joins `_TEMPLATE_CLONE_SKIP_`.** `_clone_template_state()` copies every
+    attribute of the template's `__dict__` onto the clone, and `p2s` was one of them —
+    so a clone built by one instance from another's template would have its freshly
+    passed instance silently replaced by the template's owner. The handle is the clone's
+    wiring, not resolved render state, so it is skipped for the same reason
+    `timing_metrics` and `t_start` are.
+  - **The `linkpi` widget takes its instance from the component it wraps**
+    (`self.rt_self = _linkp_.p2s`) instead of constructing one.
+
+  `tests/test_instance_plumbing.py` pins the channel. Its instances bypass the
+  `__new__` cache on purpose: while the singleton stands every instance is the same
+  object, so a test that builds one the normal way cannot tell "passed down correctly"
+  apart from "happened to be the same object anyway".
+
 - **The keyboard help now describes the layout gestures correctly.** `g` and `y` are
   hold-to-arm -- `myOnKeyUp` clears the arming on release -- but the help read "layout
   upon next mouse drag", which describes press-then-drag. Following it ran a rubber-band
@@ -676,6 +757,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   block, so the "cloud present" path stays covered.
 
 ### Fixed
+
+- **`warn once` is once per process again, not once per `Polars2SVG` instance.** The
+  `OnceFilter` on the shared `polars2svg_logger` is stripped and reinstalled by every
+  `__init__`, and the replacement started with an empty `seen_messages` — so any second
+  instance re-opened every deprecation message the first had already emitted. It never
+  showed while `Polars2SVG()` returned one cached object and components constructed
+  their own (the guard at the top of `__init__` returned before reaching the logger),
+  but it made the dedupe a property of the cache rather than of the process. The
+  filter now carries the seen set over from the instance it replaces, which also
+  survives a module reload.
 
 - **A tapped ctrl-binding ran the unmodified branch.** `myOnKeyUp` writes
   `data.ctrlkey = event.ctrlKey` unconditionally, so releasing Control set it back to

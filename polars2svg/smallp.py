@@ -96,9 +96,14 @@ class Smallp(ExportMixin):
     wxh:            Any
     wxh_actual:     tuple
 
-    def __init__(self, *args: Any, **kwargs: Unpack[SmallpKwargs]) -> None:
+    def __init__(self, *args: Any, p2s: 'polars2svg.Polars2SVG | None' = None,
+                 **kwargs: Unpack[SmallpKwargs]) -> None:
         self.t_start        = time.time()
-        self.p2s            = polars2svg.Polars2SVG()
+        # p2s=: the instance whose factory method built this component, so the render
+        # resolves defaults / color overrides against its own caller.  None means direct
+        # construction -- that gets a fresh, unconfigured instance of its own, so pass
+        # p2s= explicitly to build against a configured one.
+        self.p2s            = p2s if p2s is not None else polars2svg.Polars2SVG()
         self.timing_metrics: dict = {}
         self.gatherMetrics(self.__parseInput__, *args, **kwargs)
         self.gatherMetrics(self.__validateInput__)
@@ -157,7 +162,7 @@ class Smallp(ExportMixin):
         return self._gpu_payload_
 
     def render_with_df(self, df: Any) -> 'Smallp':
-        return Smallp(df, self.sm_template,
+        return Smallp(df, self.sm_template, p2s=self.p2s,
                       category_by        = self.category_by,
                       cycle_by           = self.cycle_by,
                       wxh                = self.wxh,

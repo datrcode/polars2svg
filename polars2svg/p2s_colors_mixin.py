@@ -54,12 +54,12 @@ class P2SColorsMixin:
     # __p2s_colors_mixin_init__() - initialization via the mixin methodology
     #
     def __p2s_colors_mixin_init__(self) -> None:
-        # to_color_lu holds only base hash-derived colors (never override results),
-        # so it can persist across re-inits without going stale when overrides change.
-        if not hasattr(self, 'to_color_lu'):
-            self.to_color_lu: dict = {}
-        if not hasattr(self, 'color_overrides_lu'):
-            self.color_overrides_lu: dict = {}
+        # Both are per-instance: to_color_lu memoizes base hash-derived colors (never
+        # override results), color_overrides_lu holds what setColorOverrides() was given.
+        # Two Polars2SVG instances share neither, so an override set on one is invisible
+        # to the other -- see the Configuration section of the class docstring.
+        self.to_color_lu: dict = {}
+        self.color_overrides_lu: dict = {}
         self.color_type_lu = {
             ('background',    'default'):   '#ffffff',
             ('data',          'default'):   "#3939ff",

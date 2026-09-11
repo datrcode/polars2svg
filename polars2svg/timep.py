@@ -131,9 +131,14 @@ class Timep(P2SBinComponentMixin, ExportMixin):
     time:         Any
     wxh:          list | tuple
 
-    def __init__(self, *args: Any, **kwargs: Unpack[TimepKwargs]) -> None:
+    def __init__(self, *args: Any, p2s: 'polars2svg.Polars2SVG | None' = None,
+                 **kwargs: Unpack[TimepKwargs]) -> None:
         self.t_start        = time.time()
-        self.p2s            = polars2svg.Polars2SVG()
+        # p2s=: the instance whose factory method built this component, so the render
+        # resolves defaults / color overrides against its own caller.  None means direct
+        # construction -- that gets a fresh, unconfigured instance of its own, so pass
+        # p2s= explicitly to build against a configured one.
+        self.p2s            = p2s if p2s is not None else polars2svg.Polars2SVG()
         self.timing_metrics: dict = {}
         self.gatherMetrics(self.__parseInput__, *args, **kwargs)
         self.gatherMetrics(self.__validateInput__)
@@ -1406,19 +1411,19 @@ class Timep(P2SBinComponentMixin, ExportMixin):
                        self.p2s.SM_COLOR  in self.sm_shared or
                        self.p2s.SM_X      in self.sm_shared)
         if _needs_ref_:
-            _ref_ = Timep(df=df_all, template=self)
+            _ref_ = Timep(df=df_all, template=self, p2s=self.p2s)
             if self.p2s.SM_X in self.sm_shared and not self._is_periodic_ and hasattr(_ref_, '_date_min_'):
                 _kwargs_['date_range_shared'] = (_ref_._date_min_, _ref_._date_max_)
             if self.p2s.SM_COUNT in self.sm_shared:
                 _kwargs_['count_range_shared'] = (_ref_._count_min_, _ref_._count_max_)
             if self.p2s.SM_COLOR in self.sm_shared and _ref_._color_stat_min_ is not None:
                 _kwargs_['color_stat_range_shared'] = (_ref_._color_stat_min_, _ref_._color_stat_max_)
-        return {k: Timep(df=v, template=self, **_kwargs_) for k, v in df_lu.items()}
+        return {k: Timep(df=v, template=self, p2s=self.p2s, **_kwargs_) for k, v in df_lu.items()}
 
     def render_with(self, df: pl.DataFrame, **overrides: Any) -> 'Timep':
         # `overrides` cannot be Unpack[TimepKwargs]: PEP 692 rejects a TypedDict
         # that repeats a named parameter, and `df` is both.
-        return Timep(df=df, template=self, **overrides)
+        return Timep(df=df, template=self, p2s=self.p2s, **overrides)
 
     def filterByRectangle(self, bounding_box: tuple, remove_records: bool = False) -> pl.DataFrame:
         _x0_, _y0_, _x1_, _y1_ = bounding_box

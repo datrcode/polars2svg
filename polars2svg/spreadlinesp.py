@@ -192,9 +192,14 @@ class SpreadLinesP(ExportMixin):
     svg: str
     wxh: Any
 
-    def __init__(self, *args: Any, **kwargs: Unpack[SpreadLinesPKwargs]) -> None:
+    def __init__(self, *args: Any, p2s: 'polars2svg.Polars2SVG | None' = None,
+                 **kwargs: Unpack[SpreadLinesPKwargs]) -> None:
         self.t_start        = time.time()
-        self.p2s            = polars2svg.Polars2SVG()
+        # p2s=: the instance whose factory method built this component, so the render
+        # resolves defaults / color overrides against its own caller.  None means direct
+        # construction -- that gets a fresh, unconfigured instance of its own, so pass
+        # p2s= explicitly to build against a configured one.
+        self.p2s            = p2s if p2s is not None else polars2svg.Polars2SVG()
         self.timing_metrics: dict = {}
         self.gatherMetrics(self.__parseInput__, *args, **kwargs)
         self.gatherMetrics(self.__validateInput__)
@@ -2034,9 +2039,9 @@ class SpreadLinesP(ExportMixin):
     # -------------------------------------------------------------------------
 
     def renderSmallMultiples(self, df_all: Any, df_lu: dict, all_key: Any) -> dict:
-        return {k: SpreadLinesP(df=v, template=self) for k, v in df_lu.items()}
+        return {k: SpreadLinesP(df=v, template=self, p2s=self.p2s) for k, v in df_lu.items()}
 
     def render_with(self, df: pl.DataFrame, **overrides: Any) -> 'SpreadLinesP':
         # `overrides` cannot be Unpack[SpreadLinesPKwargs]: PEP 692 rejects a TypedDict
         # that repeats a named parameter, and `df` is both.
-        return SpreadLinesP(df=df, template=self, **overrides)
+        return SpreadLinesP(df=df, template=self, p2s=self.p2s, **overrides)

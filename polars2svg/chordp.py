@@ -411,9 +411,14 @@ class ChP(P2SComponentColorMixin, ExportMixin):
     #
     # __init__()
     #
-    def __init__(self, *args: Any, **kwargs: Unpack[ChPKwargs]) -> None:
+    def __init__(self, *args: Any, p2s: 'polars2svg.Polars2SVG | None' = None,
+                 **kwargs: Unpack[ChPKwargs]) -> None:
         self.t_start        = time.time()
-        self.p2s            = polars2svg.Polars2SVG()
+        # p2s=: the instance whose factory method built this component, so the render
+        # resolves defaults / color overrides against its own caller.  None means direct
+        # construction -- that gets a fresh, unconfigured instance of its own, so pass
+        # p2s= explicitly to build against a configured one.
+        self.p2s            = p2s if p2s is not None else polars2svg.Polars2SVG()
         self.timing_metrics: dict = {}
         self.gatherMetrics(self.__parseInput__, *args, **kwargs)
         self.gatherMetrics(self.__validateInput__)
@@ -2284,7 +2289,7 @@ class ChP(P2SComponentColorMixin, ExportMixin):
     def render_with(self, df: pl.DataFrame, **overrides: Any) -> 'ChP':
         # `overrides` cannot be Unpack[ChPKwargs]: PEP 692 rejects a TypedDict
         # that repeats a named parameter, and `df` is both.
-        return ChP(df=df, template=self, **overrides)
+        return ChP(df=df, template=self, p2s=self.p2s, **overrides)
 
     #
     # renderSmallMultiples() - smallp integration
@@ -2299,7 +2304,7 @@ class ChP(P2SComponentColorMixin, ExportMixin):
                        self.p2s.SM_COUNT in self.sm_shared or
                        self.p2s.SM_COLOR in self.sm_shared)
         if _needs_ref_:
-            _ref_ = ChP(df=df_all, template=self)
+            _ref_ = ChP(df=df_all, template=self, p2s=self.p2s)
             if self.p2s.SM_X in self.sm_shared:
                 _kwargs_['_shared_view_x_'] = list(_ref_.order)
             if self.p2s.SM_Y in self.sm_shared and self.link_shape == 'bundled':
@@ -2309,4 +2314,4 @@ class ChP(P2SComponentColorMixin, ExportMixin):
                 _kwargs_['count_range_shared'] = (_ref_._count_min_, _ref_._count_max_)
             if self.p2s.SM_COLOR in self.sm_shared and _ref_._color_stat_min_ is not None:
                 _kwargs_['color_stat_range_shared'] = (_ref_._color_stat_min_, _ref_._color_stat_max_)
-        return {k: ChP(df=v, template=self, **_kwargs_) for k, v in df_lu.items()}
+        return {k: ChP(df=v, template=self, p2s=self.p2s, **_kwargs_) for k, v in df_lu.items()}

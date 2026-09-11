@@ -37,15 +37,20 @@ saying outright, because nothing in the code enforces them:
   dataframe stack and starting layout operations. Serving one of these views to
   an audience you do not trust is outside what the library is designed for.
 
-- **`Polars2SVG()` is a process-wide singleton, and so is its configuration.**
-  Every call returns the same instance — documented behaviour that component
-  constructors rely on, not an implementation detail — so `set_defaults()`,
-  `reset_defaults()` and `setColorOverrides()` reach every render in the
-  process. In the intended single-user case that is exactly the point: configure
-  once and every figure follows. Under a server handling several sessions it is
-  one session's settings silently changing another session's output. The
-  interactive controllers' dataframe stacks are per-view rather than per-session
-  in the same way.
+- **Configuration belongs to a `Polars2SVG` instance, and sharing one shares it.**
+  `Polars2SVG()` returns an independent instance: `set_defaults()`,
+  `reset_defaults()` and `setColorOverrides()` apply to the figures built from
+  that instance and to no other, and each factory method passes itself to the
+  component it builds (`p2s=`) so a render always resolves against its own
+  caller. A process serving several people can therefore give each session its
+  own instance — but nothing *makes* it. An application that builds one instance
+  at import time and shares it across sessions is back to one person's settings
+  changing another person's output, and that is a property of the application's
+  wiring rather than something the library can detect. The interactive
+  controllers' dataframe stacks are per-view rather than per-session in the same
+  way. None of this is an access control: an instance is an isolation boundary
+  for *configuration*, not a security boundary, and everything above about the
+  interactive surface still holds.
 
 The limits that do exist in the interactive code are **cost** bounds, not trust
 boundaries. `linkpi` bounds the search box's regex (a pattern-length cap plus a

@@ -141,9 +141,14 @@ class Piep(ExportMixin):
     svg:    str
     wxh:    Any
 
-    def __init__(self, *args: Any, **kwargs: Unpack[PiepKwargs]) -> None:
+    def __init__(self, *args: Any, p2s: 'polars2svg.Polars2SVG | None' = None,
+                 **kwargs: Unpack[PiepKwargs]) -> None:
         self.t_start        = time.time()
-        self.p2s            = polars2svg.Polars2SVG()
+        # p2s=: the instance whose factory method built this component, so the render
+        # resolves defaults / color overrides against its own caller.  None means direct
+        # construction -- that gets a fresh, unconfigured instance of its own, so pass
+        # p2s= explicitly to build against a configured one.
+        self.p2s            = p2s if p2s is not None else polars2svg.Polars2SVG()
         self.timing_metrics: dict = {}
         self.gatherMetrics(self.__parseInput__, *args, **kwargs)
         self.gatherMetrics(self.__validateInput__)
@@ -1123,7 +1128,7 @@ class Piep(ExportMixin):
     def render_with(self, df: pl.DataFrame, **overrides: Any) -> 'Piep':
         # `overrides` cannot be Unpack[PiepKwargs]: PEP 692 rejects a TypedDict
         # that repeats a named parameter, and `df` is both.
-        return Piep(df=df, template=self, **overrides)
+        return Piep(df=df, template=self, p2s=self.p2s, **overrides)
 
     #
     # renderSmallMultiples() - smallp integration
@@ -1140,7 +1145,7 @@ class Piep(ExportMixin):
         _want_pow_     = self.p2s.SM_PARTOFWHOLEp in self.sm_shared
         _want_count_   = self.p2s.SM_COUNT        in self.sm_shared
         if _want_order_ or _want_pow_ or _want_count_:
-            _ref_ = Piep(df=df_all, template=self)
+            _ref_ = Piep(df=df_all, template=self, p2s=self.p2s)
             if _want_count_ and _ref_._color_stat_min_ is not None:
                 _kwargs_['color_stat_range_shared'] = (_ref_._color_stat_min_, _ref_._color_stat_max_)
             if _want_count_:
@@ -1152,7 +1157,7 @@ class Piep(ExportMixin):
                 ]
             elif _want_order_:
                 _kwargs_['_shared_order_'] = list(_ref_._sorted_bins_)
-        return {k: Piep(df=v, template=self, **_kwargs_) for k, v in df_lu.items()}
+        return {k: Piep(df=v, template=self, p2s=self.p2s, **_kwargs_) for k, v in df_lu.items()}
 
     # ── Interactivity (panelize / brushing) ──────────────────────────────────
 

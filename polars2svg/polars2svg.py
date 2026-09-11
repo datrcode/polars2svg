@@ -72,9 +72,13 @@ def _copy_mutable_containers_(_value_: Any, _memo_: dict) -> Any:
 # module reload would make isinstance() miss filters added by the old module object.
 #
 class OnceFilter(logging.Filter):
-    def __init__(self, name: str = '') -> None:
+    def __init__(self, name: str = '', seen: set | None = None) -> None:
         super().__init__(name)
-        self.seen_messages: set = set()
+        # seen= carries the already-emitted messages over from the filter this one
+        # replaces.  The install runs on every Polars2SVG.__init__, so starting from an
+        # empty set would re-open every "warn once" message each time an instance is
+        # built -- which used to be invisible only because there was never a second one.
+        self.seen_messages: set = set() if seen is None else seen
     def filter(self, record: Any) -> bool:
         if record.msg not in self.seen_messages:
             self.seen_messages.add(record.msg)
@@ -110,8 +114,17 @@ class Polars2SVG(P2SColorsMixin,
 
     Construction
     ------------
-    ``Polars2SVG()`` takes no arguments and is a **singleton** — every call returns
-    the same shared instance (so component constructors can cheaply make their own).
+    ``Polars2SVG()`` takes no arguments and returns a **new, independent instance**.
+    Configuration lives on the instance, not in the process: ``set_defaults()``,
+    ``reset_defaults()`` and ``setColorOverrides()`` apply to every figure built from
+    *that* instance and to no other. Configure one instance once and everything you
+    render from it shares a style; build a second instance when you want a second style
+    (or a second user's session) that cannot be reached by the first.
+
+    Each factory method hands the component the instance it was called on (``p2s=``), so
+    a component always resolves its defaults and color overrides against its own caller.
+    Constructing a component directly (``XYp(df, ...)``) passes no instance and gets a
+    fresh, unconfigured one — pass ``p2s=`` to share a configured instance with it.
     The instance exposes every enum member as an attribute by name, so
     ``p2s.ROW_COUNTp``, ``p2s.CSETp``, ``p2s.BARCHARTp`` etc. are all available
     without importing the enum classes.
@@ -146,8 +159,6 @@ class Polars2SVG(P2SColorsMixin,
     ``tField(column, enum)`` builds a time-transformation field (see ``TField``) for
     binning a timestamp column by period (month, day-of-week, …) in ``timep``/``smallp``.
     '''
-    _instance_           = None
-
     # _COMPONENT_KWARGS_ / _VALID_COMPONENTS_ are properties rather than plain
     # class attributes so that resolving ChP._VALID_KWARGS (which requires the
     # optional 'layouts' extra) is deferred to first access instead of paying
@@ -193,10 +204,6 @@ class Polars2SVG(P2SColorsMixin,
     # /'', all of which are plausible values in real data and would collide with it.
     # nullNodeDisplay() restores a readable '(null)' at every text-display site.
     NULL_NODE_PREFIX     = '\x1fNULL\x1f'
-
-    def __new__(cls) -> Any:
-        if cls._instance_ is None: cls._instance_ = super().__new__(cls)
-        return cls._instance_
 
     class FieldTypeP(Enum):
         '''How a ``count=``/``order=`` field is aggregated. Pair with a field to
@@ -554,15 +561,12 @@ class Polars2SVG(P2SColorsMixin,
     REMAINDERp:                          RenderEnumsP
 
     def __init__(self) -> None:
-        # __new__ caches the singleton but Python still calls __init__ on every
-        # Polars2SVG() call -- and every component constructor makes one.  All of
-        # the setup below is once-only state, so re-running it is pure waste and
-        # re-adding the logger OnceFilter leaked one filter per instantiation.
-        if getattr(self, '_init_complete_', False): return
-
-        if not hasattr(self, '_global_defaults'):
-            self._global_defaults: dict    = {}
-            self._component_defaults: dict = {}
+        # Every Polars2SVG() builds its own instance, so everything below is per-instance
+        # state that runs exactly once for it.  The one thing that is NOT per-instance is
+        # the 'polars2svg_logger' further down -- that logger is module-global and shared
+        # by every instance, which is why its filter needs the care it gets there.
+        self._global_defaults: dict    = {}
+        self._component_defaults: dict = {}
 
         # Assign all enum members as instance attributes by name.  One loop name
         # across six enum types, so it is declared rather than inferred.
@@ -645,14 +649,18 @@ class Polars2SVG(P2SColorsMixin,
         self.enum_to_suffix = self._ENUM_TO_SUFFIX_
         self.suffix_to_enum = self._SUFFIX_TO_ENUM_
 
-        # Setup the logging / use a filter to only show a message once.  The logger
-        # is process-global, so a fresh singleton (test reset, module reload) would
-        # otherwise stack a new OnceFilter on top of the old ones -- strip stale
-        # instances first so exactly one is ever installed.
+        # Setup the logging / use a filter to only show a message once.  Instances are
+        # per-caller but this logger is not -- logging.getLogger() returns the same
+        # module-global object to all of them -- so without care every Polars2SVG() would
+        # stack another OnceFilter onto it.  Strip stale instances so exactly one is ever
+        # installed, and carry their seen set into the replacement so "once" means once
+        # per process rather than once per instance.
         self.logger = logging.getLogger('polars2svg_logger')
+        _seen_: set = set()
         for _filter_ in [f for f in self.logger.filters if type(f).__name__ == 'OnceFilter']:
+            _seen_ |= getattr(_filter_, 'seen_messages', set())
             self.logger.removeFilter(_filter_)
-        self.logger.addFilter(OnceFilter())
+        self.logger.addFilter(OnceFilter(seen=_seen_))
 
         # Initialize the mixins
         self.__p2s_colors_mixin_init__()
@@ -664,8 +672,6 @@ class Polars2SVG(P2SColorsMixin,
         self.__p2s_time_mixin_init__()
         self.__p2s_interactive_mixin_init__()
         self.__p2s_legend_mixin_init__()
-
-        self._init_complete_ = True
 
     # ------------------------------------------------------------------
     # Global configuration defaults
@@ -739,7 +745,12 @@ class Polars2SVG(P2SColorsMixin,
 
     # Per-instance lifecycle state: freshly initialized by every component's own
     # __init__ before __parseInput__ runs, and never part of the template snapshot.
-    _TEMPLATE_CLONE_SKIP_ = frozenset({'timing_metrics', 't_start', 't_end', 't_overall'})
+    # 'p2s' is here for the same reason -- it is the clone's wiring to the instance that
+    # built it, not resolved render state.  Without the skip the __dict__ copy below
+    # would silently replace it with the template's instance, so a clone built by one
+    # instance from another's template would resolve defaults and color overrides
+    # against the template's owner rather than its own caller.
+    _TEMPLATE_CLONE_SKIP_ = frozenset({'timing_metrics', 't_start', 't_end', 't_overall', 'p2s'})
 
     def _clone_template_state(self, target: Any, template: Any) -> None:
         '''Copy a template component's resolved state onto a fresh clone.
@@ -1171,7 +1182,7 @@ class Polars2SVG(P2SColorsMixin,
         v1 scope is the color encoding only: dot_size= / opacity= carry no size legend yet.
 
         '''
-        return XYp(*args, **kwargs)
+        return XYp(*args, p2s=self, **kwargs)
 
     def histop(self, *args: Any, **kwargs: Unpack[HistopKwargs]) -> Histop:
         '''
@@ -1267,7 +1278,7 @@ class Polars2SVG(P2SColorsMixin,
         v1 scope is the color encoding only: bar length (count=) is covered by the count axis labels, not the legend.
 
         '''
-        return Histop(*args, **kwargs)
+        return Histop(*args, p2s=self, **kwargs)
 
     def piep(self, *args: Any, **kwargs: Unpack[PiepKwargs]) -> Piep:
         '''
@@ -1361,7 +1372,7 @@ class Polars2SVG(P2SColorsMixin,
         v1 scope is the color encoding only: slice angle (count=) is conveyed by the slices themselves, not the legend.
 
         '''
-        return Piep(*args, **kwargs)
+        return Piep(*args, p2s=self, **kwargs)
 
     def linkp(self, *args: Any, **kwargs: Unpack[LinkPKwargs]) -> LinkP:
         '''
@@ -1583,7 +1594,7 @@ class Polars2SVG(P2SColorsMixin,
         v1 scope is the color encoding only: describes color= (links) when data-driven, else node_color=; 'vary' node/link sizing has no size legend yet.
 
         '''
-        return LinkP(*args, **kwargs)
+        return LinkP(*args, p2s=self, **kwargs)
 
     def chordp(self, *args: Any, **kwargs: 'Unpack[ChPKwargs]') -> 'ChP':
         '''
@@ -1705,7 +1716,7 @@ class Polars2SVG(P2SColorsMixin,
                 "(scipy, and networkx for some layouts). Install them with:\n"
                 "    pip install polars2svg[layouts]"
             ) from _e_
-        return ChP(*args, **kwargs)
+        return ChP(*args, p2s=self, **kwargs)
 
     def timep(self, *args: Any, **kwargs: Unpack[TimepKwargs]) -> Timep:
         '''
@@ -1794,7 +1805,7 @@ class Polars2SVG(P2SColorsMixin,
         v1 scope is the color encoding only: bar height (count=) is covered by the count axis labels, not the legend.
 
         '''
-        return Timep(*args, **kwargs)
+        return Timep(*args, p2s=self, **kwargs)
 
     def smallp(self, *args: Any, **kwargs: Unpack[SmallpKwargs]) -> Smallp:
         '''
@@ -1877,7 +1888,7 @@ class Polars2SVG(P2SColorsMixin,
         # (e.g. p2s.xyp(..., draw_context=False)) before passing it in, not on smallp() itself.
 
         '''
-        return Smallp(*args, **kwargs)
+        return Smallp(*args, p2s=self, **kwargs)
 
     def spreadlinesp(self, *args: Any, **kwargs: Unpack[SpreadLinesPKwargs]) -> SpreadLinesP:
         '''
@@ -1935,7 +1946,7 @@ class Polars2SVG(P2SColorsMixin,
         v1 scope is the color encoding only: node_color= only (a field or by-name); circle size has no legend.
 
         '''
-        return SpreadLinesP(*args, **kwargs)
+        return SpreadLinesP(*args, p2s=self, **kwargs)
 
     def tile(self, *args: Any, **kwargs: Unpack[TileKwargs]) -> Tile:
         '''
@@ -1988,7 +1999,7 @@ class Polars2SVG(P2SColorsMixin,
         size is .wxh_actual and the unscaled size of the tiling itself is .content_wxh.
 
         '''
-        return Tile(*args, **kwargs)
+        return Tile(*args, p2s=self, **kwargs)
 
     def __allhex__(self, s: str) -> bool:
         return all(c in '0123456789abcdefABCDEF' for c in s)

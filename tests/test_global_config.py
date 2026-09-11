@@ -137,13 +137,19 @@ class TestGlobalConfig(unittest.TestCase):
         self.assertEqual(h.txt_h, 20)
 
     # ------------------------------------------------------------------
-    # Singleton guard: re-creating Polars2SVG() doesn't reset config
+    # Instance guard: configuration belongs to the instance it was set on
     # ------------------------------------------------------------------
 
-    def test_singleton_reinit_does_not_reset_config(self):
+    def test_config_is_not_shared_with_another_instance(self):
         self.p2s.set_defaults(txt_h=16)
-        p2s2 = Polars2SVG()               # re-invokes __init__ on same singleton
-        self.assertEqual(p2s2._global_defaults.get('txt_h'), 16)
+        p2s2 = Polars2SVG()               # an independent instance, not the same object
+        self.assertIsNot(p2s2, self.p2s)
+        self.assertIsNone(p2s2._global_defaults.get('txt_h'))
+
+    def test_config_survives_on_the_instance_that_set_it(self):
+        self.p2s.set_defaults(txt_h=16)
+        Polars2SVG()                      # building another one changes nothing here
+        self.assertEqual(self.p2s._global_defaults.get('txt_h'), 16)
 
     # ------------------------------------------------------------------
     # All valid component names are accepted

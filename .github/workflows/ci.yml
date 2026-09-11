@@ -225,4 +225,11 @@ jobs:
         # Without DISPLAY it takes the headless SwiftShader path, which works. The
         # real fix is for that fixture to try native and fall back rather than
         # branching on DISPLAY; until it does, this trade buys 14 tests for 3.
-        run: python -m pytest tests/interaction --interaction -q
+        #
+        # -rs prints the reason for every skip. Without it the log says only
+        # "N skipped", and this suite skips for two quite different reasons -- a
+        # runner with no usable GPU canvas, and no clipboard on a headless box --
+        # which a bare count cannot tell apart from a fixture quietly breaking and
+        # taking tests with it. Green at the wrong number is the exact failure mode
+        # these tests exist to catch, so the reasons belong in the log.
+        run: python -m pytest tests/interaction --interaction -q -rs

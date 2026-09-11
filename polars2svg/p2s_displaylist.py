@@ -33,10 +33,15 @@ FLOATS_PER_INSTANCE = {
 CLOUD_ICON_W, CLOUD_ICON_H, CLOUD_ICON_RX = 28.0, 14.0, 6.0
 
 # The <defs> definition of that same icon, as it is written into the SVG.  linkp emits
-# one copy (#cloud) and spreadlinesp two (#cloud and #cloud_outline); those were three
+# one copy and spreadlinesp two (a stroked and an unstroked variant); those were three
 # hand-maintained literals of the same 644-byte string until they were hoisted here, so
 # the only differences between them -- the id, and whether the path carries a stroke --
 # are the two arguments below.
+#
+# The id is the caller's to choose because it has to be: a finished SVG is normally
+# embedded beside other figures, so an id the component does not scope to its own render
+# collides with the next figure's copy.  spreadlinesp passes 'cloud_<rand_id>' /
+# 'cloud_outline_<rand_id>'; linkp still takes the bare default (see its own note).
 #
 # Source: https://www.svgrepo.com/svg/520637/cloud
 # License: CC Attribution License
@@ -58,7 +63,7 @@ _CLOUD_ICON_D_ = (
 #
 # cloudIconDef() - the '<g id=...>' cloud icon definition for an SVG <defs> block
 # - id     : the symbol name a matching '<use href="#...">' will reference
-# - stroke : outline color, or None for the unstroked variant (spreadlinesp's #cloud_outline)
+# - stroke : outline color, or None for the unstroked variant (spreadlinesp's outline cloud)
 #
 def cloudIconDef(id: str = 'cloud', stroke: str | None = '#000000') -> str:
     _stroke_ = f'stroke="{stroke}" ' if stroke is not None else ''
@@ -323,7 +328,7 @@ def _rootViewBoxTransform_(svg_str: str) -> tuple:
 # that arrives as a finished string -- keep it for that, not as a shortcut for a
 # new component.  The document's root viewBox is honored (coordinates, lengths,
 # and font sizes are mapped into canvas pixels), so viewBox-scaled views convert
-# at the correct size.  <defs> blocks are skipped; <use href="#cloud"> (the
+# at the correct size.  <defs> blocks are skipped; every <use> (in practice only the
 # linkp/spreadlines cloud icon) approximates as a rounded rect.
 # Gradients/clip-paths are ignored -- a component needing a clip should record a
 # per-op scissor instead.

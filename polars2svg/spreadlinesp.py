@@ -178,6 +178,7 @@ class SpreadLinesP(ExportMixin):
     _gpu_dl_:         Any
     _gpu_payload_:    dict | None
     _legend_region_:  tuple | None
+    _rand_id_:        int
     _ts_enum_:        Any
     _ts_field_:       Any
     df:               Any
@@ -1438,7 +1439,7 @@ class SpreadLinesP(ExportMixin):
             _n_ego_total_ = len(_real_ego_)
             _n_sel_focal_ = sum(1 for n in _real_ego_ if n in self.highlight_nodes)
             svg.append(
-                f'<use href="#cloud" x="{x:.1f}" y="{y:.1f}"'
+                f'<use href="#cloud_{self._rand_id_}" x="{x:.1f}" y="{y:.1f}"'
                 f' fill="{_ego_co_}" stroke="{_axis_co_}" stroke-width="0.5"/>'
             )
             if dl is not None:
@@ -1449,13 +1450,13 @@ class SpreadLinesP(ExportMixin):
                                          fill=_ego_co_, stroke=_axis_co_, stroke_w=0.5)
             if _n_sel_focal_ == _n_ego_total_ and _n_ego_total_ > 0:
                 svg.append(
-                    f'<use href="#cloud_outline" x="{x:.1f}" y="{y:.1f}"'
+                    f'<use href="#cloud_outline_{self._rand_id_}" x="{x:.1f}" y="{y:.1f}"'
                     f' fill="none" stroke="{_sel_co_}" stroke-width="2.0"/>'
                 )
                 if dl is not None:
                     self.__selectionRingToDL__(dl, x, y, _sel_co_)
             elif _n_sel_focal_ > 0:
-                _clip_id_ = f'ccl_{b}'
+                _clip_id_ = f'ccl_{self._rand_id_}_{b}'
                 svg.append(
                     f'<clipPath id="{_clip_id_}" clipPathUnits="userSpaceOnUse">'
                     f'<rect x="{x:.1f}" y="{y-10:.1f}" width="15" height="20"/>'
@@ -1633,6 +1634,13 @@ class SpreadLinesP(ExportMixin):
         # on the fitted bounds)
 
     def __renderSVG__(self, rand_id: int) -> None:
+        # Every id this render emits is scoped with rand_id, so that two of these
+        # figures on one page cannot collide (see the <defs> note further down).
+        # renderBin() needs it several frames down the call stack and is not given it
+        # as an argument, so it is published here rather than passed: one assignment
+        # from the parameter, so the <defs> and the <use>/clip-path references that
+        # point at them cannot be built from different numbers.
+        self._rand_id_ = rand_id
         self._gpu_dl_ = self._gpu_payload_ = None   # invalidate cached GPU state
         self._dl_body_ = None
         self.__legendPrepare__()
@@ -1973,10 +1981,14 @@ class SpreadLinesP(ExportMixin):
                        f' width="{_vw_:.1f}" height="{_vh_:.1f}" fill="{_bg_co_}"/>'))
         if self.ego_is_set:
             # Cloud symbols -- the shared definition beside CLOUD_ICON_* in
-            # p2s_displaylist, the same one linkp emits.  #cloud_outline is the
+            # p2s_displaylist, the same one linkp emits.  #cloud_outline_ is the
             # unstroked variant, drawn under the ego node's own outline.
-            svg.insert(2, '<defs>' + cloudIconDef() +
-                          cloudIconDef('cloud_outline', stroke=None) + '</defs>')
+            #
+            # Both ids carry rand_id, as every other id this component emits does.
+            # An SVG is usually embedded in a page beside others, where a bare
+            # '#cloud' would be a duplicate id the moment a second figure appears.
+            svg.insert(2, '<defs>' + cloudIconDef(f'cloud_{rand_id}') +
+                          cloudIconDef(f'cloud_outline_{rand_id}', stroke=None) + '</defs>')
         if self.draw_border:
             _bc_ = _border_co_
             svg.append(f'<rect x="{self.vx0:.1f}" y="{self.vy0:.1f}"'

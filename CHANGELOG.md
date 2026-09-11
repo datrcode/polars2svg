@@ -758,6 +758,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **spreadlinesp scopes the SVG ids it emits, so two figures on one page no longer
+  collide.** Every other component mixes a per-render random integer into every id it
+  writes (`xyp_<rand>`, `plotClip-<rand>`, `p2sll<rand>_<n>`, …), precisely because a
+  finished SVG is normally embedded beside other figures and they then share one DOM.
+  spreadlinesp did not: its cloud `<defs>` went out as `#cloud` / `#cloud_outline` and
+  its per-bin selection clip as `#ccl_<bin>`. They are emitted only by the ego-set
+  render -- a set-valued `ego=` with `highlight_nodes=` covering part of it -- which is
+  why the golden set, all of which passes a scalar `ego=`, never showed it.
+
+  `#ccl_<bin>` was the one that changed a render rather than only invalidating the
+  markup. The `<defs>` bodies are fixed strings, so a duplicate `#cloud` resolves to an
+  identical definition and still draws correctly; the clip rect, by contrast, is placed
+  from *that figure's own layout*. `url(#ccl_0)` resolves to the first match in document
+  order, so the second spreadlinesp on a page had its partial-selection rings clipped by
+  the first figure's window -- and the window is 20px tall, so two figures of different
+  heights clip to disjoint bands and the second figure's rings vanish entirely rather
+  than draw wrong. The ids are now `cloud_<rand>`, `cloud_outline_<rand>` and
+  `ccl_<rand>_<bin>`; the random integer was already being generated and passed into
+  `__renderSVG__`, and simply never used. Rendering of a single figure is unchanged.
+
+  linkp's `#cloud` is deliberately left bare for now: it has the inert form of the
+  problem (a fixed `<defs>` body), and six tests plus the goldens pin the literal.
+
 - **`warn once` is once per process again, not once per `Polars2SVG` instance.** The
   `OnceFilter` on the shared `polars2svg_logger` is stripped and reinstalled by every
   `__init__`, and the replacement started with an empty `seen_messages` — so any second

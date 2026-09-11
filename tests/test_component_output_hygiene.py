@@ -8,8 +8,10 @@ precision belongs where the number becomes a string -- see PLANNING.md S1, and t
 `.round()`/format expressions in linkp and xyp.
 
 What survives here is the check that was never about the trimmer: no component may leak
-the multi-field separator (\x1f, used to join tuple fields) into its output.
+the multi-field separator (\x1f, used to join tuple fields) into its output -- and, since
+0.2.1, that no component reuses an SVG id across two renders.
 """
+import re
 import unittest
 
 import polars as pl
@@ -49,6 +51,13 @@ class TestComponentOutputHygiene(unittest.TestCase):
             'chordp':  lambda: p2s.chordp(_df_g_, [('fm', 'to')], wxh=(300, 300)),
             'spreadlinesp': lambda: p2s.spreadlinesp(_df_sl_, [('fm', 'to')],
                                                      ego='a', time='time', wxh=(500, 260)),
+            # A set-valued ego with only part of it highlighted -- the only render that
+            # reaches spreadlinesp's cloud <defs> and its per-bin clipPath, which is
+            # where the unscoped ids were.
+            'spreadlinesp_ego_set': lambda: p2s.spreadlinesp(_df_sl_, [('fm', 'to')],
+                                                             ego=['a', 'b'], time='time',
+                                                             highlight_nodes={'a'},
+                                                             wxh=(500, 260)),
             'smallp':  lambda: p2s.smallp(_df_cat_, 'cat',
                                           p2s.xyp(_df_cat_, 'val', 'val'), wxh=(300, 300)),
         }
@@ -59,6 +68,33 @@ class TestComponentOutputHygiene(unittest.TestCase):
         for _name_, _fn_ in self._renderers().items():
             with self.subTest(component=_name_):
                 self.assertNotIn('\x1f', _fn_().svg)
+
+    def test_ids_are_scoped_to_one_render(self):
+        '''No id may survive from one render into the next.
+
+        A finished SVG is normally embedded in a page beside other figures, where they
+        share one DOM: `url(#x)` and `href="#x"` resolve to the *first* element with
+        that id in document order, so two figures emitting the same id silently point
+        the second figure's reference at the first figure's element.  Every component
+        therefore mixes a per-render random integer into every id it emits.
+
+        spreadlinesp did not, until 0.2.1: it emitted `cloud_outline` and `ccl_<bin>`
+        bare.  `ccl_<bin>` was the one that broke a render rather than just the markup
+        -- the clip rect is positioned from that figure's own layout, so a second
+        spreadlinesp on the page had its partial-selection rings clipped by the first
+        figure's window, and where the two did not overlap the ring vanished.
+
+        linkp's `#cloud` is still bare, but its <defs> body is a fixed string, so two
+        linkps resolve to an identical definition and render correctly; no renderer
+        here emits it (a cloud needs collapsed nodes -- see TestLinkPCloudDefs).
+        '''
+        for _name_, _fn_ in self._renderers().items():
+            with self.subTest(component=_name_):
+                _first_  = set(re.findall(r'id="([^"]+)"', _fn_().svg))
+                _second_ = set(re.findall(r'id="([^"]+)"', _fn_().svg))
+                self.assertEqual(sorted(_first_ & _second_), [],
+                                 f'{_name_} reuses ids across renders; two of these '
+                                 f'figures on one page would collide')
 
 
 if __name__ == '__main__':

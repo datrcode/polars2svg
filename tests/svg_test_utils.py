@@ -51,9 +51,11 @@ def normalize_svg(svg):
          - Clip path ID    : plotClip-{randid}
          - Gradient IDs    : lines_{randid}_...
          - LinkP <textPath> paths : p2sll{randid}_{n}
+         - SpreadLinesP cloud symbols : cloud_{randid}, cloud_outline_{randid}
+         - SpreadLinesP clip paths    : ccl_{randid}_{bin}
        These are replaced with the fixed token TESTID.  Only the random half is
-       replaced in the LinkP case: the trailing _{n} is the label's emission index,
-       which distinguishes the paths within one render and must survive.
+       replaced in the LinkP and SpreadLinesP-clip cases: the trailing _{n} / _{bin}
+       distinguishes the elements within one render and must survive.
 
     2. Dot element order — __renderDots__() uses group_by() whose row order is
        non-deterministic across runs.  The individual <rect> and <circle>
@@ -65,7 +67,8 @@ def normalize_svg(svg):
     which is why p2sll appears in the substitution above.
     '''
     # 1. Replace random IDs
-    svg = re.sub(r'(plotClip-|lines_|smallp_|xyp_|histop_|timep_|chordp_|p2sll|(?:rect|circle)-group-)(\d+)', r'\1TESTID', svg)
+    svg = re.sub(r'(plotClip-|lines_|smallp_|xyp_|histop_|timep_|chordp_|p2sll|ccl_'
+                 r'|cloud_outline_|cloud_|(?:rect|circle)-group-)(\d+)', r'\1TESTID', svg)
 
     # 2. Sort dot elements within the plot group
     def _sort_plot_group_(m):

@@ -139,5 +139,132 @@ class TestSavePNGMissingDeps(unittest.TestCase):
         self.assertIn('polars2svg[export]', str(ctx.exception))
 
 
+@unittest.skipUnless(_svglib_available(), 'svglib/reportlab not installed (optional [export] extra)')
+class TestRasterizeDoesNotReadLocalFiles(unittest.TestCase):
+    '''PNG export must not turn an external reference in the SVG into a file read.
+
+    tile() embeds foreign SVG **verbatim** -- that is the component, not an
+    oversight (PLANNING.md A3, SECURITY.md) -- so a document arriving at
+    svgToPNGBytes() can carry an <image>/<use> href that polars2svg never wrote.
+    svglib resolves such an href against the *source path* of the document it
+    parsed, so rasterizing from a file path would read that file off disk and
+    composite its contents into the output PNG.  export.py hands svglib an
+    io.StringIO instead, which leaves SvgRenderer.source_path a non-str and makes
+    xlink_href_target() decline to resolve a path at all.
+
+    These tests pin the observable end of that -- the referenced file's pixels
+    never reach the PNG -- so they fail either way it could break: if
+    svgToPNGBytes() is refactored to rasterize from a path, or if a future svglib
+    inside the [export] extra's range (>=1.5,<2) drops the source_path check.
+    See the block comment above svgToPNGBytes() in polars2svg/export.py.
+    '''
+
+    # The secret file is solid red and nothing polars2svg draws here is, so "a red
+    # pixel appears in the output" is exactly "the file was read".
+    _SECRET_RGB_ = (255, 0, 0)
+
+    def setUp(self):
+        self.p2s = Polars2SVG()
+        self._tmp_ = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp_.cleanup)
+        self.dir = self._tmp_.name
+        from PIL import Image
+        self.secret_png = os.path.join(self.dir, 'secret.png')
+        Image.new('RGB', (40, 40), self._SECRET_RGB_).save(self.secret_png)
+        # An external SVG for the <use>/external-reference vector.
+        self.secret_svg = os.path.join(self.dir, 'secret.svg')
+        with open(self.secret_svg, 'w', encoding='utf-8') as f:
+            f.write('<svg width="100" height="100" xmlns="http://www.w3.org/2000/svg">'
+                    '<g id="g1"><rect x="0" y="0" width="100" height="100" fill="red"/></g>'
+                    '</svg>')
+
+    def _tiled(self, body):
+        '''Compose `body` as a foreign child SVG through tile(), as a caller would.'''
+        _foreign_ = ('<svg width="100" height="100" xmlns="http://www.w3.org/2000/svg" '
+                     'xmlns:xlink="http://www.w3.org/1999/xlink">' + body + '</svg>')
+        return self.p2s.tile([_foreign_])._repr_svg_()
+
+    def _secret_pixels(self, png_bytes):
+        '''Count pixels matching the secret file's color in a rendered PNG.'''
+        from PIL import Image
+        _im_ = Image.open(io.BytesIO(png_bytes)).convert('RGB')
+        _counts_ = _im_.getcolors(maxcolors=1 << 24) or []
+        return sum(_n_ for _n_, _px_ in _counts_ if _px_ == self._SECRET_RGB_)
+
+    def test_positive_control_embedded_image_is_composited(self):
+        # Without this, every assertion below could pass vacuously -- e.g. if
+        # svglib silently ignored <image> altogether, or the fixture were not red.
+        # A data: URI is the one image source svglib resolves with no filesystem
+        # access, so this proves the detection works without relying on the leak.
+        import base64
+        with open(self.secret_png, 'rb') as f:
+            _b64_ = base64.b64encode(f.read()).decode('ascii')
+        _svg_ = self._tiled(f'<image x="0" y="0" width="100" height="100" '
+                            f'xlink:href="data:image/png;base64,{_b64_}"/>')
+        self.assertGreater(self._secret_pixels(svgToPNGBytes(_svg_)), 100,
+                           'positive control failed: svglib did not composite an '
+                           'embedded <image>, so the leak checks below prove nothing')
+
+    def test_external_references_are_not_resolved(self):
+        _rel_png_ = os.path.basename(self.secret_png)
+        _cases_ = {
+            # <image>, every spelling of "read this file off disk"
+            'image relative':      f'<image x="0" y="0" width="100" height="100" xlink:href="{_rel_png_}"/>',
+            'image absolute':      f'<image x="0" y="0" width="100" height="100" xlink:href="{self.secret_png}"/>',
+            'image traversal':     f'<image x="0" y="0" width="100" height="100" xlink:href="../../../..{self.secret_png}"/>',
+            'image bare href':     f'<image x="0" y="0" width="100" height="100" href="{_rel_png_}"/>',
+            'image file uri':      f'<image x="0" y="0" width="100" height="100" xlink:href="file://{self.secret_png}"/>',
+            # <use> pulling in an external document, with and without a fragment
+            'use external frag':   f'<use xlink:href="{self.secret_svg}#g1" x="0" y="0"/>',
+            'use external whole':  f'<use xlink:href="{self.secret_svg}" x="0" y="0"/>',
+        }
+        # The relative spellings resolve against the rasterized document's own
+        # directory, so run from the directory holding the secret: that is the
+        # worst case for us and the one a naive temp-file refactor would produce.
+        _cwd_ = os.getcwd()
+        os.chdir(self.dir)
+        try:
+            for _name_, _body_ in _cases_.items():
+                with self.subTest(vector=_name_):
+                    _png_ = svgToPNGBytes(self._tiled(_body_))
+                    self.assertTrue(_png_.startswith(_PNG_MAGIC_))
+                    self.assertEqual(
+                        self._secret_pixels(_png_), 0,
+                        f'{_name_}: contents of a local file reached the exported '
+                        f'PNG -- the rasterizer resolved an external reference in '
+                        f'foreign SVG as a filesystem path',
+                    )
+        finally:
+            os.chdir(_cwd_)
+
+    def test_rasterizer_is_not_given_a_filesystem_path(self):
+        # The behavioural checks above are the real guarantee, but they only fail
+        # once BOTH halves break.  This one names the invariant directly, so a
+        # refactor to svg2rlg(<path>) fails here with the reason attached even on
+        # an svglib that still happens to refuse the resolution.
+        # svgToPNGBytes() imports svg2rlg at call time, so patching the module
+        # attribute is enough to see what it hands over.
+        import svglib.svglib
+        _real_, _seen_ = svglib.svglib.svg2rlg, []
+
+        def _spy_(source, *args, **kwargs):
+            _seen_.append(source)
+            return _real_(source, *args, **kwargs)
+
+        with mock.patch.object(svglib.svglib, 'svg2rlg', _spy_):
+            svgToPNGBytes(self.p2s.tile([
+                '<svg width="10" height="10" xmlns="http://www.w3.org/2000/svg"/>'
+            ])._repr_svg_())
+
+        self.assertEqual(len(_seen_), 1)
+        self.assertNotIsInstance(
+            _seen_[0], (str, bytes, os.PathLike),
+            'svgToPNGBytes() must hand svglib a stream, not a path: svglib resolves '
+            'xlink:href on <image>/<use> against the source document\'s path, so a '
+            'path here makes foreign SVG passed to tile() a local file read. '
+            'See the comment above svgToPNGBytes() in polars2svg/export.py.',
+        )
+
+
 if __name__ == '__main__':
     unittest.main()

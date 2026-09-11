@@ -46,6 +46,19 @@ def _fixSVGForRasterize_(svg: str) -> str:
 # tiles (smallp/spreadlinesp) outright.  reportlab 5 itself is fine here — it is
 # svglib 2 that changes the geometry — so the cap is on svglib, not reportlab.
 #
+# The io.StringIO wrapper below is LOAD-BEARING — do not "simplify" it into a
+# temp-file path.  svglib resolves xlink:href/href on <image> and <use> against
+# the *source path* of the document it parsed, so rasterizing from a file path
+# turns any external reference in the SVG into a filesystem read whose contents
+# land in the output PNG.  tile() embeds foreign SVG verbatim (PLANNING.md A3,
+# SECURITY.md), so that reference can come from markup polars2svg did not
+# produce.  Handing svglib a stream instead leaves its source_path a non-str and
+# SvgRenderer.xlink_href_target() then refuses to resolve a path at all — true of
+# every version the [export] extra admits (svglib 1.5.0 through 1.6.0), but a
+# property of svglib rather than of us, which is why
+# tests/test_export_save.py::TestRasterizeDoesNotReadLocalFiles pins the
+# behaviour end-to-end instead of trusting this comment.
+#
 def svgToPNGBytes(svg: str) -> bytes:
     try:
         from svglib.svglib import svg2rlg

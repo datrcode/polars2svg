@@ -101,6 +101,20 @@ the DataFrame, or evaluate untrusted expressions.
   is. Do not build an `svg_list` entry out of anything you would not paste into
   the page yourself.
 
+  What that verbatim embedding does **not** reach is the filesystem.
+  `savePNG()` / `save('*.png')` rasterize through svglib, which resolves
+  `xlink:href` on `<image>` and `<use>` against the *source path* of the document
+  it parsed — so rasterizing from a file path would turn an external reference in
+  a tiled child SVG into a local file read whose contents land in the exported
+  PNG. `polars2svg/export.py` hands svglib a stream rather than a path, which
+  leaves svglib with no base path to resolve against and makes it decline
+  external references outright; relative, absolute, traversal, `file://` and
+  external-`<use>` spellings are all inert.
+  `tests/test_export_save.py::TestRasterizeDoesNotReadLocalFiles` pins this end
+  to end, so it holds as a tested property rather than an accident of how the
+  rasterizer happens to be called. Trusting `svg_list` therefore means trusting
+  it with your *page*, not with your disk.
+
 **How untrusted string data is handled:**
 
 - All body text rendered via `svgText()` / `svgAxisLabels()`

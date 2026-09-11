@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **PNG export cannot be used to read local files, and that is now a tested
+  property rather than an accident.** `tile()` embeds foreign SVG verbatim (that
+  is the component), and svglib — the rasterizer behind `savePNG()` /
+  `save('*.png')` — resolves `xlink:href` on `<image>` and `<use>` against the
+  source *path* of the document it parsed. Rasterizing from a file path would
+  therefore turn an external reference in a tiled child SVG into a local file
+  read, with the file's contents composited into the exported PNG.
+  `svgToPNGBytes()` has always passed a stream instead of a path, which leaves
+  svglib no base path to resolve against and makes it decline the reference
+  outright, so no released version is affected — relative, absolute, `..`
+  traversal, bare `href`, `file://` and external `<use>` spellings are all inert,
+  on every svglib the `[export]` extra admits. What was missing was any record
+  that the stream is load-bearing: `polars2svg/export.py` now says so at the call
+  site, and `tests/test_export_save.py::TestRasterizeDoesNotReadLocalFiles` pins
+  all seven vectors end to end (with a `data:`-URI positive control, so the checks
+  cannot pass vacuously) plus a direct assertion that svglib is handed a stream.
+  Behaviour is unchanged; the invariant is no longer one ordinary refactor away
+  from silently breaking.
+
 ### Added
 
 - **`tests/interaction/` -- the interactive JavaScript now executes under test.**

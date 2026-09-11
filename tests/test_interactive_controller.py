@@ -1,12 +1,16 @@
 import asyncio
 import logging
 import re
+import signal
+import threading
+import time
 import unittest
 from datetime import datetime, timedelta
 
 import polars as pl
 
 from polars2svg import Polars2SVG
+from polars2svg import interactive_controller as ic
 from polars2svg.interactive_controller import (
     InteractionController,
     _collect_leaves,
@@ -2576,6 +2580,227 @@ class TestLINKPIRegexSearchBounds(_UnfilteredLoggerMixin, unittest.TestCase):
         with self.assertLogs('polars2svg_logger', level='WARNING'):
             asyncio.run(ctrl.applySearchOp(None))
         self.assertEqual(ctrl.selected_entities, set())
+
+
+class TestRegexHardStop(unittest.TestCase):
+    """_regexHardStop_ is what makes the budget bound ONE match.  A deadline checked
+    between subjects cannot: re.search() is a single C call.  It is interruptible
+    though -- CPython's engine polls signals while backtracking -- so a one-shot
+    interval timer raises out of the middle of a wedged match."""
+
+    # '(a+)+$' against a subject of all 'a' that cannot match: the textbook blowup.
+    WEDGE_PATTERN = r'(a+)+$'
+    WEDGE_SUBJECT = 'a' * 200 + '!'
+
+    def setUp(self):
+        super().setUp()
+        self._saved_handler = signal.getsignal(signal.SIGALRM) if hasattr(signal, 'SIGALRM') else None
+
+    def tearDown(self):
+        # getsignal() returns None for a handler installed from C, which signal() will
+        # not take back -- leave that one alone rather than raise out of tearDown.
+        if hasattr(signal, 'SIGALRM'):
+            signal.setitimer(signal.ITIMER_REAL, 0)
+            if self._saved_handler is not None:
+                signal.signal(signal.SIGALRM, self._saved_handler)
+        super().tearDown()
+
+    @unittest.skipUnless(hasattr(signal, 'setitimer'), 'no POSIX interval timer')
+    def test_it_interrupts_a_match_that_is_not_returning(self):
+        _t0_ = time.monotonic()
+        with self.assertRaises(ic._RegexBudgetExpired_):
+            with ic._regexHardStop_(0.3) as _armed_:
+                self.assertTrue(_armed_)
+                re.search(self.WEDGE_PATTERN, self.WEDGE_SUBJECT)
+        self.assertLess(time.monotonic() - _t0_, 5.0)
+
+    @unittest.skipUnless(hasattr(signal, 'setitimer'), 'no POSIX interval timer')
+    def test_it_leaves_the_signal_state_as_it_found_it(self):
+        _sentinel_ = lambda signum, frame: None
+        signal.signal(signal.SIGALRM, _sentinel_)
+        with ic._regexHardStop_(0.5) as _armed_:
+            self.assertTrue(_armed_)
+        self.assertIs(signal.getsignal(signal.SIGALRM), _sentinel_)
+        self.assertEqual(signal.getitimer(signal.ITIMER_REAL), (0.0, 0.0))
+
+    @unittest.skipUnless(hasattr(signal, 'setitimer'), 'no POSIX interval timer')
+    def test_state_is_restored_even_when_the_timer_fires(self):
+        _sentinel_ = lambda signum, frame: None
+        signal.signal(signal.SIGALRM, _sentinel_)
+        with self.assertRaises(ic._RegexBudgetExpired_):
+            with ic._regexHardStop_(0.2):
+                re.search(self.WEDGE_PATTERN, self.WEDGE_SUBJECT)
+        self.assertIs(signal.getsignal(signal.SIGALRM), _sentinel_)
+        self.assertEqual(signal.getitimer(signal.ITIMER_REAL), (0.0, 0.0))
+
+    def test_it_declines_off_the_main_thread(self):
+        # Signal handlers are main-thread only.  A worker must be told so, because its
+        # fallback (refusing risky patterns) is the only protection it has.
+        _armed_ = []
+        def _probe_():
+            with ic._regexHardStop_(1.0) as _a_: _armed_.append(_a_)
+        _t_ = threading.Thread(target=_probe_)
+        _t_.start(); _t_.join(10)
+        self.assertFalse(_t_.is_alive())
+        self.assertEqual(_armed_, [False])
+
+    @unittest.skipUnless(hasattr(signal, 'setitimer'), 'no POSIX interval timer')
+    def test_it_does_not_steal_an_alarm_somebody_else_is_waiting_on(self):
+        _fired_ = []
+        signal.signal(signal.SIGALRM, lambda signum, frame: _fired_.append(1))
+        signal.setitimer(signal.ITIMER_REAL, 0.4)
+        with ic._regexHardStop_(5.0) as _armed_:
+            self.assertFalse(_armed_)                     # declined
+        self.assertGreater(signal.getitimer(signal.ITIMER_REAL)[0], 0.0)
+        _end_ = time.monotonic() + 3.0
+        while not _fired_ and time.monotonic() < _end_: time.sleep(0.02)
+        self.assertTrue(_fired_, 'the caller\'s own alarm was swallowed')
+
+    def test_a_zero_budget_does_not_arm(self):
+        with ic._regexHardStop_(0) as _armed_:
+            self.assertFalse(_armed_)
+
+
+class TestRegexBacktrackingScreen(unittest.TestCase):
+    """_patternRisksBacktracking_ is the fallback for the platforms and threads where
+    the timer above cannot arm.  It must catch the catastrophic shapes without
+    refusing the patterns somebody would actually type into a search box -- a false
+    positive here is a search the user asked for and did not get."""
+
+    RISKY = [r'(a+)+$', r'(a*)*$', r'(a|a)*$', r'(a|ab)*$', r'(\d+\s*)+$',
+             r'(.*)*$', r'(a{1,3})+$', r'([a-z]+)+$']
+
+    SAFE  = ['abc', r'^srv-\d+$', '.*prod.*', '(cat|dog)+', '^(web|db|api)-[0-9]+',
+             'foo.bar', r'[A-Z]{3}\d{2}', '(?:ab)+', 'a+b+c+', r'^\w+\.\w+$',
+             r'host\d*', 'x?y*z+', r'(a++)+$']
+
+    def test_catastrophic_shapes_are_refused(self):
+        for _pattern_ in self.RISKY:
+            with self.subTest(pattern=_pattern_):
+                self.assertTrue(ic._patternRisksBacktracking_(_pattern_))
+
+    def test_realistic_search_patterns_are_allowed(self):
+        for _pattern_ in self.SAFE:
+            with self.subTest(pattern=_pattern_):
+                self.assertFalse(ic._patternRisksBacktracking_(_pattern_))
+
+    def test_an_alternation_of_distinct_literals_is_allowed_case_insensitively(self):
+        self.assertFalse(ic._patternRisksBacktracking_('(cat|dog)+', re.IGNORECASE))
+
+    def test_alternatives_that_collide_under_ignorecase_are_refused(self):
+        # '(ab|AB)+' has disjoint branches only while case matters; under IGNORECASE the
+        # two match the same text and it goes exponential (measured: 2x per repetition,
+        # 0.0006s at 12 and 0.40s at 22).  The search box passes ignore_case=True, so
+        # this is the reachable form -- the screen has to be told the flags, not guess.
+        self.assertFalse(ic._patternRisksBacktracking_('(ab|AB)+$', 0))
+        self.assertTrue(ic._patternRisksBacktracking_('(ab|AB)+$', re.IGNORECASE))
+
+    def test_an_inline_ignorecase_flag_is_honoured(self):
+        # '(?i)' sets the flag from inside the pattern, where the caller's argument
+        # cannot see it.  The screen reads the flags back off a compiled pattern, so
+        # this reaches the same verdict as passing re.IGNORECASE.
+        self.assertTrue(ic._patternRisksBacktracking_('(?i)(ab|AB)+$', 0))
+
+    def test_an_unparseable_pattern_is_treated_as_risky(self):
+        self.assertTrue(ic._patternRisksBacktracking_('(unbalanced'))
+
+    def test_a_nested_repeat_inside_an_atomic_group_is_refused(self):
+        # Conservative on purpose: an atomic group stops the OUTSIDE backtracking into
+        # it, not its own contents blowing up before it succeeds.  '(?>(a+)+b)' really
+        # does wedge, so the whole shape is refused rather than analysed further.
+        self.assertTrue(ic._patternRisksBacktracking_(r'(?>(a+)+b)'))
+
+
+@unittest.skipUnless(PANEL_AVAILABLE, 'panel not installed')
+class TestLINKPIRegexOnOneLongSubject(_UnfilteredLoggerMixin, unittest.TestCase):
+    """The defect the two bounds above did not cover: the deadline used to be checked
+    only BETWEEN subjects, so one catastrophic pattern against one long node name still
+    wedged the kernel.  Node names and labels are user data -- 'the subjects are short'
+    was an assumption about somebody's dataframe, not a bound."""
+
+    LONG_NODE = 'a' * 200 + '!'
+    WEDGE     = r'(a+)+$'
+
+    def _make_ctrl(self, budget=0.3):
+        from polars2svg.interactive_controller import linkpi
+        _df_  = pl.DataFrame({'fm': [self.LONG_NODE], 'to': [self.LONG_NODE]})
+        _p2s_ = Polars2SVG()
+        _lp_  = _p2s_.linkp(_df_, relationships=[('fm', 'to')],
+                            pos={self.LONG_NODE: [0.0, 0.0]})
+        _ctrl_ = linkpi(_lp_)
+        _ctrl_.regex_match_budget = budget
+        return _ctrl_
+
+    @unittest.skipUnless(hasattr(signal, 'setitimer'), 'no POSIX interval timer')
+    def test_one_pathological_subject_no_longer_runs_forever(self):
+        _ctrl_ = self._make_ctrl()
+        _t0_   = time.monotonic()
+        with self.assertLogs('polars2svg_logger', level='WARNING'):
+            _set_ = _ctrl_._matchNodesByRegex_(self.WEDGE, {self.LONG_NODE})
+        _elapsed_ = time.monotonic() - _t0_
+        # Unbounded this takes longer than the universe; the bound is budget + grace.
+        self.assertLess(_elapsed_, 5.0)
+        self.assertEqual(_set_, set())
+        self.assertIn('time budget', _ctrl_._last_cost_note_)
+
+    def test_a_worker_thread_refuses_the_pattern_instead(self):
+        # It cannot arm a timer, so it must not start a match nothing can stop.
+        _ctrl_ = self._make_ctrl()
+        _out_  = {}
+        def _run_():
+            _t0_ = time.monotonic()
+            with self.assertLogs('polars2svg_logger', level='WARNING') as _log_:
+                _out_['set'] = _ctrl_._matchNodesByRegex_(self.WEDGE, {self.LONG_NODE})
+            _out_['el']   = time.monotonic() - _t0_
+            _out_['note'] = _ctrl_._last_cost_note_
+            _out_['log']  = '\n'.join(_log_.output)
+        _t_ = threading.Thread(target=_run_)
+        _t_.start(); _t_.join(20)
+        self.assertFalse(_t_.is_alive(), 'the worker thread is still wedged')
+        self.assertEqual(_out_['set'], set())
+        self.assertLess(_out_['el'], 5.0)
+        self.assertIn('catastrophic pattern refused', _out_['note'])
+        # the short note goes to the info line; the log carries the why
+        self.assertIn('backtrack super-linearly', _out_['log'])
+
+    def test_a_worker_thread_still_runs_an_ordinary_pattern(self):
+        # The screen is a fallback, not a ban on regex search off the main thread.
+        _ctrl_ = self._make_ctrl()
+        _out_  = {}
+        def _run_():
+            _out_['set']  = _ctrl_._matchNodesByRegex_('^a+!$', {self.LONG_NODE})
+            _out_['note'] = _ctrl_._last_cost_note_
+        _t_ = threading.Thread(target=_run_)
+        _t_.start(); _t_.join(20)
+        self.assertFalse(_t_.is_alive())
+        self.assertEqual(_out_['set'], {self.LONG_NODE})
+        self.assertIsNone(_out_['note'])
+
+    @unittest.skipUnless(hasattr(signal, 'setitimer'), 'no POSIX interval timer')
+    def test_the_main_thread_refuses_nothing(self):
+        # Where a match can be interrupted, every pattern still runs -- the screen's
+        # false positives must not reach the common path.
+        _ctrl_ = self._make_ctrl()
+        with self.assertLogs('polars2svg_logger', level='WARNING'):
+            _ctrl_._matchNodesByRegex_(self.WEDGE, {self.LONG_NODE})
+        self.assertNotIn('catastrophic pattern refused', _ctrl_._last_cost_note_)
+
+    @unittest.skipUnless(hasattr(signal, 'setitimer'), 'no POSIX interval timer')
+    def test_a_long_LABEL_on_a_short_node_is_bounded_too(self):
+        # Labels are the scan's other subject, and they are user data as well -- a short
+        # node name is no protection when the label hanging off it is long.
+        from polars2svg.interactive_controller import linkpi
+        _df_  = pl.DataFrame({'fm': ['n'], 'to': ['n']})
+        _lp_  = Polars2SVG().linkp(_df_, relationships=[('fm', 'to')],
+                                   pos={'n': [0.0, 0.0]},
+                                   node_labels={'n': 'a' * 200 + '!'})
+        _ctrl_ = linkpi(_lp_)
+        _ctrl_.regex_match_budget = 0.3
+        _t0_ = time.monotonic()
+        with self.assertLogs('polars2svg_logger', level='WARNING'):
+            _ctrl_._matchNodesByRegex_(self.WEDGE, {'n'})
+        self.assertLess(time.monotonic() - _t0_, 5.0)
+        self.assertIn('time budget', _ctrl_._last_cost_note_)
 
 
 class TestControllerStackDepthLimit(_UnfilteredLoggerMixin, unittest.TestCase):

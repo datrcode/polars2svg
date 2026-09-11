@@ -758,6 +758,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`linkpi`'s regex search budget now stops a match that is already running, not just
+  the one after it.** The `/.../` search box compiles a browser-supplied pattern, and the
+  two bounds added for it -- `regex_max_pattern` (512 characters) and
+  `regex_match_budget` (2.0 s) -- were both checked *between* subjects. That left the
+  case they were written for only half-covered: one catastrophic pattern against one long
+  subject still wedged the kernel, because `re.search()` is a single C call and the
+  deadline was never consulted while it ran. The claim that carried it -- backtracking is
+  exponential in the length of the subject, and node names are short -- was an assumption
+  about somebody's dataframe. `SECURITY.md` lists node labels supplied via `node_labels=`
+  as untrusted data, so a long subject is the expected case, not a contrived one.
+
+  The engine turns out to be interruptible: CPython's `sre` polls signals every few
+  thousand backtracking steps, so a one-shot POSIX interval timer (`_regexHardStop_`)
+  raises straight out of the middle of a wedged match. The between-subjects check stays
+  as the soft stop and still fires first; the timer is what a match reaches only by
+  failing to return. Measured on CPython 3.13: `(a+)+$` against 200 characters returns in
+  2.25 s (budget plus grace) instead of never.
+
+  Where the timer cannot be armed -- Windows has no `setitimer`, signal handlers are
+  main-thread only, and an alarm already pending belongs to someone else -- patterns whose
+  structure permits super-linear backtracking are refused up front instead
+  (`_patternRisksBacktracking_`), since starting a match nothing in the process can stop
+  is the one option that has no recovery. That screen is deliberately conservative and
+  applies *only* on that path: wherever the timer arms, every pattern still runs. It is
+  checked against a corpus of realistic search-box patterns (`^srv-\d+$`, `(cat|dog)+`,
+  `[A-Z]{3}\d{2}`, `a+b+c+`, …), none of which it refuses, and it reads the flags rather
+  than the pattern alone -- `(ab|AB)+` is disjoint until `ignore_case=True`, which is what
+  the search box passes.
+
+  A worker thread is **not** the escape hatch it looks like, and the measurement is worth
+  recording: a catastrophic `re.search()` on a worker let the main thread tick once in
+  2.2 s. The engine holds the GIL for the whole match, so abandoning the thread does not
+  merely burn a core -- the kernel stays blocked anyway, which is the symptom being fixed.
+
 - **spreadlinesp scopes the SVG ids it emits, so two figures on one page no longer
   collide.** Every other component mixes a per-render random integer into every id it
   writes (`xyp_<rand>`, `plotClip-<rand>`, `p2sll<rand>_<n>`, …), precisely because a

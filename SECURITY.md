@@ -54,7 +54,10 @@ saying outright, because nothing in the code enforces them:
 
 The limits that do exist in the interactive code are **cost** bounds, not trust
 boundaries. `linkpi` bounds the search box's regex (a pattern-length cap plus a
-whole-scan deadline), caps the dataframe stack's depth, asks before running an
+whole-scan deadline that is enforced from *inside* a running match, not merely
+between subjects — node names and `node_labels=` values are listed above as
+untrusted data, so a single long subject is exactly the case that has to hold),
+caps the dataframe stack's depth, asks before running an
 expensive layout on a large graph, and warns when a composed document would
 exceed the Bokeh WebSocket message limit. Each of those keeps an honest mistake
 from wedging a session; none is a defence against a hostile client.

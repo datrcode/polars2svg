@@ -1,11 +1,24 @@
 import asyncio
+import contextlib
 import copy
 import json
 import logging
 import re
+import signal
+import threading
 import time
 from math import sqrt
 from typing import Any
+
+# re's pattern parser is private -- it was the public `sre_parse` until 3.11 -- and is
+# used in exactly one place: _patternRisksBacktracking_, which screens a browser-supplied
+# pattern on the platforms where a running match cannot be interrupted.  If it ever moves
+# again, that screen refuses every pattern rather than guess about one.
+try:
+    import re._parser    as _re_parser_
+    import re._constants as _re_constants_
+except ImportError:                       # pragma: no cover -- non-CPython, or re re-laid-out
+    _re_parser_ = _re_constants_ = None   # type: ignore[assignment]
 import networkx as nx
 import polars as pl
 import panel as pn
@@ -113,12 +126,11 @@ _BACKGROUND_OP_MENU_ = [
 # InteractionController.__init__ / LINKPI's __init__).
 #
 # _REGEX_MAX_PATTERN_ / _REGEX_MATCH_BUDGET_S_ bound the '/.../' form of the
-# search box.  re.search() cannot be interrupted once it is inside a match, so
-# the deadline is checked where control does come back to us: between subjects.
-# That is enough in practice because catastrophic backtracking is exponential in
-# the length of the SUBJECT, and node names are short -- the reachable
-# pathological case is a bad pattern re-run over many nodes, not one node taking
-# forever.  The length cap is the other half: a pattern needs room to be written.
+# search box: a pattern needs room to be written, and the scan as a whole runs
+# under a deadline.  That deadline is enforced in two places -- between subjects,
+# and from inside a match that has stopped coming back -- for the reasons in the
+# block below.  _REGEX_HARD_STOP_GRACE_S_ is the gap between the two, so that the
+# cheap check normally wins and the signal is only reached by a wedged match.
 #
 # _MAX_STACK_DEPTH_ bounds the dataframe stack.  Each level retains a DataFrame,
 # a rendered view and (in linkpi) a networkx graph, and 'x' / ctrl-shift-x / 'f'
@@ -126,9 +138,202 @@ _BACKGROUND_OP_MENU_ = [
 # is PLANNING.md section 10's T4b (prevent) rather than T4c (confirm): a gate a
 # repeat keystroke redeems still leaves the depth unbounded.
 # ---------------------------------------------------------------------------
-_REGEX_MAX_PATTERN_    = 512     # characters in one search-box pattern
-_REGEX_MATCH_BUDGET_S_ = 2.0     # seconds for one whole scan, not for one match
-_MAX_STACK_DEPTH_      = 64      # dataframe stack levels, base level included
+_REGEX_MAX_PATTERN_       = 512   # characters in one search-box pattern
+_REGEX_MATCH_BUDGET_S_    = 2.0   # seconds for one whole scan, not for one match
+_REGEX_HARD_STOP_GRACE_S_ = 0.25  # extra seconds before the in-match signal fires
+_MAX_STACK_DEPTH_         = 64    # dataframe stack levels, base level included
+
+
+# ---------------------------------------------------------------------------
+# Enforcing the regex budget INSIDE a match
+#
+# A deadline checked between subjects bounds a bad pattern re-run over many short
+# names, but not one pathological match: re.search() is a single C call that
+# returns only when it is finished.  The reachable case is not hypothetical --
+# node names and node LABELS are user data and can be long, so "node names are
+# short" was an assumption about somebody's dataframe, not a bound.
+#
+# The engine is, however, interruptible.  CPython's sre calls PyErr_CheckSignals()
+# every few thousand backtracking steps, so a one-shot POSIX interval timer raises
+# straight out of the middle of a wedged match.  That is the hard stop.  The
+# between-subjects check stays as the soft one and fires first (see
+# _REGEX_HARD_STOP_GRACE_S_), because stopping cleanly between subjects beats
+# unwinding through the middle of one.
+#
+# _regexHardStop_ reports whether it could arm.  It cannot when the platform has
+# no setitimer (Windows), when we are not on the main thread (signal handlers are
+# main-thread only, and Panel dispatches on a worker when configured with
+# nthreads), or when a SIGALRM is already pending for somebody else -- a debugger,
+# a notebook magic -- which is not ours to steal.
+#
+# A worker thread is NOT the way around that, and the measurement is worth keeping:
+# on CPython 3.13 a catastrophic re.search() running on a worker let the main
+# thread tick ONCE in 2.2 seconds.  The engine holds the GIL for the whole match,
+# so abandoning the thread does not merely burn a core -- the kernel stays blocked
+# anyway, which is the very symptom being fixed.  A subprocess could be killed, but
+# it costs a spawn and a pickle of the node list per keystroke; the screen below is
+# cheaper and has no runtime cost on the path that matters.
+#
+# So where the timer cannot be armed, _patternRisksBacktracking_ is the fallback:
+# refuse the pattern shapes that can backtrack super-linearly rather than start a
+# match that nothing in the process can stop.  It is deliberately conservative and
+# only applies on that path -- wherever the timer arms, every pattern still runs.
+# ---------------------------------------------------------------------------
+
+class _RegexBudgetExpired_(Exception):
+    """Raised out of the middle of a running match by _regexHardStop_'s timer."""
+
+
+@contextlib.contextmanager
+def _regexHardStop_(seconds: float) -> Any:
+    """Arm a one-shot timer that raises _RegexBudgetExpired_ from inside a running
+    re.search().  Yields True if it armed and False if this platform or thread cannot,
+    in which case the caller must screen patterns with _patternRisksBacktracking_
+    instead of relying on being able to stop one."""
+    if seconds <= 0 or not hasattr(signal, 'setitimer') or not hasattr(signal, 'SIGALRM') \
+       or threading.current_thread() is not threading.main_thread():
+        yield False
+        return
+
+    # An alarm already pending belongs to somebody else and is not ours to steal.  This is
+    # checked BEFORE installing our handler, so that in the instant it takes to find out,
+    # their alarm cannot land on ours and raise _RegexBudgetExpired_ at them.
+    if signal.getitimer(signal.ITIMER_REAL)[0] != 0.0:
+        yield False
+        return
+
+    def _fire_(signum: int, frame: Any) -> None:
+        raise _RegexBudgetExpired_()
+
+    try:
+        _prev_handler_ = signal.signal(signal.SIGALRM, _fire_)
+    except (ValueError, OSError):     # pragma: no cover -- signals unavailable after all
+        yield False
+        return
+
+    signal.setitimer(signal.ITIMER_REAL, seconds)
+    try:
+        yield True
+    finally:
+        # Disarm, then restore.  A timer that fired between the last bytecode of the body
+        # and this line leaves the signal pending, so the raise can still land in here.
+        # Two passes is provably enough: the timer is one-shot, so once a late raise has
+        # been taken there is no second one behind it.
+        for _ in range(2):
+            try:
+                signal.setitimer(signal.ITIMER_REAL, 0)
+                signal.signal(signal.SIGALRM, _prev_handler_)
+                break
+            except _RegexBudgetExpired_:
+                continue
+
+
+#
+# _patternRisksBacktracking_() - can this pattern backtrack super-linearly?
+#
+# A conservative structural screen, used only where _regexHardStop_ could not arm.
+# It answers "is there an unbounded repeat whose body can match one string in more
+# than one way" -- the ambiguity that turns into exponential backtracking when the
+# overall match then fails.  '(a+)+$' and '([a-z]+)+$' are the textbook shapes; so
+# are '(a|a)*' and '(a{1,3})+'.
+#
+# Conservative means it errs toward refusing: an alternation is cleared only when
+# every branch starts with a different literal character, and anything it cannot
+# parse or recognise is treated as risky.  Measured against a corpus of realistic
+# search-box patterns ('abc', '^srv-\d+$', '.*prod.*', '(cat|dog)+',
+# '^(web|db|api)-[0-9]+', '[A-Z]{3}\d{2}', 'a+b+c+', '(?:ab)+') it refuses none of
+# them, which is the property that matters -- a false positive here is a search the
+# user typed and did not get.  It does refuse an atomic group containing a nested
+# repeat, '(?>(a+)+)', which is safe from the outside; that one is not worth the
+# analysis, since '(?>(a+)+b)' with a failing tail inside the group really does blow
+# up (measured: 0.54s at 24 characters).
+#
+def _patternFirstLiteral_(seq: Any, flags: int) -> tuple:
+    """The literal a sub-pattern must start with, as ('lit', codepoint).  ('empty', None)
+    if it can get to the end without consuming anything, ('unknown', None) if it starts
+    with anything not cheaply reasoned about (a class, '.', a repeat, ...)."""
+    for _op_, _av_ in seq:
+        _name_ = _op_.name
+        if _name_ == 'LITERAL':    return ('lit', _av_)
+        if _name_ == 'AT':         continue   # zero-width assertion -- look past it
+        if _name_ == 'SUBPATTERN':
+            _inner_ = _patternFirstLiteral_(_av_[3], flags)
+            if _inner_[0] != 'empty': return _inner_
+            continue
+        return ('unknown', None)
+    return ('empty', None)
+
+
+def _patternBranchIsAmbiguous_(alts: Any, flags: int) -> bool:
+    """True unless every alternative provably starts with a different literal, which is
+    what keeps '(cat|dog)+' out of the refusal list while '(a|ab)*' stays in it."""
+    _firsts_ = [_patternFirstLiteral_(_alt_, flags) for _alt_ in alts]
+    if any(_kind_ != 'lit' for _kind_, _ in _firsts_): return True
+    _chars_ = [chr(_v_).lower() if (flags & re.IGNORECASE) else chr(_v_) for _, _v_ in _firsts_]
+    return len(set(_chars_)) != len(_chars_)
+
+
+def _patternIsAmbiguous_(seq: Any, flags: int) -> bool:
+    """True if this sub-pattern can match one string in more than one way.  Inside an
+    unbounded repeat that is exactly the condition for catastrophic backtracking."""
+    for _op_, _av_ in seq:
+        _name_ = _op_.name
+        if _name_ in ('MAX_REPEAT', 'MIN_REPEAT'):
+            _mn_, _mx_, _body_ = _av_
+            # A variable-length repeat is ambiguous by itself; a fixed one ('a{2}') is
+            # only as ambiguous as what it repeats.
+            if _mx_ is _re_constants_.MAXREPEAT or _mx_ != _mn_:    return True
+            if _patternIsAmbiguous_(_body_, flags):                 return True
+        elif _name_ == 'BRANCH':
+            if _patternBranchIsAmbiguous_(_av_[1], flags):          return True
+            if any(_patternIsAmbiguous_(_a_, flags) for _a_ in _av_[1]): return True
+        elif _name_ == 'SUBPATTERN':
+            if _patternIsAmbiguous_(_av_[3], flags):                return True
+        elif _name_ == 'ATOMIC_GROUP':
+            if _patternIsAmbiguous_(_av_, flags):                   return True
+        elif _name_ == 'POSSESSIVE_REPEAT':
+            if _patternIsAmbiguous_(_av_[2], flags):                return True
+    return False
+
+
+def _patternSeqRisks_(seq: Any, flags: int) -> bool:
+    for _op_, _av_ in seq:
+        _name_ = _op_.name
+        if _name_ in ('MAX_REPEAT', 'MIN_REPEAT'):
+            _mn_, _mx_, _body_ = _av_
+            if (_mx_ is _re_constants_.MAXREPEAT or _mx_ > 1) \
+               and _patternIsAmbiguous_(_body_, flags):             return True
+            if _patternSeqRisks_(_body_, flags):                    return True
+        elif _name_ == 'BRANCH':
+            if any(_patternSeqRisks_(_a_, flags) for _a_ in _av_[1]): return True
+        elif _name_ == 'SUBPATTERN':
+            if _patternSeqRisks_(_av_[3], flags):                   return True
+        elif _name_ in ('ASSERT', 'ASSERT_NOT'):
+            if _patternSeqRisks_(_av_[1], flags):                   return True
+        elif _name_ == 'ATOMIC_GROUP':
+            # Not a false alarm: an atomic group stops the OUTSIDE backtracking into it,
+            # it does not stop its own contents blowing up before the group succeeds.
+            if _patternSeqRisks_(_av_, flags):                      return True
+        elif _name_ == 'POSSESSIVE_REPEAT':
+            if _patternSeqRisks_(_av_[2], flags):                   return True
+    return False
+
+
+def _patternRisksBacktracking_(pattern: str, flags: int = 0) -> bool:
+    if _re_parser_ is None or _re_constants_ is None:  # pragma: no cover -- guarded import
+        return True
+    try:
+        # Read the flags back off a compiled pattern rather than trusting the argument:
+        # a leading '(?i)' sets IGNORECASE from inside the pattern, and the branch test
+        # is only correct if it knows.  A SCOPED '(?i:...)' still escapes this, which is
+        # a false negative on a path a user reaches by typing it at themselves -- see
+        # SECURITY.md on these being cost bounds rather than a defence against a client.
+        _flags_  = re.compile(pattern, flags).flags
+        _parsed_ = _re_parser_.parse(pattern, flags)
+    except re.error:    return True    # unparseable: re.compile() rejects it downstream too
+    except Exception:   return True
+    try:                return _patternSeqRisks_(_parsed_, _flags_)
+    except Exception:   return True    # an opcode shape we do not know -- assume the worst
 
 
 class _ContractedLayoutView_:
@@ -1948,54 +2153,77 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
     # code: an over-long one is refused (regex_max_pattern) and the scan as a whole runs
     # under a deadline (regex_match_budget).  A catastrophically backtracking pattern --
     # '(a+)+$' is the one-line example -- otherwise wedges the event loop for the whole
-    # session, which is a hang the person who typed it suffers too.  The deadline sits
-    # BETWEEN subjects, not around a match: re.search() cannot be interrupted once it has
-    # started.  That bounds the reachable case, since backtracking blows up with the
-    # length of the subject and node names are short.  Both stops are partial-result:
-    # returning the matches found so far and saying so beats returning nothing.
+    # session, which is a hang the person who typed it suffers too.
     #
-    def _matchNodesByRegex_(_self_, patterns, all_nodes, ignore_case=True):
+    # The deadline is enforced TWICE, because either one alone leaves a hole:
+    #   - between subjects, which stops a bad pattern re-run over many names; and
+    #   - inside a match, via _regexHardStop_'s interval timer, which is the only thing
+    #     that stops ONE match on ONE long subject.  Node names and labels are user data,
+    #     so "the subjects are short" was never ours to assume.
+    # Where the timer cannot be armed (Windows, a worker thread), patterns that can
+    # backtrack super-linearly are refused up front instead -- see the module block.
+    #
+    # All three stops are partial-result: returning the matches found so far and saying
+    # so beats returning nothing.
+    #
+    def _matchNodesByRegex_(_self_, patterns: Any, all_nodes: Any,
+                            ignore_case: bool = True) -> set:
         if isinstance(patterns, str): _patterns_ = set([patterns])
         else:                         _patterns_ = set(patterns)
-        _flags_    = re.IGNORECASE if ignore_case else 0
-        _compiled_ = []
-        _rejected_ = 0
-        for _pattern_ in _patterns_:
-            if len(_pattern_) > _self_.regex_max_pattern:
-                _rejected_ += 1
-                continue
-            try:             _compiled_.append(re.compile(_pattern_, _flags_))
-            except re.error: pass # invalid regex -- contributes no matches
-
-        _deadline_  = time.monotonic() + _self_.regex_match_budget
+        _flags_     = re.IGNORECASE if ignore_case else 0
+        _budget_    = _self_.regex_match_budget
+        _rejected_  = 0
+        _unsafe_    = 0
         _abandoned_ = False
+        _set_       = set()
 
-        _set_ = set()
-        _node_labels_ = _linkp_.node_labels or {}
-        str_to_node   = {str(n): n for n in all_nodes} if _node_labels_ else {}
-        for _regex_ in _compiled_:
-            if _node_labels_:
-                for _label_key_ in _node_labels_.keys():
-                    if time.monotonic() >= _deadline_:
-                        _abandoned_ = True
-                        break
-                    _actual_node_ = str_to_node.get(str(_label_key_))
-                    if _actual_node_ is not None and _regex_.search(str(_node_labels_[_label_key_])):
-                        _set_.add(_actual_node_)
-            for _node_ in all_nodes:
-                if time.monotonic() >= _deadline_:
-                    _abandoned_ = True
-                    break
-                if _regex_.search(str(_node_)): _set_.add(_node_)
-            if _abandoned_: break
+        with _regexHardStop_(_budget_ + _REGEX_HARD_STOP_GRACE_S_) as _interruptible_:
+            _compiled_ = []
+            for _pattern_ in _patterns_:
+                if len(_pattern_) > _self_.regex_max_pattern:
+                    _rejected_ += 1
+                    continue
+                if not _interruptible_ and _patternRisksBacktracking_(_pattern_, _flags_):
+                    _unsafe_ += 1   # nothing here could stop it, so do not start it
+                    continue
+                try:             _compiled_.append(re.compile(_pattern_, _flags_))
+                except re.error: pass # invalid regex -- contributes no matches
 
-        if _rejected_ or _abandoned_:
-            _why_ = ('abandoned at the %gs time budget' % _self_.regex_match_budget) if _abandoned_ \
-                    else ('pattern over %d characters' % _self_.regex_max_pattern)
+            _deadline_    = time.monotonic() + _budget_
+            _node_labels_ = _linkp_.node_labels or {}
+            str_to_node   = {str(n): n for n in all_nodes} if _node_labels_ else {}
+            try:
+                for _regex_ in _compiled_:
+                    if _node_labels_:
+                        for _label_key_ in _node_labels_.keys():
+                            if time.monotonic() >= _deadline_:
+                                _abandoned_ = True
+                                break
+                            _actual_node_ = str_to_node.get(str(_label_key_))
+                            if _actual_node_ is not None and _regex_.search(str(_node_labels_[_label_key_])):
+                                _set_.add(_actual_node_)
+                    for _node_ in all_nodes:
+                        if time.monotonic() >= _deadline_:
+                            _abandoned_ = True
+                            break
+                        if _regex_.search(str(_node_)): _set_.add(_node_)
+                    if _abandoned_: break
+            except _RegexBudgetExpired_:
+                _abandoned_ = True   # the timer fired from inside a match that was not returning
+
+        if _rejected_ or _unsafe_ or _abandoned_:
+            if   _abandoned_: _why_ = 'abandoned at the %gs time budget' % _budget_
+            elif _unsafe_:    _why_ = 'catastrophic pattern refused'
+            else:             _why_ = 'pattern over %d characters' % _self_.regex_max_pattern
+            # The info line carries this beside the other cost notes ('spring nx: 40 of
+            # 200 iterations', ...), so the note stays that short and the log gets the
+            # sentence explaining why a pattern was refused without being run.
+            _detail_ = ('pattern can backtrack super-linearly and a match cannot be '
+                        'interrupted on this thread, so it was not started') if _unsafe_ else _why_
             _self_._last_cost_note_ = f'regex search: {_why_}, partial match set'
             logging.getLogger('polars2svg_logger').warning(
                 'linkpi regex search: %s -- returning %d match(es) from an incomplete scan.',
-                _why_, len(_set_))
+                _detail_, len(_set_))
         elif (_self_._last_cost_note_ or '').startswith('regex search:'):
             _self_._last_cost_note_ = None   # our own stale note; anyone else's stands
         return _set_

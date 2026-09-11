@@ -649,8 +649,23 @@ if _PLAYWRIGHT_AVAILABLE_:
 
         Serves the component through ``panelize(..., use_webgpu=True)``, which puts the
         plot on a ``<canvas>`` and leaves the interaction SVG transparent on top of it.
-        Skips -- rather than failing -- when the browser has no usable adapter, so the
-        suite stays honest on a machine that cannot run the shaders at all.
+        Skips -- rather than failing -- when the browser cannot actually present a GPU
+        canvas, so the suite stays honest on a machine that cannot run the shaders.
+
+        **The probe below paints, and it has to.**  Asking `requestAdapter()` and
+        stopping there is the trap PLANNING.md V2 records under
+        `--enable-unsafe-swiftshader`: an adapter is handed out, a device is created,
+        and *offscreen* work is correct -- a render to a texture reads back the right
+        pixels -- while the first canvas present destroys the device.  Nothing surfaces
+        in JS beyond a device-lost with reason `destroyed`, so `gpu_error` stays empty
+        and the component reports success while drawing nothing.
+
+        That is not hypothetical.  It is what a GitHub `ubuntu-latest` runner does, and
+        it turned the first CI run of this suite into **13 blank failures instead of 13
+        skips** -- every WebGPU test asserting an ink ratio of 0.0000 against a browser
+        that never had a usable canvas.  A capability probe has to exercise the
+        capability the tests need, which is presenting to a canvas, not obtaining a
+        device.
         """
         _pages_ = []
 
@@ -659,12 +674,46 @@ if _PLAYWRIGHT_AVAILABLE_:
             _page_ = webgpu_browser.new_page()
             _pages_.append(_page_)
             _page_.goto(_app_.url, wait_until='load')
-            if not _page_.evaluate("""async () => {
-                    if (!navigator.gpu) return false;
-                    const a = await navigator.gpu.requestAdapter();
-                    return !!a;
-                }"""):
-                pytest.skip('this browser exposes no WebGPU adapter')
+            _why_ = _page_.evaluate("""async () => {
+                    if (!navigator.gpu) { return 'navigator.gpu is absent'; }
+                    let device;
+                    try {
+                        const adapter = await navigator.gpu.requestAdapter();
+                        if (!adapter) { return 'requestAdapter() returned null'; }
+                        device = await adapter.requestDevice();
+                    } catch (e) { return 'no device: ' + e; }
+
+                    // Present to a real canvas -- the step that fails where merely
+                    // getting a device does not.
+                    try {
+                        const cvs = document.createElement('canvas');
+                        cvs.width = cvs.height = 16;
+                        document.body.appendChild(cvs);
+                        const ctx = cvs.getContext('webgpu');
+                        if (!ctx) { return 'canvas.getContext("webgpu") returned null'; }
+                        ctx.configure({device: device,
+                                       format: navigator.gpu.getPreferredCanvasFormat(),
+                                       alphaMode: 'opaque'});
+                        const enc  = device.createCommandEncoder();
+                        const pass = enc.beginRenderPass({colorAttachments: [{
+                            view: ctx.getCurrentTexture().createView(),
+                            clearValue: {r: 1, g: 0, b: 0, a: 1},
+                            loadOp: 'clear', storeOp: 'store'}]});
+                        pass.end();
+                        device.queue.submit([enc.finish()]);
+                        await device.queue.onSubmittedWorkDone();
+                    } catch (e) { return 'canvas present failed: ' + e; }
+
+                    // device.lost resolves rather than rejecting, so race it against a
+                    // tick: the loss from a failed present has already been queued by
+                    // the time the submit above settles.
+                    const lost = await Promise.race([
+                        device.lost.then(i => 'device lost: ' + i.reason + ' ' + i.message),
+                        new Promise(r => setTimeout(() => r(''), 250))]);
+                    return lost;
+                }""")
+            if _why_:
+                pytest.skip(f'this browser cannot present a WebGPU canvas ({_why_})')
             _page_.wait_for_selector('[id^="gpucanvas"]', timeout=30_000)
             return _page_, _app_.view(), _page_.locator('[id^="gpucanvas"]')
 

@@ -673,6 +673,73 @@ class TestLinkPCloudDefs(unittest.TestCase):
         for _h_ in _hrefs_:
             self.assertIn(f'id="{_h_}"', _defs_)
 
+    def test_the_cloud_def_is_invariant(self):
+        '''#cloud goes out unscoped, unlike every other id the package emits -- those
+        carry a per-render random integer (spreadlinesp's `cloud_<rand_id>`; the rule
+        itself is TestComponentOutputHygiene.test_ids_are_scoped_to_one_render).
+
+        That is safe for exactly one reason, and this test is that reason: the <defs>
+        body is a constant.  Two linkps on one page *do* collide on #cloud, but both
+        resolve to an identical definition, so it is invalid markup that renders
+        correctly.  What varies per node is the color, and that rides on the <use>
+        (`fill=`), which inherits into the def because the path declares no fill of
+        its own -- the definition itself never moves.
+
+        If the definition ever becomes render-dependent the collision stops being
+        cosmetic: `url(#cloud)`/`href="#cloud"` resolve to the FIRST match in document
+        order, so the first figure's definition would silently win for every later one
+        -- the same failure that made spreadlinesp's `ccl_<bin>` drop selection rings.
+        Theming the hardcoded stroke="#000000" is the likely trigger, since the cloud
+        outline currently stays black even against a dark palette.
+
+        So: if this fails, scope the id (give `cloudIconDef()` a `cloud_<rand_id>` and
+        move the `<use>` with it) as part of whatever change broke it.
+        '''
+        from polars2svg.p2s_displaylist import cloudIconDef
+
+        def _dark_(p2s):
+            for _k_ in list(p2s.color_type_lu):
+                p2s.color_type_lu[_k_] = '#eeeeee'
+
+        def _render_(mutate=None, **kw):
+            _p2s_ = Polars2SVG()
+            if mutate is not None: mutate(_p2s_)
+            _df_ = pl.DataFrame({'fm': ['a', 'a'], 'to': ['b', 'c']})
+            return _p2s_.linkp(_df_, relationships=[('fm', 'to')],
+                               pos=self._COLLAPSED_POS_, **kw).svg
+
+        _variants_ = {
+            'defaults':     _render_(),
+            'dark palette': _render_(_dark_),
+            'node_color':   _render_(node_color='#ff0000'),
+            'node_opacity': _render_(node_opacity=0.5),
+        }
+        _defs_ = {_n_: _s_[_s_.index('<defs>'):_s_.index('</defs>') + len('</defs>')]
+                  for _n_, _s_ in _variants_.items()}
+
+        # The fixture has to actually vary the output, or the rest proves nothing --
+        # the same trap test_cloud_defs_track_the_view_window_across_re_renders guards.
+        self.assertEqual(len(set(_variants_.values())), len(_variants_),
+                         'these renders no longer differ; the invariance below is vacuous')
+
+        if len(set(_defs_.values())) != 1:
+            # Show where the definitions diverge -- they are ~650 bytes of identical
+            # path data, so the byte offset of the first difference is the only part
+            # worth printing.
+            _groups_ = {}
+            for _n_, _d_ in _defs_.items(): _groups_.setdefault(_d_, []).append(_n_)
+            _a_, _b_ = list(_groups_)[0], list(_groups_)[1]
+            _i_ = next((i for i, (x, y) in enumerate(zip(_a_, _b_)) if x != y), min(len(_a_), len(_b_)))
+            self.fail(
+                'the cloud <defs> is no longer constant across renders, so #cloud must '
+                'now be scoped per render (see this test docstring).\n'
+                f'  groups   : {list(_groups_.values())}\n'
+                f'  diverge@ : {_i_}\n'
+                f'  {_groups_[_a_]}: ...{_a_[max(0, _i_ - 30):_i_ + 30]}...\n'
+                f'  {_groups_[_b_]}: ...{_b_[max(0, _i_ - 30):_i_ + 30]}...')
+        # Stated the other way: linkp emits the shared module constant, unparameterised.
+        self.assertEqual(_defs_['defaults'], f'<defs>{cloudIconDef()}</defs>')
+
     def test_cloud_defs_track_the_view_window_across_re_renders(self):
         '''Collapsing is a group_by on *screen* coordinates, so whether a cloud exists is a
         property of the current zoom, not of the instance.  Deciding it once at construction

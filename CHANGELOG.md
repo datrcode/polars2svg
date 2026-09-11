@@ -778,8 +778,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ccl_<rand>_<bin>`; the random integer was already being generated and passed into
   `__renderSVG__`, and simply never used. Rendering of a single figure is unchanged.
 
-  linkp's `#cloud` is deliberately left bare for now: it has the inert form of the
-  problem (a fixed `<defs>` body), and six tests plus the goldens pin the literal.
+  linkp's `#cloud` is deliberately left bare: it has the inert form of the problem,
+  and the reason is now pinned rather than assumed. `TestLinkPCloudDefs.
+  test_the_cloud_def_is_invariant` asserts the `<defs>` body is byte-identical across
+  renders (dark palette, `node_color=`, `node_opacity=`) and equal to `cloudIconDef()`
+  verbatim, so two linkps on a page collide on an id that resolves to the same
+  definition either way. The per-node color rides on the `<use>`'s `fill=`, which
+  inherits into the def; the definition itself never moves.
+
+  That invariance is load-bearing, and one plausible change breaks it: the def
+  hardcodes `stroke="#000000"`, so the cloud outline stays black against a dark
+  palette. Theming it would make the definition render-dependent, at which point the
+  duplicate id stops being cosmetic — first match in document order wins, so figure
+  one's definition would silently apply to every later figure. The test fails with the
+  offset and the two differing strokes, and says to scope the id.
 
 - **`warn once` is once per process again, not once per `Polars2SVG` instance.** The
   `OnceFilter` on the shared `polars2svg_logger` is stripped and reinstalled by every

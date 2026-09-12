@@ -50,11 +50,27 @@ jobs:
         run: uvx bandit -r polars2svg/
 
       - name: pip-audit (known-vulnerable dependency scan)
-        # Audits the published surface: exactly what a bare `pip install
-        # polars2svg` resolves. Deliberately not --all-extras — that includes
-        # mlx-cuda/mlx-cuda13, whose Linux-only NVIDIA wheels are kept out of
-        # `all` on purpose (see [project.optional-dependencies]). They resolve to
-        # a no-op on macOS but pull the whole CUDA stack onto this runner.
+        # Audits the locked resolution of the package plus every extra a user
+        # can actually install. The three are named explicitly rather than
+        # --all-extras, which would add mlx-cuda/mlx-cuda13: their Linux-only
+        # NVIDIA wheels are kept out of `all` on purpose (see
+        # [project.optional-dependencies]), resolve to a no-op on macOS, and
+        # pull the whole CUDA stack onto this runner.
+        #
+        # The extras are the point. Without them this exported six packages —
+        # numpy, pillow, platformdirs, polars, polars-runtime-32, pyarrow — and
+        # said nothing about panel, bokeh, lxml, requests, urllib3, jinja2,
+        # tornado, reportlab or scikit-learn, which is where dependency
+        # advisories actually land. With them it audits 77. It ran blind past
+        # three tornado advisories (PYSEC-2026-3928, GHSA-wwv5-g3v4-889x,
+        # GHSA-8423-8fgw-73vq) that the first run with extras caught at once.
+        #
+        # "Locked", not "published": uv export reads uv.lock, so this is the
+        # pinned resolution rather than what a fresh `pip install polars2svg`
+        # gives a user. The two drift — that tornado pin was stale while a fresh
+        # resolve already had the fix — so a finding here means "our lock is
+        # behind", which is worth fixing but is not the same as a shipped
+        # vulnerability.
         #
         # Retried because this is the one check in this job whose result is not
         # a property of the repo: pip-audit queries pypi.org's JSON API once per
@@ -70,7 +86,9 @@ jobs:
         # A real finding still fails the build: pip-audit exits non-zero for
         # those on attempt 1, and the retries reproduce it deterministically.
         run: |
-          uv export --no-hashes --no-dev --no-emit-project -o /tmp/requirements-audit.txt
+          uv export --no-hashes --no-dev --no-emit-project \
+              --extra interactive --extra layouts --extra export \
+              -o /tmp/requirements-audit.txt
           for _attempt_ in 1 2 3; do
               uvx pip-audit --timeout 30 -r /tmp/requirements-audit.txt && exit 0
               if [ "$_attempt_" -lt 3 ]; then
@@ -144,10 +162,26 @@ jobs:
           pip install --no-cache-dir pytest kagglehub fonttools
 
       - name: Run the test suite
-        # test_performance.py needs a machine-local baseline (gitignored);
-        # kaggle-backed t-field tests need network/credentials. Both excluded,
-        # matching must-do #9.
-        run: python -m pytest tests/ -q --ignore=tests/test_performance.py -k 'not tfield'
+        # test_performance.py needs a machine-local baseline, so it stays out
+        # (must-do #9).
+        #
+        # There is no -k filter, and there should not be one. `-k 'not tfield'`
+        # was here to skip the Kaggle-backed t-field test, but -k matches node
+        # ids rather than files: it deselected 61 tests across nine files
+        # (test_tfield_typed.py, test_p2s_tfields.py, test_p2s.py,
+        # test_timep_basic.py, test_smallp_validation.py and three others) to
+        # exclude the ONE test that needs the network. Only test_xyp_tfields.py
+        # imports kagglehub, and the single test in it that reaches Kaggle
+        # already guards itself twice over — @unittest.skipUnless on the
+        # kagglehub import, then self.skipTest() when the download fails for
+        # want of network or credentials — so it skips cleanly here without any
+        # help from the command line.
+        #
+        # -rs for the reason the browser job gives below: this job now relies on
+        # that test skipping itself, and a bare "N skipped" cannot tell a
+        # deliberate skip from a fixture that quietly broke and took tests with
+        # it.
+        run: python -m pytest tests/ -q -rs --ignore=tests/test_performance.py
 
   # The browser-driven interaction suite (tests/interaction/, PLANNING.md 2.1).
   #

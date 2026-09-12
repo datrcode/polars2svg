@@ -1,8 +1,17 @@
 version: 2
 updates:
-  # Python dependencies (pyproject.toml: core deps, extras, and the dev
-  # dependency-group).
-  - package-ecosystem: "pip"
+  # Python dependencies (pyproject.toml and uv.lock).
+  #
+  # The ecosystem is `uv`, not `pip`. pip watches the dependencies *declared* in
+  # pyproject.toml, which leaves every transitive pin in uv.lock unwatched --
+  # that is how three tornado advisories (PYSEC-2026-3928, GHSA-wwv5-g3v4-889x,
+  # GHSA-8423-8fgw-73vq) sat in the lock while a weekly Dependabot reported
+  # nothing to update. tornado arrives via bokeh via panel, so pyproject.toml
+  # never names it and pip had nothing to look at. The uv ecosystem reads the
+  # manifest and the lockfile, and has carried security updates since
+  # 2025-12-16. Do not add a `pip` entry alongside it: both would open PRs for
+  # the same declared dependencies.
+  - package-ecosystem: "uv"
     directory: "/"
     schedule:
       interval: "weekly"

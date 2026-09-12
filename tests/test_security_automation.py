@@ -61,11 +61,19 @@ class TestDependabotConfig(unittest.TestCase):
         _skip_if_missing(_DEPENDABOT)
 
     @unittest.skipUnless(YAML_AVAILABLE, 'pyyaml not installed')
-    def test_covers_pip_and_github_actions_weekly(self):
+    def test_covers_uv_and_github_actions_weekly(self):
         with open(_DEPENDABOT, encoding='utf-8') as f:
             doc = yaml.safe_load(f)
         ecosystems = {u['package-ecosystem']: u for u in doc['updates']}
-        self.assertIn('pip', ecosystems)
+        # `uv`, not `pip`, and the distinction is the point rather than a
+        # spelling: pip watches only what pyproject.toml declares, so every
+        # transitive pin in uv.lock goes unwatched.  That is how three tornado
+        # advisories sat in the lock with a weekly Dependabot reporting nothing
+        # (tornado arrives via bokeh via panel, so pyproject.toml never names
+        # it).  Asserting the ecosystem by name is what stops a revert to pip
+        # from looking like a working config.
+        self.assertIn('uv', ecosystems)
+        self.assertNotIn('pip', ecosystems)
         self.assertIn('github-actions', ecosystems)
         for _eco_, _entry_ in ecosystems.items():
             self.assertEqual(_entry_['schedule']['interval'], 'weekly', _eco_)

@@ -80,6 +80,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **PNG goldens could not see what they were meant to catch.** The bitmap golden
+  check compared a render against its stored PNG with a single RMS tolerance of
+  5.0, chosen to absorb anti-aliasing variation. It also absorbed goldens that had
+  simply gone *stale*, and nothing distinguished the two cases. Fourteen goldens
+  drifted that way: they were regenerated here (2026-08-05 font pinning, 2026-08-07
+  coordinate rounding) and never ported downstream, so the downstream copy went on
+  rendering the **new** output against the **old** bitmaps and reported green --
+  one file at RMS 3.37, having quietly spent 67% of the budget that was supposed to
+  be there for anti-aliasing. Nothing reported it, because
+  `tools/diff_tests_prod.sh` excluded `tests/golden_png/` from its content diff
+  (PNG bytes are genuinely noisy) and checked only that the filenames matched,
+  which they did.
+
+  The two questions a golden answers are now two thresholds:
+
+  - `tolerance` (still 5.0) -- **a visual regression.** The render no longer looks
+    like the golden.
+  - `drift_tolerance` (**0.0**) -- **a stale golden.** Visually indistinguishable
+    from the golden but no longer identical to it, which means the stored file
+    predates a rendering change. Reported separately, because it is a different
+    problem with a different fix, and because letting it pass is what let the
+    fourteen accumulate.
+
+  `0.0` is not a tuned threshold. On the platform that generated them, with the
+  rasterizer that generated them, rasterization is deterministic and a current
+  golden re-renders bit-identically -- all 72 measure exactly 0.0. Set
+  `P2S_PNG_GOLDEN_DRIFT` to triage a rasterizer upgrade (which drifts every golden
+  at once, a legible signal rather than a mystery); pass `drift_tolerance=` to opt
+  a single call site out.
+
+- **`tools/diff_tests_prod.sh` now compares the PNG goldens as images, not as
+  filenames.** New `tools/compare_png_goldens.py` diffs two `golden_png/`
+  directories by RMS -- the same metric the test uses -- so encoder and metadata
+  noise scores 0.0 and stays quiet while a genuinely different image is named as
+  `DRIFTED`. Presence is still checked in both directions, and still matters on its
+  own (a missing golden fails its test). The comparison logic is a function, not
+  shell, so it is unit-tested.
+
+- **Removed an orphan golden, `tests/golden_png/_tmp_test_color_none.png`.** A
+  leftover temp artifact committed 2026-07-14 that no test ever referenced. An
+  unreferenced golden is not harmless: the mirror check treated it as a file that
+  must exist in both repos, so it was kept in sync forever while proving nothing.
+
 - **An x-axis spanning years before 1000 raised `ValueError` on Linux while rendering
   fine on macOS.** The time-axis grid rounds the axis start down to the step it is about
   to draw, and it did that by formatting the date with the step's own strftime pattern
@@ -105,6 +148,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   depends on which other tests ran first.
 
 ### Added
+
+- **`tests/test_png_golden_integrity.py`** -- guards on the golden mechanism
+  itself rather than on any one render: that the drift threshold stays strictly
+  tighter than the visual one (their collapse *is* the bug above), that a golden
+  differing by less than the visual tolerance is reported as stale and not as a
+  visual regression, that `UPDATE_GOLDEN=1` still clears it, that no stored golden
+  is unreferenced and no referenced golden is missing, and that the cross-repo
+  comparator detects drift, presence gaps and size mismatches. Being about the
+  harness rather than about pixels, these run everywhere -- including the Linux CI
+  that skips every actual PNG-RMS comparison.
 
 - **`tests/interaction/` -- the interactive JavaScript now executes under test.**
   Roughly 3,800 lines of JS live as Python strings inside the `type()` class

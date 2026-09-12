@@ -72,6 +72,21 @@ jobs:
         # behind", which is worth fixing but is not the same as a shipped
         # vulnerability.
         #
+        # --no-deps because the requirements file is already fully pinned and we do
+        # not want pip-audit resolving it. Without the flag it builds a throwaway
+        # virtualenv and INSTALLS the set to resolve it, and `export` brings
+        # rlPyCairo -> pycairo, which publishes no Linux wheel: it compiles from the
+        # sdist and wants cairo's headers, which this runner does not carry (the
+        # clean-room job installs libcairo2-dev; this job had never needed a
+        # toolchain). That failed as "Dependency \"cairo\" not found", three
+        # attempts running, which reads like a flaky network but is a build.
+        #
+        # It does not weaken the audit: uv export writes exact pins, which is what
+        # --no-deps requires, and a vulnerable pin is still reported (checked against
+        # tornado 6.5.7's three advisories). It also drops the step from ~60s to ~10s
+        # since nothing is installed. pip-audit warns that it would rather have
+        # hashes; that warning is expected, and uv.lock is the thing pinning us here.
+        #
         # Retried because this is the one check in this job whose result is not
         # a property of the repo: pip-audit queries pypi.org's JSON API once per
         # dependency, so a stalled TLS handshake fails the build even though
@@ -90,7 +105,7 @@ jobs:
               --extra interactive --extra layouts --extra export \
               -o /tmp/requirements-audit.txt
           for _attempt_ in 1 2 3; do
-              uvx pip-audit --timeout 30 -r /tmp/requirements-audit.txt && exit 0
+              uvx pip-audit --no-deps --timeout 30 -r /tmp/requirements-audit.txt && exit 0
               if [ "$_attempt_" -lt 3 ]; then
                   echo "::warning::pip-audit attempt $_attempt_ failed; retrying in $((_attempt_ * 10))s"
                   sleep $((_attempt_ * 10))

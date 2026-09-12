@@ -40,8 +40,15 @@ _ROOT_="$(dirname "$_HERE_")"
 cd "$_ROOT_" || exit 1
 
 # pip-audit reads an exported requirements file rather than the venv: CI audits
-# exactly what a bare `pip install polars2svg` resolves, and a local .venv has
-# the dev group and every extra installed on top of that.
+# the locked resolution, and a local .venv has the dev group and every extra
+# installed on top of that.
+#
+# The three --extra flags and --no-deps mirror ci.yml exactly; keep them that way.
+# Without the extras this audits six packages and says nothing about panel, bokeh,
+# lxml, requests, urllib3 or reportlab. Without --no-deps, pip-audit resolves by
+# INSTALLING into a throwaway venv, and `export` pulls rlPyCairo -> pycairo, which
+# has no Linux wheel and needs cairo's headers -- green on a Mac with cairo around,
+# a build failure on CI's runner.
 _REQS_="$(mktemp -t p2s-preflight-reqs)"
 trap 'rm -f "$_REQS_"' EXIT
 
@@ -87,9 +94,10 @@ _step_ 'ruff (E9, F)'            uvx ruff check polars2svg/
 # CI's 10s/20s -- this script is meant to be interactive and fast, and a dev who
 # hits three failures in a row can just run it again.
 _step_ 'pip-audit (dependencies)' bash -c \
-    "uv export --no-hashes --no-dev --no-emit-project -o '$_REQS_' >/dev/null || exit 1
+    "uv export --no-hashes --no-dev --no-emit-project \
+         --extra interactive --extra layouts --extra export -o '$_REQS_' >/dev/null || exit 1
      for _attempt_ in 1 2 3; do
-         uvx pip-audit --timeout 30 -r '$_REQS_' && exit 0
+         uvx pip-audit --no-deps --timeout 30 -r '$_REQS_' && exit 0
          [ \"\$_attempt_\" -lt 3 ] && sleep \$((_attempt_ * 3))
      done
      exit 1"

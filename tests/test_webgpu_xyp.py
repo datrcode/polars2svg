@@ -14,12 +14,19 @@ from webgpu_test_utils import (decode_buffer, hex_to_rgb01, manifest_count,
 
 _P2S_ = polars2svg.Polars2SVG()
 
-random.seed(20260612)
+# A private Random rather than random.seed(): seeding the module-level generator
+# leaks into every test that runs afterwards, and a test's data then depends on how
+# many values the tests BEFORE it happened to draw.  That is not hypothetical -- it
+# is how a latent glibc-only bug in xyp's axis rounding (a year before 1000 broke a
+# strftime/strptime round-trip) stayed hidden until an unrelated change to CI's -k
+# filter shifted the shared stream and moved one dataframe onto it.  Same seed, same
+# sequence, no reach outside this file.
+_RNG_ = random.Random(20260612)
 _DF_ = pl.DataFrame({
-    'x':   [random.random() * 100 for _ in range(400)],
-    'y':   [random.random() * 100 for _ in range(400)],
-    'cat': [random.choice(['a', 'b', 'c']) for _ in range(400)],
-    'val': [random.random() for _ in range(400)],
+    'x':   [_RNG_.random() * 100 for _ in range(400)],
+    'y':   [_RNG_.random() * 100 for _ in range(400)],
+    'cat': [_RNG_.choice(['a', 'b', 'c']) for _ in range(400)],
+    'val': [_RNG_.random() for _ in range(400)],
 })
 
 

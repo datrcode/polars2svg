@@ -177,5 +177,55 @@ def test_digits_type_rather_than_selecting_by_degree(search_page):
     search_page.expect_selected(0)
 
 
+# ── which ReDoS guard is actually live under Panel ───────────────────────────
+
+def test_the_regex_search_records_which_guard_was_live(search_page):
+    """The '/.../' path is bounded two different ways and the runtime picks which.
+
+    A deadline checked between subjects cannot stop ONE catastrophic match, so a
+    one-shot interval timer raises out of the middle of a wedged one.  Where that
+    timer cannot be armed, patterns that can backtrack super-linearly are refused
+    up front instead.  Both are safe; they differ in what a user sees, because the
+    screen refuses some patterns the timer would simply have run.
+
+    Both branches are covered by unit tests, but which one is in force *under Panel*
+    was nobody's assertion -- it falls out of Panel's threading, and the answer is
+    not the obvious one.  applySearchOp is a coroutine, so it reaches Panel's
+    async_executor rather than the thread pool, and `nthreads` does not move it.
+    What moves it here is the harness: serve_panel() uses pn.serve(threaded=True)
+    (it has to -- the JS state is re-initialised per server and a subprocess would
+    hide it), which puts the IOLoop off the main thread, and signal handlers are
+    main-thread only.  So this deployment runs the SCREEN.
+
+    Asserting it is the point.  If Panel ever schedules this back onto the main
+    thread, or the harness stops being threaded, the live guard changes underneath
+    the whole suite and nothing else here would notice -- the searches would keep
+    passing, and every conclusion about what bounds a browser-driven search would
+    quietly be about the other branch.
+    """
+    _search(search_page, '/^a/')
+    search_page.press('Enter')
+    search_page.expect_selected(2)          # the search really ran
+
+    _ctrl_ = search_page.app.view(0)
+    assert _ctrl_._last_regex_guard_ == 'screen', (
+        f'the interaction harness serves with pn.serve(threaded=True), so the '
+        f'interval timer cannot arm and the structural screen is what bounds a '
+        f'regex search here -- but the controller recorded '
+        f'{_ctrl_._last_regex_guard_!r}. Either Panel changed where it runs this '
+        f'coroutine or the harness stopped being threaded; the module block in '
+        f'interactive_controller.py explains what each value implies.')
+
+
+def test_an_ordinary_substring_search_leaves_the_guard_alone(search_page):
+    """The screen is on the regex path only.  A plain substring search does not go
+    through _matchNodesByRegex_ at all, so it must not record a guard -- otherwise
+    the recording says "screened" about a search that was never bounded that way."""
+    _search(search_page, 'alp')
+    search_page.press('Enter')
+    search_page.expect_selected(2)
+    assert search_page.app.view(0)._last_regex_guard_ is None
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -78,6 +78,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Behaviour is unchanged; the invariant is no longer one ordinary refactor away
   from silently breaking.
 
+### Fixed
+
+- **An x-axis spanning years before 1000 raised `ValueError` on Linux while rendering
+  fine on macOS.** The time-axis grid rounds the axis start down to the step it is about
+  to draw, and it did that by formatting the date with the step's own strftime pattern
+  (`'%Y-01-01 00:00:00'` for a yearly grid) and parsing the result back. `%Y` is
+  zero-padded by macOS's strftime and not by glibc's, while strptime's `%Y` matches
+  exactly four digits on both -- so `datetime(284, 1, 1)` survived the round-trip on one
+  platform and raised `time data '284-01-01 00:00:00' does not match format` on the
+  other. Pre-1000 dates are ordinary input for any historical series, so the platform
+  rather than the data decided whether a plot rendered.
+
+  Truncation is now arithmetic (`datetime.replace()` off a table keyed by the same
+  patterns, which stay as the steps' identifiers) and never goes through text. Verified
+  identical to the old round-trip across 27,000 (date, step) pairs with four-digit years,
+  which is the range where the old code worked; the goldens are unchanged.
+
+  It had been invisible for two reasons worth recording. Every local run is macOS, where
+  the bug does not exist -- the Linux clean-room job is the only place it could appear.
+  And the dataframe that reached it comes from an unseeded generator whose years span
+  1-2500, made deterministic-but-order-dependent by a `random.seed()` call leaking out of
+  an unrelated test file: which data any later test received depended on how many values
+  the tests before it drew. Those seeds are now private `random.Random` instances (same
+  seeds, same sequences, no reach outside their own module), so a test's input no longer
+  depends on which other tests ran first.
+
 ### Added
 
 - **`tests/interaction/` -- the interactive JavaScript now executes under test.**
@@ -863,6 +889,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `[A-Z]{3}\d{2}`, `a+b+c+`, …), none of which it refuses, and it reads the flags rather
   than the pattern alone -- `(ab|AB)+` is disjoint until `ignore_case=True`, which is what
   the search box passes.
+
+  **Which of the two is live is the deployment's choice, not the library's, and the rule
+  is not the obvious one.** `applySearchOp` is a coroutine, so param hands it to Panel's
+  async executor rather than its thread pool -- `config.nthreads` does *not* move it off
+  the main thread in a served session, because a coroutine only reaches that pool through
+  an explicit `schedule='thread'` that no `ReactiveHTML` call site uses. A live session
+  schedules it on the document's IOLoop, where the hard stop arms; a notebook with
+  `nthreads` set, or `pn.serve(threaded=True)`, runs it off the main thread, where the
+  screen takes over; Windows is always the screen. The practical difference is visible to
+  a user, since the screen refuses some patterns the timer would simply have run.
+  `_last_regex_guard_` now records which one bounded the last search (`'hard-stop'` or
+  `'screen'`) on *every* search rather than only refused ones, so a deployment can read
+  the answer instead of deriving it from somebody's threading model. The browser
+  interaction suite asserts it -- the only place the question can be put to real Panel.
 
   A worker thread is **not** the escape hatch it looks like, and the measurement is worth
   recording: a catastrophic `re.search()` on a worker let the main thread tick once in

@@ -35,6 +35,56 @@ class _CalendarStep:
         total = when.month - 1 + self.months
         return when.replace(year=when.year + total // 12, month=total % 12 + 1)
 
+#
+# Truncating an axis start down to a grid granularity.
+#
+# The granularity table below carries a strftime pattern per step ('%Y-01-01 00:00:00'
+# for a yearly grid, and so on), and truncating used to mean formatting with it and
+# parsing the result back.  That round-trip is not safe for a year before 1000:
+# strftime's %Y is zero-padded on macOS and NOT on glibc, while strptime's %Y matches
+# exactly four digits either way -- so `datetime(284, 1, 1)` survives the trip on a Mac
+# and raises `ValueError: time data '284-01-01 00:00:00' does not match format` on
+# Linux.  Dates that old are ordinary data (they arrive from any historical series),
+# so the platform, not the input, decided whether a plot rendered.
+#
+# The patterns stay as the table's identifiers -- they are still what a step IS -- and
+# the truncation reads off this map instead of going through text.  A step whose
+# pattern is missing here is a programming error rather than a runtime condition, so
+# the KeyError says which pattern needs an entry.
+#
+_ROUNDER_FIELDS_: dict[str, dict[str, int]] = {
+    '%Y-%m-%d %H:%M:%S': {},
+    '%Y-%m-%d %H:%M:00': {                                  'second': 0},
+    '%Y-%m-%d %H:00:00': {                     'minute': 0, 'second': 0},
+    '%Y-%m-%d 00:00:00': {         'hour': 0,  'minute': 0, 'second': 0},
+    '%Y-%m-01 00:00:00': {'day': 1, 'hour': 0, 'minute': 0, 'second': 0},
+    '%Y-01-01 00:00:00': {'month': 1, 'day': 1, 'hour': 0, 'minute': 0, 'second': 0},
+}
+
+
+def _truncateToStep_(when: Any, rounder: str) -> datetime:
+    """Round `when` down to the start of the grid step `rounder` names.
+
+    Accepts a date or a datetime and always returns a datetime, matching what the
+    strftime/strptime round-trip this replaced produced for either."""
+    try:
+        _fields_ = _ROUNDER_FIELDS_[rounder]
+    except KeyError:
+        raise KeyError(f'no truncation defined for grid step {rounder!r}; add it to '
+                       f'_ROUNDER_FIELDS_') from None
+    _when_ = when if isinstance(when, datetime) else datetime.combine(when, datetime.min.time())
+    # Named rather than **unpacked: datetime.replace() takes a positional tzinfo, so a
+    # **dict[str, int] is not checkable and mypy reads it as that argument.  Every step
+    # zeroes microseconds, so only the five coarser fields come off the table, each
+    # defaulting to what `when` already holds.
+    return _when_.replace(month =_fields_.get('month',  _when_.month),
+                          day   =_fields_.get('day',    _when_.day),
+                          hour  =_fields_.get('hour',   _when_.hour),
+                          minute=_fields_.get('minute', _when_.minute),
+                          second=_fields_.get('second', _when_.second),
+                          microsecond=0)
+
+
 class XYpKwargs(TypedDict, total=False):
     """Keyword arguments accepted by ``p2s.xyp()`` / ``XYp(...)``.
 
@@ -2731,7 +2781,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
         if _closest_tuple_ is None: return []
         # Round that value to the closest time interval
         _rounder_        = _closest_tuple_[3]
-        dt_start_rounded = datetime.strptime(dt_start.strftime(_rounder_), '%Y-%m-%d %H:%M:%S')
+        dt_start_rounded = _truncateToStep_(dt_start, _rounder_)
         if isinstance(dt_start, date): dt_start = datetime.combine(dt_start, datetime.min.time())
         if isinstance(dt_end,   date): dt_end   = datetime.combine(dt_end,   datetime.max.time())
         # Iterate through the time interval & construct the svg

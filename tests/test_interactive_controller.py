@@ -2803,6 +2803,75 @@ class TestLINKPIRegexOnOneLongSubject(_UnfilteredLoggerMixin, unittest.TestCase)
         self.assertIn('time budget', _ctrl_._last_cost_note_)
 
 
+class TestWhichRegexGuardWasLive(_UnfilteredLoggerMixin, unittest.TestCase):
+    """Both ReDoS guards are safe, but they are not the same experience: where the
+    timer arms every pattern runs and a wedged one is cut off; where it cannot, a
+    pattern that can backtrack super-linearly is refused without being started.
+
+    Which one a deployment gets is decided by Panel's threading, not by us (see the
+    module block in interactive_controller.py).  Before _last_regex_guard_ there was
+    nothing to ask: the refusal note told you a pattern had been screened, but on the
+    quiet path -- the one nearly every search takes -- the answer to "which bound is
+    protecting this process?" could only be reasoned out from somebody's threading
+    model.  These pin the recording against each of the three conditions that decide
+    it."""
+
+    LONG  = 'a' * 200 + '!'
+    PLAIN = r'^a+!$'
+
+    def _make_ctrl(self):
+        from polars2svg.interactive_controller import linkpi
+        _df_ = pl.DataFrame({'fm': [self.LONG], 'to': [self.LONG]})
+        _lp_ = Polars2SVG().linkp(_df_, relationships=[('fm', 'to')],
+                                  pos={self.LONG: [0.0, 0.0]})
+        _ctrl_ = linkpi(_lp_)
+        _ctrl_.regex_match_budget = 0.3
+        return _ctrl_
+
+    def test_nothing_is_recorded_before_the_first_search(self):
+        self.assertIsNone(self._make_ctrl()._last_regex_guard_)
+
+    @unittest.skipUnless(hasattr(signal, 'setitimer'), 'no POSIX interval timer')
+    def test_the_main_thread_records_the_hard_stop(self):
+        _ctrl_ = self._make_ctrl()
+        _ctrl_._matchNodesByRegex_(self.PLAIN, {self.LONG})
+        self.assertEqual(_ctrl_._last_regex_guard_, 'hard-stop')
+
+    def test_a_worker_thread_records_the_screen(self):
+        # The condition that actually fires in a served app: pn.serve(threaded=True)
+        # puts the IOLoop off the main thread, which is what tests/interaction/ runs.
+        _ctrl_ = self._make_ctrl()
+        _t_ = threading.Thread(
+            target=lambda: _ctrl_._matchNodesByRegex_(self.PLAIN, {self.LONG}))
+        _t_.start(); _t_.join(20)
+        self.assertFalse(_t_.is_alive())
+        self.assertEqual(_ctrl_._last_regex_guard_, 'screen')
+
+    @unittest.skipUnless(hasattr(signal, 'setitimer'), 'no POSIX interval timer')
+    def test_an_alarm_belonging_to_somebody_else_records_the_screen(self):
+        # Main thread, POSIX, and still the fallback -- the timer is not ours to steal.
+        _ctrl_ = self._make_ctrl()
+        _prev_ = signal.getsignal(signal.SIGALRM)
+        signal.signal(signal.SIGALRM, lambda *_a_: None)
+        signal.setitimer(signal.ITIMER_REAL, 30.0)
+        try:
+            _ctrl_._matchNodesByRegex_(self.PLAIN, {self.LONG})
+        finally:
+            signal.setitimer(signal.ITIMER_REAL, 0)
+            if _prev_ is not None:
+                signal.signal(signal.SIGALRM, _prev_)
+        self.assertEqual(_ctrl_._last_regex_guard_, 'screen')
+
+    @unittest.skipUnless(hasattr(signal, 'setitimer'), 'no POSIX interval timer')
+    def test_it_is_recorded_on_a_search_that_refuses_nothing(self):
+        # The whole point: the quiet path records too, so the question is answerable
+        # without having to provoke a refusal first.
+        _ctrl_ = self._make_ctrl()
+        _ctrl_._matchNodesByRegex_(self.PLAIN, {self.LONG})
+        self.assertIsNone(_ctrl_._last_cost_note_)
+        self.assertEqual(_ctrl_._last_regex_guard_, 'hard-stop')
+
+
 class TestControllerStackDepthLimit(_UnfilteredLoggerMixin, unittest.TestCase):
     """InteractionController.pushStack() refuses at max_stack_depth instead of
     growing forever -- every level retains a whole DataFrame and levels are pushed

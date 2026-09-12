@@ -162,9 +162,32 @@ _MAX_STACK_DEPTH_         = 64    # dataframe stack levels, base level included
 #
 # _regexHardStop_ reports whether it could arm.  It cannot when the platform has
 # no setitimer (Windows), when we are not on the main thread (signal handlers are
-# main-thread only, and Panel dispatches on a worker when configured with
-# nthreads), or when a SIGALRM is already pending for somebody else -- a debugger,
-# a notebook magic -- which is not ours to steal.
+# main-thread only), or when a SIGALRM is already pending for somebody else -- a
+# debugger, a notebook magic -- which is not ours to steal.
+#
+# WHICH of the two is live under Panel is not ours to choose, and it is NOT simply
+# "nthreads moves it to a worker".  applySearchOp is a coroutine, so param hands it
+# to Panel's async_executor (async_execute in panel/io/server.py), which branches on
+# whether there is a live session:
+#
+#   - With a session context (panel serve, pn.serve) it goes to the document's
+#     add_next_tick_callback -- the server's IOLoop.  Where that loop is the main
+#     thread, the HARD STOP is live, and it stays live WITH nthreads set: coroutines
+#     never reach Panel's thread pool.  state.execute submits there only for an
+#     explicit schedule='thread', which no ReactiveHTML call site uses.
+#   - Without one (a notebook, an embedded document) the coroutine runs on whatever
+#     thread triggered the watcher, and nthreads DOES move that to a pool worker
+#     (panel/reactive.py submits _process_bokeh_event there), so the SCREEN is live.
+#   - pn.serve(threaded=True) puts the IOLoop itself off the main thread, so the
+#     SCREEN is live there too.  That is what tests/interaction/ serves under, and
+#     test_search_mode.py asserts it rather than leaving it assumed.
+#
+# So the honest summary is that the deployment picks, not us.  Both paths are safe --
+# that is the point of having two -- but they differ in what a user SEES: where the
+# timer arms every pattern runs and a wedged one is cut off; where it cannot, a
+# pattern that can backtrack super-linearly is refused without being started.
+# _last_regex_guard_ records which one ran, so "which guard is protecting this
+# deployment?" is answerable at runtime instead of by reading a threading model.
 #
 # A worker thread is NOT the way around that, and the measurement is worth keeping:
 # on CPython 3.13 a catastrophic re.search() running on a worker let the main
@@ -1912,6 +1935,13 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
         # last did, surfaced in info_str the way FlowFieldBackground surfaces budget_note.
         self._confirm_armed_   = None
         self._last_cost_note_  = None
+        # Which ReDoS guard was live on the last regex search: 'hard-stop' when the
+        # interval timer armed, 'screen' when it could not and patterns were vetted
+        # structurally instead.  Recorded on EVERY search rather than only refused
+        # ones -- the refusal notes already say a pattern was screened, but on the
+        # quiet path there was otherwise nothing to tell a deployment which of the
+        # two bounds it is actually running under.  See the module block.
+        self._last_regex_guard_ = None
         # Guards the link_shape picker reset in applySizeChoice against re-entering its
         # own watcher; see the comment there.
         self._suppress_shape_watcher_ = False
@@ -2178,6 +2208,7 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
         _set_       = set()
 
         with _regexHardStop_(_budget_ + _REGEX_HARD_STOP_GRACE_S_) as _interruptible_:
+            _self_._last_regex_guard_ = 'hard-stop' if _interruptible_ else 'screen'
             _compiled_ = []
             for _pattern_ in _patterns_:
                 if len(_pattern_) > _self_.regex_max_pattern:

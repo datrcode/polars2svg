@@ -515,15 +515,16 @@ class TestFlowmapLevers(unittest.TestCase):
         self.p2s = Polars2SVG()
 
     def _df(self, n=40, nodes=12):
+        # Private generators, not random.seed() -- see the note on _rng_ below.
         import random
-        random.seed(5)
-        return pl.DataFrame({'fm': [f'n{random.randrange(nodes)}' for _ in range(n)],
-                             'to': [f'n{random.randrange(nodes)}' for _ in range(n)]})
+        _rng_ = random.Random(5)
+        return pl.DataFrame({'fm': [f'n{_rng_.randrange(nodes)}' for _ in range(n)],
+                             'to': [f'n{_rng_.randrange(nodes)}' for _ in range(n)]})
 
     def _pos(self, nodes=12):
         import random
-        random.seed(6)
-        return {f'n{i}': (random.random(), random.random()) for i in range(nodes)}
+        _rng_ = random.Random(6)
+        return {f'n{i}': (_rng_.random(), _rng_.random()) for i in range(nodes)}
 
     def _linkp(self, **kw):
         return self.p2s.linkp(self._df(), relationships=[('fm', 'to')], pos=self._pos(),

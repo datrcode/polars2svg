@@ -21,16 +21,23 @@ from webgpu_test_utils import (decode_buffer, hex_to_rgb01, manifest_count,
 
 _P2S_ = polars2svg.Polars2SVG()
 
-random.seed(20260612)
+# A private Random rather than random.seed(): seeding the module-level generator
+# leaks into every test that runs afterwards, and a test's data then depends on how
+# many values the tests BEFORE it happened to draw.  That is not hypothetical -- it
+# is how a latent glibc-only bug in xyp's axis rounding (a year before 1000 broke a
+# strftime/strptime round-trip) stayed hidden until an unrelated change to CI's -k
+# filter shifted the shared stream and moved one dataframe onto it.  Same seed, same
+# sequence, no reach outside this file.
+_RNG_ = random.Random(20260612)
 _NODES_ = [f'n{i}' for i in range(15)]
 _DF_ = pl.DataFrame({
     'ts':  [datetime.datetime(2026, 1, 1 + i % 28, i % 24) for i in range(300)],
-    'cat': [random.choice('abcd') for _ in range(300)],
-    'fm':  [random.choice(_NODES_) for _ in range(300)],
-    'to':  [random.choice(_NODES_) for _ in range(300)],
-    'val': [random.random() for _ in range(300)],
+    'cat': [_RNG_.choice('abcd') for _ in range(300)],
+    'fm':  [_RNG_.choice(_NODES_) for _ in range(300)],
+    'to':  [_RNG_.choice(_NODES_) for _ in range(300)],
+    'val': [_RNG_.random() for _ in range(300)],
 })
-_POS_ = {n: (random.random(), random.random()) for n in _NODES_}
+_POS_ = {n: (_RNG_.random(), _RNG_.random()) for n in _NODES_}
 
 # a linkp timing mark in the SVG: stroke-width lives on the enclosing <g> for links,
 # so a per-element stroke-width="1.5" is unique to marks (see test_linkp_timing_marks.py)
@@ -399,10 +406,10 @@ class TestSmallpWebGPU(unittest.TestCase):
 
 class TestXYpGradientLines(unittest.TestCase):
     def test_per_endpoint_lines_emit_per_vertex_tris(self):
-        df = pl.DataFrame({'x': sorted(random.random() for _ in range(50)),
-                           'y': [random.random() for _ in range(50)],
-                           'sample': [random.choice('ab') for _ in range(50)],
-                           'value': [random.random() for _ in range(50)]})
+        df = pl.DataFrame({'x': sorted(_RNG_.random() for _ in range(50)),
+                           'y': [_RNG_.random() for _ in range(50)],
+                           'sample': [_RNG_.choice('ab') for _ in range(50)],
+                           'value': [_RNG_.random() for _ in range(50)]})
         xy = _P2S_.xyp(df, x='x', y='y', color='value', dot_size='value', opacity='value',
                        line=('sample', _P2S_.LINECOLOR_FIELD))
         payload = xy.webgpu()
@@ -411,7 +418,7 @@ class TestXYpGradientLines(unittest.TestCase):
         self.assertEqual(manifest_count(payload, 'tri'), n_segments * 6)
 
 
-_POS_ = {n: (random.random(), random.random()) for n in _NODES_}
+_POS_ = {n: (_RNG_.random(), _RNG_.random()) for n in _NODES_}
 
 
 class TestLinkpiView(unittest.TestCase):

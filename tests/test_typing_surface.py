@@ -190,6 +190,7 @@ class TestAnnotationCoverageRatchet(unittest.TestCase):
         'p2s_legend_mixin':                       0,
         'spreadlinepi':                           0,
         'stack_control':                          0,
+        'svg_contract':                           0,
         'p2s_colors_mixin':                       0,
         'p2s_interactive_mixin':                  0,
         'p2s_text_mixin':                         0,

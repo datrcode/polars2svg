@@ -19,48 +19,108 @@ a public GitHub issue. Include a minimal reproduction (a DataFrame + component
 call) if possible. Expect an initial response within a few days; there is no
 formal SLA.
 
-## Deployment Model
+## Supported Deployment Profiles
 
-`polars2svg` is built for **one trusted person in one process** — a Jupyter
-notebook, or a Panel view its own author opens on their own machine. Every
-statement in the threat model below assumes that. Two consequences are worth
-saying outright, because nothing in the code enforces them:
+polars2svg supports three deployment profiles. A profile is not advice: each one
+states what is **enforced**, by which mechanism, and which test proves it. A
+deployment that is not one of these is unsupported — not because it is forbidden,
+but because nothing here has been checked against it.
 
-- **The interactive components are not a multi-tenant application.**
-  `panelize()`, `linkpi()`, `xypi()` and the rest return Panel `ReactiveHTML`
-  views whose parameters synchronise in **both** directions. The browser writes
-  `search_str`, the picker-menu `*_choice` strings, mouse coordinates and key
-  events; the Python handlers act on them as keystrokes from the person sitting
-  in front of the figure. There is no notion of a user in any of it — nothing
-  authenticates, authorises, or rate-limits, and any client that can write those
-  parameters can do anything the keyboard can do, including navigating the
-  dataframe stack and starting layout operations. Serving one of these views to
-  an audience you do not trust is outside what the library is designed for.
+| Profile | Shape | Status |
+| --- | --- | --- |
+| **Notebook** | One trusted person, one process | Fully supported |
+| **Profile A — Appliance** | A server renders SVG from untrusted data; the output is embedded in a page others view | Supported for the render path |
+| **Profile B — Interactive, multi-user** | One process serves the live interactive widgets to several mutually untrusting people | **Out of scope** |
 
-- **Configuration belongs to a `Polars2SVG` instance, and sharing one shares it.**
-  `Polars2SVG()` returns an independent instance: `set_defaults()`,
-  `reset_defaults()` and `setColorOverrides()` apply to the figures built from
-  that instance and to no other, and each factory method passes itself to the
-  component it builds (`p2s=`) so a render always resolves against its own
-  caller. A process serving several people can therefore give each session its
-  own instance — but nothing *makes* it. An application that builds one instance
-  at import time and shares it across sessions is back to one person's settings
-  changing another person's output, and that is a property of the application's
-  wiring rather than something the library can detect. The interactive
-  controllers' dataframe stacks are per-view rather than per-session in the same
-  way. None of this is an access control: an instance is an isolation boundary
-  for *configuration*, not a security boundary, and everything above about the
-  interactive surface still holds.
+### Notebook (the default)
 
-The limits that do exist in the interactive code are **cost** bounds, not trust
-boundaries. `linkpi` bounds the search box's regex (a pattern-length cap plus a
-whole-scan deadline that is enforced from *inside* a running match, not merely
-between subjects — node names and `node_labels=` values are listed above as
-untrusted data, so a single long subject is exactly the case that has to hold),
-caps the dataframe stack's depth, asks before running an
-expensive layout on a large graph, and warns when a composed document would
-exceed the Bokeh WebSocket message limit. Each of those keeps an honest mistake
-from wedging a session; none is a defence against a hostile client.
+A Jupyter notebook, or a Panel view its own author opens on their own machine.
+Everything in the library is available, and the threat model below describes what
+is escaped and what is not. This is what polars2svg was built for.
+
+### Profile A — Appliance
+
+You render with polars2svg on a server, from data you do not control, and embed
+the resulting SVG in a page someone else loads. What makes this supportable is
+not a promise that every label is escaped — it is that the **output is
+checkable**, because polars2svg generates every element and attribute in a render
+itself, from numeric geometry and a fixed vocabulary.
+
+**What the library enforces.** `polars2svg/svg_contract.py` defines an allow-list
+over the rendered document: a conforming render contains only the 16 elements and
+44 attributes the components actually emit, every reference (`href`,
+`url(#…)`) resolves inside the same document, no attribute is an event handler,
+no value carries a `javascript:`/`vbscript:`/`data:` scheme, and the document
+carries no DOCTYPE. `checkOutputContract()` returns the violations;
+`assertOutputContract()` raises. Both are public API — **call
+`assertOutputContract()` on anything you are about to serve.** It is the
+enforcement point, and it reports rather than rewrites: a violation means the
+render is not fit to serve, not that it has been made fit.
+
+**What proves it.** `tests/test_profile_conformance.py` runs that contract over
+the entire golden corpus and over every payload in `tests/injection_corpus.py`
+driven through every untrusted-text surface in every component — currently 27
+hostile strings × 20 surfaces. The corpus itself is checked for vacuity (a render
+that silently dropped the label would otherwise pass trivially), the checker is
+checked against hand-written violating documents (so the suite cannot go green
+with a broken checker), and a coverage ratchet fails the suite if a new component
+ships without injection cases.
+
+**What you are still responsible for.**
+
+- **`tile()` is outside this profile.** It embeds foreign SVG verbatim — that is
+  the component, not a defect — so it makes no promise about markup it did not
+  produce. Do not build an `svg_list` entry from untrusted input.
+
+  The contract is not *blind* to it, though, and the difference matters: because
+  `checkOutputContract()` reads the composed document, hostile markup embedded
+  through `svg_list` is reported like any other violation. So an appliance that
+  gates its responses on `assertOutputContract()` is covered even when it tiles
+  markup it did not write. Being caught at the gate is not the same as being safe
+  to compose, which is why the advice above stands.
+- **Path parameters are inputs in this profile.** `save()`, `savePNG()`,
+  `savePositions()` and `loadPositions()` take a path from the caller and are
+  classed as trusted configuration below. Never forward a request field into one.
+- **Serve it correctly.** Send a `Content-Security-Policy`, and do not serve a
+  render from its own URL as `image/svg+xml` on a domain that matters: a
+  standalone SVG document is a same-origin script context. Embed it, or serve it
+  from a separate origin.
+- **The contract is about markup polars2svg generates.** It is a strong, tested
+  property. It is not a proof that no XSS is possible anywhere in your page.
+
+### Profile B — Interactive, multi-user: out of scope
+
+**Serving the interactive components to several mutually untrusting people is out
+of scope.** `panelize()`, `linkpi()`, `xypi()`, `spreadlinepi()` and the
+`ReactiveHTML` views they return are **not** hardened for it, are not covered by
+the conformance suite, and will not be. This is a deliberate decision, not a
+backlog item.
+
+Concretely, and none of this is hypothetical:
+
+- The views' parameters synchronise in **both** directions. The browser writes
+  `search_str`, the picker `*_choice` strings, `layout_operation`, mouse
+  coordinates and key events; the Python handlers act on them as keystrokes from
+  the person sitting in front of the figure. Nothing authenticates, authorises,
+  or rate-limits, so any client that can write those parameters can do anything
+  the keyboard can do.
+- Not every one of those values is validated before use, and at least one reaches
+  the widget's DOM through `innerHTML`. In a notebook that is self-inflicted; with
+  two people in one process it is not.
+- The rendered SVG reaches the browser through a binding that is deliberately
+  exempt from Panel's HTML sanitizer (it would otherwise strip the plot to
+  nothing), so the interactive path has no sanitizer under it.
+- The interaction controller's view registry is append-only and keyed by object
+  identity, and its dataframe stacks are per-view. One process shared across
+  sessions shares those.
+- The limits that exist in the interactive code — the search regex bound, the
+  stack depth cap, the confirm gate on expensive layouts, the WebSocket payload
+  warning — are **cost** bounds that keep an honest mistake from wedging a
+  session. None is a defence against a hostile client.
+
+If you need interactive views for several users, run one process per user behind
+your own authentication and treat each process as single-tenant. That is the
+supported shape.
 
 ## Threat Model
 
@@ -88,7 +148,7 @@ the DataFrame, or evaluate untrusted expressions.
 - Values the interactive widgets synchronise back from the browser:
   `search_str`, the picker `*_choice` strings, mouse coordinates, key events.
   They arrive over a WebSocket but stand for the local user's own keystrokes
-  (see *Deployment Model*). The ones that select an operation —
+  (see *Supported Deployment Profiles*). The ones that select an operation —
   `layout_operation`, `background_operation`, `key_op_finished` — are looked
   up in fixed registries, so a value naming no operation is inert rather than
   dangerous; the rest are bounded for cost and otherwise used as given.
@@ -139,16 +199,29 @@ behavior — they render DataFrames containing `&`, `<`, `>`, `"`, and a raw
 SVG both parses as well-formed XML and never contains an unescaped tag
 originating from row data.
 
+`tests/test_profile_conformance.py` is the broader check behind Profile A: 27
+hostile strings — attribute-breakout, pre-encoded entities, CDATA and comment
+escapes, `javascript:`/`data:` URLs, bidi overrides — driven through all 20
+untrusted-text surfaces and asserted **structurally**, against the allow-list in
+`polars2svg/svg_contract.py`, rather than by substring. The distinction matters:
+a substring assertion for `<script>` passes unchanged against
+`<img src=x onerror=…>`, which is how a single-payload test can stay green
+through a real regression.
+
 **Known non-goals:**
 
 - `polars2svg` does not sanitize DataFrame values you supply as component
   *configuration* (e.g. a `color=` string). Only the render targets listed
   above receive automatic escaping.
-- The rendered SVG is not evaluated against a strict allow-list of SVG
-  features; it relies on well-formed, escaped text content plus the fact
-  that all structural markup (paths, shapes, ids) is generated by
-  `polars2svg` itself from numeric geometry, not from arbitrary string data.
+- The output allow-list (`polars2svg/svg_contract.py`) is **not applied
+  automatically.** Rendering does not call it; it is a gate a caller puts in
+  front of what it serves, and Profile A asks you to do exactly that. Nothing in
+  the library refuses to return a non-conforming document, because a render that
+  fails the contract is a bug to report, not a condition to handle at runtime.
+- The contract covers markup `polars2svg` generates. `tile()` is outside it by
+  construction, and no allow-list over our output says anything about the rest of
+  the page you embed it in.
 - There is no session isolation, and the interactive widgets' synchronised
   parameters are not an authorisation boundary. Serving the interactive
-  components to several mutually untrusting users from one process is not
-  supported — see *Deployment Model* for what that costs in practice.
+  components to several mutually untrusting users from one process is out of
+  scope — see *Profile B* above for the specifics.

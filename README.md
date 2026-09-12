@@ -240,6 +240,38 @@ count** (`pl.len()`), regardless of what `count=` is set to — so a bar sized b
 two encodings are orthogonal, a tall bar can be cold-colored (many bytes, few
 rows) or vice-versa — that is by design.
 
+## Security & deployment
+
+polars2svg supports three deployment profiles, described in full in
+[SECURITY.md](SECURITY.md):
+
+| Profile | Shape | Status |
+| --- | --- | --- |
+| **Notebook** | One trusted person, one process | Fully supported |
+| **Appliance (A)** | A server renders from untrusted data; output embedded in a page others view | Supported for the render path |
+| **Interactive, multi-user (B)** | One process serves the live widgets to mutually untrusting people | **Out of scope** |
+
+If you render from data you do not control, gate what you serve on the output
+contract. It is an allow-list over the rendered document — only the elements and
+attributes the components actually emit, every reference resolving inside the same
+document, no event handlers, no scripts:
+
+```python
+import polars as pl
+from polars2svg import Polars2SVG, assertOutputContract
+
+p2s   = Polars2SVG()
+chart = p2s.histop(pl.DataFrame({'cat': ['a', 'b', 'a']}), 'cat')
+
+# Raises OutputContractError if the render is not fit to serve.
+assertOutputContract(chart.svg)
+```
+
+It reports; it never rewrites. `tile()` is outside the profile by construction — it
+embeds foreign SVG verbatim, which is the component, not a defect. The interactive
+components (`panelize()`, `linkpi()`, …) are **not** hardened for multiple
+untrusting users; run one process per user behind your own authentication.
+
 ## Development
 
 ```bash

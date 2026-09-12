@@ -9,6 +9,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **Three supported deployment profiles, two of them enforced.** `SECURITY.md`
+  used to state that polars2svg assumes one trusted person in one process, and
+  that nothing in the code enforced it. That was honest and it was not enough — a
+  documented assumption is a disclaimer, not a control. The **Deployment Model**
+  section is now **Supported Deployment Profiles**: *Notebook* (unchanged),
+  *Profile A — Appliance* (a server renders from untrusted data and embeds the
+  output in a page others view), and *Profile B — Interactive, multi-user*, which
+  is now **explicitly out of scope**. Each profile states what is enforced, by
+  which mechanism, and which test proves it.
+
+- **Added: an output contract for Profile A (`polars2svg.svg_contract`).** New
+  public API — `checkOutputContract(svg)` returns every violation,
+  `assertOutputContract(svg)` raises — implementing an **allow-list** over the
+  rendered document: only the 16 elements and 44 attributes the components
+  actually emit, every `href`/`url()` a same-document fragment, no event-handler
+  attributes, no `javascript:`/`vbscript:`/`data:` scheme, no DOCTYPE. An
+  appliance calls it on what it is about to serve. It reports and never rewrites:
+  it is a gate, not a sanitizer, and rendering does not invoke it. `tile()` is
+  outside the profile by construction — it embeds foreign SVG verbatim, which is
+  the component.
+
+- **Added: an injection corpus and conformance suite** (`tests/injection_corpus.py`,
+  `tests/test_profile_conformance.py`). 27 hostile payloads — attribute breakout
+  in both quote flavours, pre-encoded and numeric entities, bare `&`,
+  CDATA/comment/DOCTYPE escapes, `javascript:`/`data:` URLs, CSS
+  `@import`/`expression()`, id-position breakouts, a bidi override, a 4 KB label —
+  driven through all 20 untrusted-text surfaces across every component, plus the
+  whole golden corpus, and asserted **structurally** against the contract rather
+  than by substring. This replaces a single `<script>alert(1)</script>` payload
+  checked with `assertNotIn`, which passes unchanged against
+  `<img src=x onerror=…>`.
+
+  **No escaping changed, because none was missing.** All 540 hostile renders
+  conform today. That is a measured result rather than an assumption: with the
+  escaper deliberately disabled, 15 of 15 text-bearing surfaces fail the contract
+  across four violation kinds, so the suite is known to be capable of failing. The
+  suite also proves its own corpus is not vacuous (a render that silently dropped
+  the label would otherwise pass trivially — five cases did exactly that while
+  being written), self-tests the checker against hand-written violating documents,
+  and ratchets component coverage so a new component cannot ship without cases.
+  It also pins the one property an excluded component still owes you: `tile()`
+  makes no promise about foreign SVG, but the contract is not blind to it —
+  markup embedded through `svg_list` is reported like any other violation, so
+  gating on `assertOutputContract()` covers a tiled render too.
+
+
 - **PNG export cannot be used to read local files, and that is now a tested
   property rather than an accident.** `tile()` embeds foreign SVG verbatim (that
   is the component), and svglib — the rasterizer behind `savePNG()` /
@@ -459,6 +505,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   verbatim by design — and serving several mutually untrusting users from one
   process is now an explicit non-goal. No behaviour changes; this is the policy
   catching up with what the code has always done.
+
+  *Superseded later in this same unreleased cycle:* the singleton was removed (see
+  above), and **Deployment Model** has been replaced by **Supported Deployment
+  Profiles**, which states what each profile *enforces* rather than what it
+  assumes. The entry is kept because the reasoning that produced it still holds —
+  what changed is that a documented assumption was not enough.
 
 - **The typing migration is finished: strict mypy is the package-wide floor and no
   error code is disabled.** The strict-promotion backlog (PLANNING.md §11) is empty —

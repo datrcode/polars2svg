@@ -10,6 +10,12 @@ from .p2s_legend_mixin             import LegendInfo
 from .p2s_background_mixin         import BackgroundShape, INHERIT
 TField = Polars2SVG.TField
 from .layout_protocol              import LayoutAlgorithm
+# Profile A (SECURITY.md) output contract.  Public because it is the
+# enforcement point: an appliance calls assertOutputContract() on what it is
+# about to serve.  Reports, never rewrites -- it is not a sanitizer.
+from .svg_contract                import (ALLOWED_ATTRIBUTES, ALLOWED_ELEMENTS,
+                                          OutputContractError, Violation,
+                                          assertOutputContract, checkOutputContract)
 
 # Per-component keyword-argument TypedDicts.  Each factory method is typed
 # `**kwargs: Unpack[<Component>Kwargs]`, so a checker flags a misspelled

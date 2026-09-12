@@ -30,9 +30,100 @@ jobs:
     name: CI gate
     uses: ./.github/workflows/ci.yml
 
+  # Second half of the gate, covering the one job the `ci` call above does NOT
+  # re-run: `browser-interaction` opts out of tag builds (`if: github.ref_type
+  # != 'tag'` in ci.yml), so nothing in the CI gate executes the JavaScript or
+  # the WGSL shaders — the keydown handlers, the picker-menu state machine, the
+  # preventDefault guards, the brush, and every compute/render shader. Without
+  # this job a release can publish with that entire layer unverified at the
+  # tagged commit.
+  #
+  # It VERIFIES rather than RE-RUNS, on purpose. Re-running is the obvious fix
+  # and it is the wrong trade here: a `v*` tag publishes from any branch, tags
+  # are immutable under the repo rulesets, and there is no un-tagging — so a
+  # single flaky browser run does not just fail a build, it burns a version
+  # number that can never be reused. A lookup cannot flake. It also costs
+  # seconds instead of the ~6.5 minutes the suite takes on a runner.
+  #
+  # What it actually asserts: that THIS commit already has a green
+  # browser-interaction check run, which it will have if it went through main or
+  # a PR, because ci.yml runs that job on both. The hole this closes is a tag
+  # placed on a commit whose CI never ran or ran red.
+  #
+  # Suffix match, not equality: on a push to main the check run is named for the
+  # job (`Browser interaction suite (Playwright)`), but a workflow_call prefixes
+  # it with the calling job (`CI gate / Browser interaction suite (Playwright)`).
+  # Matching the suffix accepts both, so this keeps working unchanged if the
+  # `if:` line in ci.yml is ever deleted and the suite is promoted into the gate
+  # for real. A skipped job also produces a check run — with conclusion
+  # `skipped`, not `success` — so requiring `success` correctly ignores the
+  # release run's own opted-out copy.
+  browser-verified:
+    name: Browser suite green at this commit
+    runs-on: ubuntu-latest
+    permissions:
+      checks: read
+      contents: read
+    steps:
+      - name: Require a successful browser-interaction run for this SHA
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JOB_NAME: Browser interaction suite (Playwright)
+        run: |
+          set -euo pipefail
+
+          # Bounded wait rather than a single lookup, because the common way to
+          # cut a release is to push the commit and its tag together. main's
+          # ci.yml and this workflow then start at the same moment, and the
+          # browser job takes ~6.5 minutes — so a one-shot check would see it
+          # still running and block the release over pure timing. That is the
+          # one failure mode worth spending code on here: the tag is immutable,
+          # so "try again in ten minutes" is not available, and recovering costs
+          # a burned version number.
+          #
+          # 40 x 20s = ~13 minutes, comfortably past the job's runtime. Anything
+          # still queued past that is not a race, it is a stuck runner.
+          attempts=40
+
+          for i in $(seq 1 "$attempts"); do
+            # --paginate because a commit accumulates a check run per job per
+            # workflow, and the default page of 30 can push the one we want off
+            # the end once dependabot PRs and the release run itself have landed.
+            runs=$(gh api --paginate \
+              "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/check-runs?per_page=100" \
+              --jq ".check_runs[] | select(.name | endswith(\"${JOB_NAME}\")) | \"\(.status) \(.conclusion)\"")
+
+            if grep -qx 'completed success' <<<"$runs"; then
+              echo "OK: the browser interaction suite passed at ${GITHUB_SHA}."
+              exit 0
+            fi
+
+            # A job the `if:` in ci.yml skipped reports `completed skipped`, which
+            # is correctly not a pass — that is this release run's own opted-out
+            # copy, not evidence about the commit.
+            if ! grep -qE '^(queued|in_progress)' <<<"$runs"; then
+              break
+            fi
+
+            echo "attempt ${i}/${attempts}: still running, waiting 20s"
+            echo "${runs}"
+            sleep 20
+          done
+
+          echo "check runs matching '${JOB_NAME}' for ${GITHUB_SHA}:"
+          echo "${runs:-  (none)}"
+          echo
+          echo "::error::No successful '${JOB_NAME}' run for ${GITHUB_SHA}. The" \
+               "JavaScript and WGSL layer -- keydown handlers, picker-menu state" \
+               "machine, preventDefault guards, brush, and every shader -- is" \
+               "unverified at this commit, so the release is blocked. Get the commit" \
+               "green on main or in a PR, then tag the NEXT version number: this tag" \
+               "is immutable and its version is burned."
+          exit 1
+
   build:
     name: Build sdist + wheel
-    needs: ci
+    needs: [ci, browser-verified]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7

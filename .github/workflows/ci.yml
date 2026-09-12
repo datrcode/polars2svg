@@ -231,8 +231,18 @@ jobs:
     # a called workflow inherits the *caller's* event, so event_name is never
     # "workflow_call" and gating on it silently does nothing.
     #
-    # Promote it into the release gate by deleting this line, once it has been
-    # green here for long enough to trust.
+    # This does NOT mean a release can ship JavaScript that was never exercised.
+    # release.yml's `browser-verified` job requires the tagged commit to already
+    # carry a green check run from this job — it verifies rather than re-runs, so
+    # the coverage is real while a flaky browser test still cannot burn an
+    # immutable version number. The case it refuses outright is a tag on a commit
+    # that never reached main or a PR, which is the only way the JS/WGSL layer
+    # could otherwise go out unverified.
+    #
+    # Promote this suite into the gate for real by deleting the line below, once
+    # it has been green here for long enough to trust. `browser-verified` keeps
+    # working unchanged either way: it matches the check-run name by *suffix*,
+    # which also catches the `CI gate / …` prefix a workflow_call adds.
     if: github.ref_type != 'tag'
 
     steps:

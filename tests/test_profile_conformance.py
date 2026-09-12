@@ -123,6 +123,65 @@ class TestOutputContractSelfTest(unittest.TestCase):
             '<svg xmlns="http://www.w3.org/2000/svg">'
             '<style>@import url("http://example.invalid/x.css");</style></svg>'))
 
+    def test_external_css_url_rejected(self):
+        # The style block used to be checked with a three-item deny-list, so a
+        # reference that was not @import / expression() / javascript: conformed --
+        # while the byte-identical value in a fill *attribute* was refused (see
+        # test_external_url_reference_rejected above, which is this test's mirror).
+        # These are the three shapes that gap was found with.
+        for _name_, _css_ in {
+            'fill':             'rect{fill:url(http://example.invalid/x#g)}',
+            'font_face_src':    '@font-face{font-family:e;src:url(http://example.invalid/f.woff)}',
+            'background_image': 'rect{background-image:url(http://example.invalid/b.png)}',
+        }.items():
+            with self.subTest(css=_name_):
+                self.assertIn('external-reference', self._kinds(
+                    '<svg xmlns="http://www.w3.org/2000/svg">'
+                    f'<style>{_css_}</style></svg>'))
+
+    def test_css_url_quoting_does_not_evade_the_rule(self):
+        # CSS spells one reference three ways.  A rule written against the bare
+        # form only -- which is what the attribute rule (_URL_LOCAL_REF_) can
+        # afford to be, because an attribute value is the whole token -- is
+        # evaded by adding quotes.  Protocol-relative and relative targets are
+        # here for the same reason: "not obviously a URL" is not a range check.
+        for _name_, _url_ in {
+            'bare':              'url(http://example.invalid/x)',
+            'double_quoted':     'url("http://example.invalid/x")',
+            'single_quoted':     "url('http://example.invalid/x')",
+            'inner_whitespace':  'url( http://example.invalid/x )',
+            'protocol_relative': 'url(//example.invalid/x)',
+            'relative_path':     'url(../secret.svg)',
+        }.items():
+            with self.subTest(url=_name_):
+                self.assertIn('external-reference', self._kinds(
+                    '<svg xmlns="http://www.w3.org/2000/svg">'
+                    f'<style>rect{{fill:{_url_}}}</style></svg>'))
+
+    def test_css_fetch_without_a_url_token_rejected(self):
+        # The url() range check cannot see these: CSS Images 4 lets a bare string
+        # stand in for a url() inside image-set(), so the reference is there and
+        # the token is not.  They are deny-listed rather than range-checked, which
+        # is the documented seam in an otherwise allow-listed rule -- see the
+        # stylesheet non-goal in SECURITY.md.
+        for _name_, _css_ in {
+            'image_set':        'rect{background-image:image-set("http://example.invalid/x.png" 1x)}',
+            'webkit_image_set': 'rect{background-image:-webkit-image-set("http://example.invalid/x.png" 1x)}',
+        }.items():
+            with self.subTest(css=_name_):
+                self.assertIn('dangerous-css', self._kinds(
+                    '<svg xmlns="http://www.w3.org/2000/svg">'
+                    f'<style>{_css_}</style></svg>'))
+
+    def test_local_css_url_accepted(self):
+        # The positive control for the two above.  Without it they are satisfied
+        # by a rule that flags every url() in every stylesheet, which would break
+        # the gradient and clip-path references the components legitimately emit.
+        self.assertEqual(checkOutputContract(
+            '<svg xmlns="http://www.w3.org/2000/svg">'
+            '<style>rect{fill:url(#g)}circle{clip-path:url("#c")}</style>'
+            '<rect/></svg>'), [])
+
     def test_malformed_document_rejected(self):
         self.assertIn('not-well-formed', self._kinds(
             '<svg xmlns="http://www.w3.org/2000/svg"><text>unclosed</svg>'))
@@ -281,6 +340,11 @@ class TestTileIsExcludedFromTheProfileButStillChecked(unittest.TestCase):
                            'xmlns="http://www.w3.org/1999/xhtml">x</div></foreignObject>',
         'javascript_href': '<use href="javascript:alert(1)"/>',
         'dangerous_css':   '<style>@import url("http://example.invalid/x.css");</style>',
+        # Distinct from dangerous_css: no @import, no javascript: -- just a
+        # reference out of the document, which is the shape that used to ride
+        # through tile() unreported.
+        'external_css_url': '<style>rect{fill:url(http://example.invalid/x#g)}</style>'
+                           '<rect width="10" height="10"/>',
         'anchor_element':  '<a href="http://example.invalid/"><rect width="10" '
                            'height="10"/></a>',
     }

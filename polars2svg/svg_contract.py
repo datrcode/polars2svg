@@ -11,9 +11,13 @@
 #
 # So the contract is an ALLOW-LIST rather than a deny-list.  A render conforms
 # when every element and every attribute in it is one this module names, and
-# every URL-bearing value points inside the same document.  A deny-list ("no
-# <script>, no on* handlers, no <foreignObject>") only ever excludes the attacks
-# somebody thought of; an allow-list excludes the ones nobody thought of too.
+# every URL-bearing value points inside the same document -- stylesheet text
+# included, which is not a detail: CSS fetches, so a <style> block checked any
+# less strictly than an attribute is just a hole with a longer name.
+#
+# A deny-list ("no <script>, no on* handlers, no <foreignObject>") only ever
+# excludes the attacks somebody thought of; an allow-list excludes the ones
+# nobody thought of too.
 # What makes that affordable here is how small the real vocabulary is: 16
 # elements and 44 attributes cover every render the test suite produces.
 #
@@ -36,7 +40,7 @@
 #
 from typing import NamedTuple
 import re
-import xml.etree.ElementTree as ET
+import xml.etree.ElementTree as ET  # nosec B405 - DOCTYPE/ENTITY declarations are refused before the parse (see checkOutputContract), so the entity-expansion family never reaches expat; see SECURITY.md
 
 
 #
@@ -98,8 +102,21 @@ _DOCTYPE_OR_ENTITY_ = re.compile(r'<!\s*(DOCTYPE|ENTITY)', re.IGNORECASE)
 # not only the URL-bearing ones, because a value does not need to be in a
 # reference position to matter if the document is later transformed.
 _DANGEROUS_SCHEME_ = re.compile(r'(?:javascript|vbscript|data)\s*:', re.IGNORECASE)
-# CSS constructs that fetch or execute, checked inside <style> element text.
-_CSS_DANGEROUS_    = re.compile(r'@import|expression\s*\(|javascript\s*:', re.IGNORECASE)
+# CSS constructs that fetch or execute without naming a url(), checked inside
+# <style> element text.  image-set() is here because CSS Images 4 lets a bare
+# string stand in for a url() inside it -- image-set("http://host/x" 1x) fetches
+# while containing no url() token for the range check below to find.  The
+# -webkit- prefixed spelling contains this one as a substring, so it matches too.
+_CSS_DANGEROUS_    = re.compile(
+    r'@import|expression\s*\(|javascript\s*:|image-set\s*\(', re.IGNORECASE)
+# Every url(...) token in a stylesheet, with its argument captured in whichever
+# of the three groups matched: "quoted", 'quoted', or bare.  CSS permits all
+# three spellings of the same reference, so a rule written only against the bare
+# form is evaded by adding quotes -- which is why this is tokenised and then
+# range-checked, rather than matched as one fixed shape the way the attribute
+# rule (_URL_LOCAL_REF_) can afford to be.
+_CSS_URL_TOKEN_    = re.compile(
+    r'''url\s*\(\s*(?:"([^"]*)"|'([^']*)'|([^)]*?))\s*\)''', re.IGNORECASE)
 
 
 class Violation(NamedTuple):
@@ -177,6 +194,55 @@ def _checkValue_(tag: str, attr: str, value: str, out: list[Violation]) -> None:
 
 
 #
+# _checkStyleText_() - the rules for CSS inside a <style> element
+# - the same range rule the attribute path applies, applied to stylesheet text:
+#   a reference must resolve inside this document or it is a violation
+#
+# This used to be a three-item deny-list (@import / expression() / javascript:),
+# which is how `fill:url(http://host/x)`, `@font-face{src:url(...)}` and
+# `background-image:url(...)` all conformed while the byte-identical value in a
+# *fill attribute* was correctly refused.  A deny-list here contradicted the
+# module's whole premise, and it contradicted SECURITY.md's claim that every
+# reference resolves inside the same document -- including for a tiled child,
+# whose <style> rides along verbatim.
+#
+# The deny-list is kept on top rather than replaced: @import and expression()
+# are worth naming in their own words, and the message an operator reads is the
+# reason this is not just folded into the url() rule.
+#
+def _checkStyleText_(tag: str, text: str, out: list[Violation]) -> None:
+    if _CSS_DANGEROUS_.search(text):
+        out.append(Violation(
+            'dangerous-css',
+            '<style> content uses a construct that fetches or executes '
+            '(@import, expression(), image-set() or a javascript: URL)',
+            tag))
+    # data: and vbscript: are refused in CSS for the same reason _checkValue_()
+    # refuses them in an attribute.  javascript: is matched by both rules and
+    # reported twice; that is the same "one thing can fail more than one way"
+    # the per-attribute rules already allow, and under-reporting would be the
+    # worse trade.
+    if _DANGEROUS_SCHEME_.search(text):
+        out.append(Violation(
+            'dangerous-scheme',
+            '<style> content uses a scheme that is not servable '
+            '(javascript:, vbscript: and data: are all refused)',
+            tag))
+    for _m_ in _CSS_URL_TOKEN_.finditer(text):
+        # Exactly one of the three groups is non-None -- whichever quoting the
+        # author used.  The quotes are not part of the reference, so they come
+        # off before the range check and url(#a), url("#a") and url('#a') are
+        # one rule.
+        _ref_ = next(_g_ for _g_ in _m_.groups() if _g_ is not None)
+        if _LOCAL_REF_.match(_ref_.strip()) is None:
+            out.append(Violation(
+                'external-reference',
+                f'<style> references a resource outside this document '
+                f'(url({_ref_})); only a same-document url(#fragment) is permitted',
+                tag, None, _ref_))
+
+
+#
 # checkOutputContract() - every way `svg` fails the Profile A contract
 # - returns [] for a conforming document; never raises for contract reasons, so a
 #   caller can report all findings at once (a malformed document is itself
@@ -197,7 +263,7 @@ def checkOutputContract(svg: str) -> list[Violation]:
         return _out_
 
     try:
-        _root_ = ET.fromstring(svg)
+        _root_ = ET.fromstring(svg)  # nosec B314 - unreachable for any document carrying a DOCTYPE or ENTITY declaration: those are refused above rather than expanded, which is what makes this safe to point at foreign markup; see SECURITY.md
     except ET.ParseError as _e_:
         return [Violation('not-well-formed', f'document is not well-formed XML: {_e_}')]
 
@@ -231,11 +297,14 @@ def checkOutputContract(svg: str) -> list[Violation]:
                     _tag_, _attr_, _value_))
                 continue
             _checkValue_(_tag_, _attr_, _value_, _out_)
-        if _tag_ == 'style' and _el_.text and _CSS_DANGEROUS_.search(_el_.text):
-            _out_.append(Violation(
-                'dangerous-css',
-                '<style> content uses @import, expression() or a javascript: URL',
-                _tag_))
+        if _tag_ == 'style':
+            # itertext() rather than .text: a <style> holding a child element
+            # (invalid, but a hostile document is not bound by that) splits its
+            # own text, and the half after the child would otherwise go
+            # unscanned.  The parser drops comments, so they cannot split it.
+            _css_ = ''.join(_el_.itertext())
+            if _css_:
+                _checkStyleText_(_tag_, _css_, _out_)
 
     return _out_
 

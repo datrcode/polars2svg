@@ -25,7 +25,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rendered document: only the 16 elements and 44 attributes the components
   actually emit, every `href`/`url()` a same-document fragment, no event-handler
   attributes, no `javascript:`/`vbscript:`/`data:` scheme, no DOCTYPE. An
-  appliance calls it on what it is about to serve. It reports and never rewrites:
+  appliance calls it on what it is about to serve. The same-document rule covers
+  `<style>` text as well as attributes — every `url()` in a stylesheet is
+  range-checked like an attribute value, quoted or bare — with the CSS
+  constructs that fetch without naming a `url()` (`@import`, `expression()`,
+  `image-set()`) refused by name. It reports and never rewrites:
   it is a gate, not a sanitizer, and rendering does not invoke it. `tile()` is
   outside the profile by construction — it embeds foreign SVG verbatim, which is
   the component.

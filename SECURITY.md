@@ -49,8 +49,9 @@ itself, from numeric geometry and a fixed vocabulary.
 **What the library enforces.** `polars2svg/svg_contract.py` defines an allow-list
 over the rendered document: a conforming render contains only the 16 elements and
 44 attributes the components actually emit, every reference (`href`,
-`url(#…)`) resolves inside the same document, no attribute is an event handler,
-no value carries a `javascript:`/`vbscript:`/`data:` scheme, and the document
+`url(#…)`) resolves inside the same document — in `<style>` text as well as in
+attributes, since CSS fetches too — no attribute is an event handler, no value
+carries a `javascript:`/`vbscript:`/`data:` scheme, and the document
 carries no DOCTYPE. `checkOutputContract()` returns the violations;
 `assertOutputContract()` raises. Both are public API — **call
 `assertOutputContract()` on anything you are about to serve.** It is the
@@ -221,6 +222,17 @@ through a real regression.
 - The contract covers markup `polars2svg` generates. `tile()` is outside it by
   construction, and no allow-list over our output says anything about the rest of
   the page you embed it in.
+- **Stylesheet text is allow-listed by reference, not by grammar.** Every
+  `url(…)` inside a `<style>` block is range-checked exactly like an attribute
+  value — quoted or bare, it must be a same-document `#fragment` — but the
+  contract does not parse CSS, so it cannot allow-list *properties*. The
+  constructs that fetch or execute without naming a `url()` (`@import`,
+  `expression()`, `image-set()`, a `javascript:` URL) are refused by name
+  instead. That is a deny-list, and a deny-list only excludes what somebody
+  thought of: a future CSS fetch primitive spelled some third way would pass.
+  polars2svg's own renders emit a small fixed stylesheet, so this seam matters
+  only for foreign CSS — which reaches the document solely through `tile()`, and
+  `tile()` is already outside the profile.
 - There is no session isolation, and the interactive widgets' synchronised
   parameters are not an authorisation boundary. Serving the interactive
   components to several mutually untrusting users from one process is out of

@@ -72,20 +72,29 @@ jobs:
         # behind", which is worth fixing but is not the same as a shipped
         # vulnerability.
         #
-        # --no-deps because the requirements file is already fully pinned and we do
-        # not want pip-audit resolving it. Without the flag it builds a throwaway
-        # virtualenv and INSTALLS the set to resolve it, and `export` brings
-        # rlPyCairo -> pycairo, which publishes no Linux wheel: it compiles from the
-        # sdist and wants cairo's headers, which this runner does not carry (the
-        # clean-room job installs libcairo2-dev; this job had never needed a
-        # toolchain). That failed as "Dependency \"cairo\" not found", three
-        # attempts running, which reads like a flaky network but is a build.
+        # --no-deps AND --disable-pip, and it takes both. pip-audit's default path for
+        # a requirements file is to shell out to
+        # `pip install --dry-run --report -r ...` inside a throwaway virtualenv, and
+        # --dry-run still builds an sdist to read its metadata. `export` brings
+        # rlPyCairo -> pycairo, which publishes no Linux wheel, so that build wants
+        # cairo's headers -- which this job does not carry (the clean-room job
+        # installs libcairo2-dev; this one had never needed a toolchain). It failed as
+        # `Dependency "cairo" not found` on all three attempts, which reads like a
+        # flaky network and is a compile.
         #
-        # It does not weaken the audit: uv export writes exact pins, which is what
-        # --no-deps requires, and a vulnerable pin is still reported (checked against
-        # tornado 6.5.7's three advisories). It also drops the step from ~60s to ~10s
-        # since nothing is installed. pip-audit warns that it would rather have
-        # hashes; that warning is expected, and uv.lock is the thing pinning us here.
+        # --no-deps alone does NOT avoid that: it skips dependency *resolution* while
+        # still invoking pip. --disable-pip is the flag that keeps pip out entirely,
+        # and it is only accepted alongside --no-deps or a hashed file. With both,
+        # nothing is installed and nothing is built, so no system library can be
+        # missing -- the step is a lookup of pinned names against the advisory
+        # database and takes ~2s instead of ~60s.
+        #
+        # Coverage is unchanged and was checked rather than assumed: 75 packages
+        # audited (the two short of the file are Windows/emscripten-marker-only),
+        # pycairo, lxml, tornado, urllib3, reportlab and svglib among them, and a
+        # vulnerable pin is still reported -- verified against tornado 6.5.7's three
+        # advisories. pip-audit warns it would rather have hashes; that is expected,
+        # and uv.lock is what pins us here.
         #
         # Retried because this is the one check in this job whose result is not
         # a property of the repo: pip-audit queries pypi.org's JSON API once per
@@ -105,7 +114,7 @@ jobs:
               --extra interactive --extra layouts --extra export \
               -o /tmp/requirements-audit.txt
           for _attempt_ in 1 2 3; do
-              uvx pip-audit --no-deps --timeout 30 -r /tmp/requirements-audit.txt && exit 0
+              uvx pip-audit --no-deps --disable-pip --timeout 30 -r /tmp/requirements-audit.txt && exit 0
               if [ "$_attempt_" -lt 3 ]; then
                   echo "::warning::pip-audit attempt $_attempt_ failed; retrying in $((_attempt_ * 10))s"
                   sleep $((_attempt_ * 10))

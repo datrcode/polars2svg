@@ -48,7 +48,9 @@ cd "$_ROOT_" || exit 1
 # lxml, requests, urllib3 or reportlab. Without --no-deps, pip-audit resolves by
 # INSTALLING into a throwaway venv, and `export` pulls rlPyCairo -> pycairo, which
 # has no Linux wheel and needs cairo's headers -- green on a Mac with cairo around,
-# a build failure on CI's runner.
+# a build failure on CI's runner.  --no-deps alone is not enough: it skips resolution
+# but still invokes pip.  --disable-pip is what keeps pip out, and it is only accepted
+# alongside --no-deps.
 _REQS_="$(mktemp -t p2s-preflight-reqs)"
 trap 'rm -f "$_REQS_"' EXIT
 
@@ -97,7 +99,7 @@ _step_ 'pip-audit (dependencies)' bash -c \
     "uv export --no-hashes --no-dev --no-emit-project \
          --extra interactive --extra layouts --extra export -o '$_REQS_' >/dev/null || exit 1
      for _attempt_ in 1 2 3; do
-         uvx pip-audit --no-deps --timeout 30 -r '$_REQS_' && exit 0
+         uvx pip-audit --no-deps --disable-pip --timeout 30 -r '$_REQS_' && exit 0
          [ \"\$_attempt_\" -lt 3 ] && sleep \$((_attempt_ * 3))
      done
      exit 1"

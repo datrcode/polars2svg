@@ -25,6 +25,8 @@ import panel as pn
 import param
 import pyperclip
 from panel.reactive import ReactiveHTML
+
+from .p2s_reactive_base import P2SReactiveHTML
 from shapely.geometry import Polygon
 
 from .mds_at_scale                  import LandmarkMDSLayout, PivotMDSLayout
@@ -528,255 +530,33 @@ def _resolve_set_op(shiftkey, ctrlkey):
     if ctrlkey:              return 'add'
     return 'replace'
 
-_INTERACTIVEP_CONFIG_ = {
-    'timepi': {
-        'class_name':    'TIMEPI',
-        'svg_parent_id': 'svgparenttimepi',
-        'render_fn':     'timep',
-        'fallback_shape':'SELECT_VERTICALp',
-        'brush_seq':     '[0,1,2,3,4]',
-        'has_z_key':     False,
-        'has_time_keys': True,
-        'kbd_r_desc':    'toggle brush on/off',
-    },
-    'histopi': {
-        'class_name':    'HISTOPI',
-        'svg_parent_id': 'svgparenthistopi',
-        'render_fn':     'histop',
-        'fallback_shape':'SELECT_HORIZONTALp',
-        'brush_seq':     '[0,1,2,5,6]',
-        'has_z_key':     False,
-        'has_search':    True,
-        'kbd_r_desc':    'toggle brush on/off',
-    },
-    'xypi': {
-        'class_name':    'XYPI',
-        'svg_parent_id': 'svgparentxypi',
-        'render_fn':     'xyp',
-        'fallback_shape':'SELECT_HORIZONTALp',
-        'brush_seq':     '[0,1,2,3,4,5,6]',
-        'has_z_key':     True,
-        'has_time_keys': True,
-        'kbd_r_desc':    'toggle brush on/off',
-    },
-    'chordpi': {
-        'class_name':    'CHORDPI',
-        'svg_parent_id': 'svgparentchordpi',
-        'render_fn':     'chordp',
-        'fallback_shape':'SELECT_CIRCLEp',
-        'brush_seq':     '[0,1,2]',
-        'has_z_key':     False,
-        'kbd_r_desc':    'toggle brush on/off',
-    },
-    'piepi': {
-        'class_name':    'PIEPI',
-        'svg_parent_id': 'svgparentpiepi',
-        'render_fn':     'piep',
-        'fallback_shape':'SELECT_CIRCLEp',
-        'brush_seq':     '[0,1,2]',
-        'has_z_key':     False,
-        'has_search':    True,
-        'kbd_r_desc':    'toggle brush on/off',
-    },
-}
+# ─────────────────────────────────────────────────────────────────────────────
+# Keyboard help
+#
+# Per *kind*, not per instance, so both are computed once per class below and
+# the help SVG is substituted into that class's template.
+# ─────────────────────────────────────────────────────────────────────────────
 
-def _interactivep(_plot_, kind, **kwargs):
-    cfg            = _INTERACTIVEP_CONFIG_[kind]
-    use_webgpu     = kwargs.pop('use_webgpu', False)
-    if use_webgpu and getattr(_plot_, 'webgpu', None) is None:
-        raise ValueError(f'_interactivep(): use_webgpu=True is not (yet) supported for "{kind}"')
-    _gpu_payload_default_ = _plot_.webgpu() if use_webgpu else None
-    _svg_          = _plot_._repr_svg_() if not use_webgpu else ''
-    _w_, _h_       = _plot_.wxh[0], _plot_.wxh[1]
-    class_name     = cfg['class_name']
-    svg_parent     = cfg['svg_parent_id']
-    render_fn      = cfg['render_fn']
-    fallback_shape = cfg['fallback_shape']
-    brush_seq      = cfg['brush_seq']
-    has_z_key      = cfg['has_z_key']
-    has_search     = cfg.get('has_search', False)
-    has_time_keys  = cfg.get('has_time_keys', False)
-    _cls_ref_      = [None]
-    # Constructor
-    def __init__(self, **kwargs):
-        mvc = kwargs.pop('mvc', None) # don't pass to the super
-        super(_cls_ref_[0], self).__init__(**kwargs)
-        # Locking variable
-        self.lock = asyncio.Lock()
-        # Model/View/Controller — single-df fallback: build a default stack and register self
-        if mvc is None:
-            self.mvc = InteractionController()
-            self.mvc.addStack('default', _plot_.df_orig)
-            self.mvc.view_stack[id(self)] = 'default'
-        else:
-            self.mvc = mvc
-        # Render state
-        self._plot_  = _plot_
-        self._cache_ = {id(_plot_.df_orig): (_plot_.df_orig, _plot_)}
-        self.template = _plot_
-        # Watch for callbacks
-        self.param.watch(self.applyDragOp,     'drag_op_finished')
-        self.param.watch(self.applyKeyOp,      'key_op_finished')
-        self.param.watch(self.applyBrushOp,    'brush_changed')
-        self.param.watch(self.applyBrushLeave, 'brush_leave_done')
-        if use_webgpu:
-            self.param.watch(self.applyGpuError, 'gpu_error')
-        if has_search:
-            self.param.watch(self.applySearchOp, 'search_op_finished')
-    # Refresh the view
-    def __refreshView__(self):
-        if use_webgpu:
-            if self.gpu_error: self.mod_inner   = _gpu_error_overlay(self.gpu_error, _w_, _h_)
-            else:              self.gpu_payload = self._plot_.webgpu()
-        else:
-            self.mod_inner = self._plot_._repr_svg_()
-    # WebGPU rendering failed in the browser -> surface the error in the overlay.
-    # No automatic SVG fallback: the user must re-create the view with use_webgpu=False.
-    async def applyGpuError(self, event):
-        if self.gpu_error:
-            self.mod_inner = _gpu_error_overlay(self.gpu_error, _w_, _h_)
-    # Render the view
-    def __renderView__(self, df):
-        return getattr(self.template.p2s, render_fn)(df=df, template=self.template)
-    # Core brush logic: call recordsAt and broadcast to peers
-    async def _doBrushAt(self, xy, state_idx, seq=None):
-        state_def = BRUSH_STATES[state_idx]
-        shape     = getattr(self._plot_.p2s, state_def[0])
-        threshold = state_def[1]
-        try:
-            filtered = self._plot_.recordsAt(xy, shape=shape, threshold=threshold)
-        except ValueError:
-            try:
-                filtered = self._plot_.recordsAt(xy, shape=getattr(self._plot_.p2s, fallback_shape), threshold=threshold)
-            except Exception:
-                return
-        if seq is not None and seq != self._brush_seq_:
-            return                      # superseded while recordsAt() was running (U7)
-        if len(filtered) == 0:
-            await self.mvc.brushClear(self)
-        else:
-            await self.mvc.brushUpdate(self, filtered)
-    # Callbacks - applyDragOp()
-    async def applyDragOp(self, event):
-        async with self.lock:
-            if not self.drag_op_finished: return
-            _coords_ = (self.drag_x0, self.drag_y0, self.drag_x1, self.drag_y1)
-            _shift_  = self.shiftkey
-            _shape_  = self.select_shape
-            self.drag_op_finished = False
-        if _shape_ == 'oval':
-            # press point (drag_x0/y0) is the oval center; drag edge sets the radii
-            _cx_, _cy_ = self.drag_x0, self.drag_y0
-            _rx_ = abs(self.drag_x1 - self.drag_x0)
-            _ry_ = abs(self.drag_y1 - self.drag_y0)
-            _df_ = self._plot_.filterByOval((_cx_, _cy_, _rx_, _ry_), _shift_)
-        else:
-            _df_ = self._plot_.filterByRectangle(_coords_, _shift_)
-        if len(_df_) > 0: await self.mvc.pushStack(self, _df_)
-        else:             await self.mvc.popStack(self)
-    # Callbacks - applyKeyOp()
-    async def applyKeyOp(self, event):
-        async with self.lock:
-            _key_   = self.key_op_finished
-            _xy_    = (self.x_mouse, self.y_mouse)
-            _shift_ = self.shiftkey
-            _ctrl_  = self.ctrlkey
-            self.key_op_finished = ''
-        if has_z_key and (_key_ == 'z' or _key_ == 'Z'):
-            _df_ = self._plot_.filterByColorAtXY(_xy_, _shift_)
-            if _df_ is not None and len(_df_) > 0: await self.mvc.pushStack(self, _df_)
-            else:                                  await self.mvc.popStack(self)
-        elif _key_ == 'q':
-            await self.mvc.subtractCurrentStackFromTop(self)
-        # Time-axis shortcuts (xy only): 'u' unfilters the visible timeframe; 'e' expands the
-        # timeframe both directions, shift+'e' / ctrl+'e' expand it backward / forward only.
-        # Each pulls rows from the base (top) dataframe and pushes the result onto the stack
-        # when there is something to add.
-        elif has_time_keys and _key_ == 'u':
-            _df_ = self._plot_.filterByTimeframe(self.mvc.stackTopDataFrame(self), 'unfilter')
-            if _df_ is not None and len(_df_) > 0: await self.mvc.pushStack(self, _df_)
-        elif has_time_keys and _key_ == 'e':
-            _mode_ = 'expand_before' if _shift_ else ('expand_after' if _ctrl_ else 'expand_both')
-            _df_ = self._plot_.filterByTimeframe(self.mvc.stackTopDataFrame(self), _mode_)
-            if _df_ is not None and len(_df_) > 0: await self.mvc.pushStack(self, _df_)
-    # Callbacks - applyBrushOp() — fires on mouse move (when brush active) or on brush state change
-    async def applyBrushOp(self, event):
-        # Brush ops compute outside the lock, so several can be in flight at once and
-        # their results land in completion order rather than issue order -- a stale
-        # "nothing here" from an earlier pointer position routinely arrived after a
-        # fresh update and wiped it, leaving linked views showing the wrong records
-        # (PLANNING.md U7).  Each op takes a ticket; only the newest may broadcast.
-        async with self.lock:
-            _state_ = self.brush_state
-            _xy_    = (self.x_mouse, self.y_mouse)
-            self._brush_seq_ = _seq_ = getattr(self, '_brush_seq_', 0) + 1
-        if _state_ == 0:
-            if _seq_ != self._brush_seq_: return
-            await self.mvc.brushClear(self)
-        else:
-            await self._doBrushAt(_xy_, _state_, _seq_)
-    # Callbacks - applyBrushLeave() — fires when mouse leaves the component while brush is active
-    async def applyBrushLeave(self, event):
-        async with self.lock:
-            if not self.brush_leave_done: return
-            if self.brush_state == 0:
-                self.brush_leave_done = False
-                return
-            self.brush_leave_done = False
-            # Supersede anything still in flight: leaving is the newest intent, and a
-            # brush result landing after it would re-brush a component the pointer has
-            # already left.
-            self._brush_seq_ = getattr(self, '_brush_seq_', 0) + 1
-        await self.mvc.brushClear(self)
-    # Callbacks - applySearchOp() — fires when user commits a '/' search string
-    async def applySearchOp(self, event):
-        async with self.lock:
-            _s_ = self.search_str
-        if not _s_:
-            return
-        if _s_.startswith('-'):
-            _sub_, _remove_bins_ = _s_[1:], True
-        else:
-            _sub_, _remove_bins_ = _s_, False
-        if _sub_:
-            _df_ = self._plot_.filterBySubstring(_sub_, remove_bins=_remove_bins_)
-            if len(_df_) > 0: await self.mvc.pushStack(self, _df_)
-            else:             await self.mvc.popStack(self)
-    # MVC
-    async def display(self, df, dfs, dfs_index):
-        async with self.lock:
-            # render if not already rendered — entries are (df, plot); the identity
-            # guard re-renders when a reused id would otherwise serve a freed df's plot
-            _entry_ = self._cache_.get(id(df))
-            if _entry_ is None or _entry_[0] is not df:
-                _entry_ = (df, self.__renderView__(df))
-                self._cache_[id(df)] = _entry_
-            # set the current & refresh
-            self._plot_ = _entry_[1]
-            self.__refreshView__()
-            # clean up the cache
-            _ids_ = set([id(df) for df in dfs])
-            for _id_ in list(self._cache_.keys()):
-                if _id_ not in _ids_:
-                    del self._cache_[_id_]
-
-    # Build keyboard commands string
+def _interactivePKeyboardCommands_(kbd_r_desc: str, has_z_key: bool,
+                                   has_search: bool, has_time_keys: bool) -> str:
     _z_key_cmd_ = '\nz . | filter to color nearest to mouse (shift filters those records out)' if has_z_key else ''
     _search_cmd_ = '\n/ . | filter bins: type substring + Enter (prefix -remove); Escape to cancel' if has_search else ''
     _time_key_cmd_ = ('\nu . | (time x-axis) unfilter rows within the visible timeframe'
                       '\ne . | (time x-axis) expand timeframe both directions'
                       '\nshift+e . | (time x-axis) expand timeframe backward (earlier events)'
                       '\nctrl+e . | (time x-axis) expand timeframe forward (later events)') if has_time_keys else ''
-    _keyboard_commands_ = f"""
+    return f"""
 h . | toggle help display
 q . | subtract the current from the top
 F . | pick selection shape (rectangle | oval)
-r . | {cfg['kbd_r_desc']}
+r . | {kbd_r_desc}
 R . | cycle brush shape{_z_key_cmd_}{_search_cmd_}{_time_key_cmd_}
         """
 
-    # Build static SVG for keyboard help overlay
-    _help_lines_  = _keyboard_commands_.strip().split('\n')
+
+def _interactivePKeyboardHelpSvg_(keyboard_commands: str) -> str:
+    """Static SVG for the 'h' help overlay, laid out from the command list."""
+    _help_lines_  = keyboard_commands.strip().split('\n')
     _help_w_      = max(len(l) for l in _help_lines_) * 7 + 20
     _help_h_      = len(_help_lines_) * 14 + 12
     _help_font_style_ = "font-family: 'Courier New', monospace; font-size: 11px; fill: #222;"
@@ -784,30 +564,170 @@ R . | cycle brush shape{_z_key_cmd_}{_search_cmd_}{_time_key_cmd_}
         f'<text x="10" y="{12 + i*14}" style="{_help_font_style_}">{l}</text>'
         for i, l in enumerate(_help_lines_)
     )
-    _keyboard_help_svg_ = (
+    return (
         f'<rect x="0" y="0" width="{_help_w_}" height="{_help_h_}" '
         f'fill="rgba(240,240,240,0.95)" stroke="#888" stroke-width="1" rx="3"/>'
         f'{_help_text_lines_}'
     )
 
-    # Build JS z-key block (prepended to 's' check in myOnKeyDown when has_z_key)
-    _z_block_ = (
-        """if      (event.key == 'z' || event.key == 'Z') { data.key_op_finished = "z"; }\n                else """
-        if has_z_key else ""
-    )
 
-    # Build JS time-key block (xy time-axis shortcuts). 'e'/'E' funnel to the same op;
-    # the shift/ctrl state (synced just above) picks backward vs. forward in applyKeyOp.
-    _time_block_ = (
-        """if      (event.key == 'u' || event.key == 'U') { data.key_op_finished = "u"; }
-                else if (event.key == 'e' || event.key == 'E') { data.key_op_finished = "e"; }
-                else """
-        if has_time_keys else ""
-    )
+# ─────────────────────────────────────────────────────────────────────────────
+# Template / JS -- static text shared by all five generic components.
+#
+# Per-instance values arrive as jinja ({{ svg_w }}) or via the data model
+# (data.svg_w, data.has_z_key, data.brush_seq, ...).  Two things cannot: the
+# root <svg> id and the keyboard-help SVG are per *kind*, and the id is also the
+# JS variable name Panel declares for that node, so each class binds them into
+# its own copy with a single substitution -- no f-string, and the text stays
+# readable as the SVG/JS it is.
+# ─────────────────────────────────────────────────────────────────────────────
 
-    # Build JS search blocks for myOnKeyDown (histopi only)
-    _search_block_top_ = ("""
-                if (state.search_mode) {
+_INTERACTIVEP_SVG_ROOT_ = """
+<svg id="__ROOT__" width="{{ svg_w }}" height="{{ svg_h }}" tabindex="0" onkeydown="${script('myOnKeyDown')}" onkeyup="${script('myOnKeyUp')}"{% if use_webgpu %} style="position:absolute;left:0;top:0;"{% endif %}>
+    <svg id="mod" width="{{ svg_w }}" height="{{ svg_h }}"> ${mod_inner} </svg>
+    <g   id="brushindicator" pointer-events="none"></g>
+    <g   id="brushmodelabel" pointer-events="none"></g>
+    <g   id="keyboardhelp" transform="translate(${keyboardhelp_x} 0)">__KBD_HELP__</g>
+    <rect id="drag"   x="-10" y="-10" width="5"     height="5" stroke="#000000" stroke-width="2" fill="none" />
+    <ellipse id="dragoval" cx="-10" cy="-10" rx="0" ry="0" stroke="#000000" stroke-width="2" fill="none" display="none" />
+    <rect id="screen" x="0"   y="0"   width="{{ svg_w }}" height="{{ svg_h }}" opacity="0.05"
+          onmouseover="${script('myOnMouseOver')}"  onmouseout="${script('myOnMouseOut')}"
+          onmousedown="${script('downSelect')}"     onmousemove="${script('myOnMouseMove')}"
+          onmouseup="${script('myOnMouseUp')}" />
+    <text id="infostr" x="5" y="{{ svg_h - 3 }}" fill="#000000" font-size="10px" pointer-events="none"></text>
+    {% if has_search %}<text id="searchtext" x="{{ svg_w // 2 }}" y="{{ svg_h - 2 }}" text-anchor="middle" fill="#0000cc" font-size="11px" font-family="monospace" pointer-events="none"></text>{% endif %}
+    <g id="pickermenu" pointer-events="none"></g>
+</svg>"""
+
+# ─────────────────────────────────────────────────────────────────────────────
+# WebGPU: kept off the SVG classes entirely.
+#
+# P2S_GPU_JS is ~14 KB of runtime that ships inside every view's render script,
+# and a view drawing into #mod never calls it.  Rather than guard it at runtime
+# in one shared class, each component has a `*_GPU` subclass that adds it; the
+# factory picks the class, so an SVG view's payload carries none of it.
+#
+# The `data.use_webgpu` guards stay: they are what stops the GPU branch from
+# touching `gpucanvas` if a GPU class is ever constructed in SVG mode, where
+# Panel does not declare that node's variable.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_GPU_RENDER_JS_ = P2S_GPU_JS + """
+if (data.use_webgpu) {
+    if (!window.__P2S_GPU__.supported()) { data.gpu_error = 'WebGPU is not available in this browser.'; }
+    else {
+        window.__P2S_GPU__.render(gpucanvas, data.gpu_payload)
+            .catch(function(e) { console.warn('p2s webgpu:', e); data.gpu_error = (e && e.message) ? e.message : String(e); });
+    }
+}
+"""
+
+_GPU_PAYLOAD_JS_ = """
+if (data.use_webgpu && window.__P2S_GPU__ && window.__P2S_GPU__.supported() && !data.gpu_error) {
+    window.__P2S_GPU__.render(gpucanvas, data.gpu_payload)
+        .catch(function(e) { console.warn('p2s webgpu:', e); data.gpu_error = (e && e.message) ? e.message : String(e); });
+}
+"""
+
+
+def _withGpuScripts_(scripts: dict) -> dict:
+    """An SVG class's script table plus the WebGPU runtime, for its *_GPU subclass."""
+    return {**scripts,
+            'render':      scripts['render'] + _GPU_RENDER_JS_,
+            'gpu_payload': _GPU_PAYLOAD_JS_}
+
+
+_INTERACTIVEP_GPU_HEAD_ = """
+<div id="gpuwrap" style="position:relative;width:{{ svg_w }}px;height:{{ svg_h }}px;">
+    <canvas id="gpucanvas" width="{{ svg_w }}" height="{{ svg_h }}" style="position:absolute;left:0;top:0;"></canvas>
+    """
+
+_INTERACTIVEP_GPU_TAIL_ = """
+
+</div>
+        """
+
+# jinja2 drops one trailing newline from the template source, so the SVG root must
+# not end with one -- in the SVG-only branch it would be the source's last
+# character.  The GPU branch puts it back: it sat between </svg> and </div>.
+# The SVG classes' template is the root alone -- no canvas, no {% if %}.  The GPU
+# classes wrap it.  (jinja2 drops one trailing newline from the template source,
+# so the root must not end with one; the GPU tail carries it instead.)
+_INTERACTIVEP_TEMPLATE_     = _INTERACTIVEP_SVG_ROOT_
+_INTERACTIVEP_GPU_TEMPLATE_ = (_INTERACTIVEP_GPU_HEAD_ + _INTERACTIVEP_SVG_ROOT_
+                               + _INTERACTIVEP_GPU_TAIL_)
+
+_INTERACTIVEP_SCRIPTS_ = {
+    'render': """
+                mod.innerHTML      = data.mod_inner;
+                infostr.innerHTML  = data.info_str;
+                state.x0_drag      = state.y0_drag = -10;
+                state.x1_drag      = state.y1_drag =  -5;
+                data.has_focus     = false;
+                data.shiftkey      = false;
+                data.ctrlkey       = false;
+                state.drag_op      = false;
+                data.brush_state   = 0;
+                data.brushing_mode = false;
+                data.brush_changed = 0;
+                state.last_brush_x = -999;
+                state.last_brush_y = -999;
+                state.cur_mouse_x  = -999;
+                state.cur_mouse_y  = -999;
+                state.brush_defs   = [null,['circle',5],['circle',15],['vertical',1],['vertical',3],['horizontal',1],['horizontal',3]];
+                state.brush_names  = ['','circ r=5','circ r=15','vert r=1','vert r=3','horiz r=1','horiz r=3'];
+                state.select_shape = 'rectangle';
+                state.menu_items   = {'select_shape': [['r','rectangle'],['o','oval']]};
+                state.menu_open    = false;
+                state.menu_kind    = '';
+                state.menu_index   = 0;
+                state.menu_timer   = null;
+                state.search_mode   = false;
+                state.search_buffer = '';
+                screen.addEventListener('wheel', function(event) {
+                    event.preventDefault();
+                    data.wheel_x = event.offsetX; data.wheel_y = event.offsetY;
+                    data.wheel_rots = Math.round(10*event.deltaY);
+                    data.wheel_op_finished = true;
+                }, {passive: false});
+                // On macOS ctrl+click is a secondary click -> the browser raises a
+                // contextmenu (popup) during ctrl / shift-ctrl rectangular drags.
+                // Swallow it on the panel so the intersection/add selection survives.
+                __ROOT__.addEventListener('contextmenu', function(event) {
+                    event.preventDefault();
+                });
+            """,
+    'updateBrushCursor': """
+                var _bs_ = data.brush_state;
+                if (_bs_ == 0) {
+                    brushindicator.innerHTML = '';
+                    brushmodelabel.innerHTML = '';
+                    return;
+                }
+                var _x_ = state.cur_mouse_x, _y_ = state.cur_mouse_y;
+                var _d_ = state.brush_defs[_bs_], _r_ = _d_[1];
+                var _s_ = 'stroke="rgba(100,150,255,0.8)" fill="none" pointer-events="none"';
+                if      (_d_[0] == 'circle')     { brushindicator.innerHTML = '<circle cx="'+_x_+'" cy="'+_y_+'" r="'+_r_+'" '+_s_+' stroke-width="1.5"/>'; }
+                else if (_d_[0] == 'vertical')   { brushindicator.innerHTML = '<line x1="'+_x_+'" y1="0" x2="'+_x_+'" y2="'+data.svg_h+'" '+_s_+' stroke-width="'+Math.max(1,_r_)+'"/>'; }
+                else if (_d_[0] == 'horizontal') { brushindicator.innerHTML = '<line x1="0" y1="'+_y_+'" x2="'+data.svg_w+'" y2="'+_y_+'" '+_s_+' stroke-width="'+Math.max(1,_r_)+'"/>'; }
+                var _nm_ = state.brush_names[_bs_];
+                var _tw_ = _nm_.length * 6 + 10, _rx_ = data.svg_w - _tw_ - 3;
+                brushmodelabel.innerHTML = '<rect x="'+_rx_+'" y="3" width="'+_tw_+'" height="15" rx="3" fill="rgba(100,150,255,0.3)" stroke="rgba(100,150,255,0.7)" stroke-width="0.5" pointer-events="none"/>'
+                    + '<text x="'+(_rx_+5)+'" y="14" font-size="10px" fill="rgba(40,60,200,1.0)" font-family="monospace" pointer-events="none">'+_nm_+'</text>';
+            """,
+    'myOnMouseOver': """
+                data.has_focus = true;
+                __ROOT__.focus();
+            """,
+    'myOnMouseOut': """
+                data.has_focus           = false;
+                brushindicator.innerHTML = '';
+                if (data.brush_state > 0) { data.brush_leave_done = true; }
+            """,
+    # key events don't have access to event.offsetX/Y
+    'myOnKeyDown': """
+                event.stopPropagation();
+                if (data.has_search && state.search_mode) {
                     if (event.key === 'Enter') {
                         if (state.search_buffer) {
                             data.search_str = state.search_buffer;
@@ -829,437 +749,678 @@ R . | cycle brush shape{_z_key_cmd_}{_search_cmd_}{_time_key_cmd_}
                     }
                     return;
                 }
-""") if has_search else ''
-
-    _search_block_bottom_ = ("""
-                else if (event.key == '/') {
-                    state.search_mode   = true;
-                    state.search_buffer = '';
-                    searchtext.textContent = '/ ▋';
-                }
-""") if has_search else ''
-
-    _search_init_ = """
-                state.search_mode   = false;
-                state.search_buffer = '';
-""" if has_search else ''
-
-    _search_text_elem_ = (
-        f'<text id="searchtext" x="{_w_//2}" y="{_h_-2}" text-anchor="middle" '
-        f'fill="#0000cc" font-size="11px" font-family="monospace" pointer-events="none"></text>'
-    ) if has_search else ''
-
-    # Template: in GPU mode the plot renders on a canvas underneath the (transparent)
-    # interaction SVG; the SVG keeps all controller chrome + mouse/key handling
-    _svg_root_ = f"""
-<svg id="{svg_parent}" width="{_w_}" height="{_h_}" tabindex="0" onkeydown="${{script('myOnKeyDown')}}" onkeyup="${{script('myOnKeyUp')}}"{' style="position:absolute;left:0;top:0;"' if use_webgpu else ''}>
-    <svg id="mod" width="{_w_}" height="{_h_}"> ${{mod_inner}} </svg>
-    <g   id="brushindicator" pointer-events="none"></g>
-    <g   id="brushmodelabel" pointer-events="none"></g>
-    <g   id="keyboardhelp" transform="translate(${{keyboardhelp_x}} 0)">{_keyboard_help_svg_}</g>
-    <rect id="drag"   x="-10" y="-10" width="5"     height="5" stroke="#000000" stroke-width="2" fill="none" />
-    <ellipse id="dragoval" cx="-10" cy="-10" rx="0" ry="0" stroke="#000000" stroke-width="2" fill="none" display="none" />
-    <rect id="screen" x="0"   y="0"   width="{_w_}" height="{_h_}" opacity="0.05"
-          onmouseover="${{script('myOnMouseOver')}}"  onmouseout="${{script('myOnMouseOut')}}"
-          onmousedown="${{script('downSelect')}}"     onmousemove="${{script('myOnMouseMove')}}"
-          onmouseup="${{script('myOnMouseUp')}}" />
-    <text id="infostr" x="5" y="{_h_-3}" fill="#000000" font-size="10px" pointer-events="none"></text>
-    {_search_text_elem_}
-    <g id="pickermenu" pointer-events="none"></g>
-</svg>
-"""
-    if use_webgpu:
-        _template_ = f"""
-<div id="gpuwrap" style="position:relative;width:{_w_}px;height:{_h_}px;">
-    <canvas id="gpucanvas" width="{_w_}" height="{_h_}" style="position:absolute;left:0;top:0;"></canvas>
-    {_svg_root_}
-</div>
-        """
-    else:
-        _template_ = _svg_root_
-
-    # GPU additions to the JS table: install the runtime + first paint on mount,
-    # and re-render whenever gpu_payload changes; any GPU failure sets gpu_error, and
-    # the Python watcher shows an error overlay (no automatic SVG fallback)
-    _gpu_render_block_ = (f"""
-{P2S_GPU_JS}
-                if (!window.__P2S_GPU__.supported()) {{ data.gpu_error = 'WebGPU is not available in this browser.'; }}
-                else {{
-                    window.__P2S_GPU__.render(gpucanvas, data.gpu_payload)
-                        .catch(function(e) {{ console.warn('p2s webgpu:', e); data.gpu_error = (e && e.message) ? e.message : String(e); }});
-                }}
-""") if use_webgpu else ''
-    _gpu_payload_script_ = ("""
-                if (window.__P2S_GPU__ && window.__P2S_GPU__.supported() && !data.gpu_error) {
-                    window.__P2S_GPU__.render(gpucanvas, data.gpu_payload)
-                        .catch(function(e) { console.warn('p2s webgpu:', e); data.gpu_error = (e && e.message) ? e.message : String(e); });
-                }
-""") if use_webgpu else ''
-
-    # Dynamic Class
-    cls = type(class_name, (ReactiveHTML,), {
-        #
-        # Keyboard Commands
-        #
-        '_keyboard_commands_': _keyboard_commands_,
-        #
-        # Panel Params
-        #
-        'mod_inner':         param.String(default=_svg_),
-        # Not bound as ${info_str} in _template, on purpose -- a content binding makes
-        # it a ReactiveHTML child and every write then rebuilds the subtree, killing
-        # the JS-only interaction state.  See the long note on LINKPI's info_str.
-        'info_str':          param.String(default=''),
-        'keyboardhelp_x':    param.Integer(default=-1000),
-        'x0_middle':         param.Integer(default=0),
-        'y0_middle':         param.Integer(default=0),
-        'x1_middle':         param.Integer(default=0),
-        'y1_middle':         param.Integer(default=0),
-        'middle_op_finished':param.Boolean(default=False),
-        'wheel_x':           param.Integer(default=0),
-        'wheel_y':           param.Integer(default=0),
-        'wheel_rots':        param.Integer(default=0),
-        'wheel_op_finished': param.Boolean(default=False),
-        'drag_op_finished':  param.Boolean(default=False),
-        'drag_x0':           param.Integer(default=0),
-        'drag_y0':           param.Integer(default=0),
-        'drag_x1':           param.Integer(default=10),
-        'drag_y1':           param.Integer(default=10),
-        'select_shape':      param.String(default='rectangle'),
-        'shiftkey':          param.Boolean(default=False),
-        'ctrlkey':           param.Boolean(default=False),
-        'last_key':          param.String(default=''),
-        'key_op_finished':   param.String(default=''),
-        'x_mouse':           param.Integer(default=0),
-        'y_mouse':           param.Integer(default=0),
-        'has_focus':         param.Boolean(default=False),
-        'brushing_mode':     param.Boolean(default=False),
-        'brush_state':       param.Integer(default=0),
-        'brush_changed':     param.Integer(default=0),
-        'brush_leave_done':  param.Boolean(default=False),
-        **({'search_str': param.String(default=''), 'search_op_finished': param.Boolean(default=False)} if has_search else {}),
-        **({'gpu_payload': param.Dict(default=_gpu_payload_default_), 'gpu_error': param.String(default='')} if use_webgpu else {}),
-        #
-        # Template / Required by ReactiveHTML @ Initialization
-        #
-        '_template': _template_,
-        #
-        # Functions
-        #
-        '__init__':              __init__,
-        **({'applyGpuError': applyGpuError} if use_webgpu else {}),
-        'applyDragOp':           applyDragOp,
-        'applyKeyOp':            applyKeyOp,
-        'applyBrushOp':          applyBrushOp,
-        'applyBrushLeave':       applyBrushLeave,
-        **({'applySearchOp': applySearchOp} if has_search else {}),
-        '_doBrushAt':            _doBrushAt,
-        '__renderView__':        __renderView__,
-        '__refreshView__':       __refreshView__,
-        'display':               display,
-        #
-        # JavaScript Table
-        #
-        '_scripts': {
-            'render': f"""
-                mod.innerHTML      = data.mod_inner;
-                infostr.innerHTML  = data.info_str;
-                state.x0_drag      = state.y0_drag = -10;
-                state.x1_drag      = state.y1_drag =  -5;
-                data.has_focus     = false;
-                data.shiftkey      = false;
-                data.ctrlkey       = false;
-                state.drag_op      = false;
-                data.brush_state   = 0;
-                data.brushing_mode = false;
-                data.brush_changed = 0;
-                state.last_brush_x = -999;
-                state.last_brush_y = -999;
-                state.cur_mouse_x  = -999;
-                state.cur_mouse_y  = -999;
-                state.brush_defs   = [null,['circle',5],['circle',15],['vertical',1],['vertical',3],['horizontal',1],['horizontal',3]];
-                state.brush_names  = ['','circ r=5','circ r=15','vert r=1','vert r=3','horiz r=1','horiz r=3'];
-                state.select_shape = 'rectangle';
-                state.menu_items   = {{'select_shape': [['r','rectangle'],['o','oval']]}};
-                state.menu_open    = false;
-                state.menu_kind    = '';
-                state.menu_index   = 0;
-                state.menu_timer   = null;
-{_search_init_}
-                screen.addEventListener('wheel', function(event) {{
-                    event.preventDefault();
-                    data.wheel_x = event.offsetX; data.wheel_y = event.offsetY;
-                    data.wheel_rots = Math.round(10*event.deltaY);
-                    data.wheel_op_finished = true;
-                }}, {{passive: false}});
-                // On macOS ctrl+click is a secondary click -> the browser raises a
-                // contextmenu (popup) during ctrl / shift-ctrl rectangular drags.
-                // Swallow it on the panel so the intersection/add selection survives.
-                {svg_parent}.addEventListener('contextmenu', function(event) {{
-                    event.preventDefault();
-                }});
-{_gpu_render_block_}
-            """,
-            **({'gpu_payload': _gpu_payload_script_} if use_webgpu else {}),
-            'updateBrushCursor': f"""
-                var _bs_ = data.brush_state;
-                if (_bs_ == 0) {{
-                    brushindicator.innerHTML = '';
-                    brushmodelabel.innerHTML = '';
-                    return;
-                }}
-                var _x_ = state.cur_mouse_x, _y_ = state.cur_mouse_y;
-                var _d_ = state.brush_defs[_bs_], _r_ = _d_[1];
-                var _s_ = 'stroke="rgba(100,150,255,0.8)" fill="none" pointer-events="none"';
-                if      (_d_[0] == 'circle')     {{ brushindicator.innerHTML = '<circle cx="'+_x_+'" cy="'+_y_+'" r="'+_r_+'" '+_s_+' stroke-width="1.5"/>'; }}
-                else if (_d_[0] == 'vertical')   {{ brushindicator.innerHTML = '<line x1="'+_x_+'" y1="0" x2="'+_x_+'" y2="{_h_}" '+_s_+' stroke-width="'+Math.max(1,_r_)+'"/>'; }}
-                else if (_d_[0] == 'horizontal') {{ brushindicator.innerHTML = '<line x1="0" y1="'+_y_+'" x2="{_w_}" y2="'+_y_+'" '+_s_+' stroke-width="'+Math.max(1,_r_)+'"/>'; }}
-                var _nm_ = state.brush_names[_bs_];
-                var _tw_ = _nm_.length * 6 + 10, _rx_ = {_w_} - _tw_ - 3;
-                brushmodelabel.innerHTML = '<rect x="'+_rx_+'" y="3" width="'+_tw_+'" height="15" rx="3" fill="rgba(100,150,255,0.3)" stroke="rgba(100,150,255,0.7)" stroke-width="0.5" pointer-events="none"/>'
-                    + '<text x="'+(_rx_+5)+'" y="14" font-size="10px" fill="rgba(40,60,200,1.0)" font-family="monospace" pointer-events="none">'+_nm_+'</text>';
-            """,
-            'myOnMouseOver': f"""
-                data.has_focus = true;
-                {svg_parent}.focus();
-            """,
-            'myOnMouseOut':"""
-                data.has_focus           = false;
-                brushindicator.innerHTML = '';
-                if (data.brush_state > 0) { data.brush_leave_done = true; }
-            """,
-            # key events don't have access to event.offsetX/Y
-            'myOnKeyDown': f"""
-                event.stopPropagation();
-{_search_block_top_}                if (state.menu_open) {{
+                if (state.menu_open) {
                     event.preventDefault();
                     var _items_ = state.menu_items[state.menu_kind];
-                    if      (event.key === 'Escape') {{ self.menuClose();  }}
-                    else if (event.key === 'Enter')  {{ self.menuCommit(); }}
-                    else if (event.key === 'ArrowDown' || event.key === 'j' || event.key === 'F') {{
+                    if      (event.key === 'Escape') { self.menuClose();  }
+                    else if (event.key === 'Enter')  { self.menuCommit(); }
+                    else if (event.key === 'ArrowDown' || event.key === 'j' || event.key === 'F') {
                         state.menu_index = (state.menu_index + 1) % _items_.length;
                         self.menuRender(); self.menuArmTimer();
-                    }}
-                    else if (event.key === 'ArrowUp' || event.key === 'k') {{
+                    }
+                    else if (event.key === 'ArrowUp' || event.key === 'k') {
                         state.menu_index = (state.menu_index - 1 + _items_.length) % _items_.length;
                         self.menuRender(); self.menuArmTimer();
-                    }}
-                    else if (event.key.length === 1) {{
-                        for (var _i_ = 0; _i_ < _items_.length; _i_++) {{
-                            if (_items_[_i_][0] === event.key) {{ state.menu_index = _i_; self.menuCommit(); break; }}
-                        }}
-                    }}
+                    }
+                    else if (event.key.length === 1) {
+                        for (var _i_ = 0; _i_ < _items_.length; _i_++) {
+                            if (_items_[_i_][0] === event.key) { state.menu_index = _i_; self.menuCommit(); break; }
+                        }
+                    }
                     return;
-                }}
+                }
                 data.shiftkey = event.shiftKey;
                 data.ctrlkey  = event.ctrlKey;
                 data.x_mouse  = state.cur_mouse_x;
                 data.y_mouse  = state.cur_mouse_y;
-                {_z_block_}{_time_block_}if (event.key == 'r') {{
-                    if (data.brush_state == 0) {{
-                        var _seq_ = {brush_seq};
+                if      (data.has_z_key     && (event.key == 'z' || event.key == 'Z')) { data.key_op_finished = "z"; }
+                else if (data.has_time_keys && (event.key == 'u' || event.key == 'U')) { data.key_op_finished = "u"; }
+                else if (data.has_time_keys && (event.key == 'e' || event.key == 'E')) { data.key_op_finished = "e"; }
+                else if (event.key == 'r') {
+                    if (data.brush_state == 0) {
+                        var _seq_ = data.brush_seq;
                         data.brush_state = _seq_[1];
-                    }} else {{
+                    } else {
                         data.brush_state = 0;
-                    }}
+                    }
                     data.brushing_mode = data.brush_state > 0;
                     data.brush_changed += 1;
                     self.updateBrushCursor();
-                }}
-                else if (event.key == 'R') {{
-                    var _seq_ = {brush_seq};
-                    var _non0_ = _seq_.filter(function(x) {{ return x > 0; }});
-                    if (data.brush_state == 0) {{
+                }
+                else if (event.key == 'R') {
+                    var _seq_ = data.brush_seq;
+                    var _non0_ = _seq_.filter(function(x) { return x > 0; });
+                    if (data.brush_state == 0) {
                         data.brush_state = _non0_[0];
-                    }} else {{
+                    } else {
                         var _i_ = _non0_.indexOf(data.brush_state);
                         data.brush_state = _non0_[(_i_ + 1) % _non0_.length];
-                    }}
+                    }
                     data.brushing_mode = true;
                     data.brush_changed += 1;
                     self.updateBrushCursor();
-                }}
-                else if (event.key == 'q') {{ data.key_op_finished = "q"; }}
-                else if (event.key == 'F') {{ state.menu_kind = 'select_shape'; self.menuOpen(); }}
-                else if (event.key == 'h') {{
-                    if (data.keyboardhelp_x == -1000) {{ data.keyboardhelp_x =     5; }}
-                    else                               {{ data.keyboardhelp_x = -1000; }}
-                }}{_search_block_bottom_}
-            """,
-            # key events don't have access to event.offsetX/Y
-            'myOnKeyUp':"""
-                // Hold the modifiers while a key operation is still in flight.  applyKeyOp
-                // runs asynchronously behind a lock and reads ctrlkey / shiftkey when it gets
-                // there, so clearing them the instant the user let go made a *tapped*
-                // ctrl-<key> arrive with the modifier already gone -- the handler took the
-                // unmodified branch, and ctrl-c zoomed the view instead of copying (U3).
-                //
-                // The release is not discarded, it is deferred: the key_op_finished script
-                // applies it as soon as Python reports the operation done.  Simply skipping
-                // the clear would leave the modifier stuck on until the next keydown, and the
-                // drag band -- which reads these to colour itself -- would name the wrong
-                // set-operation.
-                if (data.key_op_finished === '') {
-                    data.shiftkey = event.shiftKey;
-                    data.ctrlkey  = event.ctrlKey;
-                } else {
-                    state.pending_mods = [event.ctrlKey, event.shiftKey];
+                }
+                else if (event.key == 'q') { data.key_op_finished = "q"; }
+                else if (event.key == 'F') { state.menu_kind = 'select_shape'; self.menuOpen(); }
+                else if (event.key == 'h') {
+                    if (data.keyboardhelp_x == -1000) { data.keyboardhelp_x =     5; }
+                    else                              { data.keyboardhelp_x = -1000; }
+                }
+                else if (data.has_search && event.key == '/') {
+                    state.search_mode   = true;
+                    state.search_buffer = '';
+                    searchtext.textContent = '/ ▋';
                 }
             """,
-            'key_op_finished':"""
-                if (data.key_op_finished === '' && state.pending_mods) {
-                    data.ctrlkey  = state.pending_mods[0];
-                    data.shiftkey = state.pending_mods[1];
-                    state.pending_mods = null;
-                }
-            """,
-            'myOnMouseMove':"""
-                state.cur_mouse_x = event.offsetX;
-                state.cur_mouse_y = event.offsetY;
-                state.x1_drag     = event.offsetX;
-                state.y1_drag     = event.offsetY;
-                if (state.drag_op) { self.myUpdateDragRect(); }
-                if (data.brush_state > 0) {
-                    self.updateBrushCursor();
-                    var _dx_ = event.offsetX - state.last_brush_x;
-                    var _dy_ = event.offsetY - state.last_brush_y;
-                    if (_dx_*_dx_ + _dy_*_dy_ >= 9) {
-                        state.last_brush_x = event.offsetX;
-                        state.last_brush_y = event.offsetY;
-                        data.x_mouse       = event.offsetX;
-                        data.y_mouse       = event.offsetY;
-                        data.brush_changed += 1;
-                    }
-                }
-            """,
-            'downSelect':"""
-                if (event.button == 0) {
-                    state.x0_drag  = event.offsetX;
-                    state.y0_drag  = event.offsetY;
-                    state.x1_drag  = event.offsetX;
-                    state.y1_drag  = event.offsetY;
-                    state.drag_op  = true;
-                    self.myUpdateDragRect();
-                } else if (event.button == 1) {
-                    data.x0_middle = data.x1_middle = event.offsetX;
-                    data.y0_middle = data.y1_middle = event.offsetY;
-                }
-            """,
-            'myOnMouseUp':"""
-                if (event.button == 0) {
-                    state.x1_drag         = event.offsetX;
-                    state.y1_drag         = event.offsetY;
-                    if (state.drag_op) {
-                        state.shiftkey        = event.shiftKey;
-                        state.ctrlkey         = event.ctrlKey;
-                        state.drag_op         = false;
-                        self.myUpdateDragRect();
-                        data.drag_x0          = state.x0_drag;
-                        data.drag_y0          = state.y0_drag;
-                        data.drag_x1          = state.x1_drag;
-                        data.drag_y1          = state.y1_drag;
-                        data.drag_op_finished = true;
-                    }
-                }
-            """,
-            'myOnMouseWheel':"""
-                event.preventDefault();
-                data.wheel_x = event.offsetX; data.wheel_y = event.offsetY; data.wheel_rots = Math.round(10*event.deltaY);
-                data.wheel_op_finished = true;
-            """,
-            'mod_inner':"""
-                mod.innerHTML     = data.mod_inner;
-                infostr.innerHTML = data.info_str;
-            """,
-            'info_str': """
-                infostr.innerHTML = data.info_str;
-            """,
-            'myUpdateDragRect':"""
-                var _stroke_ = (data.shiftkey && data.ctrlkey) ? '#0000ff'
-                             : (data.shiftkey)                  ? '#ff0000'
-                             : (data.ctrlkey)                   ? '#00ff00'
-                             :                                    '#000000';
-                if (state.drag_op && state.select_shape == 'oval') {
-                    var cx = state.x0_drag, cy = state.y0_drag;
-                    var rx = Math.abs(state.x1_drag - state.x0_drag);
-                    var ry = Math.abs(state.y1_drag - state.y0_drag);
-                    dragoval.setAttribute('cx',cx); dragoval.setAttribute('cy',cy);
-                    dragoval.setAttribute('rx',rx); dragoval.setAttribute('ry',ry);
-                    dragoval.setAttribute('stroke',_stroke_);
-                    dragoval.setAttribute('display','inline');
-                    drag.setAttribute('x',-10);   drag.setAttribute('y',-10);
-                    drag.setAttribute('width',5); drag.setAttribute('height',5);
-                } else if (state.drag_op) {
-                    x = Math.min(state.x0_drag, state.x1_drag);
-                    y = Math.min(state.y0_drag, state.y1_drag);
-                    w = Math.abs(state.x1_drag - state.x0_drag)
-                    h = Math.abs(state.y1_drag - state.y0_drag)
-                    drag.setAttribute('x',x);     drag.setAttribute('y',y);
-                    drag.setAttribute('width',w); drag.setAttribute('height',h);
-                    drag.setAttribute('stroke',_stroke_);
-                    dragoval.setAttribute('display','none');
-                } else {
-                    drag.setAttribute('x',-10);   drag.setAttribute('y',-10);
-                    drag.setAttribute('width',5); drag.setAttribute('height',5);
-                    dragoval.setAttribute('display','none');
-                }
-        """,
-            # ── selection-shape picker menu (Shift+F) ──
-            # Modal JS state machine mirrored from the linkp layout picker; nothing reaches
-            # Python until menuCommit writes data.select_shape (which applyDragOp reads).
-            'menuOpen':"""
-                var _items_ = state.menu_items[state.menu_kind];
-                state.menu_index = 0;
-                for (var _i_ = 0; _i_ < _items_.length; _i_++) {
-                    if (_items_[_i_][1] == state.select_shape) { state.menu_index = _i_; break; }
-                }
-                state.menu_open = true;
-                self.menuRender();
-                self.menuArmTimer();
-            """,
-            'menuRender':"""
-                if (!state.menu_open) { return; }
-                var _items_  = state.menu_items[state.menu_kind];
-                var _header_ = 'selection shape:';
-                var _maxlen_ = _header_.length;
-                for (var _i_ = 0; _i_ < _items_.length; _i_++) {
-                    _maxlen_ = Math.max(_maxlen_, _items_[_i_][1].length + 4);
-                }
-                var _w_menu_ = _maxlen_ * 7 + 20,
-                    _h_menu_ = (_items_.length + 1) * 14 + 12,
-                    _style_  = 'font-family: \\'Courier New\\', monospace; font-size: 11px; fill: #222;';
-                var _html_ = '<rect x="8" y="8" width="' + _w_menu_ + '" height="' + _h_menu_ + '"'
-                           + ' fill="rgba(240,240,240,0.95)" stroke="#888" stroke-width="1" rx="3"/>'
-                           + '<rect x="10" y="' + (8 + 1 + (state.menu_index + 1) * 14) + '" width="' + (_w_menu_ - 4) + '" height="13"'
-                           + ' fill="rgba(100,150,255,0.3)"/>'
-                           + '<text x="18" y="' + (8 + 12) + '" style="' + _style_ + ' font-weight: bold;">' + _header_ + '</text>';
-                for (var _i_ = 0; _i_ < _items_.length; _i_++) {
-                    _html_ += '<text x="18" y="' + (8 + 12 + (_i_ + 1) * 14) + '" style="' + _style_ + '">'
-                            + '[' + _items_[_i_][0] + '] ' + _items_[_i_][1] + '</text>';
-                }
-                pickermenu.innerHTML = _html_;
-            """,
-            'menuCommit':"""
-                state.select_shape = state.menu_items[state.menu_kind][state.menu_index][1];
-                data.select_shape  = state.select_shape;
-                self.menuClose();
-            """,
-            'menuClose':"""
-                if (state.menu_timer != null) { clearTimeout(state.menu_timer); }
-                state.menu_timer     = null;
-                state.menu_open      = false;
-                state.menu_kind      = '';
-                pickermenu.innerHTML = '';
-            """,
-            'menuArmTimer':"""
-                if (state.menu_timer != null) { clearTimeout(state.menu_timer); }
-                var _self_ = self;
-                state.menu_timer = setTimeout(function() { if (state.menu_open) { _self_.menuCommit(); } }, 2500);
-            """
+    'myOnKeyUp':"""
+        // Hold the modifiers while a key operation is still in flight.  applyKeyOp
+        // runs asynchronously behind a lock and reads ctrlkey / shiftkey when it gets
+        // there, so clearing them the instant the user let go made a *tapped*
+        // ctrl-<key> arrive with the modifier already gone -- the handler took the
+        // unmodified branch, and ctrl-c zoomed the view instead of copying (U3).
+        //
+        // The release is not discarded, it is deferred: the key_op_finished script
+        // applies it as soon as Python reports the operation done.  Simply skipping
+        // the clear would leave the modifier stuck on until the next keydown, and the
+        // drag band -- which reads these to colour itself -- would name the wrong
+        // set-operation.
+        if (data.key_op_finished === '') {
+            data.shiftkey = event.shiftKey;
+            data.ctrlkey  = event.ctrlKey;
+        } else {
+            state.pending_mods = [event.ctrlKey, event.shiftKey];
         }
-    })
-    _cls_ref_[0] = cls
-    return cls(**kwargs)
+    """,
+    'key_op_finished':"""
+        if (data.key_op_finished === '' && state.pending_mods) {
+            data.ctrlkey  = state.pending_mods[0];
+            data.shiftkey = state.pending_mods[1];
+            state.pending_mods = null;
+        }
+    """,
+    'myOnMouseMove':"""
+        state.cur_mouse_x = event.offsetX;
+        state.cur_mouse_y = event.offsetY;
+        state.x1_drag     = event.offsetX;
+        state.y1_drag     = event.offsetY;
+        if (state.drag_op) { self.myUpdateDragRect(); }
+        if (data.brush_state > 0) {
+            self.updateBrushCursor();
+            var _dx_ = event.offsetX - state.last_brush_x;
+            var _dy_ = event.offsetY - state.last_brush_y;
+            if (_dx_*_dx_ + _dy_*_dy_ >= 9) {
+                state.last_brush_x = event.offsetX;
+                state.last_brush_y = event.offsetY;
+                data.x_mouse       = event.offsetX;
+                data.y_mouse       = event.offsetY;
+                data.brush_changed += 1;
+            }
+        }
+    """,
+    'downSelect':"""
+        if (event.button == 0) {
+            state.x0_drag  = event.offsetX;
+            state.y0_drag  = event.offsetY;
+            state.x1_drag  = event.offsetX;
+            state.y1_drag  = event.offsetY;
+            state.drag_op  = true;
+            self.myUpdateDragRect();
+        } else if (event.button == 1) {
+            data.x0_middle = data.x1_middle = event.offsetX;
+            data.y0_middle = data.y1_middle = event.offsetY;
+        }
+    """,
+    'myOnMouseUp':"""
+        if (event.button == 0) {
+            state.x1_drag         = event.offsetX;
+            state.y1_drag         = event.offsetY;
+            if (state.drag_op) {
+                state.shiftkey        = event.shiftKey;
+                state.ctrlkey         = event.ctrlKey;
+                state.drag_op         = false;
+                self.myUpdateDragRect();
+                data.drag_x0          = state.x0_drag;
+                data.drag_y0          = state.y0_drag;
+                data.drag_x1          = state.x1_drag;
+                data.drag_y1          = state.y1_drag;
+                data.drag_op_finished = true;
+            }
+        }
+    """,
+    'myOnMouseWheel':"""
+        event.preventDefault();
+        data.wheel_x = event.offsetX; data.wheel_y = event.offsetY; data.wheel_rots = Math.round(10*event.deltaY);
+        data.wheel_op_finished = true;
+    """,
+    'mod_inner':"""
+        mod.innerHTML     = data.mod_inner;
+        infostr.innerHTML = data.info_str;
+    """,
+    'info_str': """
+        infostr.innerHTML = data.info_str;
+    """,
+    'myUpdateDragRect':"""
+        var _stroke_ = (data.shiftkey && data.ctrlkey) ? '#0000ff'
+                     : (data.shiftkey)                  ? '#ff0000'
+                     : (data.ctrlkey)                   ? '#00ff00'
+                     :                                    '#000000';
+        if (state.drag_op && state.select_shape == 'oval') {
+            var cx = state.x0_drag, cy = state.y0_drag;
+            var rx = Math.abs(state.x1_drag - state.x0_drag);
+            var ry = Math.abs(state.y1_drag - state.y0_drag);
+            dragoval.setAttribute('cx',cx); dragoval.setAttribute('cy',cy);
+            dragoval.setAttribute('rx',rx); dragoval.setAttribute('ry',ry);
+            dragoval.setAttribute('stroke',_stroke_);
+            dragoval.setAttribute('display','inline');
+            drag.setAttribute('x',-10);   drag.setAttribute('y',-10);
+            drag.setAttribute('width',5); drag.setAttribute('height',5);
+        } else if (state.drag_op) {
+            x = Math.min(state.x0_drag, state.x1_drag);
+            y = Math.min(state.y0_drag, state.y1_drag);
+            w = Math.abs(state.x1_drag - state.x0_drag)
+            h = Math.abs(state.y1_drag - state.y0_drag)
+            drag.setAttribute('x',x);     drag.setAttribute('y',y);
+            drag.setAttribute('width',w); drag.setAttribute('height',h);
+            drag.setAttribute('stroke',_stroke_);
+            dragoval.setAttribute('display','none');
+        } else {
+            drag.setAttribute('x',-10);   drag.setAttribute('y',-10);
+            drag.setAttribute('width',5); drag.setAttribute('height',5);
+            dragoval.setAttribute('display','none');
+        }
+        """,
+    # ── selection-shape picker menu (Shift+F) ──
+    # Modal JS state machine mirrored from the linkp layout picker; nothing reaches
+    # Python until menuCommit writes data.select_shape (which applyDragOp reads).
+    'menuOpen':"""
+        var _items_ = state.menu_items[state.menu_kind];
+        state.menu_index = 0;
+        for (var _i_ = 0; _i_ < _items_.length; _i_++) {
+            if (_items_[_i_][1] == state.select_shape) { state.menu_index = _i_; break; }
+        }
+        state.menu_open = true;
+        self.menuRender();
+        self.menuArmTimer();
+    """,
+    'menuRender':"""
+        if (!state.menu_open) { return; }
+        var _items_  = state.menu_items[state.menu_kind];
+        var _header_ = 'selection shape:';
+        var _maxlen_ = _header_.length;
+        for (var _i_ = 0; _i_ < _items_.length; _i_++) {
+            _maxlen_ = Math.max(_maxlen_, _items_[_i_][1].length + 4);
+        }
+        var _w_menu_ = _maxlen_ * 7 + 20,
+            _h_menu_ = (_items_.length + 1) * 14 + 12,
+            _style_  = 'font-family: \\'Courier New\\', monospace; font-size: 11px; fill: #222;';
+        var _html_ = '<rect x="8" y="8" width="' + _w_menu_ + '" height="' + _h_menu_ + '"'
+                   + ' fill="rgba(240,240,240,0.95)" stroke="#888" stroke-width="1" rx="3"/>'
+                   + '<rect x="10" y="' + (8 + 1 + (state.menu_index + 1) * 14) + '" width="' + (_w_menu_ - 4) + '" height="13"'
+                   + ' fill="rgba(100,150,255,0.3)"/>'
+                   + '<text x="18" y="' + (8 + 12) + '" style="' + _style_ + ' font-weight: bold;">' + _header_ + '</text>';
+        for (var _i_ = 0; _i_ < _items_.length; _i_++) {
+            _html_ += '<text x="18" y="' + (8 + 12 + (_i_ + 1) * 14) + '" style="' + _style_ + '">'
+                    + '[' + _items_[_i_][0] + '] ' + _items_[_i_][1] + '</text>';
+        }
+        pickermenu.innerHTML = _html_;
+    """,
+    'menuCommit':"""
+        state.select_shape = state.menu_items[state.menu_kind][state.menu_index][1];
+        data.select_shape  = state.select_shape;
+        self.menuClose();
+    """,
+    'menuClose':"""
+        if (state.menu_timer != null) { clearTimeout(state.menu_timer); }
+        state.menu_timer     = null;
+        state.menu_open      = false;
+        state.menu_kind      = '';
+        pickermenu.innerHTML = '';
+    """,
+    'menuArmTimer':"""
+        if (state.menu_timer != null) { clearTimeout(state.menu_timer); }
+        var _self_ = self;
+        state.menu_timer = setTimeout(function() { if (state.menu_open) { _self_.menuCommit(); } }, 2500);
+    """
+}
+
+
+def _bindInteractivePText_(text: str, root_id: str, kbd_help_svg: str = '') -> str:
+    """Bind the shared static template / JS to one component kind.
+
+    ``__ROOT__`` is the root <svg>'s id, which Panel also uses as the JS variable
+    name for that node, so it has to be a literal in both the template and the
+    scripts.  ``__KBD_HELP__`` is the pre-laid-out help overlay.  Both are fixed
+    per kind, so this runs once per class at import -- not per view.
+    """
+    return text.replace('__ROOT__', root_id).replace('__KBD_HELP__', kbd_help_svg)
+
+
+def _bindInteractivePScripts_(root_id: str) -> dict:
+    return {_k_: _bindInteractivePText_(_v_, root_id) for _k_, _v_ in _INTERACTIVEP_SCRIPTS_.items()}
+
+
+def _bindInteractivePGpuScripts_(root_id: str) -> dict:
+    return _withGpuScripts_(_bindInteractivePScripts_(root_id))
+
+
+class _InteractivePBase(P2SReactiveHTML):
+    """Shared behaviour for the five generic interactive components.
+
+    One compiled class per *kind* (XYPI, HISTOPI, ...), not per view: size and
+    render mode are params the template reads, and the optional key bindings are
+    params the JS reads, so nothing here varies per instance at class level.
+    """
+
+    __abstract = True
+
+    # ── per-kind, overridden below ───────────────────────────────────────────
+    has_z_key     = param.Boolean(default=False)
+    has_search    = param.Boolean(default=False)
+    has_time_keys = param.Boolean(default=False)
+    brush_seq     = param.List(default=[0, 1, 2])
+    _render_fn_      = ''      # Polars2SVG method that re-renders this kind
+    _fallback_shape_ = ''      # recordsAt() shape used when the preferred one is rejected
+    _keyboard_commands_ = ''   # help text (also read by the test suite)
+
+    # ── per-instance ─────────────────────────────────────────────────────────
+    svg_w      = param.Integer(default=0)
+    svg_h      = param.Integer(default=0)
+    use_webgpu = param.Boolean(default=False)
+
+    mod_inner   = param.String(default='')
+    # Not bound as ${info_str} in _template, on purpose -- a content binding makes
+    # it a ReactiveHTML child and every write then rebuilds the subtree, killing
+    # the JS-only interaction state.  See the long note on LINKPI's info_str.
+    info_str          = param.String(default='')
+    keyboardhelp_x    = param.Integer(default=-1000)
+    x0_middle         = param.Integer(default=0)
+    y0_middle         = param.Integer(default=0)
+    x1_middle         = param.Integer(default=0)
+    y1_middle         = param.Integer(default=0)
+    middle_op_finished= param.Boolean(default=False)
+    wheel_x           = param.Integer(default=0)
+    wheel_y           = param.Integer(default=0)
+    wheel_rots        = param.Integer(default=0)
+    wheel_op_finished = param.Boolean(default=False)
+    drag_op_finished  = param.Boolean(default=False)
+    drag_x0           = param.Integer(default=0)
+    drag_y0           = param.Integer(default=0)
+    drag_x1           = param.Integer(default=10)
+    drag_y1           = param.Integer(default=10)
+    select_shape      = param.String(default='rectangle')
+    shiftkey          = param.Boolean(default=False)
+    ctrlkey           = param.Boolean(default=False)
+    last_key          = param.String(default='')
+    key_op_finished   = param.String(default='')
+    x_mouse           = param.Integer(default=0)
+    y_mouse           = param.Integer(default=0)
+    has_focus         = param.Boolean(default=False)
+    brushing_mode     = param.Boolean(default=False)
+    brush_state       = param.Integer(default=0)
+    brush_changed     = param.Integer(default=0)
+    brush_leave_done  = param.Boolean(default=False)
+    search_str        = param.String(default='')
+    search_op_finished= param.Boolean(default=False)
+    # gpu_payload / gpu_error are declared on the *_GPU subclasses only -- an SVG
+    # view has no use for them and they would only widen its data model.
+
+    def __init__(self, _plot_, use_webgpu=False, **kwargs):
+        mvc = kwargs.pop('mvc', None)          # don't pass to the super
+        if use_webgpu and getattr(_plot_, 'webgpu', None) is None:
+            raise ValueError(f'_interactivep(): use_webgpu=True is not (yet) supported for '
+                             f'"{type(self).__name__.lower()}"')
+        _w_, _h_ = _plot_.wxh[0], _plot_.wxh[1]
+        _gpu_ = {'gpu_payload': _plot_.webgpu()} if use_webgpu else {}
+        super().__init__(svg_w=_w_, svg_h=_h_, use_webgpu=use_webgpu, **_gpu_, **kwargs)
+        # mod_inner is a content binding (a ReactiveHTML child): assign, don't
+        # pass to super().  P2SReactiveHTML._init_params seeds first paint.
+        self.mod_inner = _plot_._repr_svg_() if not use_webgpu else ''
+        # Locking variable
+        self.lock = asyncio.Lock()
+        # Model/View/Controller — single-df fallback: build a default stack and register self
+        if mvc is None:
+            self.mvc = InteractionController()
+            self.mvc.addStack('default', _plot_.df_orig)
+            self.mvc.view_stack[id(self)] = 'default'
+        else:
+            self.mvc = mvc
+        # Render state
+        self._plot_  = _plot_
+        self._cache_ = {id(_plot_.df_orig): (_plot_.df_orig, _plot_)}
+        self.template = _plot_
+        # Watch for callbacks
+        self.param.watch(self.applyDragOp,     'drag_op_finished')
+        self.param.watch(self.applyKeyOp,      'key_op_finished')
+        self.param.watch(self.applyBrushOp,    'brush_changed')
+        self.param.watch(self.applyBrushLeave, 'brush_leave_done')
+        if use_webgpu:
+            self.param.watch(self.applyGpuError, 'gpu_error')
+        if self.has_search:
+            self.param.watch(self.applySearchOp, 'search_op_finished')
+
+    # Refresh the view
+    def __refreshView__(self):
+        if self.use_webgpu:
+            if self.gpu_error: self.mod_inner   = _gpu_error_overlay(self.gpu_error, self.svg_w, self.svg_h)
+            else:              self.gpu_payload = self._plot_.webgpu()
+        else:
+            self.mod_inner = self._plot_._repr_svg_()
+
+    # WebGPU rendering failed in the browser -> surface the error in the overlay.
+    # No automatic SVG fallback: the user must re-create the view with use_webgpu=False.
+    async def applyGpuError(self, event):
+        if self.gpu_error:
+            self.mod_inner = _gpu_error_overlay(self.gpu_error, self.svg_w, self.svg_h)
+
+    # Render the view
+    def __renderView__(self, df):
+        return getattr(self.template.p2s, self._render_fn_)(df=df, template=self.template)
+
+    # Core brush logic: call recordsAt and broadcast to peers
+    async def _doBrushAt(self, xy, state_idx, seq=None):
+        state_def = BRUSH_STATES[state_idx]
+        shape     = getattr(self._plot_.p2s, state_def[0])
+        threshold = state_def[1]
+        try:
+            filtered = self._plot_.recordsAt(xy, shape=shape, threshold=threshold)
+        except ValueError:
+            try:
+                filtered = self._plot_.recordsAt(xy, shape=getattr(self._plot_.p2s, self._fallback_shape_), threshold=threshold)
+            except Exception:
+                return
+        if seq is not None and seq != self._brush_seq_:
+            return                      # superseded while recordsAt() was running (U7)
+        if len(filtered) == 0:
+            await self.mvc.brushClear(self)
+        else:
+            await self.mvc.brushUpdate(self, filtered)
+
+    # Callbacks - applyDragOp()
+    async def applyDragOp(self, event):
+        async with self.lock:
+            if not self.drag_op_finished: return
+            _coords_ = (self.drag_x0, self.drag_y0, self.drag_x1, self.drag_y1)
+            _shift_  = self.shiftkey
+            _shape_  = self.select_shape
+            self.drag_op_finished = False
+        if _shape_ == 'oval':
+            # press point (drag_x0/y0) is the oval center; drag edge sets the radii
+            _cx_, _cy_ = self.drag_x0, self.drag_y0
+            _rx_ = abs(self.drag_x1 - self.drag_x0)
+            _ry_ = abs(self.drag_y1 - self.drag_y0)
+            _df_ = self._plot_.filterByOval((_cx_, _cy_, _rx_, _ry_), _shift_)
+        else:
+            _df_ = self._plot_.filterByRectangle(_coords_, _shift_)
+        if len(_df_) > 0: await self.mvc.pushStack(self, _df_)
+        else:             await self.mvc.popStack(self)
+
+    # Callbacks - applyKeyOp()
+    async def applyKeyOp(self, event):
+        async with self.lock:
+            _key_   = self.key_op_finished
+            _xy_    = (self.x_mouse, self.y_mouse)
+            _shift_ = self.shiftkey
+            _ctrl_  = self.ctrlkey
+            self.key_op_finished = ''
+        if self.has_z_key and (_key_ == 'z' or _key_ == 'Z'):
+            _df_ = self._plot_.filterByColorAtXY(_xy_, _shift_)
+            if _df_ is not None and len(_df_) > 0: await self.mvc.pushStack(self, _df_)
+            else:                                  await self.mvc.popStack(self)
+        elif _key_ == 'q':
+            await self.mvc.subtractCurrentStackFromTop(self)
+        # Time-axis shortcuts (xy only): 'u' unfilters the visible timeframe; 'e' expands the
+        # timeframe both directions, shift+'e' / ctrl+'e' expand it backward / forward only.
+        # Each pulls rows from the base (top) dataframe and pushes the result onto the stack
+        # when there is something to add.
+        elif self.has_time_keys and _key_ == 'u':
+            _df_ = self._plot_.filterByTimeframe(self.mvc.stackTopDataFrame(self), 'unfilter')
+            if _df_ is not None and len(_df_) > 0: await self.mvc.pushStack(self, _df_)
+        elif self.has_time_keys and _key_ == 'e':
+            _mode_ = 'expand_before' if _shift_ else ('expand_after' if _ctrl_ else 'expand_both')
+            _df_ = self._plot_.filterByTimeframe(self.mvc.stackTopDataFrame(self), _mode_)
+            if _df_ is not None and len(_df_) > 0: await self.mvc.pushStack(self, _df_)
+
+    # Callbacks - applyBrushOp() — fires on mouse move (when brush active) or on brush state change
+    async def applyBrushOp(self, event):
+        # Brush ops compute outside the lock, so several can be in flight at once and
+        # their results land in completion order rather than issue order -- a stale
+        # "nothing here" from an earlier pointer position routinely arrived after a
+        # fresh update and wiped it, leaving linked views showing the wrong records
+        # (PLANNING.md U7).  Each op takes a ticket; only the newest may broadcast.
+        async with self.lock:
+            _state_ = self.brush_state
+            _xy_    = (self.x_mouse, self.y_mouse)
+            self._brush_seq_ = _seq_ = getattr(self, '_brush_seq_', 0) + 1
+        if _state_ == 0:
+            if _seq_ != self._brush_seq_: return
+            await self.mvc.brushClear(self)
+        else:
+            await self._doBrushAt(_xy_, _state_, _seq_)
+
+    # Callbacks - applyBrushLeave() — fires when mouse leaves the component while brush is active
+    async def applyBrushLeave(self, event):
+        async with self.lock:
+            if not self.brush_leave_done: return
+            if self.brush_state == 0:
+                self.brush_leave_done = False
+                return
+            self.brush_leave_done = False
+            # Supersede anything still in flight: leaving is the newest intent, and a
+            # brush result landing after it would re-brush a component the pointer has
+            # already left.
+            self._brush_seq_ = getattr(self, '_brush_seq_', 0) + 1
+        await self.mvc.brushClear(self)
+
+    # Callbacks - applySearchOp() — fires when user commits a '/' search string
+    async def applySearchOp(self, event):
+        async with self.lock:
+            _s_ = self.search_str
+        if not _s_:
+            return
+        if _s_.startswith('-'):
+            _sub_, _remove_bins_ = _s_[1:], True
+        else:
+            _sub_, _remove_bins_ = _s_, False
+        if _sub_:
+            _df_ = self._plot_.filterBySubstring(_sub_, remove_bins=_remove_bins_)
+            if len(_df_) > 0: await self.mvc.pushStack(self, _df_)
+            else:             await self.mvc.popStack(self)
+
+    # MVC
+    async def display(self, df, dfs, dfs_index):
+        async with self.lock:
+            # render if not already rendered — entries are (df, plot); the identity
+            # guard re-renders when a reused id would otherwise serve a freed df's plot
+            _entry_ = self._cache_.get(id(df))
+            if _entry_ is None or _entry_[0] is not df:
+                _entry_ = (df, self.__renderView__(df))
+                self._cache_[id(df)] = _entry_
+            # set the current & refresh
+            self._plot_ = _entry_[1]
+            self.__refreshView__()
+            # clean up the cache
+            _ids_ = set([id(df) for df in dfs])
+            for _id_ in list(self._cache_.keys()):
+                if _id_ not in _ids_:
+                    del self._cache_[_id_]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# The five generic interactive components.
+#
+# Everything that differs between them is declared here; the template, the JS
+# and every callback are shared from _InteractivePBase above.
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TIMEPI(_InteractivePBase):
+    """Interactive timep: drag to filter, brush to link, time-axis expand keys."""
+    has_time_keys = param.Boolean(default=True)
+    brush_seq     = param.List(default=[0, 1, 2, 3, 4])
+    _svg_parent_id_  = 'svgparenttimepi'
+    _render_fn_      = 'timep'
+    _fallback_shape_ = 'SELECT_VERTICALp'
+    _kbd_r_desc_     = 'toggle brush on/off'
+    _keyboard_commands_ = _interactivePKeyboardCommands_(
+        _kbd_r_desc_, has_z_key=False, has_search=False, has_time_keys=True)
+    _template = _bindInteractivePText_(_INTERACTIVEP_TEMPLATE_, _svg_parent_id_,
+                                       _interactivePKeyboardHelpSvg_(_keyboard_commands_))
+    _scripts  = _bindInteractivePScripts_(_svg_parent_id_)
+
+
+class HISTOPI(_InteractivePBase):
+    """Interactive histop: drag to filter, brush to link, '/' substring search."""
+    has_search = param.Boolean(default=True)
+    brush_seq  = param.List(default=[0, 1, 2, 5, 6])
+    _svg_parent_id_  = 'svgparenthistopi'
+    _render_fn_      = 'histop'
+    _fallback_shape_ = 'SELECT_HORIZONTALp'
+    _kbd_r_desc_     = 'toggle brush on/off'
+    _keyboard_commands_ = _interactivePKeyboardCommands_(
+        _kbd_r_desc_, has_z_key=False, has_search=True, has_time_keys=False)
+    _template = _bindInteractivePText_(_INTERACTIVEP_TEMPLATE_, _svg_parent_id_,
+                                       _interactivePKeyboardHelpSvg_(_keyboard_commands_))
+    _scripts  = _bindInteractivePScripts_(_svg_parent_id_)
+
+
+class XYPI(_InteractivePBase):
+    """Interactive xyp: drag to filter, brush to link, 'z' color filter, time keys."""
+    has_z_key     = param.Boolean(default=True)
+    has_time_keys = param.Boolean(default=True)
+    brush_seq     = param.List(default=[0, 1, 2, 3, 4, 5, 6])
+    _svg_parent_id_  = 'svgparentxypi'
+    _render_fn_      = 'xyp'
+    _fallback_shape_ = 'SELECT_HORIZONTALp'
+    _kbd_r_desc_     = 'toggle brush on/off'
+    _keyboard_commands_ = _interactivePKeyboardCommands_(
+        _kbd_r_desc_, has_z_key=True, has_search=False, has_time_keys=True)
+    _template = _bindInteractivePText_(_INTERACTIVEP_TEMPLATE_, _svg_parent_id_,
+                                       _interactivePKeyboardHelpSvg_(_keyboard_commands_))
+    _scripts  = _bindInteractivePScripts_(_svg_parent_id_)
+
+
+class CHORDPI(_InteractivePBase):
+    """Interactive chordp: drag to filter, brush to link."""
+    brush_seq = param.List(default=[0, 1, 2])
+    _svg_parent_id_  = 'svgparentchordpi'
+    _render_fn_      = 'chordp'
+    _fallback_shape_ = 'SELECT_CIRCLEp'
+    _kbd_r_desc_     = 'toggle brush on/off'
+    _keyboard_commands_ = _interactivePKeyboardCommands_(
+        _kbd_r_desc_, has_z_key=False, has_search=False, has_time_keys=False)
+    _template = _bindInteractivePText_(_INTERACTIVEP_TEMPLATE_, _svg_parent_id_,
+                                       _interactivePKeyboardHelpSvg_(_keyboard_commands_))
+    _scripts  = _bindInteractivePScripts_(_svg_parent_id_)
+
+
+class PIEPI(_InteractivePBase):
+    """Interactive piep: drag to filter, brush to link, '/' substring search."""
+    has_search = param.Boolean(default=True)
+    brush_seq  = param.List(default=[0, 1, 2])
+    _svg_parent_id_  = 'svgparentpiepi'
+    _render_fn_      = 'piep'
+    _fallback_shape_ = 'SELECT_CIRCLEp'
+    _kbd_r_desc_     = 'toggle brush on/off'
+    _keyboard_commands_ = _interactivePKeyboardCommands_(
+        _kbd_r_desc_, has_z_key=False, has_search=True, has_time_keys=False)
+    _template = _bindInteractivePText_(_INTERACTIVEP_TEMPLATE_, _svg_parent_id_,
+                                       _interactivePKeyboardHelpSvg_(_keyboard_commands_))
+    _scripts  = _bindInteractivePScripts_(_svg_parent_id_)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# WebGPU variants.  Each adds the canvas wrapper to the template, the GPU
+# runtime to the render script, and the two params that carry the payload and
+# any browser-side error.  Everything else is inherited, so an SVG view never
+# carries the ~14 KB runtime.
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TIMEPI_GPU(TIMEPI):
+    use_webgpu  = param.Boolean(default=True)
+    gpu_payload = param.Dict(default={})
+    gpu_error   = param.String(default='')
+    _template   = _bindInteractivePText_(_INTERACTIVEP_GPU_TEMPLATE_, TIMEPI._svg_parent_id_,
+                                         _interactivePKeyboardHelpSvg_(TIMEPI._keyboard_commands_))
+    _scripts    = _bindInteractivePGpuScripts_(TIMEPI._svg_parent_id_)
+
+
+class HISTOPI_GPU(HISTOPI):
+    use_webgpu  = param.Boolean(default=True)
+    gpu_payload = param.Dict(default={})
+    gpu_error   = param.String(default='')
+    _template   = _bindInteractivePText_(_INTERACTIVEP_GPU_TEMPLATE_, HISTOPI._svg_parent_id_,
+                                         _interactivePKeyboardHelpSvg_(HISTOPI._keyboard_commands_))
+    _scripts    = _bindInteractivePGpuScripts_(HISTOPI._svg_parent_id_)
+
+
+class XYPI_GPU(XYPI):
+    use_webgpu  = param.Boolean(default=True)
+    gpu_payload = param.Dict(default={})
+    gpu_error   = param.String(default='')
+    _template   = _bindInteractivePText_(_INTERACTIVEP_GPU_TEMPLATE_, XYPI._svg_parent_id_,
+                                         _interactivePKeyboardHelpSvg_(XYPI._keyboard_commands_))
+    _scripts    = _bindInteractivePGpuScripts_(XYPI._svg_parent_id_)
+
+
+class CHORDPI_GPU(CHORDPI):
+    use_webgpu  = param.Boolean(default=True)
+    gpu_payload = param.Dict(default={})
+    gpu_error   = param.String(default='')
+    _template   = _bindInteractivePText_(_INTERACTIVEP_GPU_TEMPLATE_, CHORDPI._svg_parent_id_,
+                                         _interactivePKeyboardHelpSvg_(CHORDPI._keyboard_commands_))
+    _scripts    = _bindInteractivePGpuScripts_(CHORDPI._svg_parent_id_)
+
+
+class PIEPI_GPU(PIEPI):
+    use_webgpu  = param.Boolean(default=True)
+    gpu_payload = param.Dict(default={})
+    gpu_error   = param.String(default='')
+    _template   = _bindInteractivePText_(_INTERACTIVEP_GPU_TEMPLATE_, PIEPI._svg_parent_id_,
+                                         _interactivePKeyboardHelpSvg_(PIEPI._keyboard_commands_))
+    _scripts    = _bindInteractivePGpuScripts_(PIEPI._svg_parent_id_)
+
+
+_INTERACTIVEP_CLASSES_: dict = {
+    'timepi':  TIMEPI,
+    'histopi': HISTOPI,
+    'xypi':    XYPI,
+    'chordpi': CHORDPI,
+    'piepi':   PIEPI,
+}
+
+# Derived from the classes above so the two can never drift apart.  Kept because
+# it reads as the one-page summary of what separates the five kinds (and the
+# test suite asserts against it).
+_INTERACTIVEP_CONFIG_: dict = {
+    _kind_: {
+        'class_name':     _cls_.__name__,
+        'svg_parent_id':  _cls_._svg_parent_id_,
+        'render_fn':      _cls_._render_fn_,
+        'fallback_shape': _cls_._fallback_shape_,
+        'brush_seq':      _cls_.param.brush_seq.default,
+        'has_z_key':      _cls_.param.has_z_key.default,
+        'has_search':     _cls_.param.has_search.default,
+        'has_time_keys':  _cls_.param.has_time_keys.default,
+        'kbd_r_desc':     _cls_._kbd_r_desc_,
+    }
+    for _kind_, _cls_ in _INTERACTIVEP_CLASSES_.items()
+}
+
+
+_INTERACTIVEP_GPU_CLASSES_: dict = {
+    'timepi':  TIMEPI_GPU,
+    'histopi': HISTOPI_GPU,
+    'xypi':    XYPI_GPU,
+    'chordpi': CHORDPI_GPU,
+    'piepi':   PIEPI_GPU,
+}
+
+
+def _interactivep(_plot_, kind, **kwargs):
+    # The render mode picks the class: the WebGPU runtime lives only on the
+    # *_GPU subclasses, so an SVG view never ships it.
+    _table_ = _INTERACTIVEP_GPU_CLASSES_ if kwargs.get('use_webgpu') else _INTERACTIVEP_CLASSES_
+    return _table_[kind](_plot_, **kwargs)
+
 
 def timepi(_timep_, **kwargs):     return _interactivep(_timep_,   'timepi',   **kwargs)
 def histopi(_histop_, **kwargs):   return _interactivep(_histop_,  'histopi',  **kwargs)
@@ -1289,16 +1450,131 @@ def _tiles_overlapping_(plot, rx0, ry0, rx1, ry1):
 # smallpi — interactive wrapper for Smallp
 # ---------------------------------------------------------------------------
 
-def smallpi(_smallp_, **kwargs):
-    use_webgpu = kwargs.pop('use_webgpu', False)
-    _w_, _h_  = _smallp_.wxh_actual
-    _gpu_payload_default_ = _smallp_.webgpu() if use_webgpu else None
-    _svg_     = _smallp_._repr_svg_() if not use_webgpu else ''
-    _cls_ref_ = [None]
+# ─────────────────────────────────────────────────────────────────────────────
+# SMALLPI template / JS -- static text.
+#
+# The GPU wrapper is applied structurally with {% if use_webgpu %}; the pieces
+# are kept as separate constants and concatenated so the literal newlines of
+# each fragment survive verbatim (jinja's default block tags remove only the
+# tag, not the surrounding whitespace).
+# ─────────────────────────────────────────────────────────────────────────────
 
-    def __init__(self, **kwargs):
-        _mvc_ = kwargs.pop('mvc', None)
-        super(_cls_ref_[0], self).__init__(**kwargs)
+_SMALLPI_SVG_ROOT_ = """
+<svg id="svgparentsmallpi" width="{{ svg_w }}" height="{{ svg_h }}" tabindex="0"
+     onkeydown="${script('myOnKeyDown')}"{% if use_webgpu %} style="position:absolute;left:0;top:0;"{% endif %}>
+  <svg id="mod" x="0" y="0" width="{{ svg_w }}" height="{{ svg_h }}">${mod_inner}</svg>
+  <rect id="selbox" x="0" y="0" width="0" height="0" display="none"
+        fill="rgba(100,100,255,0.08)" stroke="#4488ff" stroke-width="1"
+        stroke-dasharray="4,2" pointer-events="none"/>
+  <rect id="screen" x="0" y="0" width="{{ svg_w }}" height="{{ svg_h }}"
+        style="fill:none;pointer-events:all;"
+        onmouseover="${script('myOnMouseOver')}"
+        onmousedown="${script('myOnMouseDown')}"
+        onmousemove="${script('myOnMouseMove')}"
+        onmouseup="${script('myOnMouseUp')}"
+        onmouseleave="${script('myOnMouseLeave')}"/>
+</svg>"""
+
+_SMALLPI_GPU_HEAD_ = """
+<div id="gpuwrap" style="position:relative;width:{{ svg_w }}px;height:{{ svg_h }}px;">
+    <canvas id="gpucanvas" width="{{ svg_w }}" height="{{ svg_h }}" style="position:absolute;left:0;top:0;"></canvas>
+    """
+
+_SMALLPI_GPU_TAIL_ = """
+</div>"""
+
+_SMALLPI_TEMPLATE_     = _SMALLPI_SVG_ROOT_
+_SMALLPI_GPU_TEMPLATE_ = _SMALLPI_GPU_HEAD_ + _SMALLPI_SVG_ROOT_ + _SMALLPI_GPU_TAIL_
+
+_SMALLPI_SCRIPTS_ = {
+    'render': """
+            state.dragging = false;
+            state.sx = 0; state.sy = 0;
+            mod.innerHTML = data.mod_inner;
+        """,
+    'myOnMouseOver': """
+            svgparentsmallpi.focus();
+        """,
+    'myOnMouseDown': """
+            state.sx = event.offsetX; state.sy = event.offsetY;
+            state.dragging = true;
+            data.drag_x0 = Math.round(event.offsetX);
+            data.drag_y0 = Math.round(event.offsetY);
+        """,
+    'myOnMouseMove': """
+            data.x_mouse = event.offsetX; data.y_mouse = event.offsetY;
+            if (data.brush_on) { data.brush_changed += 1; }
+            if (state.dragging) {
+                selbox.setAttribute('x',       Math.min(state.sx, event.offsetX));
+                selbox.setAttribute('y',       Math.min(state.sy, event.offsetY));
+                selbox.setAttribute('width',   Math.abs(event.offsetX - state.sx));
+                selbox.setAttribute('height',  Math.abs(event.offsetY - state.sy));
+                selbox.setAttribute('display', 'block');
+            }
+        """,
+    'myOnMouseUp': """
+            if (!state.dragging) return;
+            state.dragging = false;
+            data.drag_x1 = Math.round(event.offsetX);
+            data.drag_y1 = Math.round(event.offsetY);
+            data.shiftkey = event.shiftKey;
+            selbox.setAttribute('display', 'none');
+            data.drag_op_finished = !data.drag_op_finished;
+        """,
+    'myOnMouseLeave': """
+            state.dragging = false;
+            selbox.setAttribute('display', 'none');
+            data.brush_leave_done = !data.brush_leave_done;
+        """,
+    'myOnKeyDown': """
+            var k = event.key;
+            if (k === 'r') {
+                data.brush_on = !data.brush_on;
+                if (!data.brush_on) { data.key_op_finished = 'brush_off'; }
+            } else if (k === 'q' && !event.shiftKey) {
+                data.key_op_finished = 'q';
+            } else if (k === 'Q' || (event.shiftKey && k === 'q')) {
+                data.key_op_finished = 'Q';
+            }
+        """,
+    'mod_inner': """
+            mod.innerHTML = data.mod_inner;
+        """,
+}
+
+
+class SMALLPI(P2SReactiveHTML):
+    """Panel view for Smallp -- one static class for every size / render mode."""
+
+    svg_w             = param.Integer(default=0)
+    svg_h             = param.Integer(default=0)
+    use_webgpu        = param.Boolean(default=False)
+    mod_inner         = param.String(default='')
+    # gpu_payload / gpu_error live on SMALLPI_GPU only.
+    x_mouse           = param.Integer(default=0)
+    y_mouse           = param.Integer(default=0)
+    brush_on          = param.Boolean(default=False)
+    brush_changed     = param.Integer(default=0)
+    brush_leave_done  = param.Boolean(default=False)
+    drag_x0           = param.Integer(default=0)
+    drag_y0           = param.Integer(default=0)
+    drag_x1           = param.Integer(default=0)
+    drag_y1           = param.Integer(default=0)
+    drag_op_finished  = param.Boolean(default=False)
+    shiftkey          = param.Boolean(default=False)
+    key_op_finished   = param.String(default='')
+
+    _template = _SMALLPI_TEMPLATE_
+    _scripts  = _SMALLPI_SCRIPTS_
+
+    def __init__(self, _smallp_, use_webgpu=False, **kwargs):
+        _mvc_    = kwargs.pop('mvc', None)
+        _w_, _h_ = _smallp_.wxh_actual
+        _gpu_ = {'gpu_payload': _smallp_.webgpu()} if use_webgpu else {}
+        super().__init__(svg_w=_w_, svg_h=_h_, use_webgpu=use_webgpu, **_gpu_, **kwargs)
+        # mod_inner is a content binding (a ReactiveHTML child): assign, don't
+        # pass to super().  P2SReactiveHTML._init_params seeds first paint.
+        self.mod_inner = '' if use_webgpu else _smallp_._repr_svg_()
         self.lock = asyncio.Lock()
         if _mvc_ is None:
             self.mvc = InteractionController()
@@ -1309,8 +1585,9 @@ def smallpi(_smallp_, **kwargs):
             self.mvc = _mvc_
             self.mvc.view_stack[id(self)] = 'default'
             self.mvc.view_refs[id(self)]  = self
-        self._plot_  = _smallp_
-        self._cache_ = {id(_smallp_.df_orig): (_smallp_.df_orig, _smallp_)}
+        self._smallp_ = _smallp_
+        self._plot_   = _smallp_
+        self._cache_  = {id(_smallp_.df_orig): (_smallp_.df_orig, _smallp_)}
         self.param.watch(self.applyDragOp,     'drag_op_finished')
         self.param.watch(self.applyBrushOp,    'brush_changed')
         self.param.watch(self.applyBrushLeave, 'brush_leave_done')
@@ -1319,11 +1596,11 @@ def smallpi(_smallp_, **kwargs):
             self.param.watch(self.applyGpuError, 'gpu_error')
 
     def __renderView__(self, df):
-        return _smallp_.render_with_df(df)
+        return self._smallp_.render_with_df(df)
 
     def __refreshView__(self):
-        if use_webgpu:
-            if self.gpu_error: self.mod_inner   = _gpu_error_overlay(self.gpu_error, _w_, _h_)
+        if self.use_webgpu:
+            if self.gpu_error: self.mod_inner   = _gpu_error_overlay(self.gpu_error, self.svg_w, self.svg_h)
             else:              self.gpu_payload = self._plot_.webgpu()
         else:
             self.mod_inner = self._plot_._repr_svg_()
@@ -1332,7 +1609,7 @@ def smallpi(_smallp_, **kwargs):
     # No automatic SVG fallback: the user must re-create the view with use_webgpu=False.
     async def applyGpuError(self, event):
         if self.gpu_error:
-            self.mod_inner = _gpu_error_overlay(self.gpu_error, _w_, _h_)
+            self.mod_inner = _gpu_error_overlay(self.gpu_error, self.svg_w, self.svg_h)
 
     async def display(self, df, dfs, dfs_index):
         async with self.lock:
@@ -1422,132 +1699,21 @@ def smallpi(_smallp_, **kwargs):
         elif op == 'Q':         await self.mvc.setStackIndex(self, 0)
         elif op == 'brush_off': await self.mvc.brushClear(self)
 
-    _svg_root_ = f"""
-<svg id="svgparentsmallpi" width="{_w_}" height="{_h_}" tabindex="0"
-     onkeydown="${{script('myOnKeyDown')}}"{' style="position:absolute;left:0;top:0;"' if use_webgpu else ''}>
-  <svg id="mod" x="0" y="0" width="{_w_}" height="{_h_}">${{mod_inner}}</svg>
-  <rect id="selbox" x="0" y="0" width="0" height="0" display="none"
-        fill="rgba(100,100,255,0.08)" stroke="#4488ff" stroke-width="1"
-        stroke-dasharray="4,2" pointer-events="none"/>
-  <rect id="screen" x="0" y="0" width="{_w_}" height="{_h_}"
-        style="fill:none;pointer-events:all;"
-        onmouseover="${{script('myOnMouseOver')}}"
-        onmousedown="${{script('myOnMouseDown')}}"
-        onmousemove="${{script('myOnMouseMove')}}"
-        onmouseup="${{script('myOnMouseUp')}}"
-        onmouseleave="${{script('myOnMouseLeave')}}"/>
-</svg>"""
-    if use_webgpu:
-        _template = f"""
-<div id="gpuwrap" style="position:relative;width:{_w_}px;height:{_h_}px;">
-    <canvas id="gpucanvas" width="{_w_}" height="{_h_}" style="position:absolute;left:0;top:0;"></canvas>
-    {_svg_root_}
-</div>"""
-    else:
-        _template = _svg_root_
 
-    _gpu_render_block_ = (f"""
-{P2S_GPU_JS}
-            if (!window.__P2S_GPU__.supported()) {{ data.gpu_error = 'WebGPU is not available in this browser.'; }}
-            else {{
-                window.__P2S_GPU__.render(gpucanvas, data.gpu_payload)
-                    .catch(function(e) {{ console.warn('p2s webgpu:', e); data.gpu_error = (e && e.message) ? e.message : String(e); }});
-            }}
-""") if use_webgpu else ''
-    _gpu_payload_script_ = ("""
-            if (window.__P2S_GPU__ && window.__P2S_GPU__.supported() && !data.gpu_error) {
-                window.__P2S_GPU__.render(gpucanvas, data.gpu_payload)
-                    .catch(function(e) { console.warn('p2s webgpu:', e); data.gpu_error = (e && e.message) ? e.message : String(e); });
-            }
-""") if use_webgpu else ''
+class SMALLPI_GPU(SMALLPI):
+    """SMALLPI drawing into a WebGPU canvas -- adds the runtime the SVG class omits."""
+    use_webgpu  = param.Boolean(default=True)
+    gpu_payload = param.Dict(default={})
+    gpu_error   = param.String(default='')
+    _template   = _SMALLPI_GPU_TEMPLATE_
+    _scripts    = _withGpuScripts_(_SMALLPI_SCRIPTS_)
 
-    _scripts = {
-        'render': f"""
-            state.dragging = false;
-            state.sx = 0; state.sy = 0;
-            mod.innerHTML = data.mod_inner;
-{_gpu_render_block_}
-        """,
-        **({'gpu_payload': _gpu_payload_script_} if use_webgpu else {}),
-        'myOnMouseOver': """
-            svgparentsmallpi.focus();
-        """,
-        'myOnMouseDown': """
-            state.sx = event.offsetX; state.sy = event.offsetY;
-            state.dragging = true;
-            data.drag_x0 = Math.round(event.offsetX);
-            data.drag_y0 = Math.round(event.offsetY);
-        """,
-        'myOnMouseMove': """
-            data.x_mouse = event.offsetX; data.y_mouse = event.offsetY;
-            if (data.brush_on) { data.brush_changed += 1; }
-            if (state.dragging) {
-                selbox.setAttribute('x',       Math.min(state.sx, event.offsetX));
-                selbox.setAttribute('y',       Math.min(state.sy, event.offsetY));
-                selbox.setAttribute('width',   Math.abs(event.offsetX - state.sx));
-                selbox.setAttribute('height',  Math.abs(event.offsetY - state.sy));
-                selbox.setAttribute('display', 'block');
-            }
-        """,
-        'myOnMouseUp': """
-            if (!state.dragging) return;
-            state.dragging = false;
-            data.drag_x1 = Math.round(event.offsetX);
-            data.drag_y1 = Math.round(event.offsetY);
-            data.shiftkey = event.shiftKey;
-            selbox.setAttribute('display', 'none');
-            data.drag_op_finished = !data.drag_op_finished;
-        """,
-        'myOnMouseLeave': """
-            state.dragging = false;
-            selbox.setAttribute('display', 'none');
-            data.brush_leave_done = !data.brush_leave_done;
-        """,
-        'myOnKeyDown': """
-            var k = event.key;
-            if (k === 'r') {
-                data.brush_on = !data.brush_on;
-                if (!data.brush_on) { data.key_op_finished = 'brush_off'; }
-            } else if (k === 'q' && !event.shiftKey) {
-                data.key_op_finished = 'q';
-            } else if (k === 'Q' || (event.shiftKey && k === 'q')) {
-                data.key_op_finished = 'Q';
-            }
-        """,
-        'mod_inner': """
-            mod.innerHTML = data.mod_inner;
-        """,
-    }
 
-    cls = type('SMALLPI', (ReactiveHTML,), {
-        'mod_inner':         param.String(default=_svg_),
-        'x_mouse':           param.Integer(default=0),
-        'y_mouse':           param.Integer(default=0),
-        'brush_on':          param.Boolean(default=False),
-        'brush_changed':     param.Integer(default=0),
-        'brush_leave_done':  param.Boolean(default=False),
-        'drag_x0':           param.Integer(default=0),
-        'drag_y0':           param.Integer(default=0),
-        'drag_x1':           param.Integer(default=0),
-        'drag_y1':           param.Integer(default=0),
-        'drag_op_finished':  param.Boolean(default=False),
-        'shiftkey':          param.Boolean(default=False),
-        'key_op_finished':   param.String(default=''),
-        **({'gpu_payload': param.Dict(default=_gpu_payload_default_), 'gpu_error': param.String(default='')} if use_webgpu else {}),
-        '__init__':          __init__,
-        '__renderView__':    __renderView__,
-        '__refreshView__':   __refreshView__,
-        **({'applyGpuError': applyGpuError} if use_webgpu else {}),
-        'display':           display,
-        'applyBrushOp':      applyBrushOp,
-        'applyBrushLeave':   applyBrushLeave,
-        'applyDragOp':       applyDragOp,
-        'applyKeyOp':        applyKeyOp,
-        '_template':         _template,
-        '_scripts':          _scripts,
-    })
-    _cls_ref_[0] = cls
-    return cls(**kwargs)
+def smallpi(_smallp_, **kwargs):
+    use_webgpu = kwargs.pop('use_webgpu', False)
+    _cls_ = SMALLPI_GPU if use_webgpu else SMALLPI
+    return _cls_(_smallp_, use_webgpu=use_webgpu, **kwargs)
+
 
 _PLOT_TYPE_TO_WRAPPER_: dict = {
     'Timep':  timepi,
@@ -1735,11 +1901,14 @@ def panelize(layout: Any, stack: str = 'default', use_webgpu: bool = False,
     for view in views:
         others = [v for v in views if v is not view]
         mvc.link(view, others, on='stack', stack=stack)
-        if type(view).__name__ in ('LINKPI', 'SLPI'):
+        # Capability flags rather than a class-name check: the WebGPU variants are
+        # subclasses (LINKPI_GPU, SLPI_GPU), and a name comparison would silently
+        # stop linking them.
+        if getattr(view, '_broadcasts_selection_', False):
             sel_targets = [v for v in others if hasattr(v, 'receiveSelection')]
             if sel_targets:
                 mvc.link(view, sel_targets, on='selection', stack=stack)
-        if type(view).__name__ == 'LINKPI':
+        if getattr(view, '_broadcasts_positions_', False):
             pos_targets = [v for v in others if hasattr(v, 'receivePositions')]
             if pos_targets:
                 mvc.link(view, pos_targets, on='positions', stack=stack)
@@ -1749,94 +1918,940 @@ def panelize(layout: Any, stack: str = 'default', use_webgpu: bool = False,
     _warnOversizePanelPayload_(views, websocket_max_message_size)
     return _container_
 
-def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
-    _w_, _h_  = _linkp_.wxh
-    _gpu_payload_default_ = _linkp_.webgpu() if use_webgpu else None
-    _svg_     = '' if use_webgpu else _linkp_._repr_svg_()
-    _cls_ref_ = [None]
+# ─────────────────────────────────────────────────────────────────────────────
+# LINKPI -- constants, template and JS.  All static: what used to vary per view
+# (size, render mode, the picker menus built from the LinkP's own settings) is
+# now params the template and the JS read.
+# ─────────────────────────────────────────────────────────────────────────────
 
-    # ── link-size / node-size / link-opacity cycle menus (shift-L/O/P + ctrl) ──
-    # These mirror the shift-G / shift-W layout pickers: a modal list overlay that
-    # cycles forward on the shift key and backward on ctrl, committing on Enter /
-    # timeout / mouse-out. The named sizes are always offered; a user-supplied
-    # hardcoded number is the only float/int added to the size cycle (and becomes
-    # the current selection). Opacity cycles the fixed 10..100 grid. Each item's
-    # label doubles as the value committed back to Python; the 'none' label maps
-    # back to a real None (links / nodes not drawn) via __sizeLabelToValue__.
-    _NAMED_SIZES_    = ['none', 'nil', 'small', 'medium', 'large', 'vary']
-    _SIZE_MNEMONICS_ = {'none': 'o', 'nil': 'n', 'small': 's', 'medium': 'm', 'large': 'g', 'vary': 'v'}
+# ── link-size / node-size / link-opacity cycle menus (shift-L/O/P + ctrl) ──
+# These mirror the shift-G / shift-W layout pickers: a modal list overlay that
+# cycles forward on the shift key and backward on ctrl, committing on Enter /
+# timeout / mouse-out. The named sizes are always offered; a user-supplied
+# hardcoded number is the only float/int added to the size cycle (and becomes
+# the current selection). Opacity cycles the fixed 10..100 grid. Each item's
+# label doubles as the value committed back to Python; the 'none' label maps
+# back to a real None (links / nodes not drawn) via __sizeLabelToValue__.
+_NAMED_SIZES_    = ['none', 'nil', 'small', 'medium', 'large', 'vary']
+_SIZE_MNEMONICS_ = {'none': 'o', 'nil': 'n', 'small': 's', 'medium': 'm', 'large': 'g', 'vary': 'v'}
 
-    def _num_size_label(v):
-        f = float(v)
-        return str(int(f)) if f == int(f) else str(f)
+def _num_size_label(v):
+    f = float(v)
+    return str(int(f)) if f == int(f) else str(f)
 
-    def _build_size_menu(current):
-        items = [[_SIZE_MNEMONICS_[nm], nm] for nm in _NAMED_SIZES_]
-        if isinstance(current, bool):
-            cur = 'small'
-        elif isinstance(current, (int, float)):
-            cur = _num_size_label(current)
-            items.append(['#', cur])          # only a user-supplied number is added
-        elif current is None:
-            cur = 'none'
-        else:
-            cur = str(current)
-            if cur not in _NAMED_SIZES_:
-                items.append(['#', cur])
-        return items, cur
+def _build_size_menu(current):
+    items = [[_SIZE_MNEMONICS_[nm], nm] for nm in _NAMED_SIZES_]
+    if isinstance(current, bool):
+        cur = 'small'
+    elif isinstance(current, (int, float)):
+        cur = _num_size_label(current)
+        items.append(['#', cur])          # only a user-supplied number is added
+    elif current is None:
+        cur = 'none'
+    else:
+        cur = str(current)
+        if cur not in _NAMED_SIZES_:
+            items.append(['#', cur])
+    return items, cur
 
-    _link_size_items_, _link_size_cur_ = _build_size_menu(_linkp_.link_size)
-    _node_size_items_, _node_size_cur_ = _build_size_menu(_linkp_.node_size)
+_link_opacity_items_ = [[str((p // 10) % 10), str(p)] for p in range(10, 101, 10)]
 
-    _link_opacity_items_ = [[str((p // 10) % 10), str(p)] for p in range(10, 101, 10)]
-    _link_opacity_cur_   = (str(int(round(float(_linkp_.link_opacity) * 100)))
-                            if _linkp_.link_opacity is not None else '100')
+_LINK_SHAPES_      = ['line', 'curve', 'flowmap']
+_link_shape_items_ = [[str(_i_ + 1), _nm_] for _i_, _nm_ in enumerate(_LINK_SHAPES_)]
 
-    _LINK_SHAPES_      = ['line', 'curve', 'flowmap']
-    _link_shape_items_ = [[str(_i_ + 1), _nm_] for _i_, _nm_ in enumerate(_LINK_SHAPES_)]
-    _link_shape_cur_   = str(getattr(_linkp_, 'link_shape', 'line') or 'line')
-    if _link_shape_cur_ not in _LINK_SHAPES_:
-        _link_shape_items_.append(['#', _link_shape_cur_])
+# ── timing-mark spacing picker (shift-A forward / ctrl-A backward) ──
+# A pixel grid for linkp's timing_marks_spacing decimation (see linkp.py), so the
+# marks can be thinned out live on netflow-scale renders. Positional-digit
+# mnemonics like the link-shape picker; a linkp created with a spacing outside the
+# grid is appended as the current selection, like the size menus. Clamped to >=1px
+# to match the render (sub-pixel is meaningless).
+_TIMING_SPACINGS_      = [1, 2, 4, 8, 16, 32]   # pixels, fine -> very coarse
+_timing_spacing_items_ = [[str(_i_ + 1), _num_size_label(_v_)] for _i_, _v_ in enumerate(_TIMING_SPACINGS_)]
 
-    # ── timing-mark spacing picker (shift-A forward / ctrl-A backward) ──
-    # A pixel grid for linkp's timing_marks_spacing decimation (see linkp.py), so the
-    # marks can be thinned out live on netflow-scale renders. Positional-digit
-    # mnemonics like the link-shape picker; a linkp created with a spacing outside the
-    # grid is appended as the current selection, like the size menus. Clamped to >=1px
-    # to match the render (sub-pixel is meaningless).
-    _TIMING_SPACINGS_      = [1, 2, 4, 8, 16, 32]   # pixels, fine -> very coarse
-    _timing_spacing_cur_   = _num_size_label(max(float(getattr(_linkp_, 'timing_marks_spacing', 1.0) or 1.0), 1.0))
-    _timing_spacing_items_ = [[str(_i_ + 1), _num_size_label(_v_)] for _i_, _v_ in enumerate(_TIMING_SPACINGS_)]
-    if _timing_spacing_cur_ not in [_lbl_ for _, _lbl_ in _timing_spacing_items_]:
-        _timing_spacing_items_.append(['#', _timing_spacing_cur_])
+# ── label-visibility cycle (ctrl-shift-s) ──
+# The full cycle walks node labels, then both channels, then link labels alone, and
+# ends on the sticky set before going dark again.  A graph whose relationships carry
+# no label field has nothing to put in the two link states, so it cycles the short
+# list instead (which is what it did before edge labels existed).
+_LABEL_MODES_           = ['no labels', 'node labels', 'node + link labels',
+                           'link labels', 'sticky labels']
+_LABEL_MODES_NO_LINKS_  = ['no labels', 'node labels', 'sticky labels']
+# mode -> (draw_node_labels, draw_link_labels, restrict to the sticky set).  Sticky
+# holds selected *nodes*, and label_only gates both channels off the same names, so
+# the sticky state leaves link labels off rather than filtering them all away.
+_LABEL_MODE_STATE_      = {
+    'no labels':          (False, False, False),
+    'node labels':        (True,  False, False),
+    'node + link labels': (True,  True,  False),
+    'link labels':        (False, True,  False),
+    'sticky labels':      (True,  False, True),
+}
+_LABEL_MODE_FOR_FLAGS_  = {(False, False): 'no labels',   (True, False): 'node labels',
+                           (True, True): 'node + link labels', (False, True): 'link labels'}
 
-    # ── label-visibility cycle (ctrl-shift-s) ──
-    # The full cycle walks node labels, then both channels, then link labels alone, and
-    # ends on the sticky set before going dark again.  A graph whose relationships carry
-    # no label field has nothing to put in the two link states, so it cycles the short
-    # list instead (which is what it did before edge labels existed).
-    _LABEL_MODES_           = ['no labels', 'node labels', 'node + link labels',
-                               'link labels', 'sticky labels']
-    _LABEL_MODES_NO_LINKS_  = ['no labels', 'node labels', 'sticky labels']
-    # mode -> (draw_node_labels, draw_link_labels, restrict to the sticky set).  Sticky
-    # holds selected *nodes*, and label_only gates both channels off the same names, so
-    # the sticky state leaves link labels off rather than filtering them all away.
-    _LABEL_MODE_STATE_      = {
-        'no labels':          (False, False, False),
-        'node labels':        (True,  False, False),
-        'node + link labels': (True,  True,  False),
-        'link labels':        (False, True,  False),
-        'sticky labels':      (True,  False, True),
-    }
-    _LABEL_MODE_FOR_FLAGS_  = {(False, False): 'no labels',   (True, False): 'node labels',
-                               (True, True): 'node + link labels', (False, True): 'link labels'}
+_LINKPI_KEYBOARD_COMMANDS_ = """
+in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closes
+/ . | search: type substring + Enter (prefix +add -remove &intersect); Escape to cancel
+a . | cycle link arrows / timing marks (arrows-only when no time field)
+ .. | shift-a ........ | open timing-mark spacing picker (px); ctrl-a reverses
+b . | cycle background (none | background | background + labels)
+ .. | shift-b ........ | open background picker (flow field / neighborhood / clear); committing runs it
+c . | reset view or focus view on selected
+esc | cancel the running layout (keeps its best-so-far result)
+ .. | shift-c ........ | focus view on selected + neighbors
+ .. | ctrl-c ......... | copy selected nodes to clipboard (ctrl-shift-c uses node labels)
+d . | detect communities (louvain) & color nodes by community
+ .. | shift-d ........ | clear community colors
+e . | expand selection | shift-e follows directed edges
+ .. | ctrl-e ......... | expand along reversed directed edges
+f . | edge unfilter: add rows on visible edges into the view (selected: scope to edges among selected)
+ .. | shift-f ........ | node expansion: add rows incident to visible nodes into the view (selected: scope to selected)
+g . | hold and drag to lay out (shape comes from the layout-mode picker)
+ .. | shift-g ........ | open layout-mode picker: mnemonic key selects
+h . | toggle help display
+l . | open link shape picker (line | curve | flowmap); l cycles
+ .. | shift-l ........ | open link size picker (ctrl-l reverses)
+n . | select node under mouse by shape (shift, ctrl, and ctrl-shift apply)
+ .. | shift-o ........ | open link opacity picker (ctrl-o reverses)
+ .. | shift-p ........ | open node size picker (ctrl-p reverses)
+q . | invert selection
+ .. | shift-q ........ | common neighbors
+r . | toggle brush (broadcast nearest edges/nodes to linked views)
+ .. | shift-r ........ | cycle brush radius (r=5 | r=15)
+s . | set sticky labels
+ .. | shift-s ........ | remove sticky labels from selected
+ .. | ctrl-s ......... | add selected to sticky labels
+ .. | ctrl-shift-s ... | cycle labels (none | node | node+link | link | sticky)
+t . | consolidate .... | shift-t (horizontal)
+u . | undo last layout action (limited undo's)
+v . | consolidate vertically (ctrl-t also, where the browser allows)
+w . | apply layout operation to [selected] nodes
+ .. | shift-w ........ | open layout-operation picker
+x   | remove selected nodes (push stack)
+ .. | shift-x ........ | pop stack
+ .. | ctrl-shift-x ... | collapse edges to one row (selected-adjacent, or all)
+y . | hold and drag for a line layout | shift-y (horizontal) | ctrl-y (vertical)
+z . | select node under mouse by color (shift, ctrl, and ctrl-shift apply)
+1-6 | select numbered degree
+7 . | select degree 7 -> 20
+8 . | select degree 20 -> 50
+9 . | select degree 50 -> 100
+0 . | select degree 100 -> 10_000
+"""
+
+# Build static SVG for keyboard help overlay
+_help_lines_  = _LINKPI_KEYBOARD_COMMANDS_.strip().split('\n')
+_help_w_      = max(len(l) for l in _help_lines_) * 7 + 20
+_help_h_      = len(_help_lines_) * 14 + 12
+_font_style_  = "font-family: 'Courier New', monospace; font-size: 11px; fill: #222;"
+_text_lines_  = ''.join(
+    f'<text x="10" y="{12 + i*14}" style="{_font_style_}">{l.replace(" ", " ")}</text>'
+    for i, l in enumerate(_help_lines_)
+)
+_LINKPI_KEYBOARD_HELP_SVG_ = (
+    f'<rect x="0" y="0" width="{_help_w_}" height="{_help_h_}" '
+    f'fill="rgba(240,240,240,0.95)" stroke="#888" stroke-width="1" rx="3"/>'
+    f'{_text_lines_}'
+)
+
+
+# Picker-menu data + state, prepended to the render script. Built separately
+# because the render script is a plain (non-f) string with JS brace literals.
+#
+# Menu items are [mnemonic, value, display, guarded].
+#
+#   value    -- what menuCommit sends back to Python; never annotated, or the label
+#               would stop matching the registry key it selects.
+#   display  -- what the user reads.  An operation that will stop to ask a question
+#               says so here, so the cost is visible at the moment of choosing rather
+#               than only after committing.
+#   guarded  -- true for exactly those items, and it exempts them from the two ways
+#               this menu commits without an explicit Enter: the single-character
+#               mnemonic, and the 2.5 s inactivity timeout.  Pressing 'l' then '3'
+#               used to start the force layout in two keystrokes with no confirmation
+#               step at all.
+#
+def _annotate_(items, treatment_of, unit='nodes'):
+    _out_ = []
+    for _m_, _label_ in items:
+        _note_ = menu_annotation(treatment_of(_label_), unit)
+        _out_.append([_m_, _label_,
+                      f'{_label_}  ({_note_})' if _note_ else _label_,
+                      bool(_note_)])
+    return _out_
+
+_operation_items_  = _annotate_(_LAYOUT_OP_MENU_, treatment_for)
+
+_LINKPI_SVG_ROOT_ = """
+<svg id="svgparent" width="{{ svg_w }}" height="{{ svg_h }}" tabindex="0" style="user-select:none;{% if use_webgpu %} position:absolute;left:0;top:0;{% endif %}" onkeydown="${script('myOnKeyDown')}" onkeyup="${script('myOnKeyUp')}">
+    <svg id="mod" width="{{ svg_w }}" height="{{ svg_h }}"> ${mod_inner} </svg>
+    <g id="keyboardhelp" transform="translate(${keyboardhelp_x} 0)">__KBD_HELP__</g>
+    <rect id="drag" x="-10" y="-10" width="5" height="5" stroke="#000000" stroke-width="2" fill="none" />
+    <line   id="layoutline"      x1="-10" y1="-10" x2="-10"    y2="-10"    stroke="#000000" stroke-width="2" />
+    <rect   id="layoutrect"      x="-10"  y="-10"  width="10"  height="10" stroke="#000000" stroke-width="2" />
+    <circle id="layoutcircle"    cx="-10" cy="-10" r="5"       fill="none" stroke="#000000" stroke-width="6" />
+    <circle id="layoutsunflower" cx="-10" cy="-10" r="5"                   stroke="#000000" stroke-width="2" />
+    <rect id="screen" x="0" y="0" width="{{ svg_w }}" height="{{ svg_h }}" opacity="0.05"
+          onmouseover="${script('myOnMouseOver')}"      onmouseout="${script('myOnMouseOut')}"
+          onmousedown="${script('downSelect')}"         onmousemove="${script('myOnMouseMove')}"
+          onmouseup="${script('myOnMouseUp')}" />
+    <text id="infostr" x="5"   y="{{ svg_h - 2 }}" fill="#000000" font-size="10px" pointer-events="none"></text>
+    <path id="allentitieslayer" d="" fill="#000000" fill-opacity="0.01" stroke="none"
+          onmouseover="${script('myOnMouseOver')}"      onmouseout="${script('myOnMouseOut')}"
+          onmousedown="${script('downAllEntities')}"    onmousemove="${script('myOnMouseMove')}"
+          onmouseup="${script('myOnMouseUp')}" />
+    <path id="selectionlayer" d="" fill="#ff0000" transform="" stroke="none"
+          onmouseover="${script('myOnMouseOver')}"      onmouseout="${script('myOnMouseOut')}"
+          onmousedown="${script('downMove')}"           onmousemove="${script('myOnMouseMove')}"
+          onmouseup="${script('myOnMouseUp')}" />
+    <text id="searchtext" x="{{ svg_w // 2 }}" y="{{ svg_h - 2 }}" text-anchor="middle" fill="#0000cc" font-size="11px" font-family="monospace" pointer-events="none"></text>
+    <g id="brushindicator" pointer-events="none"></g>
+    <g id="brushmodelabel" pointer-events="none"></g>
+    <g id="pickermenu" pointer-events="none"></g>
+</svg>"""
+
+_LINKPI_GPU_HEAD_ = """
+<div id="gpuwrap" style="position:relative;width:{{ svg_w }}px;height:{{ svg_h }}px;">
+    <canvas id="gpucanvas" width="{{ svg_w }}" height="{{ svg_h }}" style="position:absolute;left:0;top:0;"></canvas>
+    """
+
+# The blank first line is the newline that used to sit at the end of the SVG root:
+# jinja drops one trailing newline from the source, so the root cannot carry its own.
+_LINKPI_GPU_TAIL_ = """
+
+</div>"""
+
+_LINKPI_ROOT_ = _LINKPI_SVG_ROOT_.replace('__KBD_HELP__', _LINKPI_KEYBOARD_HELP_SVG_)
+
+_LINKPI_TEMPLATE_     = _LINKPI_ROOT_
+_LINKPI_GPU_TEMPLATE_ = _LINKPI_GPU_HEAD_ + _LINKPI_ROOT_ + _LINKPI_GPU_TAIL_
+
+_LINKPI_SCRIPTS_ = {
+    'render': """
+        state.menu_items = data.menu_items;
+        state.menu_open  = false; state.menu_kind = ''; state.menu_index = 0; state.menu_timer = null;
+        mod.innerHTML            = data.mod_inner;
+        infostr.innerHTML        = data.info_str;
+        allentitieslayer.setAttribute("d", data.allentitiespath);
+        selectionlayer.setAttribute("d", data.selectionpath);
+        state.x0_drag            = state.y0_drag = -10;
+        state.x1_drag            = state.y1_drag =  -5;
+        // Only seed the mouse position on first render; this script re-runs
+        // on every refresh (e.g. after a 't' collapse pushes a new mod_inner),
+        // and clobbering cur_mouse back to 0 would make the next key op that
+        // reads it (e.g. a repeated 't') collapse to the upper-left corner
+        // until the mouse moves again and myOnMouseMove repopulates it.
+        if (state.cur_mouse_x === undefined) { state.cur_mouse_x = 0; }
+        if (state.cur_mouse_y === undefined) { state.cur_mouse_y = 0; }
+        data.has_focus           = false;
+        data.shiftkey            = false;
+        data.ctrlkey             = false;
+        state.drag_op            = false;
+        state.move_op            = false;
+        state.unselected_move_op = false;
+        state.layout_op          = false; // true if next mouse button 1 press is the begin of a layout
+        state.layout_line_flag   = false; // true if the shape will be overrode by the line version
+        state.layout_op_shape    = "";    // trigger field for python to peform the layout operation
+        data.middle_op_finished  = false;
+        data.move_op_finished    = false;
+        state.search_mode        = false;
+        state.search_buffer      = '';
+        data.brush_state         = 0;
+        data.brushing_mode       = false;
+        data.brush_changed       = 0;
+        state.last_brush_x       = -999;
+        state.last_brush_y       = -999;
+        state.brush_defs         = [null,['circle',5],['circle',15]];
+        state.brush_names        = ['','circ r=5','circ r=15'];
+
+        var _wheelFn_ = function(event) {
+            event.preventDefault();
+            data.wheel_x = event.offsetX; data.wheel_y = event.offsetY;
+            data.wheel_rots = Math.round(10*event.deltaY);
+            data.wheel_op_finished = true;
+        };
+        screen.addEventListener('wheel', _wheelFn_, {passive: false});
+        allentitieslayer.addEventListener('wheel', _wheelFn_, {passive: false});
+        selectionlayer.addEventListener('wheel', _wheelFn_, {passive: false});
+
+        // On macOS ctrl+click is a secondary click, so the browser raises a
+        // contextmenu (popup) during ctrl / shift-ctrl rectangular drags, which
+        // interrupts the drag and loses the selection (U1).  The generic
+        // _interactivep components have swallowed it since the original fix went
+        // in; LINKPI was missed -- which is why the bug outlived that fix, and on
+        // the component with by far the most dragging in it.
+        //
+        // Confirmed in a browser rather than argued about: contextmenu fires on
+        // both families, and arrived defaultPrevented only on the generic ones.
+        svgparent.addEventListener('contextmenu', function(event) {
+            event.preventDefault();
+        });
+""",
+
+    'myOnMouseOver':"""
+            data.has_focus = true;
+            svgparent.focus();
+    """,
+
+    'updateBrushCursor': """
+            var _bs_ = data.brush_state;
+            if (_bs_ == 0) {
+                brushindicator.innerHTML = '';
+                brushmodelabel.innerHTML = '';
+                return;
+            }
+            var _x_ = state.cur_mouse_x, _y_ = state.cur_mouse_y;
+            var _d_ = state.brush_defs[_bs_], _r_ = _d_[1];
+            var _s_ = 'stroke="rgba(100,150,255,0.8)" fill="none" pointer-events="none"';
+            brushindicator.innerHTML = '<circle cx="'+_x_+'" cy="'+_y_+'" r="'+_r_+'" '+_s_+' stroke-width="1.5"/>';
+            var _nm_ = state.brush_names[_bs_];
+            var _tw_ = _nm_.length * 6 + 10, _rx_ = data.svg_w - _tw_ - 3;
+            brushmodelabel.innerHTML = '<rect x="'+_rx_+'" y="3" width="'+_tw_+'" height="15" rx="3" fill="rgba(100,150,255,0.3)" stroke="rgba(100,150,255,0.7)" stroke-width="0.5" pointer-events="none"/>'
+                + '<text x="'+(_rx_+5)+'" y="14" font-size="10px" fill="rgba(40,60,200,1.0)" font-family="monospace" pointer-events="none">'+_nm_+'</text>';
+    """,
+
+    'myOnMouseOut':"""
+            // Ignore moves between this component's own hit layers.  #screen,
+            // #allentitieslayer and #selectionlayer are siblings that cover each
+            // other, so putting the pointer on a node fires mouseout on the layer
+            // being left -- which this handler read as "the mouse left the
+            // component".  The brush was therefore cleared at the very moment the
+            // pointer reached something worth brushing, and an open picker menu
+            // committed itself for the same reason (PLANNING.md U7).
+            //
+            // relatedTarget is where the pointer went; if that is still inside the
+            // component, nothing has been left.  It is null when the pointer leaves
+            // the window entirely, which is a real leave.
+            if (event.relatedTarget && svgparent.contains(event.relatedTarget)) { return; }
+            data.has_focus = false;
+            brushindicator.innerHTML = '';
+            if (data.brush_state > 0) { data.brush_leave_done = true; }
+            if (state.menu_open) { self.menuCommit(); }
+    """,
+
+    # ── picker menu (shift-W: layout operations, shift-G: layout modes) ──
+    # Modal JS state machine; nothing reaches Python until menuCommit writes
+    # data.layout_operation / data.layout_mode (select-only — 'w' / 'g'-drag
+    # still apply the choice).
+    'menuOpen':"""
+        var _items_   = state.menu_items[state.menu_kind];
+        var _current_ = (state.menu_kind == 'background')   ? data.background_operation
+                      : (state.menu_kind == 'operation')    ? data.layout_operation
+                      : (state.menu_kind == 'mode')         ? data.layout_mode
+                      : (state.menu_kind == 'link_size')    ? data.link_size_choice
+                      : (state.menu_kind == 'link_opacity') ? data.link_opacity_choice
+                      : (state.menu_kind == 'link_shape')   ? data.link_shape_choice
+                      : (state.menu_kind == 'timing_spacing') ? data.timing_spacing_choice
+                      :                                       data.node_size_choice;
+        state.menu_index = 0;
+        for (var _i_ = 0; _i_ < _items_.length; _i_++) {
+            if (_items_[_i_][1] == _current_) { state.menu_index = _i_; break; }
+        }
+        state.menu_open = true;
+        self.menuRender();
+        self.menuArmTimer();
+    """,
+    'menuRender':"""
+        if (!state.menu_open) { return; }
+        var _items_  = state.menu_items[state.menu_kind];
+        var _header_ = (state.menu_kind == 'background')   ? 'background:'
+                     : (state.menu_kind == 'operation')    ? 'layout operation:'
+                     : (state.menu_kind == 'mode')         ? 'layout mode:'
+                     : (state.menu_kind == 'link_size')    ? 'link size:'
+                     : (state.menu_kind == 'link_opacity') ? 'link opacity:'
+                     : (state.menu_kind == 'link_shape')   ? 'link shape:'
+                     : (state.menu_kind == 'timing_spacing') ? 'timing mark spacing (px):'
+                     :                                       'node size:';
+        var _maxlen_ = _header_.length;
+        for (var _i_ = 0; _i_ < _items_.length; _i_++) {
+            _maxlen_ = Math.max(_maxlen_, (_items_[_i_][2] || _items_[_i_][1]).length + 4);
+        }
+        var _w_menu_ = _maxlen_ * 7 + 20,
+            _h_menu_ = (_items_.length + 1) * 14 + 12,
+            _style_  = 'font-family: \\'Courier New\\', monospace; font-size: 11px; fill: #222;';
+        var _html_ = '<rect x="8" y="8" width="' + _w_menu_ + '" height="' + _h_menu_ + '"'
+                   + ' fill="rgba(240,240,240,0.95)" stroke="#888" stroke-width="1" rx="3"/>'
+                   + '<rect x="10" y="' + (8 + 1 + (state.menu_index + 1) * 14) + '" width="' + (_w_menu_ - 4) + '" height="13"'
+                   + ' fill="rgba(100,150,255,0.3)"/>'
+                   + '<text x="18" y="' + (8 + 12) + '" style="' + _style_ + ' font-weight: bold;">' + _header_ + '</text>';
+        for (var _i_ = 0; _i_ < _items_.length; _i_++) {
+            _html_ += '<text x="18" y="' + (8 + 12 + (_i_ + 1) * 14) + '" style="' + _style_ + '">'
+                    + '[' + _items_[_i_][0] + '] ' + (_items_[_i_][2] || _items_[_i_][1]) + '</text>';
+        }
+        pickermenu.innerHTML = _html_;
+    """,
+    'menuCommit':"""
+        var _lbl_ = state.menu_items[state.menu_kind][state.menu_index][1];
+        if      (state.menu_kind == 'background')   { data.background_operation = _lbl_;
+                                                      data.background_op_seq   = data.background_op_seq + 1; }
+        else if (state.menu_kind == 'operation')    { data.layout_operation   = _lbl_; }
+        else if (state.menu_kind == 'mode')         { data.layout_mode        = _lbl_; }
+        else if (state.menu_kind == 'link_size')    { data.link_size_choice    = _lbl_; }
+        else if (state.menu_kind == 'link_opacity') { data.link_opacity_choice = _lbl_; }
+        else if (state.menu_kind == 'link_shape')   { data.link_shape_choice   = _lbl_; }
+        else if (state.menu_kind == 'timing_spacing') { data.timing_spacing_choice = _lbl_; }
+        else                                        { data.node_size_choice    = _lbl_; }
+        self.menuClose();
+    """,
+    'menuClose':"""
+        if (state.menu_timer != null) { clearTimeout(state.menu_timer); }
+        state.menu_timer     = null;
+        state.menu_open      = false;
+        state.menu_kind      = '';
+        pickermenu.innerHTML = '';
+    """,
+    'menuArmTimer':"""
+        if (state.menu_timer != null) { clearTimeout(state.menu_timer); }
+        var _self_ = self;
+        state.menu_timer = setTimeout(function() {
+            if (!state.menu_open) { return; }
+            var _sel_ = state.menu_items[state.menu_kind][state.menu_index];
+            // Walking away from the menu must not start an expensive operation.  For a
+            // guarded item the timeout closes without committing; everything else commits
+            // as before.
+            if (_sel_ && _sel_[3]) { _self_.menuClose(); } else { _self_.menuCommit(); }
+        }, 2500);
+    """,
+
+    'myOnKeyDown':"""
+        event.stopPropagation();
+        if (state.search_mode) {
+            if (event.key === 'Enter') {
+                if (state.search_buffer) {
+                    data.search_str = state.search_buffer;
+                    data.search_op_finished = !data.search_op_finished;
+                }
+                state.search_mode   = false;
+                state.search_buffer = '';
+                searchtext.textContent = '';
+            } else if (event.key === 'Escape') {
+                state.search_mode   = false;
+                state.search_buffer = '';
+                searchtext.textContent = '';
+            } else if (event.key === 'Backspace') {
+                state.search_buffer = state.search_buffer.slice(0, -1);
+                searchtext.textContent = '/ ' + state.search_buffer + '▋';
+            } else if (event.key.length === 1) {
+                state.search_buffer += event.key;
+                searchtext.textContent = '/ ' + state.search_buffer + '▋';
+            }
+            return;
+        }
+        if (state.menu_open) {
+            event.preventDefault();
+            var _items_ = state.menu_items[state.menu_kind];
+            if      (event.key === 'Escape') { self.menuClose();  }
+            else if (event.key === 'Enter')  { self.menuCommit(); }
+            // !ctrlKey on W and G below is deliberate even though nothing tests ctrlKey
+            // for them any more: it keeps the chords deleted in U10 *inert* rather than
+            // silently cycling forward, which is the opposite of what they used to do.
+            else if (event.key === 'ArrowDown' || event.key === 'j' ||
+                     (event.key === 'W' && state.menu_kind === 'operation'    && !event.ctrlKey) ||
+                     (event.key === 'G' && state.menu_kind === 'mode'         && !event.ctrlKey) ||
+                     (event.key === 'L' && state.menu_kind === 'link_size')    ||
+                     (event.key === 'O' && state.menu_kind === 'link_opacity') ||
+                     (event.key === 'l' && state.menu_kind === 'link_shape'   && !event.ctrlKey) ||
+                     (event.key === 'A' && state.menu_kind === 'timing_spacing') ||
+                     (event.key === 'P' && state.menu_kind === 'node_size')) {
+                state.menu_index = (state.menu_index + 1) % _items_.length;
+                self.menuRender(); self.menuArmTimer();
+            }
+            // ctrl-shift-W and ctrl-shift-G used to reverse-cycle here and are gone
+            // (PLANNING.md U10).  ctrl-shift-W is a reserved chrome-level accelerator
+            // off macOS -- it CLOSES THE BROWSER WINDOW, and preventDefault() cannot
+            // reclaim what the page is never shown; ctrl-shift-G worked but went with
+            // it so the pure-reverse chords are gone as a class rather than leaving one
+            // survivor.  Nothing was lost: ArrowUp / k reverse every menu, which is what
+            // the generic _interactivep components have always done.  The clauses that
+            // remain below pair with a *ctrl entry point* (ctrl-l opens the link-size
+            // picker and steps back through it), and the audit measured all four as
+            // page-interceptable.
+            else if (event.key === 'ArrowUp' || event.key === 'k' ||
+                     (event.key === 'l' && state.menu_kind === 'link_size'    && event.ctrlKey) ||
+                     (event.key === 'o' && state.menu_kind === 'link_opacity' && event.ctrlKey) ||
+                     (event.key === 'a' && state.menu_kind === 'timing_spacing' && event.ctrlKey) ||
+                     (event.key === 'p' && state.menu_kind === 'node_size'    && event.ctrlKey)) {
+                state.menu_index = (state.menu_index - 1 + _items_.length) % _items_.length;
+                self.menuRender(); self.menuArmTimer();
+            }
+            else if (event.key.length === 1) {
+                for (var _i_ = 0; _i_ < _items_.length; _i_++) {
+                    if (_items_[_i_][0] === event.key) {
+                        state.menu_index = _i_;
+                        // A guarded item is only SELECTED by its mnemonic; committing it
+                        // takes a deliberate Enter.  'l' then '3' used to start the force
+                        // layout in two keystrokes with nothing in between.
+                        if (_items_[_i_][3]) { self.menuRender(); self.menuArmTimer(); }
+                        else                 { self.menuCommit(); }
+                        break;
+                    }
+                }
+            }
+            return;
+        }
+        data.ctrlkey  = event.ctrlKey;
+        data.shiftkey = event.shiftKey;
+        data.x_mouse  = state.cur_mouse_x;
+        data.y_mouse  = state.cur_mouse_y;
+
+        if      (event.key == "a" && !event.ctrlKey) { data.key_op_finished = 'a'; } // Toggle link arrows (on | off)
+        else if (event.key == "A" || (event.key == "a" && event.ctrlKey)) { if (event.ctrlKey) event.preventDefault(); state.menu_kind = 'timing_spacing'; self.menuOpen(); } // Open timing-mark spacing picker (shift-a forward, ctrl-a reverses)
+        else if (event.key == "b") { data.key_op_finished = 'b';  }  // Cycle background (none | background | background + labels)
+        else if (event.key == "B") { state.menu_kind = 'background'; self.menuOpen(); } // Open the background producer picker (committing runs it)
+        else if (event.key == "c") { if (event.ctrlKey) event.preventDefault(); data.key_op_finished = 'c';  } // (if selected) zoom to selected, else zoom to entire view; ctrl-c copies (suppress native copy so it can't clobber our clipboard write)
+        else if (event.key == "C") { if (event.ctrlKey) event.preventDefault(); data.key_op_finished = 'C';  } // Zoom to selected + neighbors; ctrl-shift-c copies labels
+        else if (event.key == "d") { data.key_op_finished = 'd';  } // Detect communities (louvain) & color nodes by community
+        else if (event.key == "D") { data.key_op_finished = 'D';  } // Clear the community colors
+        else if (event.key == "e") { if (event.ctrlKey) event.preventDefault(); data.key_op_finished = 'e';  } // Expand (undirected); ctrl-e expands along reversed directed edges (preventDefault: ctrl-e is browser search-bar focus)
+        else if (event.key == "E") { data.key_op_finished = 'E';  } // Expand (w/ digraph, forward)
+        else if (event.key == "f") { data.key_op_finished = 'f';  } // Edge unfilter: re-add base rows on the currently-visible edges
+        else if (event.key == "F") { data.key_op_finished = 'F';  } // Node expansion: re-add base rows incident to the currently-visible nodes
+        else if (event.key == "Escape") { data.cancel_seq = data.cancel_seq + 1; } // Ask the running layout to stop and keep its best-so-far result
+        else if (event.key == "g") { state.layout_op        = true; // Mouse press is layout shape
+                                     state.layout_line_flag = false; } 
+        else if (event.key == "G") { state.menu_kind = 'mode';      self.menuOpen(); } // Open the layout-mode picker menu
+        else if (event.key == "h") {
+            if (data.keyboardhelp_x == -1000) { data.keyboardhelp_x =     5; }
+            else                              { data.keyboardhelp_x = -1000; }
+        }
+        else if (event.key == "l" && !event.ctrlKey) { state.menu_kind = 'link_shape'; self.menuOpen(); } // Open the link-shape picker menu; 'l' cycles
+        else if (event.key == "L" || (event.key == "l" && event.ctrlKey)) { if (event.ctrlKey) event.preventDefault(); state.menu_kind = 'link_size';    self.menuOpen(); } // Cycle link size
+        else if (event.key == "O" || (event.key == "o" && event.ctrlKey)) { if (event.ctrlKey) event.preventDefault(); state.menu_kind = 'link_opacity'; self.menuOpen(); } // Cycle link opacity
+        else if (event.key == "P" || (event.key == "p" && event.ctrlKey)) { if (event.ctrlKey) event.preventDefault(); state.menu_kind = 'node_size';    self.menuOpen(); } // Cycle node size
+        else if (event.key == "n" ||                                // Select nodes with the same shape as the one under the mouse
+                 event.key == "N") { data.key_op_finished = 'n';  }
+        else if (event.key == "q") { data.key_op_finished = 'q';  } // Invert selection
+        else if (event.key == "Q") { data.key_op_finished = 'Q';  } // Select common neighbors to selected nodes
+        else if (event.key == "r") {                                // Toggle the radius brush on/off
+            if (data.brush_state == 0) { data.brush_state = 1; }
+            else                       { data.brush_state = 0; }
+            data.brushing_mode = data.brush_state > 0;
+            data.brush_changed += 1;
+            self.updateBrushCursor();
+        }
+        else if (event.key == "R") {                                // Cycle the brush radius (r=5 | r=15)
+            var _seq_ = [1, 2];
+            if (data.brush_state == 0) { data.brush_state = _seq_[0]; }
+            else {
+                var _i_ = _seq_.indexOf(data.brush_state);
+                data.brush_state = _seq_[(_i_ + 1) % _seq_.length];
+            }
+            data.brushing_mode = true;
+            data.brush_changed += 1;
+            self.updateBrushCursor();
+        }
+        else if (event.key == "s") { if (event.ctrlKey) event.preventDefault(); data.key_op_finished = 's';  } // Set sticky labels; ctrl-s cycles label mode (ctrl-s is browser Save Page As)
+        else if (event.key == "S") { if (event.ctrlKey) event.preventDefault(); data.key_op_finished = 'S';  } // Subtract selected from sticky labels; ctrl-shift-s cycles label mode
+        else if (event.key == "t") { data.key_op_finished = 't';  } // Collapse selected to a single point
+        else if (event.key == "T") { data.key_op_finished = 'T';  } // Horizontally collapse selected
+        else if (event.key == "u") { data.key_op_finished = 'u';  } // Undo last layout
+        // Vertical collapse.  It lives on an unmodified key because its old chord,
+        // ctrl-t, is reserved as new-tab off macOS and preventDefault() cannot
+        // reclaim a browser-chrome shortcut -- see PLANNING.md U2.
+        else if (event.key == "v") { data.key_op_finished = 'v';  } // Vertically collapse selected
+        else if (event.key == "w") { data.key_op_finished = 'w';  } // Apply layout operation
+        else if (event.key == "W") { state.menu_kind = 'operation'; self.menuOpen(); } // Open the layout-operation picker menu
+        else if (event.key == "x") { data.key_op_finished = 'x';  } // push the stack (remove the selected from the current graph)
+        else if (event.key == "X" && event.ctrlKey) { data.key_op_finished = 'ctrl_shift_x'; } // collapse edges to one row each (push the stack)
+        else if (event.key == "X") { data.key_op_finished = 'X';  } // pop the stack (add removed nodes back in)
+        else if (event.key == "y") { state.layout_op        = true; // Mouse press is layout line
+                                     state.layout_line_flag = true;  }
+        else if (event.key == "Y") { state.layout_op        = true; // Mouse press is layout line
+                                     state.layout_line_flag = true;  }
+        else if (event.key == "z" ||                                // Select nodes with the same color as the one under the mouse
+                 event.key == "Z") { data.key_op_finished = 'z';     }
+        else if (event.key == "1" || event.key == "!") { data.key_op_finished = '1';  }
+        else if (event.key == "2" || event.key == "@") { data.key_op_finished = '2';  }
+        else if (event.key == "3" || event.key == "#") { data.key_op_finished = '3';  }
+        else if (event.key == "4" || event.key == "$") { data.key_op_finished = '4';  }
+        else if (event.key == "5" || event.key == "%") { data.key_op_finished = '5';  }
+        else if (event.key == "6" || event.key == "^") { data.key_op_finished = '6';  }
+        else if (event.key == "7" || event.key == "&") { data.key_op_finished = '7';  }
+        else if (event.key == "8" || event.key == "*") { data.key_op_finished = '8';  }
+        else if (event.key == "9" || event.key == "(") { data.key_op_finished = '9';  }
+        else if (event.key == "0" || event.key == ")") { data.key_op_finished = '0';  }
+        else if (event.key == "/") {
+            state.search_mode   = true;
+            state.search_buffer = '';
+            searchtext.textContent = '/ ▋';
+        }
+
+        data.last_key = event.key;
+    """,
+    'myOnKeyUp':"""
+        event.stopPropagation();
+        if (state.menu_open) { return; }
+        // Hold the modifiers while a key operation is still in flight.  applyKeyOp
+        // runs asynchronously behind a lock and reads ctrlkey / shiftkey when it gets
+        // there, so clearing them the instant the user let go made a *tapped*
+        // ctrl-<key> arrive with the modifier already gone -- the handler took the
+        // unmodified branch, and ctrl-c zoomed the view instead of copying (U3).
+        //
+        // The release is not discarded, it is deferred: the key_op_finished script
+        // applies it as soon as Python reports the operation done.  Simply skipping
+        // the clear would leave the modifier stuck on until the next keydown, and the
+        // drag band -- which reads these to colour itself -- would name the wrong
+        // set-operation.
+        if (data.key_op_finished === '') {
+            data.ctrlkey  = event.ctrlKey;
+            data.shiftkey = event.shiftKey;
+        } else {
+            state.pending_mods = [event.ctrlKey, event.shiftKey];
+        }
+        if (event.key == "g" || event.key == "y" || event.key == "Y") { state.layout_op = state.layout_line_flag = false; }
+    """,
+    'key_op_finished':"""
+        // Python empties this when it has finished the operation; that is the moment
+        // a modifier release deferred by myOnKeyUp can safely be applied.  If a
+        // re-render has wiped state in between the release is simply lost, and the
+        // next keydown sets the modifiers correctly anyway.
+        if (data.key_op_finished === '' && state.pending_mods) {
+            data.ctrlkey  = state.pending_mods[0];
+            data.shiftkey = state.pending_mods[1];
+            state.pending_mods = null;
+        }
+    """,
+
+    'myOnMouseMove':"""
+        state.cur_mouse_x = event.offsetX;
+        state.cur_mouse_y = event.offsetY;
+        state.x1_drag     = event.offsetX;
+        state.y1_drag     = event.offsetY;
+        if (state.drag_op)               { self.myUpdateDragRect(); }
+        if (state.move_op)               { selectionlayer.setAttribute("transform", "translate(" + (state.x1_drag - state.x0_drag) + "," + (state.y1_drag - state.y0_drag) + ")"); }
+        if (state.unselected_move_op)    { selectionlayer.setAttribute("transform", "translate(" + (state.x1_drag - state.x0_drag) + "," + (state.y1_drag - state.y0_drag) + ")"); }
+        if (state.layout_op_shape != "") { self.myUpdateLayoutOp(); }
+        if (data.brush_state > 0) {
+            self.updateBrushCursor();
+            var _dx_ = event.offsetX - state.last_brush_x;
+            var _dy_ = event.offsetY - state.last_brush_y;
+            if (_dx_*_dx_ + _dy_*_dy_ >= 9) {   // throttle: re-brush only after ~3px of travel
+                state.last_brush_x = event.offsetX;
+                state.last_brush_y = event.offsetY;
+                data.x_mouse       = event.offsetX;
+                data.y_mouse       = event.offsetY;
+                data.brush_changed += 1;
+            }
+        }
+    """,
+    'downAllEntities':"""
+        data.ctrlkey  = event.ctrlKey;
+        data.shiftkey = event.shiftKey;
+        if (event.button == 0) {
+                data.allentities_x0      = event.offsetX; 
+                data.allentities_y0      = event.offsetY; 
+                state.x0_drag            = event.offsetX;                
+                state.y0_drag            = event.offsetY;                
+                state.x1_drag            = event.offsetX;
+                state.y1_drag            = event.offsetY;
+                state.unselected_move_op = true;
+                var ex = event.offsetX, ey = event.offsetY;
+                selectionlayer.setAttribute("d", "M " + (ex-5) + " " + (ey-5) + " l 10 0 l 0 10 l -10 0 z");
+                selectionlayer.setAttribute("transform", "");
+        }
+    """,
+    'downSelect':"""
+        if (event.button == 0) {
+            state.x0_drag  = event.offsetX;
+            state.y0_drag  = event.offsetY;
+            state.x1_drag  = event.offsetX;
+            state.y1_drag  = event.offsetY;
+            if (state.layout_op) { 
+                if (state.layout_line_flag) { 
+                    if      (data.ctrlkey)  { state.layout_op_shape = "v-line"; }
+                    else if (data.shiftkey) { state.layout_op_shape = "h-line"; }
+                    else                    { state.layout_op_shape = "line";   }
+                }
+                else                        { state.layout_op_shape = data.layout_mode; }
+                self.myUpdateLayoutOp();
+            } else               { state.drag_op         = true;             self.myUpdateDragRect(); }
+        } else if (event.button == 1) {
+            data.x0_middle = data.x1_middle = event.offsetX;
+            data.y0_middle = data.y1_middle = event.offsetY;
+        }
+    """,
+    'downMove':"""
+        if (event.button == 0) {
+            state.x0_drag  = state.x1_drag  = event.offsetX;
+            state.y0_drag  = state.y1_drag  = event.offsetY;
+            state.move_op  = true;
+        } else if (event.button == 1) {
+            data.x0_middle = data.x1_middle = event.offsetX; 
+            data.y0_middle = data.y1_middle = event.offsetY;
+        }
+    """,
+    'myUpdateLayoutOp':"""
+        var dx = state.x1_drag - state.x0_drag,
+            dy = state.y1_drag - state.y0_drag;
+        var reset_circle = true, reset_sunflower = true, reset_rect = true, reset_line = true;
+        if        (state.layout_op_shape == "circle" ||
+                   state.layout_op_shape == "circle (color)") { reset_circle = false;
+            layoutcircle.setAttribute("cx", state.x0_drag);
+            layoutcircle.setAttribute("cy", state.y0_drag);
+            layoutcircle.setAttribute("r",  Math.sqrt(dx*dx + dy*dy));
+        } else if (state.layout_op_shape == "sunflower") { reset_sunflower = false;
+            layoutsunflower.setAttribute("cx", state.x0_drag);
+            layoutsunflower.setAttribute("cy", state.y0_drag);
+            layoutsunflower.setAttribute("r",  Math.sqrt(dx*dx + dy*dy));            
+        } else if (state.layout_op_shape == "grid" || 
+                   state.layout_op_shape == "grid (color)" || 
+                   state.layout_op_shape == "grid (color, clouds)" ||
+                   state.layout_op_shape == "rescale") { reset_rect = false;
+            layoutrect.setAttribute("x", Math.min(state.x0_drag, state.x1_drag));
+            layoutrect.setAttribute("y", Math.min(state.y0_drag, state.y1_drag));
+            layoutrect.setAttribute("width",  Math.abs(dx));
+            layoutrect.setAttribute("height", Math.abs(dy));
+        } else if (state.layout_op_shape == "line")    { reset_line = false;
+            layoutline.setAttribute("x1", state.x0_drag);
+            layoutline.setAttribute("y1", state.y0_drag);
+            layoutline.setAttribute("x2", state.x1_drag);
+            layoutline.setAttribute("y2", state.y1_drag);
+        } else if (state.layout_op_shape == "h-line")  { reset_line = false;
+            layoutline.setAttribute("x1", state.x0_drag);
+            layoutline.setAttribute("y1", state.y1_drag);
+            layoutline.setAttribute("x2", state.x1_drag);
+            layoutline.setAttribute("y2", state.y1_drag);
+        } else if (state.layout_op_shape == "v-line")  { reset_line = false;
+            layoutline.setAttribute("x1", state.x1_drag);
+            layoutline.setAttribute("y1", state.y0_drag);
+            layoutline.setAttribute("x2", state.x1_drag);
+            layoutline.setAttribute("y2", state.y1_drag);
+        } else { state.layout_op_shape == ""; }
+        if (reset_circle)    { layoutcircle   .setAttribute("cx", -10); layoutcircle   .setAttribute("cy", -10); layoutcircle   .setAttribute("r",      5); }
+        if (reset_sunflower) { layoutsunflower.setAttribute("cx", -10); layoutsunflower.setAttribute("cy", -10); layoutsunflower.setAttribute("r",      5); }
+        if (reset_rect)      { layoutrect     .setAttribute("x",  -10); layoutrect     .setAttribute("y",  -10); layoutrect     .setAttribute("width",  5);  layoutrect.setAttribute("height",  5); }
+        if (reset_line)      { layoutline     .setAttribute("x1", -10); layoutline     .setAttribute("y1", -10); layoutline     .setAttribute("x2",    -5);  layoutline.setAttribute("y2",     -5); }
+    """,
+    'myOnMouseUp':"""
+        if (event.button == 0) {
+            data.ctrlkey          = event.ctrlKey;
+            data.shiftkey         = event.shiftKey;
+            state.x1_drag         = event.offsetX;
+            state.y1_drag         = event.offsetY;
+            if (state.drag_op) {
+                state.shiftkey        = event.shiftKey;
+                state.drag_op         = false;
+                self.myUpdateDragRect();
+                data.drag_x0          = state.x0_drag; 
+                data.drag_y0          = state.y0_drag; 
+                data.drag_x1          = state.x1_drag; 
+                data.drag_y1          = state.y1_drag;
+                data.drag_op_finished = true;
+            } else if (state.move_op) {
+                state.move_op         = false;
+                data.drag_x0          = state.x0_drag; 
+                data.drag_y0          = state.y0_drag; 
+                data.drag_x1          = state.x1_drag; 
+                data.drag_y1          = state.y1_drag;
+                data.move_op_finished = true;                    
+            } else if (state.layout_op_shape != "") {
+                data.drag_x0          = state.x0_drag; 
+                data.drag_y0          = state.y0_drag; 
+                data.drag_x1          = state.x1_drag; 
+                data.drag_y1          = state.y1_drag;
+                data.layout_shape     = state.layout_op_shape;
+                state.layout_op_shape = "";
+                self.myUpdateLayoutOp();
+            } else if (state.unselected_move_op) {
+                data.ctrlkey  = event.ctrlKey;
+                data.shiftkey = event.shiftKey;
+                data.drag_x0  = state.x0_drag;
+                data.drag_y0  = state.y0_drag;
+                data.drag_x1  = state.x1_drag;
+                data.drag_y1  = state.y1_drag;
+                data.unselected_move_op_finished = true;
+                state.unselected_move_op = false;
+            }
+        } else if (event.button == 1) {
+            data.x1_middle          = event.offsetX; 
+            data.y1_middle          = event.offsetY;
+            data.middle_op_finished = true;                
+        }
+    """,
+    'myOnMouseWheel':"""
+        event.preventDefault();
+        data.wheel_x = event.offsetX; data.wheel_y = event.offsetY; data.wheel_rots  = Math.round(10*event.deltaY);
+        data.wheel_op_finished = true;
+    """,
+    'mod_inner':"""
+        mod.innerHTML       = data.mod_inner;
+        infostr.innerHTML   = data.info_str;
+    """,
+    'allentitiespath':"""
+        allentitieslayer.setAttribute("d", data.allentitiespath);
+    """,
+    'selectionpath':"""
+        selectionlayer.setAttribute("d", data.selectionpath);
+        selectionlayer.setAttribute("transform", "");
+    """,
+    'info_str': """
+        infostr.innerHTML = data.info_str;
+    """,
+    'myUpdateDragRect':"""
+        if (state.drag_op) {
+            x = Math.min(state.x0_drag, state.x1_drag); 
+            y = Math.min(state.y0_drag, state.y1_drag);
+            w = Math.abs(state.x1_drag - state.x0_drag)
+            h = Math.abs(state.y1_drag - state.y0_drag)
+            drag.setAttribute('x',x);     drag.setAttribute('y',y);
+            drag.setAttribute('width',w); drag.setAttribute('height',h);
+            // shiftkey, not shftkey: the misspelling read undefined, so both shift
+            // branches were dead and the band drew the wrong colour for two of the
+            // four set-operations -- black for subtract and green for intersect,
+            // i.e. it named the operation the user was *not* about to perform
+            // (PLANNING.md U8).  The operations themselves were always correct;
+            // myOnMouseUp reads event.shiftKey off the event, which is why nothing
+            // else noticed.
+            if      (data.shiftkey && data.ctrlkey)  drag.setAttribute('stroke','#0000ff');
+            else if (data.shiftkey)                  drag.setAttribute('stroke','#ff0000');
+            else if (                data.ctrlkey)  drag.setAttribute('stroke','#00ff00');
+            else                                    drag.setAttribute('stroke','#000000');
+        } else {
+            drag.setAttribute('x',-10);   drag.setAttribute('y',-10);
+            drag.setAttribute('width',5); drag.setAttribute('height',5);
+        }
+    """
+}
+
+
+class LINKPI(P2SReactiveHTML):
+    """Panel view for LinkP.
+
+    One static class for every graph, size and render mode.  This used to be
+    built per call with ``type('LINKPI', (ReactiveHTML,), {...})``; the only
+    things that genuinely varied were the width/height baked into ``_template``
+    and the picker menus baked into the render script, and both are params now.
+    """
+
+    _keyboard_commands_ = _LINKPI_KEYBOARD_COMMANDS_
+    _template           = _LINKPI_TEMPLATE_
+    _scripts            = _LINKPI_SCRIPTS_
+
+    # Read by panelize() to decide what this view broadcasts; inherited by LINKPI_GPU.
+    _broadcasts_selection_ = True
+    _broadcasts_positions_ = True
+
+    svg_w                         = param.Integer(default=0)
+    svg_h                         = param.Integer(default=0)
+    use_webgpu                    = param.Boolean(default=False)
+    # Picker-menu contents: per view (they depend on the LinkP's own link_size /
+    # node_size / link_shape / timing spacing), so the JS reads them from the data
+    # model instead of having them baked into the render script as JSON.
+    menu_items                    = param.Dict(default={})
+    mod_inner                     = param.String(default='')
+    # gpu_payload / gpu_error live on LINKPI_GPU only.
+    allentitiespath               = param.String(default="M -100 -100 l 10 0 l 0 10 l -10 0 l 0 -10 Z")
+    selectionpath                 = param.String(default="M -100 -100 l 10 0 l 0 10 l -10 0 l 0 -10 Z")
+    # info_str is deliberately NOT bound as ${info_str} in _template, and putting it
+    # back re-opens PLANNING.md U5.  A content binding -- ${p} between tags, as opposed
+    # to an attribute binding inside a tag -- registers the param as a ReactiveHTML
+    # *child*, and panel's _update_model then takes the `prop in child_params` branch
+    # (reactive.py ~2208): it sets new_children[prop], which re-renders the whole
+    # subtree.  Every JS-only variable dies with it -- an open picker menu loses
+    # menu_open/menu_index, the search buffer empties, brush_state resets to 0 -- and
+    # because Python rewrites info_str after almost every operation, that was happening
+    # constantly.  Unbound, info_str is an ordinary data param: the 'info_str' script
+    # below still writes infostr.innerHTML, so the line displays exactly as before, and
+    # nothing rebuilds.
+    #
+    # mod_inner cannot get the same treatment, which is why it is still bound.  Unbound
+    # params take the `isinstance(v, str)` branch instead (reactive.py ~2243) and are
+    # run through panel's HTML_SANITIZER, which strips SVG markup to the empty string --
+    # the plot would simply never draw.  Being a child is what exempts mod_inner from
+    # that, so it keeps both the exemption and the rebuild.  The rebuild is tolerable
+    # there because mod_inner only changes when the plot genuinely redraws.  Only a
+    # non-string carrier (param.Dict, as gpu_payload already does) would buy the same
+    # exemption without the rebuild; that is a wider change than U5 needs.
+    info_str                      = param.String(default=" | | grid")
+    layout_mode                   = param.String(default="grid")
+    layout_operation              = param.String(default="spring nx")
+    background_operation          = param.String(default=_BACKGROUND_OP_MENU_[0][1])
+    background_op_seq             = param.Integer(default=0)
+    link_size_choice              = param.String(default='')
+    node_size_choice              = param.String(default='')
+    link_opacity_choice           = param.String(default='')
+    link_shape_choice             = param.String(default='')
+    timing_spacing_choice         = param.String(default='')
+    keyboardhelp_x                = param.Integer(default=-1000)
+    x0_middle                     = param.Integer(default=0)
+    y0_middle                     = param.Integer(default=0)
+    x1_middle                     = param.Integer(default=0)
+    y1_middle                     = param.Integer(default=0)
+    middle_op_finished            = param.Boolean(default=False)
+    wheel_x                       = param.Integer(default=0)
+    wheel_y                       = param.Integer(default=0)
+    wheel_rots                    = param.Integer(default=0)  # Mult by 10 and rounded...
+    wheel_op_finished             = param.Boolean(default=False)
+    drag_op_finished              = param.Boolean(default=False)
+    drag_x0                       = param.Integer(default=0)
+    drag_y0                       = param.Integer(default=0)
+    drag_x1                       = param.Integer(default=10)
+    drag_y1                       = param.Integer(default=10)
+    allentities_x0                = param.Integer(default=10)
+    allentities_y0                = param.Integer(default=10)
+    unselected_move_op_finished   = param.Boolean(default=False)
+    move_op_finished              = param.Boolean(default=False)
+    layout_shape                  = param.String(default="")
+    shiftkey                      = param.Boolean(default=False)
+    ctrlkey                       = param.Boolean(default=False)
+    last_key                      = param.String(default='')
+    key_op_finished               = param.String(default='')
+    cancel_seq                    = param.Integer(default=0)
+    x_mouse                       = param.Integer(default=0)
+    y_mouse                       = param.Integer(default=0)
+    has_focus                     = param.Boolean(default=False)
+    brushing_mode                 = param.Boolean(default=False)
+    brush_state                   = param.Integer(default=0)
+    brush_changed                 = param.Integer(default=0)
+    brush_leave_done              = param.Boolean(default=False)
+    search_str                    = param.String(default='')
+    search_op_finished            = param.Boolean(default=False)
 
     #
-    # Constructor
+    # Panel Template
     #
-    def __init__(self, **kwargs):
-        _mvc_ = kwargs.pop('mvc', mvc)   # allow override via kwargs, fall back to closure mvc
-        super(_cls_ref_[0], self).__init__(**kwargs)
+
+    def __init__(self, _linkp_, mvc=None, use_webgpu=False, **kwargs):
+        _mvc_    = kwargs.pop('mvc', mvc)   # allow override via kwargs
+        _w_, _h_ = _linkp_.wxh
+        # Picker menus depend on how this LinkP was built, so they are per view;
+        # the JS reads them from data.menu_items rather than from baked-in JSON.
+        _link_size_items_, _link_size_cur_ = _build_size_menu(_linkp_.link_size)
+        _node_size_items_, _node_size_cur_ = _build_size_menu(_linkp_.node_size)
+        _link_opacity_cur_ = (str(int(round(float(_linkp_.link_opacity) * 100)))
+                              if _linkp_.link_opacity is not None else '100')
+        _link_shape_items_l_ = list(_link_shape_items_)
+        _link_shape_cur_     = str(getattr(_linkp_, 'link_shape', 'line') or 'line')
+        if _link_shape_cur_ not in _LINK_SHAPES_:
+            _link_shape_items_l_.append(['#', _link_shape_cur_])
+        _timing_spacing_items_l_ = list(_timing_spacing_items_)
+        _timing_spacing_cur_     = _num_size_label(max(float(getattr(_linkp_, 'timing_marks_spacing', 1.0) or 1.0), 1.0))
+        if _timing_spacing_cur_ not in [_lbl_ for _, _lbl_ in _timing_spacing_items_l_]:
+            _timing_spacing_items_l_.append(['#', _timing_spacing_cur_])
+        super().__init__(
+            svg_w=_w_, svg_h=_h_, use_webgpu=use_webgpu,
+            **({'gpu_payload': _linkp_.webgpu()} if use_webgpu else {}),
+            link_size_choice=_link_size_cur_, node_size_choice=_node_size_cur_,
+            link_opacity_choice=_link_opacity_cur_, link_shape_choice=_link_shape_cur_,
+            timing_spacing_choice=_timing_spacing_cur_,
+            menu_items={
+                'operation':      _operation_items_,
+                'mode':           [[m, l] for m, l in _LAYOUT_MODE_MENU_],
+                'background':     [[m, l] for m, l in _BACKGROUND_OP_MENU_],
+                'link_size':      _link_size_items_,
+                'link_opacity':   _link_opacity_items_,
+                'node_size':      _node_size_items_,
+                'link_shape':     _annotate_([(m, l) for m, l in _link_shape_items_l_],
+                                             lambda lbl: FLOWMAP if lbl == 'flowmap' else None,
+                                             unit='edges'),
+                'timing_spacing': _timing_spacing_items_l_,
+            },
+            **kwargs)
+        # mod_inner is a content binding (a ReactiveHTML child): assign, don't pass
+        # to super().  P2SReactiveHTML._init_params seeds it for first paint -- see
+        # the long note on info_str below for why it has to be a child at all.
+        self.mod_inner = '' if use_webgpu else _linkp_._repr_svg_()
+        self._linkp_   = _linkp_
 
         self.rt_self   = _linkp_.p2s
         self.w, self.h = _w_, _h_
@@ -2029,7 +3044,7 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
     # No automatic SVG fallback: the user must re-create the view with use_webgpu=False.
     async def applyGpuError(self, event):
         if self.gpu_error:
-            self.mod_inner = _gpu_error_overlay(self.gpu_error, _w_, _h_)
+            self.mod_inner = _gpu_error_overlay(self.gpu_error, self.w, self.h)
 
     #
     # saveLayout() - save the current layout
@@ -2067,11 +3082,11 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
                 # only the brushed subgraph is drawn (matches the other interactive views).
                 # The stack (dfs/dfs_layout/df_level) is left untouched.
                 _cur_      = _self_.dfs_layout[_self_.df_level]
-                _brush_ln_ = _linkp_.render_with(df, pos=dict(_cur_.pos), view_window=_cur_.view_window)
+                _brush_ln_ = _self_._linkp_.render_with(df, pos=dict(_cur_.pos), view_window=_cur_.view_window)
                 _self_._brush_active_ = True
                 _self_.selectionpath  = 'M -100 -100 l 10 0 l 0 10 l -10 0 l 0 -10 Z'
-                if use_webgpu:
-                    if _self_.gpu_error: _self_.mod_inner   = _gpu_error_overlay(_self_.gpu_error, _w_, _h_)
+                if _self_.use_webgpu:
+                    if _self_.gpu_error: _self_.mod_inner   = _gpu_error_overlay(_self_.gpu_error, _self_.w, _self_.h)
                     else:                _self_.gpu_payload = _brush_ln_.webgpu()
                 else:
                     _self_.mod_inner = _brush_ln_.renderSVG()
@@ -2135,7 +3150,7 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
     async def replaceBaseDataframe(self, df):
         _pos_ = dict(self.dfs_layout[self.df_level].pos)
         _vw_  = self.dfs_layout[self.df_level].view_window
-        _new_ln_ = _linkp_.render_with(df, pos=_pos_, view_window=_vw_)
+        _new_ln_ = self._linkp_.render_with(df, pos=_pos_, view_window=_vw_)
         _g_      = self.rt_self.createNetworkXGraph(df, self.ln_params['relationships'])
         self.dfs               = [df]
         self.dfs_layout        = [_new_ln_]
@@ -2221,7 +3236,7 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
                 except re.error: pass # invalid regex -- contributes no matches
 
             _deadline_    = time.monotonic() + _budget_
-            _node_labels_ = _linkp_.node_labels or {}
+            _node_labels_ = _self_._linkp_.node_labels or {}
             str_to_node   = {str(n): n for n in all_nodes} if _node_labels_ else {}
             try:
                 for _regex_ in _compiled_:
@@ -2275,7 +3290,7 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
             if isinstance(selection, str): _substrings_ = set([selection])
             else:                          _substrings_ = set(selection)
             _set_ = set()
-            _node_labels_ = _linkp_.node_labels or {}
+            _node_labels_ = self._linkp_.node_labels or {}
             str_to_node   = {str(n): n for n in all_nodes} if _node_labels_ else {}
             for _substring_ in _substrings_:
                 if ignore_case: _substring_ = _substring_.lower()
@@ -2303,7 +3318,7 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
             if ignore_case: selection_as_set = {x.lower() for x in selection_as_set}
 
             # Iterate through the nodes...
-            _node_labels_ = _linkp_.node_labels or {}
+            _node_labels_ = self._linkp_.node_labels or {}
             if _node_labels_: # node labels handled a little differently
                 _set_ = set()
                 str_to_node = {str(n): n for n in all_nodes}
@@ -2340,7 +3355,7 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
     # selectedEntities() - return the selected entities
     #
     def selectedEntities(self):
-        _node_labels_ = _linkp_.node_labels or {}
+        _node_labels_ = self._linkp_.node_labels or {}
         _set_ = set()
         if _node_labels_:
             for _node_ in self.selected_entities:
@@ -2357,7 +3372,7 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
     # - if there are no node_labels, this should return the same as selectedEntities()
     #
     def selectedNodes(self):
-        _node_labels_ = _linkp_.node_labels or {}
+        _node_labels_ = self._linkp_.node_labels or {}
         if _node_labels_:
             _set_, covered = set(), set()
             for _node_ in _node_labels_.keys():
@@ -2478,7 +3493,7 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
     def __renderView__(self, df):
         _pos_ = dict(self.dfs_layout[self.df_level].pos)
         _vw_  = self.dfs_layout[self.df_level].view_window
-        return _linkp_.render_with(df, pos=_pos_, view_window=_vw_)
+        return self._linkp_.render_with(df, pos=_pos_, view_window=_vw_)
 
     #
     # __cacheNodePositions__() - cache the node positions for undo operations
@@ -3068,7 +4083,7 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
     # SVG is built on a worker and only assigned to the param here, on the loop.
     #
     async def _refreshViewOffloop_(self, **kwargs):
-        if kwargs.get('comp', True) and not use_webgpu:
+        if kwargs.get('comp', True) and not self.use_webgpu:
             _ln_ = self.dfs_layout[self.df_level]
             self.mod_inner = await self._run_offloop_(_ln_.renderSVG)
             self.mvc.positionsUpdate(self, _ln_.pos)
@@ -3081,8 +4096,8 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
     def __refreshView__(self, comp=True, info=True, all_ents=True, sel_ents=True):
         if (comp):
             _ln_ = self.dfs_layout[self.df_level]
-            if   not use_webgpu: self.mod_inner   = _ln_.renderSVG()
-            elif self.gpu_error: self.mod_inner   = _gpu_error_overlay(self.gpu_error, _w_, _h_)
+            if   not self.use_webgpu: self.mod_inner   = _ln_.renderSVG()
+            elif self.gpu_error: self.mod_inner   = _gpu_error_overlay(self.gpu_error, self.w, self.h)
             else:                self.gpu_payload = _ln_.webgpu()
             # A comp refresh is the single chokepoint after every operation that
             # may have moved nodes (drag-moves, layout ops, undo, load); notify
@@ -3993,925 +5008,19 @@ def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
             except (TypeError, ValueError): return
             self.updateLinkNodeParam('timing_marks_spacing', _sp_)
 
-    _keyboard_commands_ = """
-in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closes
-/ . | search: type substring + Enter (prefix +add -remove &intersect); Escape to cancel
-a . | cycle link arrows / timing marks (arrows-only when no time field)
- .. | shift-a ........ | open timing-mark spacing picker (px); ctrl-a reverses
-b . | cycle background (none | background | background + labels)
- .. | shift-b ........ | open background picker (flow field / neighborhood / clear); committing runs it
-c . | reset view or focus view on selected
-esc | cancel the running layout (keeps its best-so-far result)
- .. | shift-c ........ | focus view on selected + neighbors
- .. | ctrl-c ......... | copy selected nodes to clipboard (ctrl-shift-c uses node labels)
-d . | detect communities (louvain) & color nodes by community
- .. | shift-d ........ | clear community colors
-e . | expand selection | shift-e follows directed edges
- .. | ctrl-e ......... | expand along reversed directed edges
-f . | edge unfilter: add rows on visible edges into the view (selected: scope to edges among selected)
- .. | shift-f ........ | node expansion: add rows incident to visible nodes into the view (selected: scope to selected)
-g . | hold and drag to lay out (shape comes from the layout-mode picker)
- .. | shift-g ........ | open layout-mode picker: mnemonic key selects
-h . | toggle help display
-l . | open link shape picker (line | curve | flowmap); l cycles
- .. | shift-l ........ | open link size picker (ctrl-l reverses)
-n . | select node under mouse by shape (shift, ctrl, and ctrl-shift apply)
- .. | shift-o ........ | open link opacity picker (ctrl-o reverses)
- .. | shift-p ........ | open node size picker (ctrl-p reverses)
-q . | invert selection
- .. | shift-q ........ | common neighbors
-r . | toggle brush (broadcast nearest edges/nodes to linked views)
- .. | shift-r ........ | cycle brush radius (r=5 | r=15)
-s . | set sticky labels
- .. | shift-s ........ | remove sticky labels from selected
- .. | ctrl-s ......... | add selected to sticky labels
- .. | ctrl-shift-s ... | cycle labels (none | node | node+link | link | sticky)
-t . | consolidate .... | shift-t (horizontal)
-u . | undo last layout action (limited undo's)
-v . | consolidate vertically (ctrl-t also, where the browser allows)
-w . | apply layout operation to [selected] nodes
- .. | shift-w ........ | open layout-operation picker
-x   | remove selected nodes (push stack)
- .. | shift-x ........ | pop stack
- .. | ctrl-shift-x ... | collapse edges to one row (selected-adjacent, or all)
-y . | hold and drag for a line layout | shift-y (horizontal) | ctrl-y (vertical)
-z . | select node under mouse by color (shift, ctrl, and ctrl-shift apply)
-1-6 | select numbered degree
-7 . | select degree 7 -> 20
-8 . | select degree 20 -> 50
-9 . | select degree 50 -> 100
-0 . | select degree 100 -> 10_000
-"""
 
-    # Build static SVG for keyboard help overlay
-    _help_lines_  = _keyboard_commands_.strip().split('\n')
-    _help_w_      = max(len(l) for l in _help_lines_) * 7 + 20
-    _help_h_      = len(_help_lines_) * 14 + 12
-    _font_style_  = "font-family: 'Courier New', monospace; font-size: 11px; fill: #222;"
-    _text_lines_  = ''.join(
-        f'<text x="10" y="{12 + i*14}" style="{_font_style_}">{l.replace(" ", " ")}</text>'
-        for i, l in enumerate(_help_lines_)
-    )
-    _keyboard_help_svg_ = (
-        f'<rect x="0" y="0" width="{_help_w_}" height="{_help_h_}" '
-        f'fill="rgba(240,240,240,0.95)" stroke="#888" stroke-width="1" rx="3"/>'
-        f'{_text_lines_}'
-    )
+class LINKPI_GPU(LINKPI):
+    """LINKPI drawing into a WebGPU canvas -- adds the runtime the SVG class omits."""
+    use_webgpu  = param.Boolean(default=True)
+    gpu_payload = param.Dict(default={})
+    gpu_error   = param.String(default='')
+    _template   = _LINKPI_GPU_TEMPLATE_
+    _scripts    = _withGpuScripts_(_LINKPI_SCRIPTS_)
 
-    # Root interaction SVG (the plot lives in #mod for SVG mode, on #gpucanvas for GPU mode;
-    # all other children are interaction chrome that stays SVG in both modes)
-    _svg_root_ = f"""
-<svg id="svgparent" width="{_w_}" height="{_h_}" tabindex="0" style="user-select:none;{' position:absolute;left:0;top:0;' if use_webgpu else ''}" onkeydown="${{script('myOnKeyDown')}}" onkeyup="${{script('myOnKeyUp')}}">
-    <svg id="mod" width="{_w_}" height="{_h_}"> ${{mod_inner}} </svg>
-    <g id="keyboardhelp" transform="translate(${{keyboardhelp_x}} 0)">{_keyboard_help_svg_}</g>
-    <rect id="drag" x="-10" y="-10" width="5" height="5" stroke="#000000" stroke-width="2" fill="none" />
-    <line   id="layoutline"      x1="-10" y1="-10" x2="-10"    y2="-10"    stroke="#000000" stroke-width="2" />
-    <rect   id="layoutrect"      x="-10"  y="-10"  width="10"  height="10" stroke="#000000" stroke-width="2" />
-    <circle id="layoutcircle"    cx="-10" cy="-10" r="5"       fill="none" stroke="#000000" stroke-width="6" />
-    <circle id="layoutsunflower" cx="-10" cy="-10" r="5"                   stroke="#000000" stroke-width="2" />
-    <rect id="screen" x="0" y="0" width="{_w_}" height="{_h_}" opacity="0.05"
-          onmouseover="${{script('myOnMouseOver')}}"      onmouseout="${{script('myOnMouseOut')}}"
-          onmousedown="${{script('downSelect')}}"         onmousemove="${{script('myOnMouseMove')}}"
-          onmouseup="${{script('myOnMouseUp')}}" />
-    <text id="infostr" x="5"   y="{_h_-2}" fill="#000000" font-size="10px" pointer-events="none"></text>
-    <path id="allentitieslayer" d="" fill="#000000" fill-opacity="0.01" stroke="none"
-          onmouseover="${{script('myOnMouseOver')}}"      onmouseout="${{script('myOnMouseOut')}}"
-          onmousedown="${{script('downAllEntities')}}"    onmousemove="${{script('myOnMouseMove')}}"
-          onmouseup="${{script('myOnMouseUp')}}" />
-    <path id="selectionlayer" d="" fill="#ff0000" transform="" stroke="none"
-          onmouseover="${{script('myOnMouseOver')}}"      onmouseout="${{script('myOnMouseOut')}}"
-          onmousedown="${{script('downMove')}}"           onmousemove="${{script('myOnMouseMove')}}"
-          onmouseup="${{script('myOnMouseUp')}}" />
-    <text id="searchtext" x="{_w_//2}" y="{_h_-2}" text-anchor="middle" fill="#0000cc" font-size="11px" font-family="monospace" pointer-events="none"></text>
-    <g id="brushindicator" pointer-events="none"></g>
-    <g id="brushmodelabel" pointer-events="none"></g>
-    <g id="pickermenu" pointer-events="none"></g>
-</svg>
-"""
-    if use_webgpu:
-        _template_ = f"""
-<div id="gpuwrap" style="position:relative;width:{_w_}px;height:{_h_}px;">
-    <canvas id="gpucanvas" width="{_w_}" height="{_h_}" style="position:absolute;left:0;top:0;"></canvas>
-    {_svg_root_}
-</div>
-"""
-    else:
-        _template_ = _svg_root_
 
-    # GPU JS: install runtime + first paint on mount; re-render on gpu_payload change;
-    # any failure sets gpu_error so the Python watcher shows an error overlay (no SVG fallback)
-    _gpu_render_block_ = (f"""
-{P2S_GPU_JS}
-            if (!window.__P2S_GPU__.supported()) {{ data.gpu_error = 'WebGPU is not available in this browser.'; }}
-            else {{
-                window.__P2S_GPU__.render(gpucanvas, data.gpu_payload)
-                    .catch(function(e) {{ console.warn('p2s webgpu:', e); data.gpu_error = (e && e.message) ? e.message : String(e); }});
-            }}
-""") if use_webgpu else ''
-    _gpu_payload_script_ = ("""
-            if (window.__P2S_GPU__ && window.__P2S_GPU__.supported() && !data.gpu_error) {
-                window.__P2S_GPU__.render(gpucanvas, data.gpu_payload)
-                    .catch(function(e) { console.warn('p2s webgpu:', e); data.gpu_error = (e && e.message) ? e.message : String(e); });
-            }
-""") if use_webgpu else ''
-
-    # Picker-menu data + state, prepended to the render script. Built separately
-    # because the render script is a plain (non-f) string with JS brace literals.
-    #
-    # Menu items are [mnemonic, value, display, guarded].
-    #
-    #   value    -- what menuCommit sends back to Python; never annotated, or the label
-    #               would stop matching the registry key it selects.
-    #   display  -- what the user reads.  An operation that will stop to ask a question
-    #               says so here, so the cost is visible at the moment of choosing rather
-    #               than only after committing.
-    #   guarded  -- true for exactly those items, and it exempts them from the two ways
-    #               this menu commits without an explicit Enter: the single-character
-    #               mnemonic, and the 2.5 s inactivity timeout.  Pressing 'l' then '3'
-    #               used to start the force layout in two keystrokes with no confirmation
-    #               step at all.
-    #
-    def _annotate_(items, treatment_of, unit='nodes'):
-        _out_ = []
-        for _m_, _label_ in items:
-            _note_ = menu_annotation(treatment_of(_label_), unit)
-            _out_.append([_m_, _label_,
-                          f'{_label_}  ({_note_})' if _note_ else _label_,
-                          bool(_note_)])
-        return _out_
-
-    _operation_items_  = _annotate_(_LAYOUT_OP_MENU_, treatment_for)
-    _link_shape_menu_  = _annotate_([(m, l) for m, l in _link_shape_items_],
-                                    lambda lbl: FLOWMAP if lbl == 'flowmap' else None,
-                                    unit='edges')
-
-    _menu_init_js_ = (
-        "            state.menu_items = " + json.dumps({
-            'operation':    _operation_items_,
-            'mode':         [[m, l] for m, l in _LAYOUT_MODE_MENU_],
-            'background':   [[m, l] for m, l in _BACKGROUND_OP_MENU_],
-            'link_size':    _link_size_items_,
-            'link_opacity': _link_opacity_items_,
-            'node_size':    _node_size_items_,
-            'link_shape':   _link_shape_menu_,
-            'timing_spacing': _timing_spacing_items_,
-        }) + ";\n"
-        "            state.menu_open  = false; state.menu_kind = ''; state.menu_index = 0; state.menu_timer = null;\n"
-    )
-
-    # Dynamic Class
-    cls = type('LINKPI', (ReactiveHTML,), {
-        #
-        # Keyboard Commands
-        #
-        '_keyboard_commands_': _keyboard_commands_,
-        #
-        # Python Methods
-        #
-        '__init__':                           __init__,
-        **({'applyGpuError': applyGpuError} if use_webgpu else {}),
-        'saveLayout':                         saveLayout,
-        'loadLayout':                         loadLayout,
-        '__renderView__':                     __renderView__,
-        '__refreshView__':                    __refreshView__,
-        'display':                            display,
-        '_reconcileStack':                    _reconcileStack,
-        'replaceBaseDataframe':               replaceBaseDataframe,
-        'receiveSelection':                   receiveSelection,
-        '_extractNodes_':                     _extractNodes_,
-        '_matchNodesByRegex_':                _matchNodesByRegex_,
-        'selectEntities':                     selectEntities,
-        'selectedEntities':                   selectedEntities,
-        'selectedNodes':                      selectedNodes,
-        '_copyToClipboard_':                  _copyToClipboard_,
-        'updateLinkNodeParam':                updateLinkNodeParam,
-        '_applyLabelStateAcrossStack_':       _applyLabelStateAcrossStack_,
-        'labelModeCycle':                     labelModeCycle,
-        'nextLabelMode':                      nextLabelMode,
-        '__cacheNodePositions__':             __cacheNodePositions__,
-        'setSelectedEntitiesAndNotifyOthers': setSelectedEntitiesAndNotifyOthers,
-        '__buildLayoutRegistry__':            __buildLayoutRegistry__,
-        '__backgroundStateLabel__':           __backgroundStateLabel__,
-        '__applyBackgroundState__':           __applyBackgroundState__,
-        '__contractCollapsedGraph__':         __contractCollapsedGraph__,
-        '__expandContractedResult__':         __expandContractedResult__,
-        '__confirmGate__':                    __confirmGate__,
-        '__layoutOperation__':                __layoutOperation__,
-        'applyLayoutInteraction':             applyLayoutInteraction,
-        'applyMiddleOp':                      applyMiddleOp,
-        'applyWheelOp':                       applyWheelOp,
-        '_cancelRequested_':                   _cancelRequested_,
-        '_armCancel_':                         _armCancel_,
-        'applyCancel':                        applyCancel,
-        '_busy_':                             _busy_,
-        '_surfaceCostNote_':                  _surfaceCostNote_,
-        '_run_offloop_':                      _run_offloop_,
-        '_refreshViewOffloop_':               _refreshViewOffloop_,
-        '__setLinkNodeParam__':               __setLinkNodeParam__,
-        'popStack':                           popStack,
-        'setStackPostion':                    setStackPostion,
-        'pushStack':                          pushStack,
-        '_propagate_view_changes_':            _propagate_view_changes_,
-        '_select_by_attribute_at_mouse_':      _select_by_attribute_at_mouse_,
-        '_propagate_positions':               _propagate_positions,
-        'apply_drag_select':                  apply_drag_select,
-        'apply_move_selected':                apply_move_selected,
-        'apply_push_selected':                apply_push_selected,
-        'apply_pop':                          apply_pop,
-        'apply_collapse_edges':               apply_collapse_edges,
-        'apply_edge_unfilter':                apply_edge_unfilter,
-        'apply_node_expansion':               apply_node_expansion,
-        '_refilter_union_':                   _refilter_union_,
-        'apply_community_detection':          apply_community_detection,
-        'apply_collapse_to':                  apply_collapse_to,
-        'apply_layout_interaction':           apply_layout_interaction,
-        'apply_layout_operation':             apply_layout_operation,
-        'apply_undo':                         apply_undo,
-        'applyKeyOp':                         applyKeyOp,
-        '_doBrushAt':                         _doBrushAt,
-        'applyBrushOp':                       applyBrushOp,
-        'applyBrushLeave':                    applyBrushLeave,
-        'applyDragOp':                        applyDragOp,
-        'applyMoveOp':                        applyMoveOp,
-        'unselectedMoveOp':                   unselectedMoveOp,
-        'applySearchOp':                      applySearchOp,
-        'applyLayoutChoice':                  applyLayoutChoice,
-        '__buildBackgroundRegistry__':        __buildBackgroundRegistry__,
-        'applyBackgroundOperation':           applyBackgroundOperation,
-        'applyBackgroundChoice':              applyBackgroundChoice,
-        'applySizeChoice':                    applySizeChoice,
-        '__sizeLabelToValue__':               __sizeLabelToValue__,
-        #
-        # Panel Params
-        #
-    'mod_inner'                   : param.String(default=_svg_),
-    **({'gpu_payload': param.Dict(default=_gpu_payload_default_), 'gpu_error': param.String(default='')} if use_webgpu else {}),
-    'allentitiespath'             : param.String(default="M -100 -100 l 10 0 l 0 10 l -10 0 l 0 -10 Z"),
-    'selectionpath'               : param.String(default="M -100 -100 l 10 0 l 0 10 l -10 0 l 0 -10 Z"),
-    # info_str is deliberately NOT bound as ${info_str} in _template, and putting it
-    # back re-opens PLANNING.md U5.  A content binding -- ${p} between tags, as opposed
-    # to an attribute binding inside a tag -- registers the param as a ReactiveHTML
-    # *child*, and panel's _update_model then takes the `prop in child_params` branch
-    # (reactive.py ~2208): it sets new_children[prop], which re-renders the whole
-    # subtree.  Every JS-only variable dies with it -- an open picker menu loses
-    # menu_open/menu_index, the search buffer empties, brush_state resets to 0 -- and
-    # because Python rewrites info_str after almost every operation, that was happening
-    # constantly.  Unbound, info_str is an ordinary data param: the 'info_str' script
-    # below still writes infostr.innerHTML, so the line displays exactly as before, and
-    # nothing rebuilds.
-    #
-    # mod_inner cannot get the same treatment, which is why it is still bound.  Unbound
-    # params take the `isinstance(v, str)` branch instead (reactive.py ~2243) and are
-    # run through panel's HTML_SANITIZER, which strips SVG markup to the empty string --
-    # the plot would simply never draw.  Being a child is what exempts mod_inner from
-    # that, so it keeps both the exemption and the rebuild.  The rebuild is tolerable
-    # there because mod_inner only changes when the plot genuinely redraws.  Only a
-    # non-string carrier (param.Dict, as gpu_payload already does) would buy the same
-    # exemption without the rebuild; that is a wider change than U5 needs.
-    'info_str'                    : param.String(default=" | | grid"),
-    'layout_mode'                 : param.String(default="grid"),
-    'layout_operation'            : param.String(default="spring nx"),
-    'background_operation'        : param.String(default=_BACKGROUND_OP_MENU_[0][1]),
-    'background_op_seq'           : param.Integer(default=0),
-    'link_size_choice'            : param.String(default=_link_size_cur_),
-    'node_size_choice'            : param.String(default=_node_size_cur_),
-    'link_opacity_choice'         : param.String(default=_link_opacity_cur_),
-    'link_shape_choice'           : param.String(default=_link_shape_cur_),
-    'timing_spacing_choice'       : param.String(default=_timing_spacing_cur_),
-    'keyboardhelp_x'              : param.Integer(default=-1000),
-    'x0_middle'                   : param.Integer(default=0),
-    'y0_middle'                   : param.Integer(default=0),
-    'x1_middle'                   : param.Integer(default=0),
-    'y1_middle'                   : param.Integer(default=0),
-    'middle_op_finished'          : param.Boolean(default=False),
-    'wheel_x'                     : param.Integer(default=0),
-    'wheel_y'                     : param.Integer(default=0),
-    'wheel_rots'                  : param.Integer(default=0), # Mult by 10 and rounded...
-    'wheel_op_finished'           : param.Boolean(default=False),
-    'drag_op_finished'            : param.Boolean(default=False),
-    'drag_x0'                     : param.Integer(default=0),
-    'drag_y0'                     : param.Integer(default=0),
-    'drag_x1'                     : param.Integer(default=10),
-    'drag_y1'                     : param.Integer(default=10),
-    'allentities_x0'              : param.Integer(default=10),
-    'allentities_y0'              : param.Integer(default=10),
-    'unselected_move_op_finished' : param.Boolean(default=False),
-    'move_op_finished'            : param.Boolean(default=False),
-    'layout_shape'                : param.String(default=""),
-    'shiftkey'                    : param.Boolean(default=False),
-    'ctrlkey'                     : param.Boolean(default=False),
-    'last_key'                    : param.String(default=''),
-    'key_op_finished'             : param.String(default=''),
-    'cancel_seq'                  : param.Integer(default=0),
-    'x_mouse'                     : param.Integer(default=0),
-    'y_mouse'                     : param.Integer(default=0),
-    'has_focus'                   : param.Boolean(default=False),
-    'brushing_mode'               : param.Boolean(default=False),
-    'brush_state'                 : param.Integer(default=0),
-    'brush_changed'               : param.Integer(default=0),
-    'brush_leave_done'            : param.Boolean(default=False),
-    'search_str'                  : param.String(default=''),
-    'search_op_finished'          : param.Boolean(default=False),
-
-    #
-    # Panel Template
-    #
-    '_template': _template_,
-
-    #
-    # Panel Javascript Definitions
-    #
-    '_scripts': {
-        'render': _menu_init_js_ + """
-            mod.innerHTML            = data.mod_inner;
-            infostr.innerHTML        = data.info_str;
-            allentitieslayer.setAttribute("d", data.allentitiespath);
-            selectionlayer.setAttribute("d", data.selectionpath);
-            state.x0_drag            = state.y0_drag = -10;
-            state.x1_drag            = state.y1_drag =  -5;
-            // Only seed the mouse position on first render; this script re-runs
-            // on every refresh (e.g. after a 't' collapse pushes a new mod_inner),
-            // and clobbering cur_mouse back to 0 would make the next key op that
-            // reads it (e.g. a repeated 't') collapse to the upper-left corner
-            // until the mouse moves again and myOnMouseMove repopulates it.
-            if (state.cur_mouse_x === undefined) { state.cur_mouse_x = 0; }
-            if (state.cur_mouse_y === undefined) { state.cur_mouse_y = 0; }
-            data.has_focus           = false;
-            data.shiftkey            = false;
-            data.ctrlkey             = false;
-            state.drag_op            = false;
-            state.move_op            = false;
-            state.unselected_move_op = false;
-            state.layout_op          = false; // true if next mouse button 1 press is the begin of a layout
-            state.layout_line_flag   = false; // true if the shape will be overrode by the line version
-            state.layout_op_shape    = "";    // trigger field for python to peform the layout operation
-            data.middle_op_finished  = false;
-            data.move_op_finished    = false;
-            state.search_mode        = false;
-            state.search_buffer      = '';
-            data.brush_state         = 0;
-            data.brushing_mode       = false;
-            data.brush_changed       = 0;
-            state.last_brush_x       = -999;
-            state.last_brush_y       = -999;
-            state.brush_defs         = [null,['circle',5],['circle',15]];
-            state.brush_names        = ['','circ r=5','circ r=15'];
-
-            var _wheelFn_ = function(event) {
-                event.preventDefault();
-                data.wheel_x = event.offsetX; data.wheel_y = event.offsetY;
-                data.wheel_rots = Math.round(10*event.deltaY);
-                data.wheel_op_finished = true;
-            };
-            screen.addEventListener('wheel', _wheelFn_, {passive: false});
-            allentitieslayer.addEventListener('wheel', _wheelFn_, {passive: false});
-            selectionlayer.addEventListener('wheel', _wheelFn_, {passive: false});
-
-            // On macOS ctrl+click is a secondary click, so the browser raises a
-            // contextmenu (popup) during ctrl / shift-ctrl rectangular drags, which
-            // interrupts the drag and loses the selection (U1).  The generic
-            // _interactivep components have swallowed it since the original fix went
-            // in; LINKPI was missed -- which is why the bug outlived that fix, and on
-            // the component with by far the most dragging in it.
-            //
-            // Confirmed in a browser rather than argued about: contextmenu fires on
-            // both families, and arrived defaultPrevented only on the generic ones.
-            svgparent.addEventListener('contextmenu', function(event) {
-                event.preventDefault();
-            });
-""" + _gpu_render_block_ + """
-        """,
-
-        **({'gpu_payload': _gpu_payload_script_} if use_webgpu else {}),
-
-        'myOnMouseOver':"""
-                data.has_focus = true;
-                svgparent.focus();
-        """,
-
-        'updateBrushCursor': f"""
-                var _bs_ = data.brush_state;
-                if (_bs_ == 0) {{
-                    brushindicator.innerHTML = '';
-                    brushmodelabel.innerHTML = '';
-                    return;
-                }}
-                var _x_ = state.cur_mouse_x, _y_ = state.cur_mouse_y;
-                var _d_ = state.brush_defs[_bs_], _r_ = _d_[1];
-                var _s_ = 'stroke="rgba(100,150,255,0.8)" fill="none" pointer-events="none"';
-                brushindicator.innerHTML = '<circle cx="'+_x_+'" cy="'+_y_+'" r="'+_r_+'" '+_s_+' stroke-width="1.5"/>';
-                var _nm_ = state.brush_names[_bs_];
-                var _tw_ = _nm_.length * 6 + 10, _rx_ = {_w_} - _tw_ - 3;
-                brushmodelabel.innerHTML = '<rect x="'+_rx_+'" y="3" width="'+_tw_+'" height="15" rx="3" fill="rgba(100,150,255,0.3)" stroke="rgba(100,150,255,0.7)" stroke-width="0.5" pointer-events="none"/>'
-                    + '<text x="'+(_rx_+5)+'" y="14" font-size="10px" fill="rgba(40,60,200,1.0)" font-family="monospace" pointer-events="none">'+_nm_+'</text>';
-        """,
-
-        'myOnMouseOut':"""
-                // Ignore moves between this component's own hit layers.  #screen,
-                // #allentitieslayer and #selectionlayer are siblings that cover each
-                // other, so putting the pointer on a node fires mouseout on the layer
-                // being left -- which this handler read as "the mouse left the
-                // component".  The brush was therefore cleared at the very moment the
-                // pointer reached something worth brushing, and an open picker menu
-                // committed itself for the same reason (PLANNING.md U7).
-                //
-                // relatedTarget is where the pointer went; if that is still inside the
-                // component, nothing has been left.  It is null when the pointer leaves
-                // the window entirely, which is a real leave.
-                if (event.relatedTarget && svgparent.contains(event.relatedTarget)) { return; }
-                data.has_focus = false;
-                brushindicator.innerHTML = '';
-                if (data.brush_state > 0) { data.brush_leave_done = true; }
-                if (state.menu_open) { self.menuCommit(); }
-        """,
-
-        # ── picker menu (shift-W: layout operations, shift-G: layout modes) ──
-        # Modal JS state machine; nothing reaches Python until menuCommit writes
-        # data.layout_operation / data.layout_mode (select-only — 'w' / 'g'-drag
-        # still apply the choice).
-        'menuOpen':"""
-            var _items_   = state.menu_items[state.menu_kind];
-            var _current_ = (state.menu_kind == 'background')   ? data.background_operation
-                          : (state.menu_kind == 'operation')    ? data.layout_operation
-                          : (state.menu_kind == 'mode')         ? data.layout_mode
-                          : (state.menu_kind == 'link_size')    ? data.link_size_choice
-                          : (state.menu_kind == 'link_opacity') ? data.link_opacity_choice
-                          : (state.menu_kind == 'link_shape')   ? data.link_shape_choice
-                          : (state.menu_kind == 'timing_spacing') ? data.timing_spacing_choice
-                          :                                       data.node_size_choice;
-            state.menu_index = 0;
-            for (var _i_ = 0; _i_ < _items_.length; _i_++) {
-                if (_items_[_i_][1] == _current_) { state.menu_index = _i_; break; }
-            }
-            state.menu_open = true;
-            self.menuRender();
-            self.menuArmTimer();
-        """,
-        'menuRender':"""
-            if (!state.menu_open) { return; }
-            var _items_  = state.menu_items[state.menu_kind];
-            var _header_ = (state.menu_kind == 'background')   ? 'background:'
-                         : (state.menu_kind == 'operation')    ? 'layout operation:'
-                         : (state.menu_kind == 'mode')         ? 'layout mode:'
-                         : (state.menu_kind == 'link_size')    ? 'link size:'
-                         : (state.menu_kind == 'link_opacity') ? 'link opacity:'
-                         : (state.menu_kind == 'link_shape')   ? 'link shape:'
-                         : (state.menu_kind == 'timing_spacing') ? 'timing mark spacing (px):'
-                         :                                       'node size:';
-            var _maxlen_ = _header_.length;
-            for (var _i_ = 0; _i_ < _items_.length; _i_++) {
-                _maxlen_ = Math.max(_maxlen_, (_items_[_i_][2] || _items_[_i_][1]).length + 4);
-            }
-            var _w_menu_ = _maxlen_ * 7 + 20,
-                _h_menu_ = (_items_.length + 1) * 14 + 12,
-                _style_  = 'font-family: \\'Courier New\\', monospace; font-size: 11px; fill: #222;';
-            var _html_ = '<rect x="8" y="8" width="' + _w_menu_ + '" height="' + _h_menu_ + '"'
-                       + ' fill="rgba(240,240,240,0.95)" stroke="#888" stroke-width="1" rx="3"/>'
-                       + '<rect x="10" y="' + (8 + 1 + (state.menu_index + 1) * 14) + '" width="' + (_w_menu_ - 4) + '" height="13"'
-                       + ' fill="rgba(100,150,255,0.3)"/>'
-                       + '<text x="18" y="' + (8 + 12) + '" style="' + _style_ + ' font-weight: bold;">' + _header_ + '</text>';
-            for (var _i_ = 0; _i_ < _items_.length; _i_++) {
-                _html_ += '<text x="18" y="' + (8 + 12 + (_i_ + 1) * 14) + '" style="' + _style_ + '">'
-                        + '[' + _items_[_i_][0] + '] ' + (_items_[_i_][2] || _items_[_i_][1]) + '</text>';
-            }
-            pickermenu.innerHTML = _html_;
-        """,
-        'menuCommit':"""
-            var _lbl_ = state.menu_items[state.menu_kind][state.menu_index][1];
-            if      (state.menu_kind == 'background')   { data.background_operation = _lbl_;
-                                                          data.background_op_seq   = data.background_op_seq + 1; }
-            else if (state.menu_kind == 'operation')    { data.layout_operation   = _lbl_; }
-            else if (state.menu_kind == 'mode')         { data.layout_mode        = _lbl_; }
-            else if (state.menu_kind == 'link_size')    { data.link_size_choice    = _lbl_; }
-            else if (state.menu_kind == 'link_opacity') { data.link_opacity_choice = _lbl_; }
-            else if (state.menu_kind == 'link_shape')   { data.link_shape_choice   = _lbl_; }
-            else if (state.menu_kind == 'timing_spacing') { data.timing_spacing_choice = _lbl_; }
-            else                                        { data.node_size_choice    = _lbl_; }
-            self.menuClose();
-        """,
-        'menuClose':"""
-            if (state.menu_timer != null) { clearTimeout(state.menu_timer); }
-            state.menu_timer     = null;
-            state.menu_open      = false;
-            state.menu_kind      = '';
-            pickermenu.innerHTML = '';
-        """,
-        'menuArmTimer':"""
-            if (state.menu_timer != null) { clearTimeout(state.menu_timer); }
-            var _self_ = self;
-            state.menu_timer = setTimeout(function() {
-                if (!state.menu_open) { return; }
-                var _sel_ = state.menu_items[state.menu_kind][state.menu_index];
-                // Walking away from the menu must not start an expensive operation.  For a
-                // guarded item the timeout closes without committing; everything else commits
-                // as before.
-                if (_sel_ && _sel_[3]) { _self_.menuClose(); } else { _self_.menuCommit(); }
-            }, 2500);
-        """,
-
-        'myOnKeyDown':"""
-            event.stopPropagation();
-            if (state.search_mode) {
-                if (event.key === 'Enter') {
-                    if (state.search_buffer) {
-                        data.search_str = state.search_buffer;
-                        data.search_op_finished = !data.search_op_finished;
-                    }
-                    state.search_mode   = false;
-                    state.search_buffer = '';
-                    searchtext.textContent = '';
-                } else if (event.key === 'Escape') {
-                    state.search_mode   = false;
-                    state.search_buffer = '';
-                    searchtext.textContent = '';
-                } else if (event.key === 'Backspace') {
-                    state.search_buffer = state.search_buffer.slice(0, -1);
-                    searchtext.textContent = '/ ' + state.search_buffer + '▋';
-                } else if (event.key.length === 1) {
-                    state.search_buffer += event.key;
-                    searchtext.textContent = '/ ' + state.search_buffer + '▋';
-                }
-                return;
-            }
-            if (state.menu_open) {
-                event.preventDefault();
-                var _items_ = state.menu_items[state.menu_kind];
-                if      (event.key === 'Escape') { self.menuClose();  }
-                else if (event.key === 'Enter')  { self.menuCommit(); }
-                // !ctrlKey on W and G below is deliberate even though nothing tests ctrlKey
-                // for them any more: it keeps the chords deleted in U10 *inert* rather than
-                // silently cycling forward, which is the opposite of what they used to do.
-                else if (event.key === 'ArrowDown' || event.key === 'j' ||
-                         (event.key === 'W' && state.menu_kind === 'operation'    && !event.ctrlKey) ||
-                         (event.key === 'G' && state.menu_kind === 'mode'         && !event.ctrlKey) ||
-                         (event.key === 'L' && state.menu_kind === 'link_size')    ||
-                         (event.key === 'O' && state.menu_kind === 'link_opacity') ||
-                         (event.key === 'l' && state.menu_kind === 'link_shape'   && !event.ctrlKey) ||
-                         (event.key === 'A' && state.menu_kind === 'timing_spacing') ||
-                         (event.key === 'P' && state.menu_kind === 'node_size')) {
-                    state.menu_index = (state.menu_index + 1) % _items_.length;
-                    self.menuRender(); self.menuArmTimer();
-                }
-                // ctrl-shift-W and ctrl-shift-G used to reverse-cycle here and are gone
-                // (PLANNING.md U10).  ctrl-shift-W is a reserved chrome-level accelerator
-                // off macOS -- it CLOSES THE BROWSER WINDOW, and preventDefault() cannot
-                // reclaim what the page is never shown; ctrl-shift-G worked but went with
-                // it so the pure-reverse chords are gone as a class rather than leaving one
-                // survivor.  Nothing was lost: ArrowUp / k reverse every menu, which is what
-                // the generic _interactivep components have always done.  The clauses that
-                // remain below pair with a *ctrl entry point* (ctrl-l opens the link-size
-                // picker and steps back through it), and the audit measured all four as
-                // page-interceptable.
-                else if (event.key === 'ArrowUp' || event.key === 'k' ||
-                         (event.key === 'l' && state.menu_kind === 'link_size'    && event.ctrlKey) ||
-                         (event.key === 'o' && state.menu_kind === 'link_opacity' && event.ctrlKey) ||
-                         (event.key === 'a' && state.menu_kind === 'timing_spacing' && event.ctrlKey) ||
-                         (event.key === 'p' && state.menu_kind === 'node_size'    && event.ctrlKey)) {
-                    state.menu_index = (state.menu_index - 1 + _items_.length) % _items_.length;
-                    self.menuRender(); self.menuArmTimer();
-                }
-                else if (event.key.length === 1) {
-                    for (var _i_ = 0; _i_ < _items_.length; _i_++) {
-                        if (_items_[_i_][0] === event.key) {
-                            state.menu_index = _i_;
-                            // A guarded item is only SELECTED by its mnemonic; committing it
-                            // takes a deliberate Enter.  'l' then '3' used to start the force
-                            // layout in two keystrokes with nothing in between.
-                            if (_items_[_i_][3]) { self.menuRender(); self.menuArmTimer(); }
-                            else                 { self.menuCommit(); }
-                            break;
-                        }
-                    }
-                }
-                return;
-            }
-            data.ctrlkey  = event.ctrlKey;
-            data.shiftkey = event.shiftKey;
-            data.x_mouse  = state.cur_mouse_x;
-            data.y_mouse  = state.cur_mouse_y;
-
-            if      (event.key == "a" && !event.ctrlKey) { data.key_op_finished = 'a'; } // Toggle link arrows (on | off)
-            else if (event.key == "A" || (event.key == "a" && event.ctrlKey)) { if (event.ctrlKey) event.preventDefault(); state.menu_kind = 'timing_spacing'; self.menuOpen(); } // Open timing-mark spacing picker (shift-a forward, ctrl-a reverses)
-            else if (event.key == "b") { data.key_op_finished = 'b';  }  // Cycle background (none | background | background + labels)
-            else if (event.key == "B") { state.menu_kind = 'background'; self.menuOpen(); } // Open the background producer picker (committing runs it)
-            else if (event.key == "c") { if (event.ctrlKey) event.preventDefault(); data.key_op_finished = 'c';  } // (if selected) zoom to selected, else zoom to entire view; ctrl-c copies (suppress native copy so it can't clobber our clipboard write)
-            else if (event.key == "C") { if (event.ctrlKey) event.preventDefault(); data.key_op_finished = 'C';  } // Zoom to selected + neighbors; ctrl-shift-c copies labels
-            else if (event.key == "d") { data.key_op_finished = 'd';  } // Detect communities (louvain) & color nodes by community
-            else if (event.key == "D") { data.key_op_finished = 'D';  } // Clear the community colors
-            else if (event.key == "e") { if (event.ctrlKey) event.preventDefault(); data.key_op_finished = 'e';  } // Expand (undirected); ctrl-e expands along reversed directed edges (preventDefault: ctrl-e is browser search-bar focus)
-            else if (event.key == "E") { data.key_op_finished = 'E';  } // Expand (w/ digraph, forward)
-            else if (event.key == "f") { data.key_op_finished = 'f';  } // Edge unfilter: re-add base rows on the currently-visible edges
-            else if (event.key == "F") { data.key_op_finished = 'F';  } // Node expansion: re-add base rows incident to the currently-visible nodes
-            else if (event.key == "Escape") { data.cancel_seq = data.cancel_seq + 1; } // Ask the running layout to stop and keep its best-so-far result
-            else if (event.key == "g") { state.layout_op        = true; // Mouse press is layout shape
-                                         state.layout_line_flag = false; } 
-            else if (event.key == "G") { state.menu_kind = 'mode';      self.menuOpen(); } // Open the layout-mode picker menu
-            else if (event.key == "h") {
-                if (data.keyboardhelp_x == -1000) { data.keyboardhelp_x =     5; }
-                else                              { data.keyboardhelp_x = -1000; }
-            }
-            else if (event.key == "l" && !event.ctrlKey) { state.menu_kind = 'link_shape'; self.menuOpen(); } // Open the link-shape picker menu; 'l' cycles
-            else if (event.key == "L" || (event.key == "l" && event.ctrlKey)) { if (event.ctrlKey) event.preventDefault(); state.menu_kind = 'link_size';    self.menuOpen(); } // Cycle link size
-            else if (event.key == "O" || (event.key == "o" && event.ctrlKey)) { if (event.ctrlKey) event.preventDefault(); state.menu_kind = 'link_opacity'; self.menuOpen(); } // Cycle link opacity
-            else if (event.key == "P" || (event.key == "p" && event.ctrlKey)) { if (event.ctrlKey) event.preventDefault(); state.menu_kind = 'node_size';    self.menuOpen(); } // Cycle node size
-            else if (event.key == "n" ||                                // Select nodes with the same shape as the one under the mouse
-                     event.key == "N") { data.key_op_finished = 'n';  }
-            else if (event.key == "q") { data.key_op_finished = 'q';  } // Invert selection
-            else if (event.key == "Q") { data.key_op_finished = 'Q';  } // Select common neighbors to selected nodes
-            else if (event.key == "r") {                                // Toggle the radius brush on/off
-                if (data.brush_state == 0) { data.brush_state = 1; }
-                else                       { data.brush_state = 0; }
-                data.brushing_mode = data.brush_state > 0;
-                data.brush_changed += 1;
-                self.updateBrushCursor();
-            }
-            else if (event.key == "R") {                                // Cycle the brush radius (r=5 | r=15)
-                var _seq_ = [1, 2];
-                if (data.brush_state == 0) { data.brush_state = _seq_[0]; }
-                else {
-                    var _i_ = _seq_.indexOf(data.brush_state);
-                    data.brush_state = _seq_[(_i_ + 1) % _seq_.length];
-                }
-                data.brushing_mode = true;
-                data.brush_changed += 1;
-                self.updateBrushCursor();
-            }
-            else if (event.key == "s") { if (event.ctrlKey) event.preventDefault(); data.key_op_finished = 's';  } // Set sticky labels; ctrl-s cycles label mode (ctrl-s is browser Save Page As)
-            else if (event.key == "S") { if (event.ctrlKey) event.preventDefault(); data.key_op_finished = 'S';  } // Subtract selected from sticky labels; ctrl-shift-s cycles label mode
-            else if (event.key == "t") { data.key_op_finished = 't';  } // Collapse selected to a single point
-            else if (event.key == "T") { data.key_op_finished = 'T';  } // Horizontally collapse selected
-            else if (event.key == "u") { data.key_op_finished = 'u';  } // Undo last layout
-            // Vertical collapse.  It lives on an unmodified key because its old chord,
-            // ctrl-t, is reserved as new-tab off macOS and preventDefault() cannot
-            // reclaim a browser-chrome shortcut -- see PLANNING.md U2.
-            else if (event.key == "v") { data.key_op_finished = 'v';  } // Vertically collapse selected
-            else if (event.key == "w") { data.key_op_finished = 'w';  } // Apply layout operation
-            else if (event.key == "W") { state.menu_kind = 'operation'; self.menuOpen(); } // Open the layout-operation picker menu
-            else if (event.key == "x") { data.key_op_finished = 'x';  } // push the stack (remove the selected from the current graph)
-            else if (event.key == "X" && event.ctrlKey) { data.key_op_finished = 'ctrl_shift_x'; } // collapse edges to one row each (push the stack)
-            else if (event.key == "X") { data.key_op_finished = 'X';  } // pop the stack (add removed nodes back in)
-            else if (event.key == "y") { state.layout_op        = true; // Mouse press is layout line
-                                         state.layout_line_flag = true;  }
-            else if (event.key == "Y") { state.layout_op        = true; // Mouse press is layout line
-                                         state.layout_line_flag = true;  }
-            else if (event.key == "z" ||                                // Select nodes with the same color as the one under the mouse
-                     event.key == "Z") { data.key_op_finished = 'z';     }
-            else if (event.key == "1" || event.key == "!") { data.key_op_finished = '1';  }
-            else if (event.key == "2" || event.key == "@") { data.key_op_finished = '2';  }
-            else if (event.key == "3" || event.key == "#") { data.key_op_finished = '3';  }
-            else if (event.key == "4" || event.key == "$") { data.key_op_finished = '4';  }
-            else if (event.key == "5" || event.key == "%") { data.key_op_finished = '5';  }
-            else if (event.key == "6" || event.key == "^") { data.key_op_finished = '6';  }
-            else if (event.key == "7" || event.key == "&") { data.key_op_finished = '7';  }
-            else if (event.key == "8" || event.key == "*") { data.key_op_finished = '8';  }
-            else if (event.key == "9" || event.key == "(") { data.key_op_finished = '9';  }
-            else if (event.key == "0" || event.key == ")") { data.key_op_finished = '0';  }
-            else if (event.key == "/") {
-                state.search_mode   = true;
-                state.search_buffer = '';
-                searchtext.textContent = '/ ▋';
-            }
-
-            data.last_key = event.key;
-        """,
-        'myOnKeyUp':"""
-            event.stopPropagation();
-            if (state.menu_open) { return; }
-            // Hold the modifiers while a key operation is still in flight.  applyKeyOp
-            // runs asynchronously behind a lock and reads ctrlkey / shiftkey when it gets
-            // there, so clearing them the instant the user let go made a *tapped*
-            // ctrl-<key> arrive with the modifier already gone -- the handler took the
-            // unmodified branch, and ctrl-c zoomed the view instead of copying (U3).
-            //
-            // The release is not discarded, it is deferred: the key_op_finished script
-            // applies it as soon as Python reports the operation done.  Simply skipping
-            // the clear would leave the modifier stuck on until the next keydown, and the
-            // drag band -- which reads these to colour itself -- would name the wrong
-            // set-operation.
-            if (data.key_op_finished === '') {
-                data.ctrlkey  = event.ctrlKey;
-                data.shiftkey = event.shiftKey;
-            } else {
-                state.pending_mods = [event.ctrlKey, event.shiftKey];
-            }
-            if (event.key == "g" || event.key == "y" || event.key == "Y") { state.layout_op = state.layout_line_flag = false; }
-        """,
-        'key_op_finished':"""
-            // Python empties this when it has finished the operation; that is the moment
-            // a modifier release deferred by myOnKeyUp can safely be applied.  If a
-            // re-render has wiped state in between the release is simply lost, and the
-            // next keydown sets the modifiers correctly anyway.
-            if (data.key_op_finished === '' && state.pending_mods) {
-                data.ctrlkey  = state.pending_mods[0];
-                data.shiftkey = state.pending_mods[1];
-                state.pending_mods = null;
-            }
-        """,
-
-        'myOnMouseMove':"""
-            state.cur_mouse_x = event.offsetX;
-            state.cur_mouse_y = event.offsetY;
-            state.x1_drag     = event.offsetX;
-            state.y1_drag     = event.offsetY;
-            if (state.drag_op)               { self.myUpdateDragRect(); }
-            if (state.move_op)               { selectionlayer.setAttribute("transform", "translate(" + (state.x1_drag - state.x0_drag) + "," + (state.y1_drag - state.y0_drag) + ")"); }
-            if (state.unselected_move_op)    { selectionlayer.setAttribute("transform", "translate(" + (state.x1_drag - state.x0_drag) + "," + (state.y1_drag - state.y0_drag) + ")"); }
-            if (state.layout_op_shape != "") { self.myUpdateLayoutOp(); }
-            if (data.brush_state > 0) {
-                self.updateBrushCursor();
-                var _dx_ = event.offsetX - state.last_brush_x;
-                var _dy_ = event.offsetY - state.last_brush_y;
-                if (_dx_*_dx_ + _dy_*_dy_ >= 9) {   // throttle: re-brush only after ~3px of travel
-                    state.last_brush_x = event.offsetX;
-                    state.last_brush_y = event.offsetY;
-                    data.x_mouse       = event.offsetX;
-                    data.y_mouse       = event.offsetY;
-                    data.brush_changed += 1;
-                }
-            }
-        """,
-        'downAllEntities':"""
-            data.ctrlkey  = event.ctrlKey;
-            data.shiftkey = event.shiftKey;
-            if (event.button == 0) {
-                    data.allentities_x0      = event.offsetX; 
-                    data.allentities_y0      = event.offsetY; 
-                    state.x0_drag            = event.offsetX;                
-                    state.y0_drag            = event.offsetY;                
-                    state.x1_drag            = event.offsetX;
-                    state.y1_drag            = event.offsetY;
-                    state.unselected_move_op = true;
-                    var ex = event.offsetX, ey = event.offsetY;
-                    selectionlayer.setAttribute("d", "M " + (ex-5) + " " + (ey-5) + " l 10 0 l 0 10 l -10 0 z");
-                    selectionlayer.setAttribute("transform", "");
-            }
-        """,
-        'downSelect':"""
-            if (event.button == 0) {
-                state.x0_drag  = event.offsetX;
-                state.y0_drag  = event.offsetY;
-                state.x1_drag  = event.offsetX;
-                state.y1_drag  = event.offsetY;
-                if (state.layout_op) { 
-                    if (state.layout_line_flag) { 
-                        if      (data.ctrlkey)  { state.layout_op_shape = "v-line"; }
-                        else if (data.shiftkey) { state.layout_op_shape = "h-line"; }
-                        else                    { state.layout_op_shape = "line";   }
-                    }
-                    else                        { state.layout_op_shape = data.layout_mode; }
-                    self.myUpdateLayoutOp();
-                } else               { state.drag_op         = true;             self.myUpdateDragRect(); }
-            } else if (event.button == 1) {
-                data.x0_middle = data.x1_middle = event.offsetX;
-                data.y0_middle = data.y1_middle = event.offsetY;
-            }
-        """,
-        'downMove':"""
-            if (event.button == 0) {
-                state.x0_drag  = state.x1_drag  = event.offsetX;
-                state.y0_drag  = state.y1_drag  = event.offsetY;
-                state.move_op  = true;
-            } else if (event.button == 1) {
-                data.x0_middle = data.x1_middle = event.offsetX; 
-                data.y0_middle = data.y1_middle = event.offsetY;
-            }
-        """,
-        'myUpdateLayoutOp':"""
-            var dx = state.x1_drag - state.x0_drag,
-                dy = state.y1_drag - state.y0_drag;
-            var reset_circle = true, reset_sunflower = true, reset_rect = true, reset_line = true;
-            if        (state.layout_op_shape == "circle" ||
-                       state.layout_op_shape == "circle (color)") { reset_circle = false;
-                layoutcircle.setAttribute("cx", state.x0_drag);
-                layoutcircle.setAttribute("cy", state.y0_drag);
-                layoutcircle.setAttribute("r",  Math.sqrt(dx*dx + dy*dy));
-            } else if (state.layout_op_shape == "sunflower") { reset_sunflower = false;
-                layoutsunflower.setAttribute("cx", state.x0_drag);
-                layoutsunflower.setAttribute("cy", state.y0_drag);
-                layoutsunflower.setAttribute("r",  Math.sqrt(dx*dx + dy*dy));            
-            } else if (state.layout_op_shape == "grid" || 
-                       state.layout_op_shape == "grid (color)" || 
-                       state.layout_op_shape == "grid (color, clouds)" ||
-                       state.layout_op_shape == "rescale") { reset_rect = false;
-                layoutrect.setAttribute("x", Math.min(state.x0_drag, state.x1_drag));
-                layoutrect.setAttribute("y", Math.min(state.y0_drag, state.y1_drag));
-                layoutrect.setAttribute("width",  Math.abs(dx));
-                layoutrect.setAttribute("height", Math.abs(dy));
-            } else if (state.layout_op_shape == "line")    { reset_line = false;
-                layoutline.setAttribute("x1", state.x0_drag);
-                layoutline.setAttribute("y1", state.y0_drag);
-                layoutline.setAttribute("x2", state.x1_drag);
-                layoutline.setAttribute("y2", state.y1_drag);
-            } else if (state.layout_op_shape == "h-line")  { reset_line = false;
-                layoutline.setAttribute("x1", state.x0_drag);
-                layoutline.setAttribute("y1", state.y1_drag);
-                layoutline.setAttribute("x2", state.x1_drag);
-                layoutline.setAttribute("y2", state.y1_drag);
-            } else if (state.layout_op_shape == "v-line")  { reset_line = false;
-                layoutline.setAttribute("x1", state.x1_drag);
-                layoutline.setAttribute("y1", state.y0_drag);
-                layoutline.setAttribute("x2", state.x1_drag);
-                layoutline.setAttribute("y2", state.y1_drag);
-            } else { state.layout_op_shape == ""; }
-            if (reset_circle)    { layoutcircle   .setAttribute("cx", -10); layoutcircle   .setAttribute("cy", -10); layoutcircle   .setAttribute("r",      5); }
-            if (reset_sunflower) { layoutsunflower.setAttribute("cx", -10); layoutsunflower.setAttribute("cy", -10); layoutsunflower.setAttribute("r",      5); }
-            if (reset_rect)      { layoutrect     .setAttribute("x",  -10); layoutrect     .setAttribute("y",  -10); layoutrect     .setAttribute("width",  5);  layoutrect.setAttribute("height",  5); }
-            if (reset_line)      { layoutline     .setAttribute("x1", -10); layoutline     .setAttribute("y1", -10); layoutline     .setAttribute("x2",    -5);  layoutline.setAttribute("y2",     -5); }
-        """,
-        'myOnMouseUp':"""
-            if (event.button == 0) {
-                data.ctrlkey          = event.ctrlKey;
-                data.shiftkey         = event.shiftKey;
-                state.x1_drag         = event.offsetX;
-                state.y1_drag         = event.offsetY;
-                if (state.drag_op) {
-                    state.shiftkey        = event.shiftKey;
-                    state.drag_op         = false;
-                    self.myUpdateDragRect();
-                    data.drag_x0          = state.x0_drag; 
-                    data.drag_y0          = state.y0_drag; 
-                    data.drag_x1          = state.x1_drag; 
-                    data.drag_y1          = state.y1_drag;
-                    data.drag_op_finished = true;
-                } else if (state.move_op) {
-                    state.move_op         = false;
-                    data.drag_x0          = state.x0_drag; 
-                    data.drag_y0          = state.y0_drag; 
-                    data.drag_x1          = state.x1_drag; 
-                    data.drag_y1          = state.y1_drag;
-                    data.move_op_finished = true;                    
-                } else if (state.layout_op_shape != "") {
-                    data.drag_x0          = state.x0_drag; 
-                    data.drag_y0          = state.y0_drag; 
-                    data.drag_x1          = state.x1_drag; 
-                    data.drag_y1          = state.y1_drag;
-                    data.layout_shape     = state.layout_op_shape;
-                    state.layout_op_shape = "";
-                    self.myUpdateLayoutOp();
-                } else if (state.unselected_move_op) {
-                    data.ctrlkey  = event.ctrlKey;
-                    data.shiftkey = event.shiftKey;
-                    data.drag_x0  = state.x0_drag;
-                    data.drag_y0  = state.y0_drag;
-                    data.drag_x1  = state.x1_drag;
-                    data.drag_y1  = state.y1_drag;
-                    data.unselected_move_op_finished = true;
-                    state.unselected_move_op = false;
-                }
-            } else if (event.button == 1) {
-                data.x1_middle          = event.offsetX; 
-                data.y1_middle          = event.offsetY;
-                data.middle_op_finished = true;                
-            }
-        """,
-        'myOnMouseWheel':"""
-            event.preventDefault();
-            data.wheel_x = event.offsetX; data.wheel_y = event.offsetY; data.wheel_rots  = Math.round(10*event.deltaY);
-            data.wheel_op_finished = true;
-        """,
-        'mod_inner':"""
-            mod.innerHTML       = data.mod_inner;
-            infostr.innerHTML   = data.info_str;
-        """,
-        'allentitiespath':"""
-            allentitieslayer.setAttribute("d", data.allentitiespath);
-        """,
-        'selectionpath':"""
-            selectionlayer.setAttribute("d", data.selectionpath);
-            selectionlayer.setAttribute("transform", "");
-        """,
-        'info_str': """
-            infostr.innerHTML = data.info_str;
-        """,
-        'myUpdateDragRect':"""
-            if (state.drag_op) {
-                x = Math.min(state.x0_drag, state.x1_drag); 
-                y = Math.min(state.y0_drag, state.y1_drag);
-                w = Math.abs(state.x1_drag - state.x0_drag)
-                h = Math.abs(state.y1_drag - state.y0_drag)
-                drag.setAttribute('x',x);     drag.setAttribute('y',y);
-                drag.setAttribute('width',w); drag.setAttribute('height',h);
-                // shiftkey, not shftkey: the misspelling read undefined, so both shift
-                // branches were dead and the band drew the wrong colour for two of the
-                // four set-operations -- black for subtract and green for intersect,
-                // i.e. it named the operation the user was *not* about to perform
-                // (PLANNING.md U8).  The operations themselves were always correct;
-                // myOnMouseUp reads event.shiftKey off the event, which is why nothing
-                // else noticed.
-                if      (data.shiftkey && data.ctrlkey)  drag.setAttribute('stroke','#0000ff');
-                else if (data.shiftkey)                  drag.setAttribute('stroke','#ff0000');
-                else if (                data.ctrlkey)  drag.setAttribute('stroke','#00ff00');
-                else                                    drag.setAttribute('stroke','#000000');
-            } else {
-                drag.setAttribute('x',-10);   drag.setAttribute('y',-10);
-                drag.setAttribute('width',5); drag.setAttribute('height',5);
-            }
-        """
-    }
-
-    })
-    _cls_ref_[0] = cls
-    return cls(**kwargs)
+def linkpi(_linkp_, mvc=None, use_webgpu=False, **kwargs):
+    _cls_ = LINKPI_GPU if use_webgpu else LINKPI
+    return _cls_(_linkp_, mvc=mvc, use_webgpu=use_webgpu, **kwargs)
 
 _PLOT_TYPE_TO_WRAPPER_['LinkP'] = linkpi
 

@@ -474,7 +474,9 @@ class TestBackgroundOperationLifecycle(unittest.TestCase):
     def test_the_javascript_offers_the_picker(self):
         js = '\n'.join(str(v) for v in type(self.view)._scripts.values())
         self.assertIn("state.menu_kind = 'background'; self.menuOpen();", js)
-        self.assertIn('"background": [["f", "flow field (2 layers)"]', js)
+        # The menu contents are per view and reach the JS through the data model,
+        # so the entry is asserted on the param rather than on the script text.
+        self.assertEqual(self.view.menu_items['background'][0], ['f', 'flow field (2 layers)'])
         self.assertIn('data.background_op_seq   = data.background_op_seq + 1', js)
         # 'b' must still cycle visibility rather than opening the picker.
         self.assertIn('else if (event.key == "b") { data.key_op_finished = \'b\';  }', js)

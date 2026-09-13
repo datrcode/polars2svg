@@ -426,16 +426,24 @@ class TestLinkpiView(unittest.TestCase):
         return _P2S_.linkp(df=_DF_, relationships=[('fm', 'to')], pos=_POS_)
 
     def test_svg_mode_has_no_gpu_params(self):
+        # The WebGPU runtime and its params live on LINKPI_GPU; an SVG view must
+        # carry neither -- P2S_GPU_JS is ~14 KB shipped per view.
         from polars2svg.interactive_controller import linkpi
+        from polars2svg.p2s_webgpu_runtime import P2S_GPU_JS
         v = linkpi(self._linkp_())
         self.assertNotIn('gpu_payload', type(v).param)
+        self.assertNotIn('gpu_error', type(v).param)
         self.assertNotIn('gpucanvas', type(v)._template)
+        self.assertNotIn('gpucanvas', v._get_template()[1])
+        self.assertNotIn(P2S_GPU_JS, type(v)._scripts['render'])
+        self.assertNotIn('gpu_payload', type(v)._scripts)
 
     def test_gpu_mode_payload_and_canvas(self):
         from polars2svg.interactive_controller import linkpi
         v = linkpi(self._linkp_(), use_webgpu=True)
         self.assertIsInstance(v.gpu_payload, dict)
         self.assertIn('gpucanvas', type(v)._template)
+        self.assertIn('gpucanvas', v._get_template()[1])
         self.assertEqual(v.mod_inner, '')                       # plot is on the canvas
         self.assertIn('__P2S_GPU__', type(v)._scripts['render'])
         self.assertIn('gpu_payload', type(v)._scripts)
@@ -463,16 +471,24 @@ class TestSpreadlinepiView(unittest.TestCase):
         return _P2S_.spreadlinesp(_DF_, [('fm', 'to')], ego=_NODES_[0], time='ts')
 
     def test_svg_mode_has_no_gpu_params(self):
+        # The WebGPU runtime and its params live on SLPI_GPU; an SVG view must
+        # carry neither -- P2S_GPU_JS is ~14 KB shipped per view.
         from polars2svg.spreadlinepi import spreadlinepi
+        from polars2svg.p2s_webgpu_runtime import P2S_GPU_JS
         v = spreadlinepi(self._spread_())
         self.assertNotIn('gpu_payload', type(v).param)
+        self.assertNotIn('gpu_error', type(v).param)
         self.assertNotIn('gpucanvas', type(v)._template)
+        self.assertNotIn('gpucanvas', v._get_template()[1])
+        self.assertNotIn(P2S_GPU_JS, type(v)._scripts['render'])
+        self.assertNotIn('gpu_payload', type(v)._scripts)
 
     def test_gpu_mode_payload_and_canvas(self):
         from polars2svg.spreadlinepi import spreadlinepi
         v = spreadlinepi(self._spread_(), use_webgpu=True)
         self.assertIsInstance(v.gpu_payload, dict)
         self.assertIn('gpucanvas', type(v)._template)
+        self.assertIn('gpucanvas', v._get_template()[1])
         self.assertEqual(v.mod_inner, '')
         self.assertIn('__P2S_GPU__', type(v)._scripts['render'])
         self.assertIn('gpu_payload', type(v)._scripts)

@@ -242,6 +242,7 @@ class TestAnnotationCoverageRatchet(unittest.TestCase):
         'svg_contract':                           0,
         'p2s_colors_mixin':                       0,
         'p2s_interactive_mixin':                  0,
+        'p2s_reactive_base':                      0,
         'p2s_text_mixin':                         0,
         'circle_packer':                          0,
         'tile':                                   0,

@@ -1898,12 +1898,14 @@ class TestLINKPIPickerMenu(unittest.TestCase):
         self.assertIn('pickermenu', cls._template)
 
     def test_render_script_seeds_menu_items(self):
+        # The menus are per view now: the render script reads them out of the data
+        # model, so the labels have to be asserted on the param, not on the JS text.
         from polars2svg.interactive_controller import _LAYOUT_MODE_MENU_, _LAYOUT_OP_MENU_
-        cls = type(self._make_ctrl())
-        render = cls._scripts['render']
-        self.assertIn('state.menu_items', render)
+        ctrl = self._make_ctrl()
+        self.assertIn('state.menu_items = data.menu_items', type(ctrl)._scripts['render'])
+        _labels_ = {_i_[1] for _items_ in ctrl.menu_items.values() for _i_ in _items_}
         for _, label in _LAYOUT_OP_MENU_ + _LAYOUT_MODE_MENU_:
-            self.assertIn(label, render)
+            self.assertIn(label, _labels_)
 
     def test_menu_scripts_exist(self):
         cls = type(self._make_ctrl())
@@ -2082,30 +2084,22 @@ class TestLINKPISizeCycleMenus(unittest.TestCase):
         ctrl   = self._make_ctrl(link_size=2, node_size=4.5)
         self.assertEqual(ctrl.link_size_choice, '2')
         self.assertEqual(ctrl.node_size_choice, '4.5')
-        render = type(ctrl)._scripts['render']
-        self.assertIn('"link_size"', render)
+        self.assertIn('link_size', ctrl.menu_items)
         # the hardcoded values appear as menu labels
-        self.assertIn('"2"', render)
-        self.assertIn('"4.5"', render)
+        self.assertIn('2',   [lbl for _, lbl in ctrl.menu_items['link_size']])
+        self.assertIn('4.5', [lbl for _, lbl in ctrl.menu_items['node_size']])
 
     def test_named_sizes_do_not_inject_arbitrary_numbers(self):
         # With named sizes only, the size menus carry no numeric labels.
-        import json, re
         ctrl   = self._make_ctrl()  # defaults: link 'small', node 'medium'
-        render = type(ctrl)._scripts['render']
-        m      = re.search(r'state\.menu_items = (\{.*?\});', render, re.S)
-        self.assertIsNotNone(m)
-        items  = json.loads(m.group(1))
+        items  = ctrl.menu_items
         for kind in ('link_size', 'node_size'):
             labels = [lbl for _, lbl in items[kind]]
             self.assertEqual(labels, ['none', 'nil', 'small', 'medium', 'large', 'vary'])
 
     def test_opacity_menu_is_ten_to_hundred_grid(self):
-        import json, re
         ctrl   = self._make_ctrl()
-        render = type(ctrl)._scripts['render']
-        items  = json.loads(re.search(r'state\.menu_items = (\{.*?\});', render, re.S).group(1))
-        labels = [lbl for _, lbl in items['link_opacity']]
+        labels = [lbl for _, lbl in ctrl.menu_items['link_opacity']]
         self.assertEqual(labels, [str(p) for p in range(10, 101, 10)])
 
     # ── 'l' opens the link-shape picker (line | curve | flowmap) ──────────────
@@ -2121,9 +2115,7 @@ class TestLINKPISizeCycleMenus(unittest.TestCase):
         self.assertEqual(ctrl.link_shape_choice, 'curve')
 
     def _menu_items(self, ctrl):
-        import json, re
-        render = type(ctrl)._scripts['render']
-        return json.loads(re.search(r'state\.menu_items = (\{.*?\});', render, re.S).group(1))
+        return ctrl.menu_items
 
     def test_link_shape_menu_lists_all_shapes(self):
         # Items are [mnemonic, value, display, guarded]; the VALUE is what round-trips to
@@ -2194,9 +2186,9 @@ class TestLINKPISizeCycleMenus(unittest.TestCase):
 
     # ── template / script wiring ──────────────────────────────────────────────
     def test_render_script_seeds_new_menu_kinds(self):
-        render = type(self._make_ctrl())._scripts['render']
-        for kind in ('"link_size"', '"link_opacity"', '"node_size"', '"link_shape"'):
-            self.assertIn(kind, render)
+        _items_ = self._make_ctrl().menu_items
+        for kind in ('link_size', 'link_opacity', 'node_size', 'link_shape'):
+            self.assertIn(kind, _items_)
 
     def test_commit_script_handles_new_kinds(self):
         commit = type(self._make_ctrl())._scripts['menuCommit']
@@ -2235,10 +2227,7 @@ class TestLINKPITimingSpacingPicker(unittest.TestCase):
         return linkpi(linkp)
 
     def _menu_items(self, ctrl, kind):
-        import json, re
-        render = type(ctrl)._scripts['render']
-        items  = json.loads(re.search(r'state\.menu_items = (\{.*?\});', render, re.S).group(1))
-        return items[kind]
+        return ctrl.menu_items[kind]
 
     # ── default selection + pixel grid ────────────────────────────────────────
     def test_default_choice_is_one_pixel(self):
@@ -2270,7 +2259,7 @@ class TestLINKPITimingSpacingPicker(unittest.TestCase):
 
     # ── template / script wiring ──────────────────────────────────────────────
     def test_render_script_seeds_timing_spacing_kind(self):
-        self.assertIn('"timing_spacing"', type(self._make_ctrl())._scripts['render'])
+        self.assertIn('timing_spacing', self._make_ctrl().menu_items)
 
     def test_commit_script_handles_timing_spacing(self):
         self.assertIn('timing_spacing_choice', type(self._make_ctrl())._scripts['menuCommit'])

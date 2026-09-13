@@ -1,7 +1,7 @@
 from typing import Any
 import polars as pl
 import param
-from panel.reactive import ReactiveHTML
+from .p2s_reactive_base import P2SReactiveHTML
 
 from . import od_flow_layout as _ofl_
 
@@ -175,15 +175,196 @@ def _stackKeyboardHelpSvg_() -> str:
 _STACK_HELP_SVG_ = _stackKeyboardHelpSvg_()
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Panel template / JS -- static text on the class.
+#
+# The help box is wider than the (narrow) widget, so the root <svg> needs
+# overflow:visible for it to show in full when open.  That means the help must
+# be *hidden by not rendering it* (display:none) rather than parked off-screen —
+# an off-screen copy would spill past the widget's left edge into the
+# neighbouring component instead of being clipped away.
+#
+# {{ svg_w }} / {{ svg_h }} are jinja: ReactiveHTML._get_template() renders the
+# template once per instance with that instance's params, so one compiled class
+# serves every widget size.  _STACK_HELP_SVG_ is a module constant and is
+# concatenated in once, here.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_STACK_CONTROL_TEMPLATE_ = (
+    '<svg id="svgstackcontrol" width="{{ svg_w }}" height="{{ svg_h }}" tabindex="0"'
+    ' style="overflow: visible;" onkeydown="${script(\'myOnKeyDown\')}">'
+    '<svg id="mod" width="{{ svg_w }}" height="{{ svg_h }}">${mod_inner}</svg>'
+    '<g id="keyboardhelp" transform="translate(5 0)" display="${help_display}">'
+    + _STACK_HELP_SVG_ +
+    '</g>'
+    '<rect id="screen" x="0" y="0" width="{{ svg_w }}" height="{{ svg_h }}" opacity="0"'
+    ' style="cursor:pointer;" onclick="${script(\'myOnClick\')}"'
+    ' onmouseover="${script(\'focusSelf\')}" />'
+    '</svg>'
+)
+
+_STACK_CONTROL_SCRIPTS_ = {
+    'render':    'mod.innerHTML = data.mod_inner;',
+    'mod_inner': 'mod.innerHTML = data.mod_inner;',
+    'myOnClick': 'data.click_y = Math.round(event.offsetY); data.click_op_finished = !data.click_op_finished;',
+    # grab focus on hover so the widget receives key events (matches the
+    # other interactive components)
+    'focusSelf': 'svgstackcontrol.focus();',
+    # 'h' toggles the help overlay (JS-only, shown/hidden via display);
+    # 'c' collapses to base+current; ctrl+shift+c rebases the visible
+    # dataframe as the new base.  Both ops funnel through key_op_finished,
+    # which the Python watcher reads & resets.
+    'myOnKeyDown': (
+        "event.stopPropagation();\n"
+        "var k = event.key;\n"
+        "if (k === 'h') {\n"
+        "    data.help_display = (data.help_display === 'none') ? 'inline' : 'none';\n"
+        "    event.preventDefault();\n"
+        "} else if ((k === 'c' || k === 'C') && event.ctrlKey && event.shiftKey) {\n"
+        "    data.key_op_finished = 'rebase';\n"
+        "    event.preventDefault();\n"
+        "} else if (k === 'c' && !event.ctrlKey && !event.shiftKey && !event.altKey && !event.metaKey) {\n"
+        "    data.key_op_finished = 'collapse';\n"
+        "    event.preventDefault();\n"
+        "}"
+    ),
+}
+
+
+class STACKCONTROLI(P2SReactiveHTML):
+    """Stack navigator widget.
+
+    One static class for every widget size: ``svg_w`` / ``svg_h`` are params the
+    jinja template reads, so this no longer needs to be built per call with
+    ``type()``.  The frame renderer stays a closure built by
+    :func:`stack_controli` (it carries the geometry settled there) and is handed
+    to the instance rather than captured by a generated class.
+    """
+
+    svg_w:             Any = param.Integer(default=0)
+    svg_h:             Any = param.Integer(default=0)
+    mod_inner:         Any = param.String(default='')
+    click_y:           Any = param.Integer(default=0)
+    click_op_finished: Any = param.Boolean(default=False)
+    key_op_finished:   Any = param.String(default='')
+    help_display:      Any = param.String(default='none')
+
+    _template = _STACK_CONTROL_TEMPLATE_
+    _scripts  = _STACK_CONTROL_SCRIPTS_
+
+    def __init__(self, wxh: tuple, stack_name: str, render_svg_content: Any,
+                 initial_svg: str, initial_frame_map: list, initial_cache: dict,
+                 **kwargs: Any) -> None:
+        mvc = kwargs.pop('mvc', None)
+        super().__init__(svg_w=wxh[0], svg_h=wxh[1], **kwargs)
+        # mod_inner is a content binding (a ReactiveHTML child), so it cannot be
+        # passed to super(); P2SReactiveHTML._init_params puts this value into
+        # the data model for first paint.
+        self.mod_inner            = initial_svg
+        self.wxh                  = wxh       # read by _sketch_placeholder_html()
+        self._stack_name_         = stack_name
+        self._render_svg_content_ = render_svg_content
+        self.mvc                  = mvc
+        self._frame_map_          = list(initial_frame_map)
+        self._svg_cache_          = dict(initial_cache)
+        if mvc is not None:
+            mvc.view_stack[id(self)] = stack_name
+            mvc.view_refs[id(self)]  = self
+            if stack_name in mvc.stacks:
+                s = mvc.stacks[stack_name]
+                svg, fm          = self._render_svg_content_(s['dfs'], s['index'], self._svg_cache_)
+                self.mod_inner   = svg
+                self._frame_map_ = fm
+        self.param.watch(self.applyClickOp, 'click_op_finished')
+        self.param.watch(self.applyKeyOp,   'key_op_finished')
+
+    # _broadcastStackChange() — push the (already mutated) stack out to every view
+    # registered on the same stack name, so peers re-render in lock-step.  Shared
+    # by the click handler and the keyboard ops below.
+    async def _broadcastStackChange(self, sn: str, df: pl.DataFrame, dfs: list, index: int) -> None:
+        for vid, vsn in self.mvc.view_stack.items():
+            if vsn == sn:
+                view = self.mvc.view_refs.get(vid)
+                if view is not None:
+                    await view.display(df, dfs, index)
+
+    async def applyClickOp(self, event: Any) -> None:
+        cy  = self.click_y
+        idx = None
+        for (y_top, y_bot, stack_idx) in self._frame_map_:
+            if y_top <= cy < y_bot:
+                idx = stack_idx
+                break
+        if idx is None or self.mvc is None:
+            return
+        sn = self.mvc.view_stack.get(id(self))
+        if sn is None:
+            return
+        s = self.mvc.stacks.get(sn)
+        if s is None or idx < 0 or idx >= len(s['dfs']):
+            return
+        s['index'] = idx
+        await self._broadcastStackChange(sn, s['dfs'][idx], s['dfs'], idx)
+
+    # applyKeyOp() — keyboard shortcuts routed from myOnKeyDown.  The 'h' help
+    # toggle lives entirely in JS (it just flips help_display); only the two
+    # stack-collapsing ops need Python:
+    #   'collapse' (c)            -> drop every frame except the base and the
+    #                                currently visible one, leaving [base, current]
+    #                                (or just [base] when the base itself is visible)
+    #   'rebase'   (ctrl+shift+c) -> discard the whole stack and make the visible
+    #                                dataframe the new base, leaving [current]
+    async def applyKeyOp(self, event: Any) -> None:
+        _op_ = self.key_op_finished
+        if _op_:
+            self.key_op_finished = ''      # reset so an identical next press re-fires
+        if not _op_ or self.mvc is None:
+            return
+        sn = self.mvc.view_stack.get(id(self))
+        if sn is None:
+            return
+        s = self.mvc.stacks.get(sn)
+        if s is None or not s['dfs']:
+            return
+        idx = s['index']
+        if idx < 0 or idx >= len(s['dfs']):
+            return
+        base_df, cur_df = s['dfs'][0], s['dfs'][idx]
+        # A stale tile can no longer be served for the kept frame: the tile cache
+        # is identity-guarded (see _add_frame), so a reused id re-renders rather
+        # than reusing a since-freed frame's render.
+        if _op_ == 'collapse':
+            new_dfs = [base_df] if cur_df is base_df else [base_df, cur_df]
+            new_idx = len(new_dfs) - 1
+            s['dfs'], s['index'] = new_dfs, new_idx
+            await self._broadcastStackChange(sn, new_dfs[new_idx], new_dfs, new_idx)
+        elif _op_ == 'rebase':
+            await self.mvc.replaceStack(self, cur_df)
+
+    async def display(self, df: pl.DataFrame, dfs: list, dfs_index: int) -> None:
+        if df is not dfs[dfs_index]:
+            return
+        svg, fm          = self._render_svg_content_(dfs, dfs_index, self._svg_cache_)
+        self.mod_inner   = svg
+        self._frame_map_ = fm
+        _ids_ = {id(d) for d in dfs}
+        for _id_ in list(self._svg_cache_.keys()):
+            if _id_ not in _ids_:
+                del self._svg_cache_[_id_]
+
+    def sketchHtml(self, use_webgpu: bool = False) -> str | None:
+        # Static snapshot for panelizeSketch(): the current stack frame already
+        # lives in mod_inner as a complete <svg>...</svg>, so reuse it verbatim.
+        return self.mod_inner or None
+
+
+
 def stack_controli(component: Any, stack_name: str = 'default', insets: tuple = (2, 2), hgap: int = 4,
                    wxh: tuple = (160, 256), txt_h: int = 10, **kwargs: Any) -> Any:
     w, h   = wxh
     wc, hc = component.wxh
     x0_val     = insets[0]
     inset_y_val = insets[1]
-    # One-element cell holding the class that `type()` builds below; filled after
-    # construction, so the checker cannot infer anything but None from the literal.
-    _cls_ref_: list = [None]
     _mlx_avail_, _cuda_avail_ = _mlxCudaStatus_()
     _row_txt_h_ = int(min(10, max(1, (hc - 4) / 2)))
 
@@ -340,12 +521,13 @@ def stack_controli(component: Any, stack_name: str = 'default', insets: tuple = 
         _svg_.append('</svg>')
         return ''.join(_svg_), frame_map
 
-    # Pre-compute the initial SVG so it becomes the class-level param default.
-    # Panel seeds the JS data object from class defaults, not __init__ instance
-    # assignments, so the render script sees the real content on first paint —
-    # if mvc already carries a populated stack, the default must reflect it too,
-    # or the browser paints just the base frame no matter what __init__ assigns.
-    # Also pre-populate the tile cache for the base df so __init__ starts warm.
+    # Pre-compute the initial SVG so the widget paints its real content on the
+    # first frame.  It reaches the browser through
+    # P2SReactiveHTML._init_params(), which seeds the data model with this
+    # instance's child values -- ReactiveHTML itself would leave data.mod_inner
+    # at the class default.  If mvc already carries a populated stack the
+    # initial render must reflect it too, or the browser paints just the base
+    # frame.  Also pre-populates the tile cache so __init__ starts warm.
     _initial_mvc_ = kwargs.get('mvc')
     if _initial_mvc_ is not None and stack_name in _initial_mvc_.stacks:
         _initial_stack_ = _initial_mvc_.stacks[stack_name]
@@ -355,156 +537,10 @@ def stack_controli(component: Any, stack_name: str = 'default', insets: tuple = 
     _initial_cache_: dict = {}
     _initial_svg_, _initial_frame_map_ = _render_svg_content(_initial_dfs_, _initial_index_, _initial_cache_)
 
-    def __init__(self: Any, **kwargs: Any) -> None:
-        mvc = kwargs.pop('mvc', None)
-        super(_cls_ref_[0], self).__init__(**kwargs)
-        self.mvc         = mvc
-        self._frame_map_ = list(_initial_frame_map_)
-        self._svg_cache_ = dict(_initial_cache_)
-        if mvc is not None:
-            mvc.view_stack[id(self)] = stack_name
-            mvc.view_refs[id(self)]  = self
-            if stack_name in mvc.stacks:
-                s = mvc.stacks[stack_name]
-                svg, fm          = _render_svg_content(s['dfs'], s['index'], self._svg_cache_)
-                self.mod_inner   = svg
-                self._frame_map_ = fm
-        self.param.watch(self.applyClickOp, 'click_op_finished')
-        self.param.watch(self.applyKeyOp,   'key_op_finished')
 
-    # _broadcastStackChange() — push the (already mutated) stack out to every view
-    # registered on the same stack name, so peers re-render in lock-step.  Shared
-    # by the click handler and the keyboard ops below.
-    async def _broadcastStackChange(self: Any, sn: str, df: pl.DataFrame, dfs: list, index: int) -> None:
-        for vid, vsn in self.mvc.view_stack.items():
-            if vsn == sn:
-                view = self.mvc.view_refs.get(vid)
-                if view is not None:
-                    await view.display(df, dfs, index)
-
-    async def applyClickOp(self: Any, event: Any) -> None:
-        cy  = self.click_y
-        idx = None
-        for (y_top, y_bot, stack_idx) in self._frame_map_:
-            if y_top <= cy < y_bot:
-                idx = stack_idx
-                break
-        if idx is None or self.mvc is None:
-            return
-        sn = self.mvc.view_stack.get(id(self))
-        if sn is None:
-            return
-        s = self.mvc.stacks.get(sn)
-        if s is None or idx < 0 or idx >= len(s['dfs']):
-            return
-        s['index'] = idx
-        await self._broadcastStackChange(sn, s['dfs'][idx], s['dfs'], idx)
-
-    # applyKeyOp() — keyboard shortcuts routed from myOnKeyDown.  The 'h' help
-    # toggle lives entirely in JS (it just flips help_display); only the two
-    # stack-collapsing ops need Python:
-    #   'collapse' (c)            -> drop every frame except the base and the
-    #                                currently visible one, leaving [base, current]
-    #                                (or just [base] when the base itself is visible)
-    #   'rebase'   (ctrl+shift+c) -> discard the whole stack and make the visible
-    #                                dataframe the new base, leaving [current]
-    async def applyKeyOp(self: Any, event: Any) -> None:
-        _op_ = self.key_op_finished
-        if _op_:
-            self.key_op_finished = ''      # reset so an identical next press re-fires
-        if not _op_ or self.mvc is None:
-            return
-        sn = self.mvc.view_stack.get(id(self))
-        if sn is None:
-            return
-        s = self.mvc.stacks.get(sn)
-        if s is None or not s['dfs']:
-            return
-        idx = s['index']
-        if idx < 0 or idx >= len(s['dfs']):
-            return
-        base_df, cur_df = s['dfs'][0], s['dfs'][idx]
-        # A stale tile can no longer be served for the kept frame: the tile cache
-        # is identity-guarded (see _add_frame), so a reused id re-renders rather
-        # than reusing a since-freed frame's render.
-        if _op_ == 'collapse':
-            new_dfs = [base_df] if cur_df is base_df else [base_df, cur_df]
-            new_idx = len(new_dfs) - 1
-            s['dfs'], s['index'] = new_dfs, new_idx
-            await self._broadcastStackChange(sn, new_dfs[new_idx], new_dfs, new_idx)
-        elif _op_ == 'rebase':
-            await self.mvc.replaceStack(self, cur_df)
-
-    async def display(self: Any, df: pl.DataFrame, dfs: list, dfs_index: int) -> None:
-        if df is not dfs[dfs_index]:
-            return
-        svg, fm          = _render_svg_content(dfs, dfs_index, self._svg_cache_)
-        self.mod_inner   = svg
-        self._frame_map_ = fm
-        _ids_ = {id(d) for d in dfs}
-        for _id_ in list(self._svg_cache_.keys()):
-            if _id_ not in _ids_:
-                del self._svg_cache_[_id_]
-
-    def sketchHtml(self: Any, use_webgpu: bool = False) -> str | None:
-        # Static snapshot for panelizeSketch(): the current stack frame already
-        # lives in mod_inner as a complete <svg>...</svg>, so reuse it verbatim.
-        return self.mod_inner or None
-
-    cls = type('STACKCONTROLI', (ReactiveHTML,), {
-        'mod_inner':         param.String(default=_initial_svg_),
-        'click_y':           param.Integer(default=0),
-        'click_op_finished': param.Boolean(default=False),
-        'key_op_finished':   param.String(default=''),
-        'help_display':      param.String(default='none'),
-        'wxh':               wxh,
-        # The help box is wider than the (narrow) widget, so the root <svg> needs
-        # overflow:visible for it to show in full when open.  That means the help
-        # must be *hidden by not rendering it* (display:none) rather than parked
-        # off-screen — an off-screen copy would spill past the widget's left edge
-        # into the neighbouring component instead of being clipped away.
-        '_template': (
-            f'<svg id="svgstackcontrol" width="{w}" height="{h}" tabindex="0"'
-            f' style="overflow: visible;" onkeydown="${{script(\'myOnKeyDown\')}}">'
-            f'<svg id="mod" width="{w}" height="{h}">${{mod_inner}}</svg>'
-            f'<g id="keyboardhelp" transform="translate(5 0)" display="${{help_display}}">{_STACK_HELP_SVG_}</g>'
-            f'<rect id="screen" x="0" y="0" width="{w}" height="{h}" opacity="0"'
-            f' style="cursor:pointer;" onclick="${{script(\'myOnClick\')}}"'
-            f' onmouseover="${{script(\'focusSelf\')}}" />'
-            f'</svg>'
-        ),
-        '_scripts': {
-            'render':    'mod.innerHTML = data.mod_inner;',
-            'mod_inner': 'mod.innerHTML = data.mod_inner;',
-            'myOnClick': 'data.click_y = Math.round(event.offsetY); data.click_op_finished = !data.click_op_finished;',
-            # grab focus on hover so the widget receives key events (matches the
-            # other interactive components)
-            'focusSelf': 'svgstackcontrol.focus();',
-            # 'h' toggles the help overlay (JS-only, shown/hidden via display);
-            # 'c' collapses to base+current; ctrl+shift+c rebases the visible
-            # dataframe as the new base.  Both ops funnel through key_op_finished,
-            # which the Python watcher reads & resets.
-            'myOnKeyDown': (
-                "event.stopPropagation();\n"
-                "var k = event.key;\n"
-                "if (k === 'h') {\n"
-                "    data.help_display = (data.help_display === 'none') ? 'inline' : 'none';\n"
-                "    event.preventDefault();\n"
-                "} else if ((k === 'c' || k === 'C') && event.ctrlKey && event.shiftKey) {\n"
-                "    data.key_op_finished = 'rebase';\n"
-                "    event.preventDefault();\n"
-                "} else if (k === 'c' && !event.ctrlKey && !event.shiftKey && !event.altKey && !event.metaKey) {\n"
-                "    data.key_op_finished = 'collapse';\n"
-                "    event.preventDefault();\n"
-                "}"
-            ),
-        },
-        '__init__':              __init__,
-        'display':               display,
-        'applyClickOp':          applyClickOp,
-        'applyKeyOp':            applyKeyOp,
-        '_broadcastStackChange': _broadcastStackChange,
-        'sketchHtml':            sketchHtml,
-    })
-    _cls_ref_[0] = cls
-    return cls(**kwargs)
+    return STACKCONTROLI(wxh=wxh, stack_name=stack_name,
+                         render_svg_content=_render_svg_content,
+                         initial_svg=_initial_svg_,
+                         initial_frame_map=_initial_frame_map_,
+                         initial_cache=_initial_cache_,
+                         **kwargs)

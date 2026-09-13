@@ -484,6 +484,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Every interactive Panel view is a static class; nothing is built with
+  `type()` per call any more.** `xypi` / `histopi` / `timepi` / `chordpi` /
+  `piepi` / `linkpi` / `smallpi` / `spreadlinepi` / `stack_controli` each
+  construct one compiled `ReactiveHTML` subclass at import instead of a fresh one
+  per view. Same classes, same names (`XYPI`, `LINKPI`, …), same rendered
+  template — verified byte-for-byte across 33 component/size/render-mode
+  combinations — and the same DOM ids, so nothing downstream moves.
+
+  The comment this was built on was wrong: a `ReactiveHTML` subclass does *not*
+  fix its width and height at class-compile time. `_template` is re-rendered per
+  instance by `ReactiveHTML._get_template()`, which runs it through jinja2 with
+  every param of that instance in the context, so `{{ svg_w }}` resolves per
+  view. What genuinely needed the dynamic class was narrower and is now handled
+  by `P2SReactiveHTML._init_params()` (`polars2svg/p2s_reactive_base.py`):
+  `mod_inner` is a `${…}` binding *between* tags, which makes it a ReactiveHTML
+  **child**, and `_init_params()` drops children from the data model it builds —
+  so `data.mod_inner` starts at the param's **class** default while every later
+  write goes through raw. Baking the plot into that class default is what
+  `type()` bought; seeding the data model with the instance's own child values
+  buys the same thing without a class per view. The value has to arrive raw:
+  ordinary string params go through Panel's HTML sanitizer, which strips an SVG
+  to nothing (3663 bytes to 104 on a measured `xyp` render). `tests/
+  test_reactive_first_paint.py` locks all of it down — it fails on a blank or
+  sanitized first frame, and on a class built per call.
+
+  Consequences worth knowing:
+
+  - Each `type()` call permanently registered a bokeh `DataModel`
+    (`LINKPI1`, `LINKPI2`, …) that was never reclaimed, so a long notebook
+    session leaked one model class per view. Constructing views now adds none.
+  - The templates and JS are plain static text rather than f-strings. All 157
+    escaped braces (`{{`/`}}`) that the f-strings forced on the JS are gone —
+    the `{{ … }}` that remain are jinja interpolations in the templates, not
+    escapes — so `_template`/`_scripts` read as the SVG and JS they are, and
+    could be moved to real `.svg`/`.js` files without further change.
+  - What used to be baked into a per-view class is now a param the template or
+    the JS reads: size (`svg_w`/`svg_h`), render mode (`use_webgpu`), LINKPI's
+    picker menus (`menu_items`), and the generic components' optional key
+    bindings (`has_z_key`/`has_search`/`has_time_keys`/`brush_seq`).
+  - `_INTERACTIVEP_CONFIG_` is now derived from the five classes rather than
+    driving them, so the table and the classes cannot drift apart.
+  - **WebGPU is a subclass, so an SVG view's payload is unchanged.** Each
+    component that supports it gains a `*_GPU` variant (`XYPI_GPU`, `LINKPI_GPU`,
+    `SLPI_GPU`, …) carrying the canvas wrapper, the `P2S_GPU_JS` runtime and the
+    `gpu_payload`/`gpu_error` params; the SVG class carries none of them. The
+    factory picks the class from `use_webgpu=`. That keeps 14.8 KB of JS off
+    every SVG view — an 88% cut in script payload for `smallpi`/`spreadlinepi`
+    and 48% for the rest — and restores the original property that an SVG view
+    has no GPU params at all.
+  - `panelize()` decided what a view broadcasts from `type(view).__name__ in
+    ('LINKPI', 'SLPI')`. A subclass does not match that, which would have
+    silently dropped selection and position linking for the WebGPU variants, so
+    the decision moved to inherited `_broadcasts_selection_` /
+    `_broadcasts_positions_` class flags.
+
+
 - **The enumerations moved out of `Polars2SVG` into `polars2svg/p2s_enums.py`, and
   the 42-member `RenderEnumsP` grab-bag became thirteen named classes.** Member
   names are unchanged — `p2s.BARCHARTp`, `p2s.SM_COLOR`, `p2s.ROW_COUNTp` and the

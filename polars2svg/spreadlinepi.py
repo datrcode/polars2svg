@@ -23,8 +23,9 @@ import polars as pl
 import param
 from panel.reactive import ReactiveHTML
 
-from .interactive_controller import InteractionController, _gpu_error_overlay
-from .p2s_webgpu_runtime      import P2S_GPU_JS
+from .p2s_reactive_base import P2SReactiveHTML
+
+from .interactive_controller import InteractionController, _gpu_error_overlay, _withGpuScripts_
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -127,25 +128,163 @@ def _filter_out_nodes(spread: Any, df: pl.DataFrame, nodes: set) -> pl.DataFrame
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Panel template / JS
+#
+# Both are plain static text on the class -- no f-strings, so no doubled braces.
+# Per-instance values reach them two ways:
+#   {{ param }}  jinja, substituted per instance by ReactiveHTML._get_template()
+#   data.param   the same value read from the synced data model inside _scripts
+# The GPU canvas wrapper and the ~14 KB WebGPU runtime live on SLPI_GPU, not
+# here: an SVG view never calls into them and should not carry them.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_SLPI_GPU_HEAD_ = (
+    "<div id='gpuwrap' style='position:relative;width:{{ svg_w }}px;height:{{ svg_h }}px;'>"
+    "<canvas id='gpucanvas' width='{{ svg_w }}' height='{{ svg_h }}'"
+    " style='position:absolute;left:0;top:0;'></canvas>"
+)
+
+_SLPI_SVG_ROOT_ = (
+    "<svg id='svgparentslpi' width='{{ svg_w }}' height='{{ svg_h }}' tabindex='0'"
+    "{%- if use_webgpu %} style='position:absolute;left:0;top:0;'{% endif %}"
+    " onkeydown=\"${script('myOnKeyDown')}\">"
+    "<svg id='mod' x='0' y='0' width='{{ svg_w }}' height='{{ svg_h }}'>${mod_inner}</svg>"
+    "<rect id='screen' x='0' y='0' width='{{ svg_w }}' height='{{ svg_h }}'"
+    " style='fill:none;pointer-events:all;'"
+    " onmouseover=\"${script('myOnMouseOver')}\""
+    " onmousedown=\"${script('myOnMouseDown')}\""
+    " onmousemove=\"${script('myOnMouseMove')}\""
+    " onmouseup=\"${script('myOnMouseUp')}\""
+    " onmouseleave=\"${script('myOnMouseLeave')}\"/>"
+    "<rect id='drag_rect' x='0' y='0' width='0' height='0'"
+    " style='fill:rgba(128,128,128,0.08);stroke:#000000;stroke-width:1;pointer-events:none;stroke-dasharray:4,2;'/>"
+    "</svg>"
+)
+
+# The SVG class's template is the root alone -- no canvas.  SLPI_GPU wraps it.
+_SLPI_TEMPLATE_     = _SLPI_SVG_ROOT_
+_SLPI_GPU_TEMPLATE_ = _SLPI_GPU_HEAD_ + _SLPI_SVG_ROOT_ + "</div>"
+
+_SLPI_SCRIPTS_ = {
+    'render': (
+        "state.dragging = false; state.x0_drag = state.y0_drag = state.x1_drag = state.y1_drag = 0;"
+        "state.shiftkey = false; state.ctrlkey = false;"
+        "mod.innerHTML = data.mod_inner;"
+    ),
+    'mod_inner':     "mod.innerHTML = data.mod_inner;",
+    'myOnMouseOver': "svgparentslpi.focus();",
+    'myOnMouseDown': (
+        "state.x0_drag = state.x1_drag = event.offsetX;"
+        "state.y0_drag = state.y1_drag = event.offsetY;"
+        "state.shiftkey = event.shiftKey; state.ctrlkey = event.ctrlKey;"
+        "state.dragging = true;"
+        "data.drag_x0 = Math.round(event.offsetX); data.drag_y0 = Math.round(event.offsetY);"
+        "self.myUpdateDragRect();"
+    ),
+    'myOnMouseMove': (
+        "data.x_mouse = event.offsetX; data.y_mouse = event.offsetY;"
+        "if (state.dragging) {"
+        "  state.x1_drag = event.offsetX; state.y1_drag = event.offsetY;"
+        "  state.shiftkey = event.shiftKey; state.ctrlkey = event.ctrlKey;"
+        "  self.myUpdateDragRect();"
+        "}"
+    ),
+    'myOnMouseUp': (
+        "if (!state.dragging) return; state.dragging = false;"
+        "data.drag_x1 = Math.round(event.offsetX); data.drag_y1 = Math.round(event.offsetY);"
+        "data.ctrlkey = event.ctrlKey; data.shiftkey = event.shiftKey;"
+        "self.myUpdateDragRect();"
+        "data.drag_op_finished = !data.drag_op_finished;"
+    ),
+    'myOnMouseLeave': (
+        "state.dragging = false; self.myUpdateDragRect();"
+    ),
+    'myUpdateDragRect': (
+        "if (state.dragging) {"
+        "  var x = Math.min(state.x0_drag, state.x1_drag);"
+        "  var y = Math.min(state.y0_drag, state.y1_drag);"
+        "  var w = Math.abs(state.x1_drag - state.x0_drag);"
+        "  var h = Math.abs(state.y1_drag - state.y0_drag);"
+        "  drag_rect.setAttribute('x', x); drag_rect.setAttribute('y', y);"
+        "  drag_rect.setAttribute('width', w); drag_rect.setAttribute('height', h);"
+        "  if      (state.shiftkey && state.ctrlkey) drag_rect.setAttribute('stroke', '#0000ff');"
+        "  else if (state.shiftkey)                  drag_rect.setAttribute('stroke', '#ff0000');"
+        "  else if (state.ctrlkey)                   drag_rect.setAttribute('stroke', '#00ff00');"
+        "  else                                       drag_rect.setAttribute('stroke', '#000000');"
+        "} else {"
+        "  drag_rect.setAttribute('width', 0); drag_rect.setAttribute('height', 0);"
+        "}"
+    ),
+    'myOnKeyDown':    "event.stopPropagation(); var k=event.key; if(k==='X'){data.key_op_finished='X';} else if(k==='x'){data.key_op_finished='x';} else if(k==='c'){data.key_op_finished='c';}",
+}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Interactive wrapper
 # ─────────────────────────────────────────────────────────────────────────────
 
-def spreadlinepi(_spread_: Any, use_webgpu: bool = False, **kwargs: Any) -> Any:
-    _w_, _h_    = _spread_.wxh
-    _gpu_payload_default_ = _spread_.webgpu() if use_webgpu else None
-    _svg_       = '' if use_webgpu else _spread_._repr_svg_()
-    # One-element cell holding the class that `type()` builds below; filled
-    # after construction, so the literal alone tells the checker nothing.
-    _cls_: list = [None]
-    _spread_ref_ = [_spread_]   # mutable so 'c' (change ego) can update the template
+class SLPI(P2SReactiveHTML):
+    """Panel view for SpreadLinesP.
+
+    A single static class: size and GPU mode are ordinary params, so one
+    compiled class serves every instance.  (This used to be built per call with
+    ``type('SLPI', (ReactiveHTML,), {...})`` because the width/height were baked
+    into ``_template``; they no longer are.)
+    """
+
+    # ── per-instance view state ──────────────────────────────────────────────
+    svg_w:      Any = param.Integer(default=0)
+    svg_h:      Any = param.Integer(default=0)
+    use_webgpu: Any = param.Boolean(default=False)
+
+    mod_inner:   Any = param.String(default='')
+    # gpu_payload / gpu_error live on SLPI_GPU only.
+
+    x_mouse:          Any = param.Integer(default=0)
+    y_mouse:          Any = param.Integer(default=0)
+    drag_x0:          Any = param.Integer(default=0)
+    drag_y0:          Any = param.Integer(default=0)
+    drag_x1:          Any = param.Integer(default=0)
+    drag_y1:          Any = param.Integer(default=0)
+    drag_op_finished: Any = param.Boolean(default=False)
+    shiftkey:         Any = param.Boolean(default=False)
+    ctrlkey:          Any = param.Boolean(default=False)
+    key_op_finished:  Any = param.String(default='')
+
+    _template = _SLPI_TEMPLATE_
+    _scripts  = _SLPI_SCRIPTS_
+
+    # Read by panelize() to decide what this view broadcasts; inherited by SLPI_GPU.
+    _broadcasts_selection_ = True
+
+    # Instance state filled in __init__.  Bare annotations only -- assigning here
+    # would make them class attributes that shadow the per-instance values.
+    _spread_base_:     Any
+    _spread_:          Any
+    _cache_:           dict
+    selected_entities: set[str]
+    lock:              Any
+    mvc:               Any
 
     # ── Constructor ──────────────────────────────────────────────────────────
-    def __init__(self: Any, **kwargs: Any) -> None:
-        _mvc_ = kwargs.pop('mvc', None)
-        super(_cls_[0], self).__init__(**kwargs)
-        self.lock              = asyncio.Lock()
-        self._spread_          = _spread_ref_[0]
-        self._cache_           = {id(_spread_ref_[0].df_orig): (_spread_ref_[0].df_orig, _spread_ref_[0])}
+    def __init__(self, _spread_: Any, use_webgpu: bool = False, **kwargs: Any) -> None:
+        _mvc_    = kwargs.pop('mvc', None)
+        _w_, _h_ = _spread_.wxh
+        super().__init__(
+            svg_w=_w_, svg_h=_h_, use_webgpu=use_webgpu,
+            **({'gpu_payload': _spread_.webgpu()} if use_webgpu else {}),
+            **kwargs)
+        # Assigned rather than passed to super(): `mod_inner` is a content
+        # binding (${mod_inner} between tags), so ReactiveHTML treats it as a
+        # child and rejects a str passed as a constructor kwarg.  The dynamic
+        # class carried the SVG as the param *default* for the same reason.
+        self.mod_inner = '' if use_webgpu else _spread_._repr_svg_()
+        self.lock = asyncio.Lock()
+        # The base plot every render_with() starts from.  'c' (change ego)
+        # replaces it, which is why it is instance state rather than a constant.
+        self._spread_base_     = _spread_
+        self._spread_          = _spread_
+        self._cache_           = {id(_spread_.df_orig): (_spread_.df_orig, _spread_)}
         self.selected_entities = set()
         if _mvc_ is None:
             self.mvc = InteractionController()
@@ -161,43 +300,43 @@ def spreadlinepi(_spread_: Any, use_webgpu: bool = False, **kwargs: Any) -> Any:
             self.param.watch(self.applyGpuError, 'gpu_error')
 
     # ── View helpers ─────────────────────────────────────────────────────────
-    def __renderView__(self: Any, df: Any) -> Any:
-        return _spread_ref_[0].render_with(df)
+    def __renderView__(self, df: Any) -> Any:
+        return self._spread_base_.render_with(df)
 
-    def _highlighted_plot(self: Any) -> Any:
+    def _highlighted_plot(self) -> Any:
         """The SpreadLinesP instance to render now (with current highlight_nodes)."""
         df = self._spread_.df
         if self.selected_entities:
-            return _spread_ref_[0].render_with(df, highlight_nodes=self.selected_entities)
+            return self._spread_base_.render_with(df, highlight_nodes=self.selected_entities)
         return self._spread_
 
-    def _highlighted_svg(self: Any) -> str:
+    def _highlighted_svg(self) -> str:
         """Re-render self._spread_.df with current highlight_nodes, return SVG."""
         return self._highlighted_plot()._repr_svg_()
 
-    def _apply_render_(self: Any) -> None:
+    def _apply_render_(self) -> None:
         """Push the current plot to whichever backend is active (GPU canvas or SVG)."""
         _plot_ = self._highlighted_plot()
-        if   not use_webgpu: self.mod_inner   = _plot_._repr_svg_()
-        elif self.gpu_error: self.mod_inner   = _gpu_error_overlay(self.gpu_error, _w_, _h_)
-        else:                self.gpu_payload = _plot_.webgpu()
+        if   not self.use_webgpu: self.mod_inner   = _plot_._repr_svg_()
+        elif self.gpu_error:      self.mod_inner   = _gpu_error_overlay(self.gpu_error, self.svg_w, self.svg_h)
+        else:                     self.gpu_payload = _plot_.webgpu()
 
-    def __refreshView__(self: Any) -> None:
+    def __refreshView__(self) -> None:
         self._apply_render_()
 
     # WebGPU rendering failed in the browser -> surface the error in the overlay.
     # No automatic SVG fallback: the user must re-create the view with use_webgpu=False.
-    async def applyGpuError(self: Any, event: Any) -> None:
+    async def applyGpuError(self, event: Any) -> None:
         if self.gpu_error:
-            self.mod_inner = _gpu_error_overlay(self.gpu_error, _w_, _h_)
+            self.mod_inner = _gpu_error_overlay(self.gpu_error, self.svg_w, self.svg_h)
 
     # ── MVC callbacks ────────────────────────────────────────────────────────
-    async def display(self: Any, df: pl.DataFrame, dfs: list, dfs_index: int) -> None:
+    async def display(self, df: pl.DataFrame, dfs: list, dfs_index: int) -> None:
         async with self.lock:
             # entries are (df, spread); identity-guard the id() key against reuse
             entry = self._cache_.get(id(df))
             if entry is None or entry[0] is not df:
-                entry = (df, _spread_ref_[0].render_with(df))
+                entry = (df, self._spread_base_.render_with(df))
                 self._cache_[id(df)] = entry
             self._spread_ = entry[1]
             self._apply_render_()
@@ -206,18 +345,18 @@ def spreadlinepi(_spread_: Any, use_webgpu: bool = False, **kwargs: Any) -> Any:
                 if k not in keep:
                     del self._cache_[k]
 
-    async def receiveSelection(self: Any, entities: list) -> None:
+    async def receiveSelection(self, entities: list) -> None:
         self.selected_entities = {str(e) for e in entities}
         self._apply_render_()
 
-    async def _broadcastSelection(self: Any) -> None:
+    async def _broadcastSelection(self) -> None:
         """Notify all mvc-registered views with receiveSelection, bypassing explicit link setup."""
         for _v_ in self.mvc.view_refs.values():
             if _v_ is not self and hasattr(_v_, 'receiveSelection'):
                 await _v_.receiveSelection(self.selected_entities)
 
     # ── Interaction callbacks ─────────────────────────────────────────────────
-    async def applyDragOp(self: Any, event: Any) -> None:
+    async def applyDragOp(self, event: Any) -> None:
         async with self.lock:
             x0, y0 = self.drag_x0, self.drag_y0
             x1, y1 = self.drag_x1, self.drag_y1
@@ -241,7 +380,7 @@ def spreadlinepi(_spread_: Any, use_webgpu: bool = False, **kwargs: Any) -> Any:
         self._apply_render_()
         await self._broadcastSelection()
 
-    async def applyKeyOp(self: Any, event: Any) -> None:
+    async def applyKeyOp(self, event: Any) -> None:
         async with self.lock:
             op = self.key_op_finished
             self.key_op_finished = ''
@@ -262,139 +401,27 @@ def spreadlinepi(_spread_: Any, use_webgpu: bool = False, **kwargs: Any) -> Any:
             new_ego = (next(iter(self.selected_entities))
                        if len(self.selected_entities) == 1
                        else set(self.selected_entities))
-            new_spread = _spread_ref_[0].render_with(self._spread_.df_orig, ego=new_ego)
-            _spread_ref_[0] = new_spread
+            new_spread = self._spread_base_.render_with(self._spread_.df_orig, ego=new_ego)
+            self._spread_base_ = new_spread
             self._cache_ = {id(new_spread.df_orig): (new_spread.df_orig, new_spread)}
             self._spread_ = new_spread
             self._apply_render_()
             await self._broadcastSelection()
 
-    # ── Panel template ───────────────────────────────────────────────────────
-    _w, _h = str(_w_), str(_h_)
-    # The spreadlines plot lives in #mod (SVG mode) or on #gpucanvas (GPU mode);
-    # #screen + #drag_rect are interaction chrome that stays SVG in both modes.
-    _svg_root_ = (
-        "<svg id='svgparentslpi' width='" + _w + "' height='" + _h + "' tabindex='0'"
-        + (" style='position:absolute;left:0;top:0;'" if use_webgpu else "")
-        + " onkeydown=\"${script('myOnKeyDown')}\">"
-        "<svg id='mod' x='0' y='0' width='" + _w + "' height='" + _h + "'>${mod_inner}</svg>"
-        "<rect id='screen' x='0' y='0' width='" + _w + "' height='" + _h + "'"
-        " style='fill:none;pointer-events:all;'"
-        " onmouseover=\"${script('myOnMouseOver')}\""
-        " onmousedown=\"${script('myOnMouseDown')}\""
-        " onmousemove=\"${script('myOnMouseMove')}\""
-        " onmouseup=\"${script('myOnMouseUp')}\""
-        " onmouseleave=\"${script('myOnMouseLeave')}\"/>"
-        "<rect id='drag_rect' x='0' y='0' width='0' height='0'"
-        " style='fill:rgba(128,128,128,0.08);stroke:#000000;stroke-width:1;pointer-events:none;stroke-dasharray:4,2;'/>"
-        "</svg>"
-    )
-    if use_webgpu:
-        _template = (
-            "<div id='gpuwrap' style='position:relative;width:" + _w + "px;height:" + _h + "px;'>"
-            "<canvas id='gpucanvas' width='" + _w + "' height='" + _h + "' style='position:absolute;left:0;top:0;'></canvas>"
-            + _svg_root_ + "</div>"
-        )
-    else:
-        _template = _svg_root_
 
-    _gpu_render_block_ = ((
-        P2S_GPU_JS +
-        "if (!window.__P2S_GPU__.supported()) { data.gpu_error = 'WebGPU is not available in this browser.'; }"
-        "else { window.__P2S_GPU__.render(gpucanvas, data.gpu_payload)"
-        "  .catch(function(e){ console.warn('p2s webgpu:', e); data.gpu_error = (e && e.message) ? e.message : String(e); }); }"
-    ) if use_webgpu else "")
-    _gpu_payload_script_ = ((
-        "if (window.__P2S_GPU__ && window.__P2S_GPU__.supported() && !data.gpu_error) {"
-        "  window.__P2S_GPU__.render(gpucanvas, data.gpu_payload)"
-        "    .catch(function(e){ console.warn('p2s webgpu:', e); data.gpu_error = (e && e.message) ? e.message : String(e); }); }"
-    ) if use_webgpu else "")
+class SLPI_GPU(SLPI):
+    """SLPI drawing into a WebGPU canvas -- adds the runtime the SVG class omits."""
+    use_webgpu:  Any = param.Boolean(default=True)
+    gpu_payload: Any = param.Dict(default={})
+    gpu_error:   Any = param.String(default='')
 
-    _scripts = {
-        'render': (
-            "state.dragging = false; state.x0_drag = state.y0_drag = state.x1_drag = state.y1_drag = 0;"
-            "state.shiftkey = false; state.ctrlkey = false;"
-            "mod.innerHTML = data.mod_inner;"
-            + _gpu_render_block_
-        ),
-        **({'gpu_payload': _gpu_payload_script_} if use_webgpu else {}),
-        'mod_inner':     "mod.innerHTML = data.mod_inner;",
-        'myOnMouseOver': "svgparentslpi.focus();",
-        'myOnMouseDown': (
-            "state.x0_drag = state.x1_drag = event.offsetX;"
-            "state.y0_drag = state.y1_drag = event.offsetY;"
-            "state.shiftkey = event.shiftKey; state.ctrlkey = event.ctrlKey;"
-            "state.dragging = true;"
-            "data.drag_x0 = Math.round(event.offsetX); data.drag_y0 = Math.round(event.offsetY);"
-            "self.myUpdateDragRect();"
-        ),
-        'myOnMouseMove': (
-            "data.x_mouse = event.offsetX; data.y_mouse = event.offsetY;"
-            "if (state.dragging) {"
-            "  state.x1_drag = event.offsetX; state.y1_drag = event.offsetY;"
-            "  state.shiftkey = event.shiftKey; state.ctrlkey = event.ctrlKey;"
-            "  self.myUpdateDragRect();"
-            "}"
-        ),
-        'myOnMouseUp': (
-            "if (!state.dragging) return; state.dragging = false;"
-            "data.drag_x1 = Math.round(event.offsetX); data.drag_y1 = Math.round(event.offsetY);"
-            "data.ctrlkey = event.ctrlKey; data.shiftkey = event.shiftKey;"
-            "self.myUpdateDragRect();"
-            "data.drag_op_finished = !data.drag_op_finished;"
-        ),
-        'myOnMouseLeave': (
-            "state.dragging = false; self.myUpdateDragRect();"
-        ),
-        'myUpdateDragRect': (
-            "if (state.dragging) {"
-            "  var x = Math.min(state.x0_drag, state.x1_drag);"
-            "  var y = Math.min(state.y0_drag, state.y1_drag);"
-            "  var w = Math.abs(state.x1_drag - state.x0_drag);"
-            "  var h = Math.abs(state.y1_drag - state.y0_drag);"
-            "  drag_rect.setAttribute('x', x); drag_rect.setAttribute('y', y);"
-            "  drag_rect.setAttribute('width', w); drag_rect.setAttribute('height', h);"
-            "  if      (state.shiftkey && state.ctrlkey) drag_rect.setAttribute('stroke', '#0000ff');"
-            "  else if (state.shiftkey)                  drag_rect.setAttribute('stroke', '#ff0000');"
-            "  else if (state.ctrlkey)                   drag_rect.setAttribute('stroke', '#00ff00');"
-            "  else                                       drag_rect.setAttribute('stroke', '#000000');"
-            "} else {"
-            "  drag_rect.setAttribute('width', 0); drag_rect.setAttribute('height', 0);"
-            "}"
-        ),
-        'myOnKeyDown':    "event.stopPropagation(); var k=event.key; if(k==='X'){data.key_op_finished='X';} else if(k==='x'){data.key_op_finished='x';} else if(k==='c'){data.key_op_finished='c';}",
-    }
+    _template = _SLPI_GPU_TEMPLATE_
+    _scripts  = _withGpuScripts_(_SLPI_SCRIPTS_)
 
-    cls = type('SLPI', (ReactiveHTML,), {
-        'mod_inner':         param.String(default=_svg_),
-        **({'gpu_payload': param.Dict(default=_gpu_payload_default_), 'gpu_error': param.String(default='')} if use_webgpu else {}),
-        'x_mouse':           param.Integer(default=0),
-        'y_mouse':           param.Integer(default=0),
-        'drag_x0':           param.Integer(default=0),
-        'drag_y0':           param.Integer(default=0),
-        'drag_x1':           param.Integer(default=0),
-        'drag_y1':           param.Integer(default=0),
-        'drag_op_finished':  param.Boolean(default=False),
-        'shiftkey':          param.Boolean(default=False),
-        'ctrlkey':           param.Boolean(default=False),
-        'key_op_finished':   param.String(default=''),
-        '__init__':          __init__,
-        '__renderView__':    __renderView__,
-        '_highlighted_plot': _highlighted_plot,
-        '_highlighted_svg':  _highlighted_svg,
-        '_apply_render_':    _apply_render_,
-        '__refreshView__':   __refreshView__,
-        **({'applyGpuError': applyGpuError} if use_webgpu else {}),
-        'display':           display,
-        'receiveSelection':   receiveSelection,
-        '_broadcastSelection': _broadcastSelection,
-        'applyDragOp':        applyDragOp,
-        'applyKeyOp':        applyKeyOp,
-        '_template':         _template,
-        '_scripts':          _scripts,
-    })
-    _cls_[0] = cls
-    return cls(**kwargs)
+
+def spreadlinepi(_spread_: Any, use_webgpu: bool = False, **kwargs: Any) -> Any:
+    _cls_ = SLPI_GPU if use_webgpu else SLPI
+    return _cls_(_spread_, use_webgpu=use_webgpu, **kwargs)
 
 
 # Register with the panelize wrapper registry.  Registration lives here (not

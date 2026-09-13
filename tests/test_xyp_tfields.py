@@ -29,11 +29,14 @@ class Testxyp_tfields(unittest.TestCase):
 
     @unittest.skipUnless(_KAGGLEHUB_AVAILABLE, "kagglehub not importable (broken upstream dependency)")
     def test_example_globalTemperatures(self):
-        # Network/credential-dependent: kagglehub.dataset_download hits Kaggle on a
-        # cache miss and needs credentials. Skip cleanly (rather than error) when the
-        # data can't be fetched — a fresh clone with no network/creds still passes.
-        # When the dataset is already cached the download returns immediately and the
-        # test runs for real.
+        # Network-dependent, but NOT credential-dependent: this dataset is public,
+        # so kagglehub.dataset_download fetches it anonymously with no Kaggle
+        # credentials configured. It hits the network on a cache miss and returns
+        # immediately once cached. CI runs this for real on every run — see the
+        # "Run the test suite" step in .github/workflows/ci.yml.
+        # The try/except below is the fallback, not the normal path: a Kaggle
+        # outage, a rate limit, or a fresh clone with no network degrades this to
+        # a clean skip rather than an error, so the suite still passes offline.
         try:
             path = kagglehub.dataset_download("berkeleyearth/climate-change-earth-surface-temperature-data")
         except Exception as e:

@@ -195,16 +195,27 @@ jobs:
         # (test_tfield_typed.py, test_p2s_tfields.py, test_p2s.py,
         # test_timep_basic.py, test_smallp_validation.py and three others) to
         # exclude the ONE test that needs the network. Only test_xyp_tfields.py
-        # imports kagglehub, and the single test in it that reaches Kaggle
-        # already guards itself twice over — @unittest.skipUnless on the
-        # kagglehub import, then self.skipTest() when the download fails for
-        # want of network or credentials — so it skips cleanly here without any
-        # help from the command line.
+        # imports kagglehub, and only test_example_globalTemperatures within it
+        # reaches Kaggle — test_exhaustive alongside it is offline.
         #
-        # -rs for the reason the browser job gives below: this job now relies on
-        # that test skipping itself, and a bare "N skipped" cannot tell a
-        # deliberate skip from a fixture that quietly broke and took tests with
-        # it.
+        # That one test RUNS here rather than skipping: kagglehub is installed
+        # in the step above, and berkeleyearth/climate-change-earth-surface-
+        # temperature-data is a public dataset, so dataset_download succeeds
+        # anonymously with no Kaggle credentials configured on the runner. This
+        # job really does pull that dataset on every run. That is intentional
+        # — it is the only t-field coverage against a real-world CSV rather
+        # than a hand-built or randomDataFrame() frame — so keep it running.
+        #
+        # Its two guards are the fallback path, not the normal one:
+        # @unittest.skipUnless on the kagglehub import, then self.skipTest()
+        # when dataset_download raises. A Kaggle outage, a rate limit, or a
+        # future credential requirement therefore degrades this to a skip
+        # instead of a red build. Do not read that as the expected outcome: on
+        # a healthy run the test executes for real.
+        #
+        # -rs for the reason the browser job gives below, plus one specific to
+        # that fallback — it is silent, so without -rs a Kaggle outage would
+        # stop exercising this test with nothing in the log to say so.
         run: python -m pytest tests/ -q -rs --ignore=tests/test_performance.py
 
   # The browser-driven interaction suite (tests/interaction/, PLANNING.md 2.1).

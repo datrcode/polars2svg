@@ -131,22 +131,20 @@ This reversed a previous policy. The codebase was deliberately untyped
 internally on the grounds that annotating it would be prohibitively large; a
 2026-09-02 audit measured that instead, and found ~72% of what mypy reports
 comes from a handful of undeclared dynamic attribute surfaces rather than from
-missing signatures. Declaring those is cheap, so the annotation work is now
-tractable and is proceeding module by module.
+missing signatures. Declaring those was cheap, which is what made the
+annotation work tractable; it is finished (see below).
 
 Two ratchets enforce it, and both only move one way:
 
-- `[[tool.mypy.overrides]]` in `pyproject.toml` lists modules that are fully
-  annotated and holds them to `disallow_untyped_defs` with every relaxed error
-  code re-enabled. Add a module when you finish it; never remove one.
+- `[tool.mypy]` in `pyproject.toml` holds every module to `disallow_untyped_defs`,
+  `disallow_incomplete_defs` and `check_untyped_defs` with no error codes
+  disabled. `[[tool.mypy.overrides]]` holds exactly one entry, the
+  `interactive_controller` exemption; do not add a module to it — coming off
+  strict checking is a regression, not a config change.
 - `TestAnnotationCoverageRatchet` in `tests/test_typing_surface.py` caps the
   number of unannotated functions per module. Adding an untyped function fails
   the suite; annotating one means lowering that module's number in the same
   commit (a ceiling left above the real count also fails).
-
-So: to annotate a module, type its functions, lower its ceiling to the new
-count, and — if it reaches 0 — add it to the mypy override list. Expect the
-promotion to surface latent findings; that is the point of it.
 
 The migration itself is finished: every module except `interactive_controller.py`
 is fully annotated, and that one is *permanently relaxed* by decision — it builds

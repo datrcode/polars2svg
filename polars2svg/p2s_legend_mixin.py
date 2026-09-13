@@ -5,6 +5,7 @@ import polars as pl
 
 from .exceptions      import InvalidSpecError
 from .p2s_displaylist import DisplayList
+from .p2s_enums       import ColorTypeP
 
 # Accepted legend= positions (layer 2 of the spec); True aliases to 'right'.
 LEGEND_POSITIONS = ('right', 'left', 'top', 'bottom')
@@ -56,18 +57,20 @@ class P2SLegendMixin:
     # can follow the mixin's own methods; bare annotations, so nothing exists at
     # runtime and nothing is shadowed.
     #
-    # Typed `Any` on purpose: the mixin genuinely does not know the concrete type,
-    # and several hosts declare the same name with a narrower type of their own.
+    # The enum members are typed with their real class from p2s_enums -- the module
+    # imports nothing from the package, so naming them here costs no cycle.  The
+    # rest stay `Any` on purpose: the mixin genuinely does not know the concrete
+    # type, and several hosts declare the same name with a narrower type of their
+    # own.
     # ---------------------------------------------------------------------
-    CROW_STRETCHEDp:       Any
-    CSET_STRETCHEDp:       Any
-    CSETp:                 Any
-    CSTRETCHED_MAXp:       Any
-    CSTRETCHED_MEANp:      Any
-    CSTRETCHED_MEDIANp:    Any
-    CSTRETCHED_MINp:       Any
-    CSTRETCHED_SUMp:       Any
-    ColorTypeP:            Any
+    CROW_STRETCHEDp:       ColorTypeP
+    CSET_STRETCHEDp:       ColorTypeP
+    CSETp:                 ColorTypeP
+    CSTRETCHED_MAXp:       ColorTypeP
+    CSTRETCHED_MEANp:      ColorTypeP
+    CSTRETCHED_MEDIANp:    ColorTypeP
+    CSTRETCHED_MINp:       ColorTypeP
+    CSTRETCHED_SUMp:       ColorTypeP
     colorSpectrumTuples:   Any
     colorTyped:            Any
     colors:                Any
@@ -132,17 +135,17 @@ class P2SLegendMixin:
     # - CSETp -> categorical swatch list; every other ColorTypeP member maps a value
     #   onto the spectrum -> colorbar; None (flat color / literal hex) -> no legend
     #
-    def legendKind(self, color_mode: Any) -> str | None:
+    def legendKind(self, color_mode: ColorTypeP | None) -> str | None:
         if color_mode is None:            return None
         if color_mode == self.CSETp:      return 'categorical'
-        if isinstance(color_mode, self.ColorTypeP): return 'colorbar'
+        if isinstance(color_mode, ColorTypeP): return 'colorbar'
         return None
 
     #
     # legendModeIsStretched() - True for the rank-equalized spectrum modes (the
     # colorbar gradient is then rank-based between the labeled min/max, not linear)
     #
-    def legendModeIsStretched(self, color_mode: Any) -> bool:
+    def legendModeIsStretched(self, color_mode: ColorTypeP | None) -> bool:
         return color_mode in (self.CROW_STRETCHEDp,    self.CSET_STRETCHEDp,
                               self.CSTRETCHED_SUMp,    self.CSTRETCHED_MINp,
                               self.CSTRETCHED_MEDIANp, self.CSTRETCHED_MEANp,

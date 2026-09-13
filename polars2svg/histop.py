@@ -7,6 +7,7 @@ import polars2svg
 from polars2svg.p2s_displaylist import DisplayList
 from polars2svg.export import ExportMixin
 from polars2svg.p2s_bin_component_mixin import P2SBinComponentMixin
+from polars2svg.p2s_enums import BarStyleP, SelectShapeP
 
 class HistopKwargs(TypedDict, total=False):
     """Keyword arguments accepted by ``p2s.histop()`` / ``Histop(...)``.
@@ -42,7 +43,7 @@ class HistopKwargs(TypedDict, total=False):
     order:                   Any
     remainder_threshold:     Any
     sm_shared:               set
-    style:                   Any
+    style:                   BarStyleP
     swarm_max_pts:           Any
     template:                'Histop | None'
     txt_h:                   Any
@@ -124,7 +125,7 @@ class Histop(P2SBinComponentMixin, ExportMixin):
     bar_h:  Any
     bin_by: Any
     insets: tuple
-    style:  Any
+    style:  BarStyleP
     svg:    str
     wxh:    Any
 
@@ -302,7 +303,7 @@ class Histop(P2SBinComponentMixin, ExportMixin):
                         raise ValueError(f'Histop.__validateInput__(): color field "{_f_}" not found')
 
         # Validate style
-        _valid_styles_ = {self.p2s.BARCHARTp, self.p2s.BOXPLOTp, self.p2s.BOXPLOT_W_SWARMp, self.p2s.STACKEDBARp}
+        _valid_styles_ = set(self.p2s.BarStyleP)
         if self.style not in _valid_styles_:
             raise ValueError(f'Histop.__validateInput__(): style must be one of {_valid_styles_}')
 
@@ -1317,7 +1318,7 @@ class Histop(P2SBinComponentMixin, ExportMixin):
                            if _sub_ in self.p2s.formatMultiFieldValue(b).lower()]
         return self.__recordsForBins__(_matching_bins_, remove=remove_bins)
 
-    def recordsAt(self, xy: tuple, shape: Any = None, threshold: float = 2.0) -> pl.DataFrame:
+    def recordsAt(self, xy: tuple, shape: SelectShapeP | None = None, threshold: float = 2.0) -> pl.DataFrame:
         """Return the original records whose bin row contains pixel y.
 
         Only SELECT_HORIZONTALp is supported: the x coordinate and threshold are

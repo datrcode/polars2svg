@@ -484,6 +484,107 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The enumerations moved out of `Polars2SVG` into `polars2svg/p2s_enums.py`, and
+  the 42-member `RenderEnumsP` grab-bag became thirteen named classes.** Member
+  names are unchanged — `p2s.BARCHARTp`, `p2s.SM_COLOR`, `p2s.ROW_COUNTp` and the
+  other 89 reach callers exactly as before, and `p2s.ColorTypeP` /
+  `Polars2SVG.ColorTypeP` still resolve — so no calling code changes.
+
+  Nesting the enums inside `Polars2SVG` put them *downstream of every mixin* in the
+  import graph: a mixin could not name the type of an enum it reads off `self`, so
+  its host-attribute declarations said `Any` and the boundary went unchecked. The
+  new module imports nothing from the package, so every mixin can import it. That
+  removed **41** `Any` declarations across `P2STimeMixin`, `P2SLegendMixin`,
+  `P2SGraphMixin` and `P2SRenderMixin`, and let the time and legend mixins reference
+  the classes directly instead of routing through the host.
+
+  `RenderEnumsP` held thirteen unrelated decisions in one enum, which is why the
+  code carried hand-written subsets of it (`_width_enums_`, `_style_enums_`,
+  `_color_enums_`, `_opacity_enums_` in `xyp`, plus `distribution_types` /
+  `line_types` built member-by-member in `__init__`). Those subsets *were* the
+  classes; they are now `RowCountP`, `DistributionPlacementP`, `DistributionScaleP`,
+  `LineWidthP`, `LineStyleP`, `LineColorP`, `LineOpacityP`, `SmallMultipleP`,
+  `BarStyleP`, `SelectShapeP`, `NodeColorP`, `PieStyleP` and `OrderBucketP`, and
+  each hand-written set collapsed to `set(<class>)`.
+
+  Every enum derives from a **member-less `P2SEnum` base**, so the two `isinstance()`
+  dispatch sites in `xyp` that sorted positional arguments by "is this a render
+  enum" keep working — they now test against `RenderEnum`, a union alias that means
+  exactly what `RenderEnumsP` used to. Enum values restart at 1 in each class;
+  nothing reads `.value` and members of different Enum classes never compare equal,
+  so the reuse is safe. `TestEnumRegistry` in `tests/test_typing_surface.py` holds
+  `ENUM_CLASSES`, `RENDER_ENUM_CLASSES` and the `RenderEnum` alias in step, and
+  checks that no two classes claim the same member name.
+
+  The one API-visible removal is the `RenderEnumsP` **class** itself (`p2s.RenderEnumsP`);
+  its 42 members are untouched.
+
+- **Eleven `Any` annotations replaced with real enum types.** The time mixin's four
+  enum-taking methods (`polarsOperationForEnum`, `humanReadablePeriodicTimeDelta`,
+  `timePeriodicRange`, `timePeriodicHumanReadable`), the three linear-granularity
+  resolvers that return one (`SpreadLinesP.__dataGranularityCap__` /
+  `__autoResolveLinearEnum__`, `Timep.__autoResolveLinearEnum2__`), and the four
+  colour-mode parameters (`XYp.__legendDefaultTitle__`,
+  `XYp.__determineColoringMode__`, `P2SLegendMixin.legendKind` /
+  `legendModeIsStretched`, the last two as `ColorTypeP | None`).
+
+  Each was verified by **reading the function**, not from the runtime trace alone:
+  the trace proposed `P2SGraphMixin.__graphCountAggExpr__(count)` as pure-enum, but
+  it also handles `str` and `tuple` on branches the tests never take, so it stays
+  `Any`. Package-wide `Any` annotation sites: **830 → 778**.
+
+- **`recordsAt(shape=)` is typed on all six components** — `SelectShapeP | None`
+  on `ChP`, `Histop`, `LinkP`, `Piep`, `Timep` and `XYp`. This is a **public**
+  method, and the contract was already written down three ways: each
+  implementation defaults `None` to its own shape, raises `ValueError` on any
+  other, and says so in its docstring. Typing it moves a wrong `p2s.SELECT_*` from
+  a runtime error to a call-site one. The runtime check stays — the type says "a
+  selection shape", the component still decides which shapes it supports, so
+  `ChP.recordsAt(xy, shape=p2s.SELECT_VERTICALp)` still raises.
+
+  Two more from the same pass: `TField.transform` / `TField.__new__(transform)`
+  (`TimeLinearTypeP | TimePeriodicTypeP` — the guard on the line below the
+  signature proves it) and `XYp.__buildColorOps__(_color_mode_)`
+  (`ColorTypeP | None`). Package-wide `Any` annotation sites: **778 → 769**.
+
+- **The `count=` / `color=` spec unions are named types, and `style=` is typed.**
+  `p2s_enums.py` now also carries `CountSpec`, `ColorSpec` and
+  `ResolvedColorSpec`, transcribed from the aggregation rule in
+  `parameter_conventions.md`.
+
+  These parameters resisted typing because they looked like one contract and are
+  really **two**. `color=` as the user passes it may be an enum, a dict, a tuple
+  or `None`; by the time a render helper sees it, `__parseInput__` has resolved it
+  to a column name and it is never any of those. Annotating both with one union
+  fails to type-check — `colorizeOrder()` appends its `color` to a list of column
+  names — which is what `ResolvedColorSpec` exists to say. With the two separated,
+  `colorizeBar(count)`, `colorizeOrder(count, color)`, `__colorModeInfo__(spec)`
+  and `__validateColorSpec__(spec)` all type cleanly.
+
+  `style=` became typable as a side effect of splitting `RenderEnumsP`: `histop`
+  and `timep` validate against exactly `set(BarStyleP)` and `piep` against
+  `set(PieStyleP)`, so the class *is* the valid set. Both the `_defaults_`
+  declaration and the `<Component>Kwargs` entry are now `BarStyleP` / `PieStyleP`
+  for all three, and the hand-written `_valid_styles_` literals collapsed to
+  `set(<class>)`. This is the first **user-facing** parameter to come off `Any`:
+  `p2s.piep(df, bin_by='c', style=p.BARCHARTp)` is now a type error at the call
+  site as well as a `ValueError` at runtime.
+
+  Package-wide `Any` annotation sites: **769 → 758**.
+
+  The other 144 `Any` entries in the Kwargs TypedDicts stay as they are. `style`
+  was safe because its validator enumerates the whole valid set; `color=`,
+  `count=`, `order=` and `time=` have no such enumeration, a trace cannot prove a
+  union over them complete, and too narrow a type there rejects valid *user* code.
+
+  The rest of the enum-bearing `Any` parameters are deliberately left alone. Four
+  are genuinely polymorphic (`_copy_mutable_containers_`, `isHexColor`,
+  `HexColorStringMeta.__instancecheck__`, `XYp.__assertHashableSpecItem__`) and
+  narrowing them would be wrong. The remaining ten are the `count=` / `color=`
+  spec union (`colorizeBar`, `colorizeOrder`, `__colorModeInfo__`,
+  `__validateColorSpec__`, `__isEnum__`, ...); they are internal, so a too-narrow
+  guess there costs valid user code and buys a checker nothing.
+
 - **BREAKING — `Polars2SVG()` is no longer a singleton.** Every call used to return one
   cached instance, so `set_defaults()` / `reset_defaults()` / `setColorOverrides()`
   reached every figure in the process. `__new__` no longer caches: each call builds an

@@ -1,5 +1,6 @@
 from typing import Any
 import polars as pl
+from .p2s_enums import ColorSpec
 
 
 class P2SComponentColorMixin:
@@ -58,7 +59,7 @@ class P2SComponentColorMixin:
     # Kinds: 'default' | 'fixed_hex' | 'categorical' | 'crow_magnitude' | 'crow_stretched' |
     #        'cset_magnitude' | 'cset_stretched' | 'stat_magnitude' | 'stat_stretched'
     #
-    def __colorModeInfo__(self, spec: Any) -> dict:
+    def __colorModeInfo__(self, spec: ColorSpec) -> dict:
         _p2s_ = self.p2s
         _cmag_  = {_p2s_.CMAGNITUDE_SUMp, _p2s_.CMAGNITUDE_MINp, _p2s_.CMAGNITUDE_MEDIANp,
                    _p2s_.CMAGNITUDE_MEANp, _p2s_.CMAGNITUDE_MAXp}
@@ -213,7 +214,7 @@ class P2SComponentColorMixin:
     #
     # __validateColorSpec__() - raise ValueError if a node_color value is not a recognized form
     #
-    def __validateColorSpec__(self, spec: Any, param_name: str, allow_dict: bool = False) -> None:
+    def __validateColorSpec__(self, spec: ColorSpec, param_name: str, allow_dict: bool = False) -> None:
         if spec is None: return
         if isinstance(spec, dict):
             if not allow_dict:

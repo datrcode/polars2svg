@@ -4,6 +4,7 @@ import ast
 import importlib.util
 import inspect
 import tomllib
+import typing
 from enum import Enum
 from pathlib import Path
 
@@ -85,6 +86,54 @@ class TestPublicSurfaceAnnotations(unittest.TestCase):
 
 
 #
+# The enum registry.
+#
+# The enums live in p2s_enums.py (not nested in Polars2SVG) so the mixins can
+# name their types without an import cycle.  Three lists there have to agree,
+# and nothing at runtime keeps them in step.
+#
+class TestEnumRegistry(unittest.TestCase):
+    '''p2s_enums.py carries three lists that have to agree: ENUM_CLASSES (what
+    Polars2SVG.__init__ binds onto the instance), RENDER_ENUM_CLASSES (the tuple
+    that replaced isinstance(x, RenderEnumsP)), and the RenderEnum union alias
+    (the same tuple spelled as a type).  Nothing at runtime keeps them in step.'''
+
+    def test_render_tuple_and_union_alias_agree(self):
+        from polars2svg.p2s_enums import RENDER_ENUM_CLASSES, RenderEnum
+        self.assertEqual(set(RENDER_ENUM_CLASSES), set(typing.get_args(RenderEnum)),
+                         'RENDER_ENUM_CLASSES and the RenderEnum union alias list '
+                         'different classes -- update both')
+
+    def test_render_classes_are_registered(self):
+        from polars2svg.p2s_enums import ENUM_CLASSES, RENDER_ENUM_CLASSES
+        _missing_ = [c.__name__ for c in RENDER_ENUM_CLASSES if c not in ENUM_CLASSES]
+        self.assertEqual(_missing_, [],
+                         f'render enum classes absent from ENUM_CLASSES, so their '
+                         f'members are never bound onto the instance: {_missing_}')
+
+    def test_member_names_are_unique_across_classes(self):
+        # Every member is bound onto the instance by its bare name, so two classes
+        # sharing a member name would silently shadow one another.
+        from polars2svg.p2s_enums import ENUM_CLASSES
+        _seen_ = {}
+        for _cls_ in ENUM_CLASSES:
+            for _name_ in _cls_.__members__:
+                with self.subTest(member=_name_):
+                    self.assertNotIn(_name_, _seen_,
+                                     f'{_name_} is defined by both {_seen_.get(_name_)} '
+                                     f'and {_cls_.__name__}')
+                _seen_[_name_] = _cls_.__name__
+
+    def test_every_class_derives_from_the_shared_base(self):
+        # P2SEnum is what makes one isinstance() recognise a member of any of them.
+        from polars2svg.p2s_enums import ENUM_CLASSES, P2SEnum
+        for _cls_ in ENUM_CLASSES:
+            with self.subTest(enum=_cls_.__name__):
+                self.assertTrue(issubclass(_cls_, P2SEnum),
+                                f'{_cls_.__name__} does not derive from P2SEnum')
+
+
+#
 # The typing ratchet.
 #
 # polars2svg was annotated module by module over 2026-09-02/03 and strict mypy
@@ -95,10 +144,10 @@ class TestPublicSurfaceAnnotations(unittest.TestCase):
 # owns it for every module rather than for a graduating list.
 #
 class TestEnumMemberDeclarations(unittest.TestCase):
-    '''Polars2SVG.__init__ flattens six nested Enums onto the instance with
-    setattr() loops.  A class-level declaration block mirrors them so type
-    checkers can see p2s.SCALARp / p2s.PT_DoWp / p2s.BARCHARTp.  Nothing at
-    runtime keeps the two in sync -- these tests do.'''
+    '''Polars2SVG.__init__ flattens every class in p2s_enums.ENUM_CLASSES onto
+    the instance with one setattr() loop.  A class-level declaration block mirrors
+    them so type checkers can see p2s.SCALARp / p2s.PT_DoWp / p2s.BARCHARTp.
+    Nothing at runtime keeps the two in sync -- these tests do.'''
 
     @staticmethod
     def _bound_enum_members():
@@ -197,6 +246,7 @@ class TestAnnotationCoverageRatchet(unittest.TestCase):
         'circle_packer':                          0,
         'tile':                                   0,
         'p2s_time_mixin':                         0,
+        'p2s_enums':                              0,
         'udist_scatterplots_via_sectors_tile_opt':0,
         'p2s_polars_mixin':                       0,
         'p2s_render_mixin':                       0,

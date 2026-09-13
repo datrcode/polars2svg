@@ -25,6 +25,7 @@ from polars2svg.p2s_displaylist import (DisplayList, hexToRGBA,
                                         cubicBezierSegmentsTable, flattenPathD)
 from polars2svg.export import ExportMixin
 from polars2svg.p2s_component_color_mixin import P2SComponentColorMixin
+from polars2svg.p2s_enums import SelectShapeP
 
 
 def _mst_order(nodes: list, n: int, A_weight: Any) -> list:
@@ -2221,7 +2222,7 @@ class ChP(P2SComponentColorMixin, ExportMixin):
         if _mask_ is None: return pl.lit(False)
         return _mask_.fill_null(False)
 
-    def recordsAt(self, xy: tuple, shape: Any = None, threshold: float = 2.0) -> pl.DataFrame:
+    def recordsAt(self, xy: tuple, shape: SelectShapeP | None = None, threshold: float = 2.0) -> pl.DataFrame:
         if shape is None: shape = self.p2s.SELECT_CIRCLEp
         if shape != self.p2s.SELECT_CIRCLEp:
             raise ValueError(f'ChP.recordsAt(): only SELECT_CIRCLEp is supported, got {shape}')

@@ -13,6 +13,7 @@ from polars2svg.p2s_background_mixin import P2SBackgroundMixin
 from polars2svg.exceptions import DataError
 from polars2svg.od_flow_layout import ODFlowLayout
 from polars2svg.layout_budget import Budget
+from polars2svg.p2s_enums import SelectShapeP
 
 class LinkPKwargs(TypedDict, total=False):
     """Keyword arguments accepted by ``p2s.linkp()`` / ``LinkP(...)``.
@@ -2601,7 +2602,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
     # Matching is done on __p2s_index__ (a stable row id) and the original columns are
     # re-selected, so synthetic concat/geometry columns never leak to peers.  Only
     # SELECT_CIRCLEp is supported (a radius); bands don't fit a 2-D node-link view.
-    def recordsAt(self, xy: tuple, shape: Any = None, threshold: float = 5.0) -> pl.DataFrame:
+    def recordsAt(self, xy: tuple, shape: SelectShapeP | None = None, threshold: float = 5.0) -> pl.DataFrame:
         if shape is None: shape = self.p2s.SELECT_CIRCLEp
         if shape != self.p2s.SELECT_CIRCLEp:
             raise ValueError(f'LinkP.recordsAt(): only SELECT_CIRCLEp is supported, got {shape}')

@@ -15,6 +15,7 @@ from polars2svg.p2s_displaylist import DisplayList, hexToRGBA
 from polars2svg.export import ExportMixin
 from polars2svg.p2s_background_mixin import P2SBackgroundMixin
 from polars2svg.exceptions import DataError
+from polars2svg.p2s_enums import ColorTypeP, SelectShapeP
 from polars2svg import _seriation
 
 #
@@ -639,10 +640,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
         if   len(_colors_) >  1: raise ValueError('XYp.__distributionsParamSetDefaults__():  more than one distribution color found')
         if   self.p2s.DISTRIBUTION_INSIDEp in _enums_ and self.p2s.DISTRIBUTION_OUTSIDEp in _enums_: 
             raise ValueError('XYp.__distributionsParamSetDefaults__():  cannot specify both inside and outside distributions')
-        _relative_to_ = _enums_ & {self.p2s.DISTRIBUTION_COLOR_MIN_TO_COLOR_MAX,
-                                   self.p2s.DISTRIBUTION_ZERO_TO_COLOR_MAX,
-                                   self.p2s.DISTRIBUTION_ALL_MIN_TO_ALL_MAX,
-                                   self.p2s.DISTRIBUTION_ZERO_TO_ALL_MAX}
+        _relative_to_ = _enums_ & set(self.p2s.DistributionScaleP)
         if len(_relative_to_) >  1: raise ValueError(f'XYp.__distributionsParamSetDefaults__():  only one relative setting allowed ({_relative_to_})')
         if len(_relative_to_) == 0: _enums_ |= {self.p2s.DISTRIBUTION_ZERO_TO_COLOR_MAX}
         return _fields_, _ints_, _floats_, _colors_, _enums_
@@ -658,9 +656,9 @@ class XYp(P2SBackgroundMixin, ExportMixin):
             if   isinstance(_obj_, self.p2s.HexColorString):         _colors_   .append(_obj_)
             elif isinstance(_obj_, str):                             _fields_   .append(_obj_)
             elif isinstance(_obj_, int) or isinstance(_obj_, float): _widths_   .append(_obj_)
-            elif isinstance(_obj_, self.p2s.RenderEnumsP):           _enums_    .add   (_obj_)
+            elif isinstance(_obj_, self.p2s.RenderEnum):            _enums_    .add   (_obj_)
             elif isListOfInts(_obj_):                                _int_lists_.append(_obj_)
-            else: raise TypeError(f'XYp.__cleanLineParamTuple__() - param "{_param_}" not of type string, int/float, HexColorString, RenderEnumsP, or list of ints')
+            else: raise TypeError(f'XYp.__cleanLineParamTuple__() - param "{_param_}" not of type string, int/float, HexColorString, a render enum, or list of ints')
 
         # Ensure that there aren't too many...
         if len(_widths_)    >  1: raise ValueError(f'XYp.__cleanLineParamTuple__() - param "{_param_}" has more than one width')
@@ -681,7 +679,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     # __lineParamLineWidthCleaner__()
     #
     def __lineParamLineWidthCleaner__(self, _param_: list | str | tuple, _widths_: list, _enums_: set, _parent_widths_: list, _parent_enums_: set) -> tuple:
-        _width_enums_ = {self.p2s.LINEWIDTH_DOTSIZE_MEAN, self.p2s.LINEWIDTH_DOTSIZE_VARIABLE, self.p2s.LINEWIDTH_DOTSIZE_SPECIFIED}
+        _width_enums_ = set(self.p2s.LineWidthP)
         _lw_enum_     = _enums_        & _width_enums_
         _lw_parent_   = _parent_enums_ & _width_enums_
         # Can't specify more than one enum
@@ -719,7 +717,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     # __lineParamLineStyleCleaner__()
     #
     def __lineParamLineStyleCleaner__(self, _param_: list | str | tuple, _int_lists_: list, _enums_: set, _parent_int_lists_: list, _parent_enums_: set) -> tuple:
-        _style_enums_ = {self.p2s.LINESTYLE_SOLID, self.p2s.LINESTYLE_DOTTED, self.p2s.LINESTYLE_SPECIFIED}
+        _style_enums_ = set(self.p2s.LineStyleP)
         _ls_enum_   = _enums_        & _style_enums_
         _ls_parent_ = _parent_enums_ & _style_enums_
         if   len(_ls_enum_)  > 1: raise ValueError(f'XYp.__lineParamLineStyleCleaner__() - param "{_param_}" has more than one line style setting ({_ls_enum_})')
@@ -750,7 +748,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     # __lineParamLineColorCleaner__()
     #    
     def __lineParamLineColorCleaner__(self, _param_: list | str | tuple, _colors_: list, _enums_: set, _parent_colors_: list, _parent_enums_: set) -> tuple:
-        _color_enums_ = {self.p2s.LINECOLOR_GROUPBY, self.p2s.LINECOLOR_FIELD, self.p2s.LINECOLOR_SPECIFIED}
+        _color_enums_ = set(self.p2s.LineColorP)
         _lc_enum_   = _enums_        & _color_enums_
         _lc_parent_ = _parent_enums_ & _color_enums_
         if   len(_lc_enum_) >  1: raise ValueError(f'XYp.__lineParamLineColorCleaner__() - param "{_param_}" has more than one line color setting ({_lc_enum_})')
@@ -781,8 +779,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     # __lineParamLineOpacityCleaner__()
     #
     def __lineParamLineOpacityCleaner__(self, _param_: list | str | tuple, _enums_: set, _parent_enums_: set) -> set:
-        _opacity_enums_ = {self.p2s.LINEOPACITY_FIELD_MEAN, self.p2s.LINEOPACITY_FIELD_VARIABLE,  self.p2s.LINEOPACITY_100,
-                           self.p2s.LINEOPACITY_75, self.p2s.LINEOPACITY_50, self.p2s.LINEOPACITY_25, self.p2s.LINEOPACITY_10}
+        _opacity_enums_ = set(self.p2s.LineOpacityP)
         _lo_enum_     = _enums_        & _opacity_enums_
         _parent_enum_ = _parent_enums_ & _opacity_enums_
         if   len(_lo_enum_)  > 1: raise ValueError(f'XYp.__lineParamLineOpacityCleaner__() - param "{_param_}" has more than one line opacity setting ({_lo_enum_})')
@@ -808,10 +805,10 @@ class XYp(P2SBackgroundMixin, ExportMixin):
                 elif isinstance(_obj_, str):                             _fields_   .append((_obj_,))
                 elif isinstance(_obj_, tuple):                           _fields_   .append(_obj_)
                 elif isinstance(_obj_, int) or isinstance(_obj_, float): _widths_   .append(_obj_)
-                elif isinstance(_obj_, self.p2s.RenderEnumsP):           _enums_    .add(_obj_)
+                elif isinstance(_obj_, self.p2s.RenderEnum):            _enums_    .add(_obj_)
                 elif isListOfInts(_obj_):                                _int_lists_.append(_obj_)
-                else: raise TypeError(f'XYp.__cleanLineParam__() - param "{_param_}" not of type string, int/float, HexColorString, RenderEnumsP, or list of ints')
-        else: raise TypeError(f'XYp.__cleanLineParam__() - param "{_param_}" not of type string, int/float, HexColorString, RenderEnumsP, or list of ints')
+                else: raise TypeError(f'XYp.__cleanLineParam__() - param "{_param_}" not of type string, int/float, HexColorString, a render enum, or list of ints')
+        else: raise TypeError(f'XYp.__cleanLineParam__() - param "{_param_}" not of type string, int/float, HexColorString, a render enum, or list of ints')
 
         # Check for exceptions
         if len(_widths_)    >  1: raise ValueError(f'XYp.__cleanLineParam__() - param "{_param_}" has more than one width')        
@@ -1616,7 +1613,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     #
     # __legendDefaultTitle__() - default legend title from the color spec
     #
-    def __legendDefaultTitle__(self, _mode_: Any) -> str:
+    def __legendDefaultTitle__(self, _mode_: ColorTypeP | None) -> str:
         if _mode_ in (self.p2s.CROW_MAGNITUDEp, self.p2s.CROW_STRETCHEDp): return 'rows'
         if self.color_clean:
             _first_ = self.color_clean[0]
@@ -2154,7 +2151,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     #
     # __determineColoringMode__()
     #
-    def __determineColoringMode__(self) -> Any:
+    def __determineColoringMode__(self) -> ColorTypeP | None:
         # Check if any of the color enums are in self.color_enums
         # ... and then make sure the column supports that mode
         for x in self.p2s.ColorTypeP:
@@ -3422,7 +3419,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     # - populates the provided operation lists with color pipeline ops for the given color mode
     # - mutates _agg_ops_, _norm_ops_, _spectrum_ops_, _tohexcolor_ops_, _fill_nulls_, _shape_template_ in place
     #
-    def __buildColorOps__(self, _color_mode_: Any, _color_default_: str, _color_error_: str,
+    def __buildColorOps__(self, _color_mode_: ColorTypeP | None, _color_default_: str, _color_error_: str,
                           _agg_ops_: list, _norm_ops_: list, _spectrum_ops_: list, _tohexcolor_ops_: list, _fill_nulls_: list, _shape_template_: list) -> None:
         if   _color_mode_ in [self.p2s.CROW_MAGNITUDEp,      self.p2s.CROW_STRETCHEDp,
                               self.p2s.CMAGNITUDE_SUMp,      self.p2s.CSTRETCHED_SUMp,
@@ -3824,7 +3821,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
         if remove_records: return self.df.join(_df_filtered_, on='__p2s_index__', how='anti').drop('__p2s_index__')
         else:              return self.df.join(_df_filtered_, on='__p2s_index__')            .drop('__p2s_index__')
 
-    def recordsAt(self, xy: tuple, shape: Any = None, threshold: float = 2.0) -> pl.DataFrame:
+    def recordsAt(self, xy: tuple, shape: SelectShapeP | None = None, threshold: float = 2.0) -> pl.DataFrame:
         if shape is None: shape = self.p2s.SELECT_CIRCLEp # SELECT_HORIZONTALp, SELECT_VERTICALp
         _x_, _y_ = xy
         if   shape == self.p2s.SELECT_CIRCLEp:

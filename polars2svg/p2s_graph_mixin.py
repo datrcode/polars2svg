@@ -11,6 +11,7 @@ from collections.abc import Iterable
 import polars as pl
 
 from .exceptions import InvalidSpecError
+from .p2s_enums  import FieldTypeP, RowCountP
 
 import numpy as np
 
@@ -48,12 +49,15 @@ class P2SGraphMixin:
     # can follow the mixin's own methods; bare annotations, so nothing exists at
     # runtime and nothing is shadowed.
     #
-    # Typed `Any` on purpose: the mixin genuinely does not know the concrete type,
-    # and several hosts declare the same name with a narrower type of their own.
+    # The enum members are typed with their real class from p2s_enums -- the module
+    # imports nothing from the package, so naming them here costs no cycle.  The
+    # rest stay `Any` on purpose: the mixin genuinely does not know the concrete
+    # type, and several hosts declare the same name with a narrower type of their
+    # own.
     # ---------------------------------------------------------------------
     NULL_NODE_PREFIX:              Any
-    ROW_COUNTp:                    Any
-    SETp:                          Any
+    ROW_COUNTp:                    RowCountP
+    SETp:                          FieldTypeP
     closestPointOnSegment:         Any
     createConcatColumn:            Any
     flattenTuple:                  Any

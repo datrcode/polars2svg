@@ -8,6 +8,7 @@ import polars2svg
 from polars2svg.p2s_displaylist import DisplayList
 from polars2svg.export import ExportMixin
 from polars2svg.p2s_bin_component_mixin import P2SBinComponentMixin
+from polars2svg.p2s_enums import BarStyleP, SelectShapeP, TimeLinearTypeP
 
 
 #
@@ -51,7 +52,7 @@ class TimepKwargs(TypedDict, total=False):
     min_label_spacing:       Any
     remainder_threshold:     Any
     sm_shared:               set
-    style:                   Any
+    style:                   BarStyleP
     swarm_max_pts:           Any
     template:                'Timep | None'
     time:                    Any
@@ -126,7 +127,7 @@ class Timep(P2SBinComponentMixin, ExportMixin):
     _dl_:         DisplayList
     _time_field_: Any
     insets:       tuple
-    style:        Any
+    style:        BarStyleP
     svg:          str
     time:         Any
     wxh:          list | tuple
@@ -321,7 +322,7 @@ class Timep(P2SBinComponentMixin, ExportMixin):
                         raise ValueError(f'Timep.__validateInput__(): color field "{_f_}" not found')
 
         # Validate style
-        _valid_styles_ = {self.p2s.BARCHARTp, self.p2s.BOXPLOTp, self.p2s.BOXPLOT_W_SWARMp, self.p2s.STACKEDBARp}
+        _valid_styles_ = set(self.p2s.BarStyleP)
         if self.style not in _valid_styles_:
             raise ValueError(f'Timep.__validateInput__(): style must be one of {_valid_styles_}')
 
@@ -441,7 +442,7 @@ class Timep(P2SBinComponentMixin, ExportMixin):
         elif                                   _all_same_s_: return self.p2s.LT_Y_m_d_H_Mp
         else:                                                return self.p2s.LT_Y_m_d_H_M_Sp
 
-    def __autoResolveLinearEnum2__(self) -> Any:
+    def __autoResolveLinearEnum2__(self) -> TimeLinearTypeP:
         '''Like __autoResolveLinearEnum__ but avoids sort+group_by_dynamic.
         Counts distinct bins via dt.truncate().n_unique() — no sort required.
         Also checks the spine size (min-to-max range ÷ interval) so that sparse
@@ -1576,7 +1577,7 @@ class Timep(P2SBinComponentMixin, ExportMixin):
             return _df_result_.drop([c for c in ['__p2s_index__', '__bin_key__']
                                      if c in _df_result_.columns])
 
-    def recordsAt(self, xy: tuple, shape: Any = None, threshold: float = 2.0) -> pl.DataFrame:
+    def recordsAt(self, xy: tuple, shape: SelectShapeP | None = None, threshold: float = 2.0) -> pl.DataFrame:
         """Return the original records whose bar column contains pixel x.
 
         Only SELECT_VERTICALp is supported: the y coordinate and threshold are

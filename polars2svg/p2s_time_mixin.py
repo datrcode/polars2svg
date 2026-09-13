@@ -4,6 +4,7 @@ import polars as pl
 from datetime import timedelta
 
 from .exceptions import InvalidSpecError, Polars2SVGError
+from .p2s_enums import TimeLinearTypeP, TimePeriodicTypeP
 
 class P2STimeMixin:
     # ---------------------------------------------------------------------
@@ -14,37 +15,39 @@ class P2STimeMixin:
     # can follow the mixin's own methods; bare annotations, so nothing exists at
     # runtime and nothing is shadowed.
     #
-    # Typed `Any` on purpose: the mixin genuinely does not know the concrete type,
-    # and several hosts declare the same name with a narrower type of their own.
+    # The enum members are typed with their real class from p2s_enums -- the module
+    # imports nothing from the package, so naming them here costs no cycle.  The
+    # rest stay `Any` on purpose: the mixin genuinely does not know the concrete
+    # type, and several hosts declare the same name with a narrower type of their
+    # own.
     # ---------------------------------------------------------------------
-    LT_Y_Qp:           Any
-    LT_Y_m_d_4Hp:      Any
-    LT_Y_m_d_H_15Mp:   Any
-    LT_Y_m_d_H_M_15Sp: Any
-    LT_Y_m_d_H_M_Sp:   Any
-    LT_Y_m_d_H_Mp:     Any
-    LT_Y_m_d_Hp:       Any
-    LT_Y_m_dp:         Any
-    LT_Y_mp:           Any
-    LT_Yp:             Any
-    PT_DoW_H_Mp:       Any
-    PT_DoW_Hp:         Any
-    PT_DoWp:           Any
-    PT_DoYp:           Any
-    PT_H_M_Sp:         Any
-    PT_H_Mp:           Any
-    PT_Hp:             Any
-    PT_M_Sp:           Any
-    PT_Mp:             Any
-    PT_Qp:             Any
-    PT_Sp:             Any
-    PT_d_H_Mp:         Any
-    PT_d_Hp:           Any
-    PT_dp:             Any
-    PT_m_d_Hp:         Any
-    PT_m_dp:           Any
-    PT_mp:             Any
-    TimePeriodicTypeP: Any
+    LT_Y_Qp:           TimeLinearTypeP
+    LT_Y_m_d_4Hp:      TimeLinearTypeP
+    LT_Y_m_d_H_15Mp:   TimeLinearTypeP
+    LT_Y_m_d_H_M_15Sp: TimeLinearTypeP
+    LT_Y_m_d_H_M_Sp:   TimeLinearTypeP
+    LT_Y_m_d_H_Mp:     TimeLinearTypeP
+    LT_Y_m_d_Hp:       TimeLinearTypeP
+    LT_Y_m_dp:         TimeLinearTypeP
+    LT_Y_mp:           TimeLinearTypeP
+    LT_Yp:             TimeLinearTypeP
+    PT_DoW_H_Mp:       TimePeriodicTypeP
+    PT_DoW_Hp:         TimePeriodicTypeP
+    PT_DoWp:           TimePeriodicTypeP
+    PT_DoYp:           TimePeriodicTypeP
+    PT_H_M_Sp:         TimePeriodicTypeP
+    PT_H_Mp:           TimePeriodicTypeP
+    PT_Hp:             TimePeriodicTypeP
+    PT_M_Sp:           TimePeriodicTypeP
+    PT_Mp:             TimePeriodicTypeP
+    PT_Qp:             TimePeriodicTypeP
+    PT_Sp:             TimePeriodicTypeP
+    PT_d_H_Mp:         TimePeriodicTypeP
+    PT_d_Hp:           TimePeriodicTypeP
+    PT_dp:             TimePeriodicTypeP
+    PT_m_d_Hp:         TimePeriodicTypeP
+    PT_m_dp:           TimePeriodicTypeP
+    PT_mp:             TimePeriodicTypeP
     periodic_ranges:   Any
 
     def __init__(self) -> None:
@@ -57,7 +60,7 @@ class P2STimeMixin:
     # polarsOperationForEnum
     # - see also timePeriodicHumanReadable()
     #
-    def polarsOperationForEnum(self, column: str, _enum_: Any) -> pl.Expr:
+    def polarsOperationForEnum(self, column: str, _enum_: TimeLinearTypeP | TimePeriodicTypeP) -> pl.Expr:
         if isinstance(column, tuple):
             if len(column) == 1: column = column[0]
             else: raise InvalidSpecError(f'XYp.polarsOperationForTimeEnums(): column must be a string {column=}')
@@ -140,7 +143,7 @@ class P2STimeMixin:
     #
     # humanReadablePeriodicTimeDelta()
     #
-    def humanReadablePeriodicTimeDelta(self, _diff_: int, _enum_: Any) -> str:
+    def humanReadablePeriodicTimeDelta(self, _diff_: int, _enum_: TimePeriodicTypeP) -> str:
         if   _diff_ == 0: return ''
         elif _enum_ == self.PT_Qp:        # (1,     4)          # quarters ... i.e., 3 months
             return f'{_diff_}q'
@@ -253,22 +256,22 @@ class P2STimeMixin:
     #
     # timePeriodicRange() - return the range for a time periodic type
     #
-    def timePeriodicRange(self, _enum_: Any) -> tuple: return self.periodic_ranges[_enum_]
+    def timePeriodicRange(self, _enum_: TimePeriodicTypeP) -> tuple: return self.periodic_ranges[_enum_]
 
     #
     # timePeriodicHumanReadable() - return a human readable string for a time periodic type
     # - see also polarsOperationForEnum
     #
-    def timePeriodicHumanReadable(self, value: int, _enum_: Any) -> str:
+    def timePeriodicHumanReadable(self, value: int, _enum_: TimePeriodicTypeP) -> str:
         _months_   = self.__monthLookup__()
         _max_days_ = self.__maxDaysInMonthLookup__() # max days (in a year with a leap year)
         _dow_      = self.__daysOfWeekLookup__()
         # Handle the degenerate cases
-        if _enum_ in [self.TimePeriodicTypeP.PT_m_dp, self.TimePeriodicTypeP.PT_m_d_Hp]:
-            if   _enum_ == self.TimePeriodicTypeP.PT_m_dp:
+        if _enum_ in [TimePeriodicTypeP.PT_m_dp, TimePeriodicTypeP.PT_m_d_Hp]:
+            if   _enum_ == TimePeriodicTypeP.PT_m_dp:
                 _days_   = value
                 _append_ = ''
-            elif _enum_ == self.TimePeriodicTypeP.PT_m_d_Hp:
+            elif _enum_ == TimePeriodicTypeP.PT_m_d_Hp:
                 _hours_  = value % 24
                 _days_   = value // 24
                 _append_ = f' {_hours_}h'
@@ -278,21 +281,21 @@ class P2STimeMixin:
             raise Polars2SVGError(f'XYp.timePeriodicHumanReadable(): {value=}, {_enum_=} ... degenerative case exceeded months (should not happen)')
         # Handle the straightforward cases
         _lu_ = {
-            self.TimePeriodicTypeP.PT_Qp:       lambda x: f'q{x}',
-            self.TimePeriodicTypeP.PT_mp:       lambda x: _months_[x],
-            self.TimePeriodicTypeP.PT_DoYp:     lambda x: str(x), # day of year (okay)
-            self.TimePeriodicTypeP.PT_DoWp:     lambda x: _dow_[x],
-            self.TimePeriodicTypeP.PT_DoW_Hp:   lambda x: _dow_[x//24]      + f' {x%24:02}h',
-            self.TimePeriodicTypeP.PT_DoW_H_Mp: lambda x: _dow_[x//(24*60)] + f' {x%(24*60)//60:02}:{x%(24*60)%60:02}',
-            self.TimePeriodicTypeP.PT_dp:       lambda x: f'{x:02}d',
-            self.TimePeriodicTypeP.PT_d_Hp:     lambda x: f'{x//24:02} {x%24:02}h',
-            self.TimePeriodicTypeP.PT_d_H_Mp:   lambda x: f'{x//(24*60):02} {x%(24*60)//60:02}:{x%(24*60)%60:02}',
-            self.TimePeriodicTypeP.PT_Hp:       lambda x: f'{x:02}h',
-            self.TimePeriodicTypeP.PT_H_Mp:     lambda x: f'{x//60:02}:{x%60:02}m',
-            self.TimePeriodicTypeP.PT_H_M_Sp:   lambda x: f'{x//3600:02}:{x%3600//60:02}:{x%60:02}',
-            self.TimePeriodicTypeP.PT_Mp:       lambda x: f'{x:02}m',
-            self.TimePeriodicTypeP.PT_M_Sp:     lambda x: f'{x//60:02}:{x%60:02}s',
-            self.TimePeriodicTypeP.PT_Sp:       lambda x: f'{x:02}s',
+            TimePeriodicTypeP.PT_Qp:       lambda x: f'q{x}',
+            TimePeriodicTypeP.PT_mp:       lambda x: _months_[x],
+            TimePeriodicTypeP.PT_DoYp:     lambda x: str(x), # day of year (okay)
+            TimePeriodicTypeP.PT_DoWp:     lambda x: _dow_[x],
+            TimePeriodicTypeP.PT_DoW_Hp:   lambda x: _dow_[x//24]      + f' {x%24:02}h',
+            TimePeriodicTypeP.PT_DoW_H_Mp: lambda x: _dow_[x//(24*60)] + f' {x%(24*60)//60:02}:{x%(24*60)%60:02}',
+            TimePeriodicTypeP.PT_dp:       lambda x: f'{x:02}d',
+            TimePeriodicTypeP.PT_d_Hp:     lambda x: f'{x//24:02} {x%24:02}h',
+            TimePeriodicTypeP.PT_d_H_Mp:   lambda x: f'{x//(24*60):02} {x%(24*60)//60:02}:{x%(24*60)%60:02}',
+            TimePeriodicTypeP.PT_Hp:       lambda x: f'{x:02}h',
+            TimePeriodicTypeP.PT_H_Mp:     lambda x: f'{x//60:02}:{x%60:02}m',
+            TimePeriodicTypeP.PT_H_M_Sp:   lambda x: f'{x//3600:02}:{x%3600//60:02}:{x%60:02}',
+            TimePeriodicTypeP.PT_Mp:       lambda x: f'{x:02}m',
+            TimePeriodicTypeP.PT_M_Sp:     lambda x: f'{x//60:02}:{x%60:02}s',
+            TimePeriodicTypeP.PT_Sp:       lambda x: f'{x:02}s',
         }
         return _lu_[_enum_](value)
 

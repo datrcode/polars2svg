@@ -8,6 +8,7 @@ from polars2svg.export import ExportMixin
 from polars2svg.p2s_displaylist import (CLOUD_ICON_H, CLOUD_ICON_RX, CLOUD_ICON_W,
                                         cloudIconDef, pathToDL, roundedRectPoints,
                                         strokePolylineDL)
+from polars2svg.p2s_enums import TimeLinearTypeP
 
 #
 # Implementation of the following:
@@ -510,7 +511,7 @@ class SpreadLinesP(ExportMixin):
             p.LT_Y_m_d_H_M_15Sp, p.LT_Y_m_d_H_M_Sp,
         ]
 
-    def __dataGranularityCap__(self) -> Any:
+    def __dataGranularityCap__(self) -> TimeLinearTypeP:
         """Return the finest TimeLinearTypeP allowed by actual data precision."""
         p = self.p2s
         if p.dateColumn(self.df, self._ts_field_):
@@ -533,7 +534,7 @@ class SpreadLinesP(ExportMixin):
         if                               all_on_min:    return p.LT_Y_m_d_H_Mp
         return p.LT_Y_m_d_H_M_Sp
 
-    def __autoResolveLinearEnum__(self) -> Any:
+    def __autoResolveLinearEnum__(self) -> TimeLinearTypeP:
         """
         Pick the finest granularity where ego-containing bins fit within the
         canvas without overcrowding.

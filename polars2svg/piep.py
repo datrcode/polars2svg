@@ -9,6 +9,7 @@ from math import pi, cos, sin, atan2, sqrt, radians
 import polars2svg
 from polars2svg.p2s_displaylist import DisplayList
 from polars2svg.export import ExportMixin
+from polars2svg.p2s_enums import PieStyleP, SelectShapeP
 
 # Sentinel for "no slice under this pixel".  It cannot be None: None is a legal
 # bin value -- a null in the bin_by column gets its own group from polars and is
@@ -52,7 +53,7 @@ class PiepKwargs(TypedDict, total=False):
     min_slice_deg:           Any
     sm_shared:               set
     start_angle:             Any
-    style:                   Any
+    style:                   PieStyleP
     template:                'Piep | None'
     txt_h:                   Any
     use_lazy_execution:      bool
@@ -113,7 +114,7 @@ class Piep(ExportMixin):
     min_slice_deg:           float
     sm_shared:               set
     start_angle:             float
-    style:                   Any
+    style:                   PieStyleP
     txt_h:                   int
     use_lazy_execution:      bool
     waffle_n:                int
@@ -311,7 +312,7 @@ class Piep(ExportMixin):
         self.__resolveColor__()
 
         # Validate style
-        _valid_styles_ = {self.p2s.PIEp, self.p2s.DONUTp, self.p2s.WAFFLEp}
+        _valid_styles_ = set(self.p2s.PieStyleP)
         if self.style not in _valid_styles_:
             raise ValueError(f'Piep.__validateInput__(): style must be one of {_valid_styles_}')
 
@@ -1225,7 +1226,7 @@ class Piep(ExportMixin):
             _acc_ += _cnt_
         return _NO_BIN_
 
-    def recordsAt(self, xy: tuple, shape: Any = None, threshold: float = 2.0) -> pl.DataFrame:
+    def recordsAt(self, xy: tuple, shape: SelectShapeP | None = None, threshold: float = 2.0) -> pl.DataFrame:
         '''Records whose slice contains the pixel xy (SELECT_CIRCLEp).'''
         if shape is None: shape = self.p2s.SELECT_CIRCLEp
         if shape != self.p2s.SELECT_CIRCLEp:

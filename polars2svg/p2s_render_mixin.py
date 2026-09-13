@@ -2,6 +2,7 @@ from typing import Any
 import polars as pl
 
 from .exceptions import InvalidSpecError
+from .p2s_enums import CountSpec, FieldTypeP, ResolvedColorSpec, RowCountP
 
 class P2SRenderMixin:
     # ---------------------------------------------------------------------
@@ -12,12 +13,15 @@ class P2SRenderMixin:
     # can follow the mixin's own methods; bare annotations, so nothing exists at
     # runtime and nothing is shadowed.
     #
-    # Typed `Any` on purpose: the mixin genuinely does not know the concrete type,
-    # and several hosts declare the same name with a narrower type of their own.
+    # The enum members are typed with their real class from p2s_enums -- the module
+    # imports nothing from the package, so naming them here costs no cycle.  The
+    # rest stay `Any` on purpose: the mixin genuinely does not know the concrete
+    # type, and several hosts declare the same name with a narrower type of their
+    # own.
     # ---------------------------------------------------------------------
     MULTI_FIELD_SEP:                Any
-    ROW_COUNTp:                     Any
-    SCALARp:                        Any
+    ROW_COUNTp:                     RowCountP
+    SCALARp:                        FieldTypeP
     colorTyped:                     Any
     colorizeColumnPolarsOperations: Any
     numericColumn:                  Any
@@ -36,7 +40,7 @@ class P2SRenderMixin:
     # Returns a list of color values sorted by their global total (descending),
     # to be passed as color_order to colorizeBar() for consistent cross-bar ordering.
     #
-    def colorizeOrder(self, df: pl.DataFrame, count: Any, color: Any) -> list:
+    def colorizeOrder(self, df: pl.DataFrame, count: CountSpec, color: ResolvedColorSpec) -> list:
         color_enums = set()
         if isinstance(color, tuple):
             _strs_ = []
@@ -99,7 +103,7 @@ class P2SRenderMixin:
     # colorizeBar() - colorize a bar for a barchart using polars operations
     # xywh convention: (x, y_bottom, bar_width, bar_height) - bars extend upward from y_bottom
     #
-    def colorizeBar(self, df: pl.DataFrame, xywh: tuple, count: Any, color: str | tuple | None, color_order: list | None = None, orientation: str = 'horizontal', remainder_threshold: float = 3.0, dl: Any = None) -> str:
+    def colorizeBar(self, df: pl.DataFrame, xywh: tuple, count: CountSpec, color: str | tuple | None, color_order: list | None = None, orientation: str = 'horizontal', remainder_threshold: float = 3.0, dl: Any = None) -> str:
         if orientation not in ('horizontal', 'vertical'):
             raise ValueError('colorizeBar(): orientation must be "horizontal" or "vertical"')
         bar_h, bar_w = xywh[3], xywh[2]

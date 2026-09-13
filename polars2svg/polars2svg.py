@@ -3,7 +3,6 @@ import polars.selectors as cs
 import logging
 import copy
 
-from enum import Enum
 from collections.abc import Mapping
 from typing import Any, Union, Unpack, TYPE_CHECKING
 import re
@@ -19,6 +18,7 @@ from .p2s_time_mixin        import P2STimeMixin
 from .p2s_interactive_mixin import P2SInteractiveMixin
 from .p2s_legend_mixin      import P2SLegendMixin
 from .p2s_background_mixin  import BackgroundShape as _BackgroundShape_, INHERIT as _INHERIT_
+from . import p2s_enums as _enums_
 from .xyp                import XYp, XYpKwargs
 from .smallp             import Smallp, SmallpKwargs
 from .timep              import Timep, TimepKwargs
@@ -205,88 +205,17 @@ class Polars2SVG(P2SColorsMixin,
     # nullNodeDisplay() restores a readable '(null)' at every text-display site.
     NULL_NODE_PREFIX     = '\x1fNULL\x1f'
 
-    class FieldTypeP(Enum):
-        '''How a ``count=``/``order=`` field is aggregated. Pair with a field to
-        override the dtype-keyed default: ``('field', p2s.SCALARp)`` forces ``sum``,
-        ``('field', p2s.SETp)`` forces distinct-count (``n_unique``). Members are
-        exposed on the instance as ``p2s.SCALARp`` / ``p2s.SETp``.'''
-        SCALARp = 1 # Treat a field as a scalar -- e.g., (1 + 1 + 2 + 2) = 4
-        SETp    = 2 # Treat a field as a set -- e.g., (1 + 1 + 2 + 2) = set(1,2) = len(set(1,2)) = 2
-
-    class StatisticP(Enum):
-        '''Aggregation statistic for a numeric field, used in ``('field', <stat>)``
-        specs for ``order=`` (histop) and magnitude coloring. Exposed on the instance
-        as ``p2s.MINp``, ``p2s.MEANp``, etc.'''
-        MINp    = 1
-        MEDIANp = 2 
-        MEANp   = 3 
-        MAXp    = 4 
-        STDp    = 5
-        SUMp    = 6
-
-    class ColorTypeP(Enum):
-        '''Color-encoding modes, used as ``color=('field', <enum>)`` (or bare, e.g.
-        ``color=p2s.CROW_MAGNITUDEp``). The ``C``-prefix distinguishes them from the
-        counting enums. Broadly: ``CSET*`` treat the field categorically; ``CMAGNITUDE_*``
-        / ``CSTRETCHED_*`` map a numeric statistic onto ``p2s.spectrum_palette`` (linear
-        vs. rank-equalized); ``CROW_*`` color by raw row count (``pl.len()``), independent
-        of ``count=``. Exposed on the instance by name, e.g. ``p2s.CSETp``.'''
-        CSETp              =  1 # if set_size == 1, color == color(object-in-set) else generate set color                 (xyp, timep)
-        CSET_MAGNITUDEp    =  2 # count the items in the set, scale across a spectrum                                     (xyp)
-        CSET_STRETCHEDp    =  3 # count the items in the set, give that value an equal amount of the spectrum             (xyp)
-        CROW_MAGNITUDEp    =  4 # count the number of rows at that pixel, scale across a spectrum                         (xyp)
-        CROW_STRETCHEDp    =  5 # count the number of rows at that pixel, give that value an equal amount of the spectrum (xyp)
-        CMAGNITUDE_SUMp    =  6 # sum a field (numeric field), scale across a spectrum                                    (xyp)
-        CMAGNITUDE_MINp    =  7 # min a field (numeric field), scale across a spectrum                                    (xyp)
-        CMAGNITUDE_MEDIANp =  8 # median a field (numeric field), scale across a spectrum                                 (xyp)
-        CMAGNITUDE_MEANp   =  9 # mean a field (numeric field), scale across a spectrum                                   (xyp)
-        CMAGNITUDE_MAXp    = 10 # max a field (numeric field), scale across a spectrum                                    (xyp)
-        CSTRETCHED_SUMp    = 11 # sum a field (numeric field), give that value an equal amount of the spectrum            (xyp)
-        CSTRETCHED_MINp    = 12 # min a field (numeric field), scale across a spectrum                                    (xyp)
-        CSTRETCHED_MEDIANp = 13 # median a field (numeric field), scale across a spectrum                                 (xyp)
-        CSTRETCHED_MEANp   = 14 # mean a field (numeric field), scale across a spectrum                                   (xyp)
-        CSTRETCHED_MAXp    = 15 # max a field (numeric field), scale across a spectrum                                    (xyp)
-
-    class TimeLinearTypeP(Enum):
-        '''Linear (monotonic) time-binning resolutions — each ``LT_*`` member bins a
-        timestamp down to a calendar granularity (year, month, day, 4-hour, …) while
-        preserving chronological order. Used via ``p2s.tField(col, p2s.LT_Y_mp)`` or a
-        ``('field', <enum>)`` time spec in ``timep``. Contrast ``TimePeriodicTypeP``,
-        which folds time into a repeating cycle.'''
-        LT_Yp                = 1
-        LT_Y_Qp              = 2
-        LT_Y_mp              = 3
-        LT_Y_m_dp            = 4
-        LT_Y_m_d_Hp          = 5
-        LT_Y_m_d_H_Mp        = 6
-        LT_Y_m_d_H_M_Sp      = 7
-        LT_Y_m_d_4Hp         = 8   # 4-hour bins
-        LT_Y_m_d_H_15Mp      = 9   # 15-minute bins
-        LT_Y_m_d_H_M_15Sp   = 10   # 15-second bins
-
-    class TimePeriodicTypeP(Enum):
-        '''Periodic (cyclic) time-binning resolutions — each ``PT_*`` member folds a
-        timestamp into a repeating cycle (quarter, month, day-of-week, hour, …), so all
-        Mondays or all Januaries collapse into one bin. Used via
-        ``p2s.tField(col, p2s.PT_DoWp)`` or a ``('field', <enum>)`` time spec in ``timep``.
-        Contrast ``TimeLinearTypeP``, which keeps chronological order.'''
-        PT_Qp       = 1   # Quarter
-        PT_mp       = 2   # Month
-        PT_m_dp     = 3   # Month Day      (note that this uses a leap year to determine the number of days)
-        PT_m_d_Hp   = 4   # Month Day Hour (note that this uses a leap year to determine the number of days)
-        PT_DoYp     = 5   # Day of Year    (note that this does *NOT* use a leap year to determine the number of days)
-        PT_DoWp     = 6   # Day of Week
-        PT_DoW_Hp   = 7   # Day of Week Hour
-        PT_DoW_H_Mp = 8   # Day of Week Hour Minute
-        PT_dp       = 9   # Day (of Month)
-        PT_d_Hp     = 10  # Day (of Month) Hour
-        PT_d_H_Mp   = 11  # Day (of Month) Hour Minute
-        PT_Hp       = 12  # Hour
-        PT_H_Mp     = 13  # Hour Minute
-        PT_H_M_Sp   = 14  # Hour Minute Second
-        PT_Mp       = 15  # Minute
-        PT_M_Sp     = 16  # Minute Second
-        PT_Sp       = 17  # Second
+    # The enumerations live in p2s_enums.py so that the mixins -- every one of which
+    # is upstream of this module in the import graph -- can name their types instead
+    # of declaring them `Any`.  Re-exposed here as class attributes so p2s.ColorTypeP
+    # and Polars2SVG.ColorTypeP keep resolving exactly as they did when these were
+    # nested class definitions.  Annotations elsewhere in this file must use the
+    # module-qualified `_enums_.X` spelling: mypy rejects a class *variable* as a type.
+    FieldTypeP        = _enums_.FieldTypeP
+    StatisticP        = _enums_.StatisticP
+    ColorTypeP        = _enums_.ColorTypeP
+    TimeLinearTypeP   = _enums_.TimeLinearTypeP
+    TimePeriodicTypeP = _enums_.TimePeriodicTypeP
 
     # enum <-> suffix lookup tables -- class attributes (rather than built in __init__) so
     # TField.__new__ can resolve a suffix without needing a Polars2SVG instance.
@@ -362,8 +291,8 @@ class Polars2SVG(P2SColorsMixin,
         '''
         __slots__ = ('column', 'transform')
         column:    str   # the real column name
-        transform: Any   # a TimeLinearTypeP / TimePeriodicTypeP member
-        def __new__(cls, column: str, transform: Any) -> Any:
+        transform: _enums_.TimeLinearTypeP | _enums_.TimePeriodicTypeP
+        def __new__(cls, column: str, transform: _enums_.TimeLinearTypeP | _enums_.TimePeriodicTypeP) -> Any:
             if not isinstance(column, str): raise TypeError(f'polars2svg.TField(): column must be a string, got {type(column)}')
             if transform not in Polars2SVG._ENUM_TO_SUFFIX_: raise InvalidSpecError(f'polars2svg.tField(): unknown enumeration {transform}')
             _self_ = super().__new__(cls, column + '|' + Polars2SVG._ENUM_TO_SUFFIX_[transform])
@@ -375,73 +304,23 @@ class Polars2SVG(P2SColorsMixin,
         def alias(self) -> str: return str(self)
         def __repr__(self) -> str: return f'TField({self.column!r}, {self.transform})'
 
-    #
-    # RenderEnumsP - general enums for render options
-    #
-    class RenderEnumsP(Enum):
-        '''General render-option enums used across components. This grab-bag holds the
-        default sentinel ``ROW_COUNTp`` (count/order/size by raw row count), the xyp
-        distribution / line-width / line-style / line-color / line-opacity modes, the
-        ``SM_*`` small-multiple sharing flags, the bar-chart styles (``BARCHARTp``,
-        ``BOXPLOTp``, ``STACKEDBARp``, …), the piechart styles (``PIEp``, ``DONUTp``,
-        ``WAFFLEp``), and node-selection shapes. Members are exposed on the instance by
-        name, e.g. ``p2s.ROW_COUNTp``, ``p2s.BARCHARTp``, ``p2s.SM_COLOR``.'''
-        # counting by rows
-        ROW_COUNTp                          =  1 # for certain transformations, treat the row count as the parameter
-        # xy distribution
-        DISTRIBUTION_INSIDEp                =  2 # xy default (doesn't require specification)
-        DISTRIBUTION_OUTSIDEp               =  3
-        DISTRIBUTION_AUTOBINp               =  4 # xy default (doesn't require specification)
-        DISTRIBUTION_COLOR_MIN_TO_COLOR_MAX =  5
-        DISTRIBUTION_ZERO_TO_COLOR_MAX      =  6 # xy default
-        DISTRIBUTION_ALL_MIN_TO_ALL_MAX     =  7
-        DISTRIBUTION_ZERO_TO_ALL_MAX        =  8
-        # xy line width
-        LINEWIDTH_DOTSIZE_MEAN              =  9
-        LINEWIDTH_DOTSIZE_VARIABLE          = 10
-        LINEWIDTH_DOTSIZE_SPECIFIED         = 11 # xy default
-        # xy line style
-        LINESTYLE_SOLID                     = 12 # xy default
-        LINESTYLE_DOTTED                    = 13
-        LINESTYLE_SPECIFIED                 = 14
-        LINECOLOR_GROUPBY                   = 15 # xy default
-        LINECOLOR_FIELD                     = 16
-        LINECOLOR_SPECIFIED                 = 17
-        # xy line opacity
-        LINEOPACITY_FIELD_MEAN              = 18
-        LINEOPACITY_FIELD_VARIABLE          = 19
-        LINEOPACITY_100                     = 20 # xy default
-        LINEOPACITY_75                      = 21
-        LINEOPACITY_50                      = 22
-        LINEOPACITY_25                      = 23
-        LINEOPACITY_10                      = 24
-        # small multiple options (for shared attributes)
-        SM_X                                = 25
-        SM_Y                                = 26
-        SM_COUNT                            = 27
-        SM_COLOR                            = 28
-        # for temporal barcharts (and histograms)
-        BARCHARTp                           = 29
-        BOXPLOTp                            = 30
-        BOXPLOT_W_SWARMp                    = 31
-        STACKEDBARp                         = 32
-        # selection shapes
-        SELECT_CIRCLEp                      = 33
-        SELECT_HORIZONTALp                  = 34
-        SELECT_VERTICALp                    = 35
-        # node coloring
-        COLOR_BY_NODE_NAME                  = 36
-        # piechart styles (piep)
-        PIEp                                = 37
-        DONUTp                              = 38
-        WAFFLEp                             = 39
-        # piechart small-multiple shared modes (piep)
-        SM_SLICE_ORDERp                     = 40 # keep the same slice order & colors across panels
-        SM_PARTOFWHOLEp                     = 41 # fade the "all rows" chart behind, fill each slice's share
-        # partial order= bucket (chordp order=, xyp x_order=/y_order=)
-        REMAINDERp                          = 42 # placeholder in order= -- values absent from order= merge into
-                                                 # one bucket at the sentinel's position.  Without it, unlisted
-                                                 # values are appended in sorted order and keep their identity.
+    # The thirteen classes that replaced the RenderEnumsP grab-bag, plus the tuple
+    # and union alias that still mean "any render enum".
+    RowCountP              = _enums_.RowCountP
+    DistributionPlacementP = _enums_.DistributionPlacementP
+    DistributionScaleP     = _enums_.DistributionScaleP
+    LineWidthP             = _enums_.LineWidthP
+    LineStyleP             = _enums_.LineStyleP
+    LineColorP             = _enums_.LineColorP
+    LineOpacityP           = _enums_.LineOpacityP
+    SmallMultipleP         = _enums_.SmallMultipleP
+    BarStyleP              = _enums_.BarStyleP
+    SelectShapeP           = _enums_.SelectShapeP
+    NodeColorP             = _enums_.NodeColorP
+    PieStyleP              = _enums_.PieStyleP
+    OrderBucketP           = _enums_.OrderBucketP
+    RENDER_ENUM_CLASSES    = _enums_.RENDER_ENUM_CLASSES
+    RenderEnum             = _enums_.RenderEnum
 
     # ---------------------------------------------------------------------
     # Enum members bound onto the instance by the setattr() loops in __init__.
@@ -457,108 +336,108 @@ class Polars2SVG(P2SColorsMixin,
     # suite until it is declared here too.
     # ---------------------------------------------------------------------
     # FieldTypeP
-    SCALARp: FieldTypeP
-    SETp:    FieldTypeP
+    SCALARp: _enums_.FieldTypeP
+    SETp:    _enums_.FieldTypeP
 
     # StatisticP
-    MINp:    StatisticP
-    MEDIANp: StatisticP
-    MEANp:   StatisticP
-    MAXp:    StatisticP
-    STDp:    StatisticP
-    SUMp:    StatisticP
+    MINp:    _enums_.StatisticP
+    MEDIANp: _enums_.StatisticP
+    MEANp:   _enums_.StatisticP
+    MAXp:    _enums_.StatisticP
+    STDp:    _enums_.StatisticP
+    SUMp:    _enums_.StatisticP
 
     # ColorTypeP
-    CSETp:              ColorTypeP
-    CSET_MAGNITUDEp:    ColorTypeP
-    CSET_STRETCHEDp:    ColorTypeP
-    CROW_MAGNITUDEp:    ColorTypeP
-    CROW_STRETCHEDp:    ColorTypeP
-    CMAGNITUDE_SUMp:    ColorTypeP
-    CMAGNITUDE_MINp:    ColorTypeP
-    CMAGNITUDE_MEDIANp: ColorTypeP
-    CMAGNITUDE_MEANp:   ColorTypeP
-    CMAGNITUDE_MAXp:    ColorTypeP
-    CSTRETCHED_SUMp:    ColorTypeP
-    CSTRETCHED_MINp:    ColorTypeP
-    CSTRETCHED_MEDIANp: ColorTypeP
-    CSTRETCHED_MEANp:   ColorTypeP
-    CSTRETCHED_MAXp:    ColorTypeP
+    CSETp:              _enums_.ColorTypeP
+    CSET_MAGNITUDEp:    _enums_.ColorTypeP
+    CSET_STRETCHEDp:    _enums_.ColorTypeP
+    CROW_MAGNITUDEp:    _enums_.ColorTypeP
+    CROW_STRETCHEDp:    _enums_.ColorTypeP
+    CMAGNITUDE_SUMp:    _enums_.ColorTypeP
+    CMAGNITUDE_MINp:    _enums_.ColorTypeP
+    CMAGNITUDE_MEDIANp: _enums_.ColorTypeP
+    CMAGNITUDE_MEANp:   _enums_.ColorTypeP
+    CMAGNITUDE_MAXp:    _enums_.ColorTypeP
+    CSTRETCHED_SUMp:    _enums_.ColorTypeP
+    CSTRETCHED_MINp:    _enums_.ColorTypeP
+    CSTRETCHED_MEDIANp: _enums_.ColorTypeP
+    CSTRETCHED_MEANp:   _enums_.ColorTypeP
+    CSTRETCHED_MAXp:    _enums_.ColorTypeP
 
     # TimeLinearTypeP
-    LT_Yp:             TimeLinearTypeP
-    LT_Y_Qp:           TimeLinearTypeP
-    LT_Y_mp:           TimeLinearTypeP
-    LT_Y_m_dp:         TimeLinearTypeP
-    LT_Y_m_d_Hp:       TimeLinearTypeP
-    LT_Y_m_d_H_Mp:     TimeLinearTypeP
-    LT_Y_m_d_H_M_Sp:   TimeLinearTypeP
-    LT_Y_m_d_4Hp:      TimeLinearTypeP
-    LT_Y_m_d_H_15Mp:   TimeLinearTypeP
-    LT_Y_m_d_H_M_15Sp: TimeLinearTypeP
+    LT_Yp:             _enums_.TimeLinearTypeP
+    LT_Y_Qp:           _enums_.TimeLinearTypeP
+    LT_Y_mp:           _enums_.TimeLinearTypeP
+    LT_Y_m_dp:         _enums_.TimeLinearTypeP
+    LT_Y_m_d_Hp:       _enums_.TimeLinearTypeP
+    LT_Y_m_d_H_Mp:     _enums_.TimeLinearTypeP
+    LT_Y_m_d_H_M_Sp:   _enums_.TimeLinearTypeP
+    LT_Y_m_d_4Hp:      _enums_.TimeLinearTypeP
+    LT_Y_m_d_H_15Mp:   _enums_.TimeLinearTypeP
+    LT_Y_m_d_H_M_15Sp: _enums_.TimeLinearTypeP
 
     # TimePeriodicTypeP
-    PT_Qp:       TimePeriodicTypeP
-    PT_mp:       TimePeriodicTypeP
-    PT_m_dp:     TimePeriodicTypeP
-    PT_m_d_Hp:   TimePeriodicTypeP
-    PT_DoYp:     TimePeriodicTypeP
-    PT_DoWp:     TimePeriodicTypeP
-    PT_DoW_Hp:   TimePeriodicTypeP
-    PT_DoW_H_Mp: TimePeriodicTypeP
-    PT_dp:       TimePeriodicTypeP
-    PT_d_Hp:     TimePeriodicTypeP
-    PT_d_H_Mp:   TimePeriodicTypeP
-    PT_Hp:       TimePeriodicTypeP
-    PT_H_Mp:     TimePeriodicTypeP
-    PT_H_M_Sp:   TimePeriodicTypeP
-    PT_Mp:       TimePeriodicTypeP
-    PT_M_Sp:     TimePeriodicTypeP
-    PT_Sp:       TimePeriodicTypeP
+    PT_Qp:       _enums_.TimePeriodicTypeP
+    PT_mp:       _enums_.TimePeriodicTypeP
+    PT_m_dp:     _enums_.TimePeriodicTypeP
+    PT_m_d_Hp:   _enums_.TimePeriodicTypeP
+    PT_DoYp:     _enums_.TimePeriodicTypeP
+    PT_DoWp:     _enums_.TimePeriodicTypeP
+    PT_DoW_Hp:   _enums_.TimePeriodicTypeP
+    PT_DoW_H_Mp: _enums_.TimePeriodicTypeP
+    PT_dp:       _enums_.TimePeriodicTypeP
+    PT_d_Hp:     _enums_.TimePeriodicTypeP
+    PT_d_H_Mp:   _enums_.TimePeriodicTypeP
+    PT_Hp:       _enums_.TimePeriodicTypeP
+    PT_H_Mp:     _enums_.TimePeriodicTypeP
+    PT_H_M_Sp:   _enums_.TimePeriodicTypeP
+    PT_Mp:       _enums_.TimePeriodicTypeP
+    PT_M_Sp:     _enums_.TimePeriodicTypeP
+    PT_Sp:       _enums_.TimePeriodicTypeP
 
-    # RenderEnumsP
-    ROW_COUNTp:                          RenderEnumsP
-    DISTRIBUTION_INSIDEp:                RenderEnumsP
-    DISTRIBUTION_OUTSIDEp:               RenderEnumsP
-    DISTRIBUTION_AUTOBINp:               RenderEnumsP
-    DISTRIBUTION_COLOR_MIN_TO_COLOR_MAX: RenderEnumsP
-    DISTRIBUTION_ZERO_TO_COLOR_MAX:      RenderEnumsP
-    DISTRIBUTION_ALL_MIN_TO_ALL_MAX:     RenderEnumsP
-    DISTRIBUTION_ZERO_TO_ALL_MAX:        RenderEnumsP
-    LINEWIDTH_DOTSIZE_MEAN:              RenderEnumsP
-    LINEWIDTH_DOTSIZE_VARIABLE:          RenderEnumsP
-    LINEWIDTH_DOTSIZE_SPECIFIED:         RenderEnumsP
-    LINESTYLE_SOLID:                     RenderEnumsP
-    LINESTYLE_DOTTED:                    RenderEnumsP
-    LINESTYLE_SPECIFIED:                 RenderEnumsP
-    LINECOLOR_GROUPBY:                   RenderEnumsP
-    LINECOLOR_FIELD:                     RenderEnumsP
-    LINECOLOR_SPECIFIED:                 RenderEnumsP
-    LINEOPACITY_FIELD_MEAN:              RenderEnumsP
-    LINEOPACITY_FIELD_VARIABLE:          RenderEnumsP
-    LINEOPACITY_100:                     RenderEnumsP
-    LINEOPACITY_75:                      RenderEnumsP
-    LINEOPACITY_50:                      RenderEnumsP
-    LINEOPACITY_25:                      RenderEnumsP
-    LINEOPACITY_10:                      RenderEnumsP
-    SM_X:                                RenderEnumsP
-    SM_Y:                                RenderEnumsP
-    SM_COUNT:                            RenderEnumsP
-    SM_COLOR:                            RenderEnumsP
-    BARCHARTp:                           RenderEnumsP
-    BOXPLOTp:                            RenderEnumsP
-    BOXPLOT_W_SWARMp:                    RenderEnumsP
-    STACKEDBARp:                         RenderEnumsP
-    SELECT_CIRCLEp:                      RenderEnumsP
-    SELECT_HORIZONTALp:                  RenderEnumsP
-    SELECT_VERTICALp:                    RenderEnumsP
-    COLOR_BY_NODE_NAME:                  RenderEnumsP
-    PIEp:                                RenderEnumsP
-    DONUTp:                              RenderEnumsP
-    WAFFLEp:                             RenderEnumsP
-    SM_SLICE_ORDERp:                     RenderEnumsP
-    SM_PARTOFWHOLEp:                     RenderEnumsP
-    REMAINDERp:                          RenderEnumsP
+    # The render enums (RowCountP .. OrderBucketP)
+    ROW_COUNTp:                          _enums_.RowCountP
+    DISTRIBUTION_INSIDEp:                _enums_.DistributionPlacementP
+    DISTRIBUTION_OUTSIDEp:               _enums_.DistributionPlacementP
+    DISTRIBUTION_AUTOBINp:               _enums_.DistributionPlacementP
+    DISTRIBUTION_COLOR_MIN_TO_COLOR_MAX: _enums_.DistributionScaleP
+    DISTRIBUTION_ZERO_TO_COLOR_MAX:      _enums_.DistributionScaleP
+    DISTRIBUTION_ALL_MIN_TO_ALL_MAX:     _enums_.DistributionScaleP
+    DISTRIBUTION_ZERO_TO_ALL_MAX:        _enums_.DistributionScaleP
+    LINEWIDTH_DOTSIZE_MEAN:              _enums_.LineWidthP
+    LINEWIDTH_DOTSIZE_VARIABLE:          _enums_.LineWidthP
+    LINEWIDTH_DOTSIZE_SPECIFIED:         _enums_.LineWidthP
+    LINESTYLE_SOLID:                     _enums_.LineStyleP
+    LINESTYLE_DOTTED:                    _enums_.LineStyleP
+    LINESTYLE_SPECIFIED:                 _enums_.LineStyleP
+    LINECOLOR_GROUPBY:                   _enums_.LineColorP
+    LINECOLOR_FIELD:                     _enums_.LineColorP
+    LINECOLOR_SPECIFIED:                 _enums_.LineColorP
+    LINEOPACITY_FIELD_MEAN:              _enums_.LineOpacityP
+    LINEOPACITY_FIELD_VARIABLE:          _enums_.LineOpacityP
+    LINEOPACITY_100:                     _enums_.LineOpacityP
+    LINEOPACITY_75:                      _enums_.LineOpacityP
+    LINEOPACITY_50:                      _enums_.LineOpacityP
+    LINEOPACITY_25:                      _enums_.LineOpacityP
+    LINEOPACITY_10:                      _enums_.LineOpacityP
+    SM_X:                                _enums_.SmallMultipleP
+    SM_Y:                                _enums_.SmallMultipleP
+    SM_COUNT:                            _enums_.SmallMultipleP
+    SM_COLOR:                            _enums_.SmallMultipleP
+    BARCHARTp:                           _enums_.BarStyleP
+    BOXPLOTp:                            _enums_.BarStyleP
+    BOXPLOT_W_SWARMp:                    _enums_.BarStyleP
+    STACKEDBARp:                         _enums_.BarStyleP
+    SELECT_CIRCLEp:                      _enums_.SelectShapeP
+    SELECT_HORIZONTALp:                  _enums_.SelectShapeP
+    SELECT_VERTICALp:                    _enums_.SelectShapeP
+    COLOR_BY_NODE_NAME:                  _enums_.NodeColorP
+    PIEp:                                _enums_.PieStyleP
+    DONUTp:                              _enums_.PieStyleP
+    WAFFLEp:                             _enums_.PieStyleP
+    SM_SLICE_ORDERp:                     _enums_.SmallMultipleP
+    SM_PARTOFWHOLEp:                     _enums_.SmallMultipleP
+    REMAINDERp:                          _enums_.OrderBucketP
 
     def __init__(self) -> None:
         # Every Polars2SVG() builds its own instance, so everything below is per-instance
@@ -568,15 +447,13 @@ class Polars2SVG(P2SColorsMixin,
         self._global_defaults: dict    = {}
         self._component_defaults: dict = {}
 
-        # Assign all enum members as instance attributes by name.  One loop name
-        # across six enum types, so it is declared rather than inferred.
+        # Assign all enum members as instance attributes by name.  The registry in
+        # p2s_enums.py is the single source of truth for which classes take part;
+        # the loop variable is shared across all of them, so it is declared rather
+        # than inferred.
         _m_: Any
-        for _m_ in self.FieldTypeP:        setattr(self, _m_.name, _m_)
-        for _m_ in self.StatisticP:        setattr(self, _m_.name, _m_)
-        for _m_ in self.ColorTypeP:        setattr(self, _m_.name, _m_)
-        for _m_ in self.TimeLinearTypeP:   setattr(self, _m_.name, _m_)
-        for _m_ in self.TimePeriodicTypeP: setattr(self, _m_.name, _m_)
-        for _m_ in self.RenderEnumsP:      setattr(self, _m_.name, _m_)
+        for _enum_cls_ in _enums_.ENUM_CLASSES:
+            for _m_ in _enum_cls_: setattr(self, _m_.name, _m_)
 
         # Label rendered for the REMAINDERp bucket (arc name / axis tick).  A listed
         # order= value equal to this string collides with the bucket and raises --
@@ -607,34 +484,11 @@ class Polars2SVG(P2SColorsMixin,
         self.periodic_ranges[self.PT_M_Sp        ] = (0,     60*60-1)    # seconds
         self.periodic_ranges[self.PT_Sp          ] = (0,     59)         # seconds
 
-        self.distribution_types = {
-            self.DISTRIBUTION_INSIDEp,
-            self.DISTRIBUTION_OUTSIDEp,
-            self.DISTRIBUTION_AUTOBINp,
-            self.DISTRIBUTION_COLOR_MIN_TO_COLOR_MAX,
-            self.DISTRIBUTION_ZERO_TO_COLOR_MAX,
-            self.DISTRIBUTION_ALL_MIN_TO_ALL_MAX,
-            self.DISTRIBUTION_ZERO_TO_ALL_MAX,
-        }
+        # Kept as instance sets for back-compat; the classes are now the source of truth.
+        self.distribution_types = set(_enums_.DistributionPlacementP) | set(_enums_.DistributionScaleP)
 
-        self.line_types = {
-            self.LINEWIDTH_DOTSIZE_MEAN,
-            self.LINEWIDTH_DOTSIZE_VARIABLE,
-            self.LINEWIDTH_DOTSIZE_SPECIFIED,
-            self.LINESTYLE_SOLID,
-            self.LINESTYLE_DOTTED,
-            self.LINESTYLE_SPECIFIED,
-            self.LINECOLOR_GROUPBY,
-            self.LINECOLOR_FIELD,
-            self.LINECOLOR_SPECIFIED,
-            self.LINEOPACITY_FIELD_MEAN,
-            self.LINEOPACITY_FIELD_VARIABLE,
-            self.LINEOPACITY_100,
-            self.LINEOPACITY_75,
-            self.LINEOPACITY_50,
-            self.LINEOPACITY_25,
-            self.LINEOPACITY_10,
-        }
+        self.line_types = (set(_enums_.LineWidthP) | set(_enums_.LineStyleP)
+                           | set(_enums_.LineColorP) | set(_enums_.LineOpacityP))
 
         self.all_enums   = {self.SCALARp,
                             self.SETp,
@@ -2257,7 +2111,7 @@ class Polars2SVG(P2SColorsMixin,
     #
     # tField() - create a transformation field
     #
-    def tField(self, column: str, _enum_: 'Union[Polars2SVG.TimeLinearTypeP, Polars2SVG.TimePeriodicTypeP]') -> 'Polars2SVG.TField':
+    def tField(self, column: str, _enum_: 'Union[_enums_.TimeLinearTypeP, _enums_.TimePeriodicTypeP]') -> 'Polars2SVG.TField':
         '''Build a time-transformation field pairing a timestamp ``column`` with a
         binning ``_enum_`` (a ``TimeLinearTypeP`` or ``TimePeriodicTypeP`` member).
 

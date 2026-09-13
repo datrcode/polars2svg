@@ -21,7 +21,6 @@ Supports:
 import asyncio
 import polars as pl
 import param
-from panel.reactive import ReactiveHTML
 
 from .p2s_reactive_base import P2SReactiveHTML
 

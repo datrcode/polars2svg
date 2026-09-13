@@ -1,7 +1,6 @@
 import asyncio
 import contextlib
 import copy
-import json
 import logging
 import re
 import signal

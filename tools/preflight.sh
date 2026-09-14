@@ -20,7 +20,7 @@
 # Caveats worth knowing before you trust a green run:
 #
 #   - mypy is a CEILING, not a clean bill of health -- see _MYPY_CEILING_ below.
-#     730 real errors stand behind it.
+#     104 real errors stand behind it.
 #   - ruff checks the whole tree as of Q3 (2026-09-14), not just polars2svg/.
 #     tests/ had never been linted and held 106 E9/F findings including an F821;
 #     those are fixed and the scope now matches ci.yml's.
@@ -105,7 +105,7 @@ printf '\npreflight (mirrors ci.yml fast jobs)\n\n'
 # no issues found in 47 source files" on 2026-09-13 while the same config resolved
 # against .venv found 730 errors in 17 files.  See PLANNING.md Q1 and audit F1.
 #
-# It cannot be a plain pass/fail step yet.  730 is the standing count, and a gate
+# It cannot be a plain pass/fail step yet.  104 is the standing count, and a gate
 # that is always red is a gate you learn to ignore -- the same reason the test suite
 # is not in this script.  So it is a CEILING: green at or below the number, red
 # above it.  That is enough to catch the drift that motivated Q1 (the count moved
@@ -126,7 +126,7 @@ printf '\npreflight (mirrors ci.yml fast jobs)\n\n'
 # a re-baseline, with the new dependency version named.  Q4 step 1 replaces this
 # with the per-module ratchet in tests/test_typing_surface.py, at which point
 # this goes back to a plain _step_ invocation.
-_MYPY_CEILING_=730
+_MYPY_CEILING_=104
 
 _step_mypy_() {
     printf '  %-34s' "mypy (resolved, ceiling $_MYPY_CEILING_)"

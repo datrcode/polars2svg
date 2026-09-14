@@ -17,7 +17,7 @@ try:
     import re._parser    as _re_parser_
     import re._constants as _re_constants_
 except ImportError:                       # pragma: no cover -- non-CPython, or re re-laid-out
-    _re_parser_ = _re_constants_ = None   # type: ignore[assignment]
+    _re_parser_ = _re_constants_ = None
 import networkx as nx
 import polars as pl
 import panel as pn

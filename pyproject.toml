@@ -216,10 +216,43 @@ markers = ["interaction: browser-driven Playwright tests (require chromium)"]
 # coverage from the test suite as well, so it cannot regress where mypy is not
 # run.
 [tool.mypy]
-ignore_missing_imports   = true
+python_version           = "3.12"   # the requires-python floor, not whatever .venv happens to be
+files                    = ["polars2svg"]
 disallow_untyped_defs    = true
 disallow_incomplete_defs = true
 check_untyped_defs       = true
+# Added 2026-09-14 (PLANNING.md Q4 / audit F6).  Each of these cost exactly zero
+# errors when measured against the 730 baseline, so they are free to hold from
+# here on; warn_unused_ignores cost four, and those four dead `# type: ignore`
+# comments were removed rather than kept.
+warn_unused_configs      = true
+warn_redundant_casts     = true
+warn_unused_ignores      = true
+strict_equality          = true
+extra_checks             = true
+disallow_untyped_decorators = true
+
+# Third-party libraries that ship no type information.  This replaces a GLOBAL
+# `ignore_missing_imports = true`, which silently turned every unresolved import
+# into Any -- including a misspelt one -- and was the mechanism behind CI's
+# vacuous green (audit F1/F5).  Verified 2026-09-14 by running mypy without the
+# flag and collecting every import-untyped / import-not-found module: this list
+# is exactly that set and nothing else is excused, so a typo in any OTHER import
+# now fails instead of quietly becoming Any.
+#
+# `re._parser` / `re._constants` are CPython internals, imported by the regex
+# budget guard; they are private and unstubbed by design.
+#
+# scipy-stubs, types-networkx and types-shapely exist on PyPI and would shrink
+# this list, but each turns Any into real types and surfaces new errors -- worth
+# doing against the ratchet in tests/test_typing_surface.py, not before it.
+[[tool.mypy.overrides]]
+module = [
+  "shapely.*", "scipy.*", "networkx.*", "sklearn.*", "squarify",
+  "mlx.*", "reportlab.*", "pyperclip",
+  "re._parser", "re._constants",
+]
+ignore_missing_imports = true
 
 # --- interactive_controller.py: permanently relaxed --------------------------
 # The one module the annotation migration deliberately does not cover, decided

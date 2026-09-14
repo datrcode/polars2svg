@@ -1767,6 +1767,17 @@ class XYp(P2SBackgroundMixin, ExportMixin):
             _xmin_, _xmax_ = (_xmin_ - datetime(1970, 1, 1)).total_seconds(), (_xmax_ - datetime(1970, 1, 1)).total_seconds()
         if isinstance(_ymin_, datetime) or isinstance(_ymin_, date):
             _ymin_, _ymax_ = (_ymin_ - datetime(1970, 1, 1)).total_seconds(), (_ymax_ - datetime(1970, 1, 1)).total_seconds()
+        # Narrowed once, here, rather than at each use below.  polars types
+        # Series.min()/.max() as PythonLiteral -- the ten-way union int|float|
+        # Decimal|date|time|timedelta|str|bytes|ndarray|list -- and mypy reports one
+        # error per incompatible operand PAIR, so the arithmetic in steps 3-4 came to
+        # 374 errors in this module alone over eleven lines.  __xi__/__yi__ are the
+        # internal numeric axis columns and any datetime range was converted directly
+        # above, so a number or None is what these are from here on.  cast() is a
+        # no-op at runtime: this states the type, it does not change the values.
+        # See PLANNING.md Q4.
+        _xmin_, _xmax_ = cast('float | None', _xmin_), cast('float | None', _xmax_)
+        _ymin_, _ymax_ = cast('float | None', _ymin_), cast('float | None', _ymax_)
         _dx_ = 1 if _xmax_ is None or _xmin_ is None else _xmax_ - _xmin_
         _dy_ = 1 if _ymax_ is None or _ymin_ is None else _ymax_ - _ymin_
         if abs(_dx_) < 0.0001: _dx_ = 1

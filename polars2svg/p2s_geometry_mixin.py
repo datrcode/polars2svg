@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, cast
 import polars as pl
 import math
 import random
@@ -171,7 +171,13 @@ class P2SGeometryMixin:
         _weights_, _statics_ = None, None
         if weight_field is not None: _weights_ = df[weight_field]
         if static_field is not None: _statics_ = df[static_field]
+        # Narrowed once at the boundary: polars types .min()/.max() as the ten-way
+        # PythonLiteral union and mypy reports one error per incompatible operand
+        # PAIR, so the arithmetic below came to 134 errors over 2 lines.  These are
+        # the x/y coordinate columns being rescaled, so a number is what they are.  cast() is a no-op at
+        # runtime -- it states the type, it does not change the values.  PLANNING.md Q4.
         x0, y0, x1, y1     = df[x_field].min(), df[y_field].min(), df[x_field].max(), df[y_field].max()
+        x0, y0, x1, y1     = cast(float, x0), cast(float, y0), cast(float, x1), cast(float, y1)
         udspvsto            = UDistScatterPlotsViaSectorsTileOpt(
                                 df[x_field], df[y_field],
                                 weights=_weights_, static_points=_statics_,
@@ -179,6 +185,7 @@ class P2SGeometryMixin:
         x_vals, y_vals      = udspvsto.results()
         df                  = df.with_columns(pl.Series(x_field, x_vals), pl.Series(y_field, y_vals))
         x0_, y0_, x1_, y1_  = df[x_field].min(), df[y_field].min(), df[x_field].max(), df[y_field].max()
+        x0_, y0_, x1_, y1_  = cast(float, x0_), cast(float, y0_), cast(float, x1_), cast(float, y1_)
         # x1_ == x0_ (no spread in the transformed result, e.g. a single point) would otherwise divide by zero
         x_expr = pl.lit(x0).alias(x_field) if x1_ == x0_ else ((pl.col(x_field) - x0_)/(x1_ - x0_) * (x1 - x0) + x0).alias(x_field)
         y_expr = pl.lit(y0).alias(y_field) if y1_ == y0_ else ((pl.col(y_field) - y0_)/(y1_ - y0_) * (y1 - y0) + y0).alias(y_field)

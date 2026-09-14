@@ -16,6 +16,7 @@ from   os.path import exists
 import time
 import platformdirs
 from   importlib.resources import files as _pkg_files
+from   typing  import cast
 
 from .exceptions import DataError, Polars2SVGError
 
@@ -394,7 +395,13 @@ class UDistScatterPlotsViaSectorsTileOpt:
     # _repr_svg_() -- simple SVG representation of the results
     #
     def _repr_svg_(self) -> str:
+        # Narrowed once at the boundary: polars types .min()/.max() as the ten-way
+        # PythonLiteral union and mypy reports one error per incompatible operand
+        # PAIR, so the arithmetic below came to 140 errors over 4 lines.  These are
+        # the x/y result coordinate columns, so a number is what they are.  cast() is a no-op at
+        # runtime -- it states the type, it does not change the values.  PLANNING.md Q4.
         x0, y0, x1, y1 = self.df_results['x'].min(), self.df_results['y'].min(), self.df_results['x'].max(), self.df_results['y'].max()
+        x0, y0, x1, y1 = cast(float, x0), cast(float, y0), cast(float, x1), cast(float, y1)
         xperc, yperc   = (x1-x0)*0.01, (y1-y0)*0.01
         x0, y0, x1, y1 = x0-xperc, y0-yperc, x1+xperc, y1+yperc
         svg = []

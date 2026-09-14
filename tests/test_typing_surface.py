@@ -3,6 +3,9 @@ import unittest
 import ast
 import importlib.util
 import inspect
+import re
+import subprocess
+import sys
 import tomllib
 import typing
 from enum import Enum
@@ -320,6 +323,111 @@ class TestAnnotationCoverageRatchet(unittest.TestCase):
         self.assertEqual(_gone_, [], f'MAX_UNANNOTATED lists modules that no longer exist: {_gone_}')
 
 
+class TestMypyErrorRatchet(unittest.TestCase):
+    '''Per-module ceiling on *mypy errors* -- the sibling of
+    TestAnnotationCoverageRatchet above, and deliberately a separate thing.
+
+    The two measure different properties and the package needs both.  The
+    annotation ratchet is an AST scan: it asks whether functions carry
+    annotations.  This one runs mypy and asks whether those annotations are
+    CONSISTENT with what the code does -- which nothing checked until 2026-09-13.
+    CI ran `uvx mypy polars2svg`, which resolves into an isolated environment
+    where polars, numpy and PIL are absent; `ignore_missing_imports` turned them
+    into Any, so every operation on a DataFrame, Series or ndarray type-checked
+    trivially and the gate printed Success over 730 real errors.  See PLANNING.md
+    Q1/Q4 and 20260913_fable_code_audit.md F1.
+
+    Same rule as its sibling: these numbers may fall, never rise.  Fixing errors
+    in a module means lowering its entry; a ceiling left above the real count
+    fails too, so progress cannot silently leak away.
+
+    THE COUNT DEPENDS ON THE DEPENDENCY VERSIONS, not only on this source tree.
+    polars types aggregate returns as a ten-way PythonLiteral union, so a polars
+    release can move these numbers with no code change here.  That is a deliberate re-baseline -- rerun, update the table,
+    and say which version in the commit -- not a regression.  Measured against
+    uv.lock: polars 1.41.2, numpy 2.4.6, mypy 2.3.1, extras layouts+interactive+
+    export, no mlx.  tools/preflight.sh and ci.yml carry the matching global
+    ceiling; this table is the per-module half, so a fix in one module can no
+    longer mask a regression in another.
+    '''
+
+    MAX_ERRORS = {
+        'xyp':                                       46,
+        'chordp':                                    9,
+        'p2s_render_mixin':                          8,
+        'od_flow_layout':                            6,
+        'p2s_geometry_mixin':                        4,
+        'p2s_component_color_mixin':                 4,
+        'linkp':                                     4,
+        'spreadlinepi':                              3,
+        'piep':                                      3,
+        'p2s_graph_mixin':                           3,
+        'ncp_layout':                                3,
+        'mds_at_scale':                              3,
+        'udist_scatterplots_via_sectors_tile_opt':   2,
+        'p2s_glyph_atlas':                           2,
+        'p2s_colors_mixin':                          2,
+        'p2s_reactive_base':                         1,
+        'export':                                    1,
+    }
+
+    _ERR_RE_ = re.compile(r'^polars2svg/(?P<mod>[^:/]+)\.py:\d+:(?:\d+:)? error:')
+
+    _counts_ = None      # {module stem: error count}, measured once for the class
+
+    @classmethod
+    def setUpClass(cls):
+        if importlib.util.find_spec('mypy') is None:
+            raise unittest.SkipTest('mypy is not installed (it is in the dev group)')
+        _root_ = Path(inspect.getfile(polars2svg)).parent.parent
+        if not (_root_ / 'pyproject.toml').is_file():
+            raise unittest.SkipTest('not a source checkout (installed-wheel test run)')
+        _p_ = subprocess.run([sys.executable, '-m', 'mypy', 'polars2svg'],
+                             cwd=_root_, capture_output=True, text=True)
+        # mypy exits 0 clean, 1 with findings, >=2 on a crash or bad config.  Without
+        # this guard a broken run yields no ': error:' lines, counts zero everywhere,
+        # and reports the ratchet as passing -- the same false green this whole test
+        # exists to close.
+        if _p_.returncode > 1:
+            raise AssertionError(f'mypy did not run (exit {_p_.returncode}):\n'
+                                 f'{_p_.stdout[-2000:]}\n{_p_.stderr[-2000:]}')
+        _counts_ = {}
+        for _line_ in _p_.stdout.splitlines():
+            _m_ = cls._ERR_RE_.match(_line_)
+            if _m_: _counts_[_m_.group('mod')] = _counts_.get(_m_.group('mod'), 0) + 1
+        cls._counts_ = _counts_
+
+    def test_no_module_gains_mypy_errors(self):
+        for _mod_, _count_ in sorted(self._counts_.items()):
+            with self.subTest(module=_mod_):
+                _ceiling_ = self.MAX_ERRORS.get(_mod_, 0)
+                self.assertLessEqual(
+                    _count_, _ceiling_,
+                    f'{_mod_}.py has {_count_} mypy errors, ceiling is {_ceiling_}. '
+                    'Run `.venv/bin/python -m mypy polars2svg` to see them. If you fixed '
+                    'errors here, lower the ceiling; if a dependency upgrade moved the '
+                    'count, re-baseline the table and name the version in the commit.')
+
+    def test_ceilings_are_not_stale(self):
+        # A ceiling left above the real count hides a later regression -- the same
+        # rule the annotation ratchet enforces.
+        _slack_ = {m: (c, self._counts_.get(m, 0)) for m, c in self.MAX_ERRORS.items()
+                   if self._counts_.get(m, 0) < c}
+        self.assertEqual(_slack_, {},
+                         'these ceilings are above the real count -- lower them to lock the '
+                         f'progress in {{module: (ceiling, actual)}}: {_slack_}')
+
+    def test_total_matches_the_global_ceiling(self):
+        # tools/preflight.sh and ci.yml gate on one number; this table is the same
+        # number split by module.  If they disagree, one of them was updated alone.
+        _total_ = sum(self._counts_.values())
+        self.assertEqual(
+            _total_, sum(self.MAX_ERRORS.values()),
+            f'per-module counts sum to {_total_} but MAX_ERRORS sums to '
+            f'{sum(self.MAX_ERRORS.values())}; keep _MYPY_CEILING_ in tools/preflight.sh '
+            "and _CEILING_ in ci.yml's type-check job equal to the new total.")
+
+
 class TestRatchetConfigConsistency(unittest.TestCase):
     '''The two halves of the ratchet must agree.  During the migration that meant
     "a module listed in [[tool.mypy.overrides]] must be fully annotated"; strict
@@ -345,26 +453,35 @@ class TestRatchetConfigConsistency(unittest.TestCase):
                          'no error code may be disabled package-wide -- the migration-era '
                          f'disable list is gone: {_cfg_.get("disable_error_code")}')
 
-    def test_relaxed_set_is_exactly_the_documented_one(self):
-        _cfg_ = self._mypy_cfg()
-        if _cfg_ is None: self.skipTest('pyproject.toml not present (installed-wheel test run)')
+    @classmethod
+    def _relaxed_stems(cls):
+        '''Module stems from the [[tool.mypy.overrides]] entries that actually RELAX
+        strictness -- i.e. turn disallow_untyped_defs off.
+
+        Not every override relaxes the package.  Since 2026-09-14 there is also one
+        that only sets ignore_missing_imports, naming the third-party libraries that
+        ship no type information (PLANNING.md Q4 / audit F5).  That one grants
+        nothing to polars2svg's own modules and must not be read as an exemption --
+        counting it here would have made the honest config look like typing debt.'''
+        _cfg_ = cls._mypy_cfg()
+        if _cfg_ is None: return None
         _relaxed_ = []
         for _o_ in _cfg_.get('overrides', []):
+            if _o_.get('disallow_untyped_defs', True): continue   # absent or true -> not a relaxation
             _m_ = _o_.get('module', [])
             _relaxed_.extend([_m_] if isinstance(_m_, str) else _m_)
-        _stems_ = {n.rsplit('.', 1)[-1] for n in _relaxed_}
+        return {n.rsplit('.', 1)[-1] for n in _relaxed_}
+
+    def test_relaxed_set_is_exactly_the_documented_one(self):
+        _stems_ = self._relaxed_stems()
+        if _stems_ is None: self.skipTest('pyproject.toml not present (installed-wheel test run)')
         self.assertEqual(_stems_, set(TestAnnotationCoverageRatchet.PERMANENTLY_RELAXED),
-                         'the [[tool.mypy.overrides]] block may only carry the permanently '
+                         'the [[tool.mypy.overrides]] block may only relax the permanently '
                          f'relaxed module(s); found: {sorted(_stems_)}')
 
     def test_strictly_checked_modules_are_fully_annotated(self):
-        _cfg_ = self._mypy_cfg()
-        if _cfg_ is None: self.skipTest('pyproject.toml not present (installed-wheel test run)')
-        _relaxed_ = []
-        for _o_ in _cfg_.get('overrides', []):
-            _m_ = _o_.get('module', [])
-            _relaxed_.extend([_m_] if isinstance(_m_, str) else _m_)
-        _stems_ = {n.rsplit('.', 1)[-1] for n in _relaxed_}
+        _stems_ = self._relaxed_stems()
+        if _stems_ is None: self.skipTest('pyproject.toml not present (installed-wheel test run)')
         _ceilings_ = TestAnnotationCoverageRatchet.MAX_UNANNOTATED
         _strict_ = sorted(set(_ceilings_) - _stems_)
         self.assertTrue(_strict_, 'no strictly checked modules found -- MAX_UNANNOTATED is empty?')

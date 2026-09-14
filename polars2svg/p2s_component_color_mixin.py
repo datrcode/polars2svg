@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, cast
 import polars as pl
 from .p2s_enums import ColorSpec
 
@@ -173,8 +173,11 @@ class P2SComponentColorMixin:
             _r_, _g_, _b_ = f'__{prefix}_r__', f'__{prefix}_g__', f'__{prefix}_b__'
             # legend-only stat accumulator (kept separate from _color_stat_min_/_max_,
             # which smallp SM_COLOR sharing reads and which stretched modes never touch)
-            _lg_min_ = df[_sc_].cast(pl.Float64).min()
-            _lg_max_ = df[_sc_].cast(pl.Float64).max()
+            # The column is cast to Float64 right here, so the aggregate is a float --
+            # but polars types .min()/.max() as the ten-way PythonLiteral union, which
+            # made the two comparisons below 34 errors.  cast() is a no-op at runtime.
+            _lg_min_ = cast('float | None', df[_sc_].cast(pl.Float64).min())
+            _lg_max_ = cast('float | None', df[_sc_].cast(pl.Float64).max())
             if _lg_min_ is not None and (getattr(self, '_legend_stat_min_', None) is None or _lg_min_ < self._legend_stat_min_):
                 self._legend_stat_min_ = float(_lg_min_)
             if _lg_max_ is not None and (getattr(self, '_legend_stat_max_', None) is None or _lg_max_ > self._legend_stat_max_):

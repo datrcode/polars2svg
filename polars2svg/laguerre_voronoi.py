@@ -80,11 +80,11 @@ class _QTNode:
                 for p in old:
                     # _subdivide() just assigned self.children; mypy still has it
                     # narrowed to None from the enclosing `is None` test.
-                    for ch in self.children:  # type: ignore[union-attr, attr-defined]
+                    for ch in self.children:  # type: ignore[attr-defined]
                         if ch.insert(p[0], p[1], p[2], capacity):
                             break
         else:
-            for ch in self.children:  # type: ignore[union-attr]
+            for ch in self.children:
                 if ch.insert(x, y, idx, capacity):
                     break
         return True
@@ -107,7 +107,7 @@ class _QTNode:
         else:
             # Visit closest child first to prune early
             ordered = sorted(
-                self.children,  # type: ignore[union-attr]
+                self.children,
                 key=lambda c: self._min_dist2_to_child(c, qx, qy),
             )
             for ch in ordered:

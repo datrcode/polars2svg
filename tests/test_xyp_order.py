@@ -1,6 +1,7 @@
 import unittest
 import polars as pl
 from polars2svg import Polars2SVG
+from svg_test_utils import normalize_svg
 
 class Testxyp_order(unittest.TestCase):
     def __init__(self, *args, **kwargs):
@@ -171,6 +172,58 @@ class Testxyp_partial_order(unittest.TestCase):
             _eager_, _ = self._slots(x_order=_order_, use_lazy_execution=False)
             _lazy_,  _ = self._slots(x_order=_order_, use_lazy_execution=True)
             self.assertEqual(_eager_, _lazy_, msg=f'x_order={_order_} differs under lazy execution')
+
+
+
+class Testxyp_categorical_label_priority(unittest.TestCase):
+    '''Which category labels get drawn must not depend on chance.
+
+    __renderContext_set__ picks label positions in priority order -- most rows first --
+    and stops once they no longer fit.  That order came from
+    `group_by([px, axis]).len().sort('len', descending=True)`, and group_by returns
+    groups arbitrarily, so on a categorical axis where the counts are EQUAL (the common
+    case) every row tied on 'len' and the priority was whatever order the engine
+    happened to produce.
+
+    The visible effect: the same data rendered twice drew different axis labels -- four
+    runs of a 30-category axis produced four different sets -- and lazy and eager
+    execution disagreed with each other for the same reason.  Ties now break on the
+    screen coordinate.
+
+    Lazy vs eager is the invariant worth asserting: it fails deterministically without
+    the fix, where run-to-run variation needs separate processes to show up.
+    PLANNING.md §15.
+    '''
+    def setUp(self):
+        self.p2s = Polars2SVG()
+
+    def _df_(self, cats):
+        _n_ = cats * 4          # equal counts -> every row ties on 'len'
+        return pl.DataFrame({'c': [f'c{i % cats:02d}' for i in range(_n_)],
+                             'd': [f'd{i % 3}'        for i in range(_n_)]})
+
+    def _svg_(self, df, lazy, wxh):
+        return normalize_svg(self.p2s.xyp(df, x='c', y='d', wxh=wxh,
+                                          use_lazy_execution=lazy).svg)
+
+    def test_execution_mode_does_not_change_the_render(self):
+        # More categories than fit is the case that exposed it: with everything tied,
+        # the arbitrary order decided which labels survived.
+        for _cats_, _wxh_ in ((4, (256, 256)), (30, (256, 256)),
+                              (60, (256, 256)), (30, (128, 128))):
+            with self.subTest(categories=_cats_, wxh=_wxh_):
+                _df_ = self._df_(_cats_)
+                self.assertEqual(self._svg_(_df_, True,  _wxh_),
+                                 self._svg_(_df_, False, _wxh_),
+                                 'use_lazy_execution must decide how the work is '
+                                 'scheduled, never what is drawn')
+
+    def test_repeated_renders_are_identical(self):
+        _df_ = self._df_(30)
+        _first_ = self._svg_(_df_, False, (256, 256))
+        for _i_ in range(4):
+            with self.subTest(repeat=_i_):
+                self.assertEqual(self._svg_(_df_, False, (256, 256)), _first_)
 
 
 if __name__ == '__main__':

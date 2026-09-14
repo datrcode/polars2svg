@@ -2306,8 +2306,24 @@ class XYp(P2SBackgroundMixin, ExportMixin):
         if    x_axis: px_col, axis_col = '__xpx__', '__x__'
         else:         px_col, axis_col = '__ypx__', '__y__'
 
-        # Organize the data by the most rows -- this will be the priority for rendering
-        _df_ = self.df_flat.group_by([px_col,axis_col]).len().sort('len', descending=True)
+        # Organize the data by the most rows -- this will be the priority for rendering.
+        #
+        # maintain_order= and the second sort key are both load-bearing.  group_by()
+        # returns groups in an arbitrary order, and sorting on 'len' alone leaves every
+        # tie to that order -- so on a categorical axis where the counts are equal (the
+        # common case) the priority was effectively random.  It decides which labels get
+        # drawn once there are more categories than fit, so the SAME data rendered twice
+        # produced different axis labels: four runs of a 30-category axis drew four
+        # different sets, and lazy vs eager execution disagreed for the same reason.
+        #
+        # Ties now break on the screen coordinate, which is deterministic and reads
+        # left-to-right (top-to-bottom on y).  Combined with the _filled_ collision test
+        # below that spreads the labels evenly across the axis rather than clustering
+        # them.  Counts that genuinely differ are unaffected -- 'len' is still primary.
+        # PLANNING.md §15.
+        _df_ = (self.df_flat.group_by([px_col, axis_col], maintain_order=True)
+                            .len()
+                            .sort(['len', px_col], descending=[True, False]))
 
         # Limit the number of labels based on the pixel goal and the dimension
         _max_labels_to_render_ = _dim_ // pixel_goal

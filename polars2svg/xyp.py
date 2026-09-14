@@ -63,6 +63,27 @@ _ROUNDER_FIELDS_: dict[str, dict[str, int]] = {
 }
 
 
+#
+# _joinInSameMode_() - join two frames that use_lazy_execution keeps in step.
+#
+# polars' DataFrame.join and LazyFrame.join each require an operand of their own
+# type.  __indexXandY_join__ builds both sides through the same
+# `if self.use_lazy_execution` branches, so they are always in the same mode -- but
+# that is an invariant carried by a FLAG, and a flag cannot narrow a type.  Reading
+# the left operand's actual type says it once here instead of at five call sites.
+#
+# It is also stricter than the flag was: if the two ever disagreed, the old code
+# raised inside polars; this converts the right operand to match, which is free in
+# the normal case (`lazy()` on a LazyFrame returns self, and the eager branch never
+# collects because the right side is already eager).  PLANNING.md §14 T7 follow-up.
+#
+def _joinInSameMode_(left:  pl.DataFrame | pl.LazyFrame,
+                     right: pl.DataFrame | pl.LazyFrame,
+                     **kwargs: Any) -> pl.DataFrame | pl.LazyFrame:
+    if isinstance(left, pl.LazyFrame): return left.join(right.lazy(), **kwargs)
+    return left.join(right.collect() if isinstance(right, pl.LazyFrame) else right, **kwargs)
+
+
 def _truncateToStep_(when: Any, rounder: str) -> datetime:
     """Round `when` down to the start of the grid step `rounder` names.
 
@@ -1425,8 +1446,10 @@ class XYp(P2SBackgroundMixin, ExportMixin):
         _struct_   = isinstance(_listed_[0], tuple) if len(_listed_) > 0 else False
 
         # Distinct values actually present, so the unlisted set can be computed
-        _vals_ = _df_.select(pl.col(_src_)).unique()
-        if self.use_lazy_execution: _vals_ = _vals_.collect()
+        _vals_q_ = _df_.select(pl.col(_src_)).unique()
+        # isinstance, not the flag: same result whenever the two agree, and it is what
+        # lets a checker see that _vals_ is eager below.
+        _vals_   = _vals_q_.collect() if isinstance(_vals_q_, pl.LazyFrame) else _vals_q_
         _present_ = _vals_[_src_].to_list()
         if _struct_: _present_ = [tuple(_v_.values()) for _v_ in _present_ if _v_ is not None]
         _listed_set_ = set(_listed_)
@@ -1498,9 +1521,9 @@ class XYp(P2SBackgroundMixin, ExportMixin):
                     # No user specified order -- make one by sorting the values
                     #
                     if _order_ is None or len(_order_) == 0:
-                        _dfi_ = _df_.select([_src_]).unique().sort(_src_).with_row_index(_dst_)
+                        _dfi_: pl.DataFrame | pl.LazyFrame = _df_.select([_src_]).unique().sort(_src_).with_row_index(_dst_)
                         if self.use_lazy_execution: _dfi_ = _dfi_.lazy()
-                        _df_  = _df_.join(_dfi_, on=_src_, how='left')
+                        _df_  = _joinInSameMode_(_df_, _dfi_, on=_src_, how='left')
 
                     #
                     # Order is specified as a list -- make that a one up
@@ -1517,18 +1540,18 @@ class XYp(P2SBackgroundMixin, ExportMixin):
                             for _field_ in range(_fields_):
                                 _dict_[str(_field_)] = []
                                 for _tuple_ in _order_: _dict_[str(_field_)].append(_tuple_[_field_])
-                            _df_order_ = pl.DataFrame(_dict_)
+                            _df_order_: pl.DataFrame | pl.LazyFrame = pl.DataFrame(_dict_)
                             if self.use_lazy_execution: _df_order_ = _df_order_.lazy()
                             # Join on positional struct-field columns "0", "1", ... (assumes the data carries no columns with those exact names)
                             _lefton_  = [pl.col(_src_).struct.field(str(i)) for i in range(_fields_)]
                             _righton_ = [str(i) for i in range(_fields_)]
-                            _df_      = _df_.join(_df_order_, left_on=_lefton_, how='left', right_on=_righton_) \
+                            _df_      = _joinInSameMode_(_df_, _df_order_, left_on=_lefton_, how='left', right_on=_righton_) \
                                             .with_columns(pl.col(_dst_).fill_null(len(_order_))) \
                                             .drop(_righton_)
                         else:
                             _df_order_ = pl.DataFrame({_src_: _order_, _dst_: range(len(_order_))})
                             if self.use_lazy_execution: _df_order_ = _df_order_.lazy()
-                            _df_       = _df_.join(_df_order_, on=_src_, how='left') \
+                            _df_       = _joinInSameMode_(_df_, _df_order_, on=_src_, how='left') \
                                              .with_columns(pl.col(_dst_).fill_null(len(_order_)))
 
                     #
@@ -1551,7 +1574,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
                             # Join on positional struct-field columns "0", "1", ... (assumes the data carries no columns with those exact names)
                             _lefton_  = [pl.col(_src_).struct.field(str(i)) for i in range(_fields_)]
                             _righton_ = [str(i) for i in range(_fields_)]
-                            _df_      = _df_.join(_df_order_, left_on=_lefton_, how='left', right_on=_righton_) \
+                            _df_      = _joinInSameMode_(_df_, _df_order_, left_on=_lefton_, how='left', right_on=_righton_) \
                                             .with_columns(pl.col(_dst_).fill_null(_max_)) \
                                             .drop(_righton_)
                         else:
@@ -1560,7 +1583,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
                             for k, v in _order_.items(): _dict_[_src_].append(k); _dict_[_dst_].append(v)
                             _df_order_ = pl.DataFrame(_dict_)
                             if self.use_lazy_execution: _df_order_ = _df_order_.lazy()
-                            _df_       = _df_.join(_df_order_, on=_src_, how='left') \
+                            _df_       = _joinInSameMode_(_df_, _df_order_, on=_src_, how='left') \
                                              .with_columns(pl.col(_dst_).fill_null(_max_))
 
                     #
@@ -1585,7 +1608,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
                     raise TypeError(f'XYp.__indexXandY__():  Type "{_dtype_}" for column "{_src_}" is not supported')
 
         # Put it back together
-        self.df_flat = _df_.collect() if self.use_lazy_execution else _df_
+        self.df_flat = _df_.collect() if isinstance(_df_, pl.LazyFrame) else _df_
 
     #
     # __constructGeometry__()

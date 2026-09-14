@@ -90,15 +90,19 @@ jobs:
         run: |
           _CEILING_=60
           set +e
-          _out_="$(uv run mypy polars2svg 2>&1)"; _rc_=$?
+          _out_="$(uv run --no-sync mypy polars2svg 2>&1)"; _rc_=$?
           set -e
-          # mypy exits 0 clean, 1 with findings, >=2 on a crash or bad config.
-          # Without this guard a broken run emits no ': error: ' lines, counts
-          # zero, and reports a false green -- which is the exact failure mode
-          # this job is being changed to correct.
-          if [ "$_rc_" -gt 1 ]; then
+          # Did mypy actually run to completion?  Check for its summary line, not the
+          # exit code.  The exit code is not enough and this gate learned that the hard
+          # way: `uv run` returns 1 when it cannot prepare the environment, which is
+          # indistinguishable from "mypy found errors", and a run that never happened
+          # emits no ': error: ' lines -- so it counts zero and sails under any ceiling.
+          # Run 34874055205 reported "mypy: 0 errors (ceiling 60)" and passed while mypy
+          # had not executed at all.  That false green is the precise thing this job
+          # exists to prevent, so the check is now on evidence that mypy spoke.
+          if ! printf '%s\n' "$_out_" | grep -qE '^(Success: no issues found|Found [0-9]+ error)'; then
               printf '%s\n' "$_out_"
-              echo "::error::mypy did not run (exit $_rc_)"
+              echo "::error::mypy did not run to completion (exit $_rc_) -- no summary line"
               exit 1
           fi
           _n_="$(printf '%s\n' "$_out_" | grep -c ': error: ' || true)"
@@ -233,7 +237,12 @@ jobs:
         # had never been linted by CI or preflight and held 106 E9/F findings,
         # including an F821 (an undefined name) that sat behind `if False` in the
         # opt-in interaction suite, where no test run would reach it either.
-        run: uv run ruff check .
+        #
+        # --no-sync is load-bearing: a bare `uv run` re-syncs the project environment
+        # first and does NOT inherit the --no-install-package flags from the sync step
+        # above, so it reinstalls rlPyCairo/pycairo and dies compiling them.  Verified:
+        # after the sync neither package is present; one plain `uv run` puts both back.
+        run: uv run --no-sync ruff check .
 
   linux-cleanroom:
     name: Linux clean-room wheel install + tests (py${{ matrix.python }})

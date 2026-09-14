@@ -69,7 +69,7 @@ def test_the_band_normalises_a_backwards_drag(quad_page):
 def test_the_band_is_parked_off_canvas_after_release(quad_page):
     """Parked at (-10, -10) 5x5, not merely made small -- so a stale band cannot be
     mistaken for a live one a few pixels across."""
-    _box_(quad_page) if False else _box(quad_page, *CORNER, 80, 80)
+    _box(quad_page, *CORNER, 80, 80)
 
     _rect_ = quad_page.drag_rect()
     assert (_rect_['x'], _rect_['y']) == ('-10', '-10')

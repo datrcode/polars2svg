@@ -108,7 +108,6 @@ class TestHistopOrder(unittest.TestCase):
         Row-count order would be: A(10), C(6), B(3)
         n_unique  order should be: B(3),  C(2), A(1)
         '''
-        import polars as pl
         # A: 10 rows, 1 unique group → n_unique=1
         # B: 3  rows, 3 unique groups → n_unique=3
         # C: 6  rows, 2 unique groups → n_unique=2

@@ -121,7 +121,6 @@ class Testxyp_background(unittest.TestCase):
         self.assertIn('<path', chart.svg)
 
     def test_multilinestring(self):
-        from shapely.geometry import MultiLineString
         mls = MultiLineString([[(1,1),(3,3)], [(2,4),(4,2)]])
         chart = self.p2s.xyp(df=self.df, x='x', y='y',
                              background={'mls': mls},

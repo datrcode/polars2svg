@@ -366,8 +366,8 @@ class TestPerformanceRegression(unittest.TestCase):
         entries, legacy = _load_baseline()
         if legacy:
             self.skipTest(
-                f"perf baseline is the old schema-1 (flat, platform-less) format — "
-                f"regenerate with UPDATE_PERF_BASELINE=1")
+                "perf baseline is the old schema-1 (flat, platform-less) format — "
+                "regenerate with UPDATE_PERF_BASELINE=1")
         if platform_id not in entries:
             self.skipTest(
                 f"No perf baseline for platform '{platform_id}' "

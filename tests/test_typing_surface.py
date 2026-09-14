@@ -162,7 +162,13 @@ class TestEnumMemberDeclarations(unittest.TestCase):
 
     @staticmethod
     def _declared_enum_members():
-        _ann_ = Polars2SVG.__dict__.get('__annotations__', {})
+        # inspect.get_annotations() rather than cls.__dict__['__annotations__']:
+        # PEP 649/749 (3.14) stores class annotations behind __annotate__ and the
+        # __dict__ entry is absent until something evaluates them, so the direct
+        # read returned {} there and every declared member looked missing.  This
+        # returns the class's OWN annotations -- not inherited ones -- which is
+        # exactly what the __dict__ read meant, and it works on 3.12 through 3.14.
+        _ann_ = inspect.get_annotations(Polars2SVG)
         return {k: v for k, v in _ann_.items()
                 if isinstance(v, type) and issubclass(v, Enum)}
 
@@ -440,7 +446,7 @@ class TestComponentAttrDeclarations(unittest.TestCase):
                 _own_, _defaults_, _assigned_ = self._source_facts(_cls_)
                 _inherited_ = set()
                 for _b_ in _cls_.__mro__:
-                    _inherited_ |= set(_b_.__dict__.get('__annotations__', {}))
+                    _inherited_ |= set(inspect.get_annotations(_b_))   # own-class only, per base -- see above
                 _undeclared_ = sorted(_defaults_ - _inherited_ - _assigned_)
                 self.assertEqual(_undeclared_, [],
                                  f'{_cls_.__name__} has _defaults_ parameters with no '

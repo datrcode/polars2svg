@@ -40,6 +40,13 @@ jobs:
   type-check:
     name: mypy (public surface)
     runs-on: ubuntu-latest
+    # No job in this workflow had a timeout until 2026-09-14, when the interaction
+    # suite hung and would have burned GitHub's 6-hour default had it not been
+    # cancelled by hand.  These are generous against each job's observed range
+    # (17-30s) -- they exist to turn a hang into a fast, legible
+    # failure, not to police normal variance.  Raise deliberately if a job
+    # legitimately grows; do not raise to paper over a hang.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
@@ -120,6 +127,13 @@ jobs:
   security-and-quality:
     name: bandit + pip-audit + ruff
     runs-on: ubuntu-latest
+    # No job in this workflow had a timeout until 2026-09-14, when the interaction
+    # suite hung and would have burned GitHub's 6-hour default had it not been
+    # cancelled by hand.  These are generous against each job's observed range
+    # (14-20s, plus pip-audit's retry backoff) -- they exist to turn a hang into a fast, legible
+    # failure, not to police normal variance.  Raise deliberately if a job
+    # legitimately grows; do not raise to paper over a hang.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
@@ -247,6 +261,13 @@ jobs:
   linux-cleanroom:
     name: Linux clean-room wheel install + tests (py${{ matrix.python }})
     runs-on: ubuntu-latest
+    # No job in this workflow had a timeout until 2026-09-14, when the interaction
+    # suite hung and would have burned GitHub's 6-hour default had it not been
+    # cancelled by hand.  These are generous against each job's observed range
+    # (4m15s-5m27s per leg) -- they exist to turn a hang into a fast, legible
+    # failure, not to police normal variance.  Raise deliberately if a job
+    # legitimately grows; do not raise to paper over a hang.
+    timeout-minutes: 25
     # 3.14 added 2026-09-14 alongside the `Programming Language :: Python :: 3.14`
     # classifier, and deliberately in the same change: the classifier is a claim of
     # support, and this leg is what keeps the claim true.  requires-python has
@@ -363,6 +384,13 @@ jobs:
   browser-interaction:
     name: Browser interaction suite (Playwright)
     runs-on: ubuntu-latest
+    # No job in this workflow had a timeout until 2026-09-14, when the interaction
+    # suite hung and would have burned GitHub's 6-hour default had it not been
+    # cancelled by hand.  These are generous against each job's observed range
+    # (6m10s-6m37s) -- they exist to turn a hang into a fast, legible
+    # failure, not to police normal variance.  Raise deliberately if a job
+    # legitimately grows; do not raise to paper over a hang.
+    timeout-minutes: 20
 
     # Deliberately NOT the python:3.13-slim container the clean-room job uses.
     # Chromium needs a system library stack that image does not carry, and that
@@ -415,8 +443,23 @@ jobs:
         # pytest-playwright is named explicitly because it is deliberately not in
         # [dependency-groups] dev — the browser tooling stays opt-in for local
         # work, so `uv sync` installs nothing new.
+        #
+        # tornado is pinned to the version uv.lock resolves, and that pin is the only
+        # thing standing between this job and the open internet.  This is the ONLY job
+        # that installs unpinned -- every other one resolves through uv.lock -- and on
+        # 2026-09-14 that cost a full CI outage: tornado 6.5.9 was published at 18:08Z,
+        # and the next run of this suite hung for 26 minutes with no output and had to
+        # be cancelled.  The run 111 minutes earlier, on code identical but for ci.yml,
+        # passed in 6m37s.  Of all 76 installed packages tornado was the only one that
+        # differed.  tornado is Bokeh/Panel's web server, which this suite boots and
+        # drives, so the whole harness sat waiting on a server that never answered.
+        #
+        # Keep this equal to uv.lock's tornado.  The real fix is to resolve this job
+        # through the lockfile like every other one; until then an upstream release can
+        # take CI down between two identical commits, which is exactly the unpinned-
+        # tooling failure that 20260913_fable_code_audit.md F4 was about.
         run: |
-          pip install --no-cache-dir ".[interactive,layouts]"
+          pip install --no-cache-dir ".[interactive,layouts]" "tornado==6.5.8"
           pip install --no-cache-dir pytest pytest-playwright
 
       - name: Install chromium

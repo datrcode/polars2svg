@@ -14,13 +14,18 @@ environment at `.venv/`.
 git clone https://github.com/datrcode/polars2svg.git
 cd polars2svg
 uv venv --python 3.13
-uv pip install -e . --group dev
+uv pip install -e '.[layouts,interactive,export]' --group dev
 ```
 
-`--group dev` pulls in every optional extra (`interactive`, `layouts`,
-`export`, `mlx`) plus test-only tooling, so the full test suite — including
-`linkp`/`chordp`/interactive-variant tests — runs unmodified. Use
-`.venv/bin/python`, never a system `python3`.
+The three extras plus `--group dev` (test-only tooling) are what the full test
+suite needs — including the `linkp`/`chordp`/interactive-variant tests — so it
+runs unmodified. Use `.venv/bin/python`, never a system `python3`.
+
+Naming the extras is new as of 2026-09-14: the `dev` group used to re-list their
+contents, which meant two copies of every version floor and had already drifted
+apart. `mlx` is deliberately **not** installed here — this environment is meant
+to be what a plain `pip install polars2svg` gives you, which is also what
+production CI's clean-room job checks; see below for the MLX interpreters.
 
 The `mlx` extra installs MLX with the Metal backend on Apple silicon. **On Linux
 it installs no backend at all** — PyPI's `mlx` ships none there, so the install

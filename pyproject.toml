@@ -1,5 +1,8 @@
 [build-system]
-requires      = ["hatchling"]
+# >=1.27 is the floor for PEP 639 `license`/`license-expression` handling below;
+# an older hatchling emits legacy metadata or fails outright.  The 0.2.0 wheel was
+# built with 1.31.0.
+requires      = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [project]
@@ -44,7 +47,14 @@ classifiers=[
 "Programming Language :: Python :: 3",
 "Programming Language :: Python :: 3.12",
 "Programming Language :: Python :: 3.13",
+# 3.14 added 2026-09-14, only after the whole suite ran green on 3.14.5 -- the main
+# suite (3461 passed, matching 3.13 exactly) and the 219-test interaction suite.
+# requires-python already admitted it, so users were installing there regardless.
+"Programming Language :: Python :: 3.14",
 "Operating System :: OS Independent",
+# The package ships a py.typed marker and every module is annotated; PyPI users
+# filter on this trove classifier to find typed packages.
+"Typing :: Typed",
 "Topic :: Scientific/Engineering :: Visualization",
 ]
 
@@ -154,20 +164,27 @@ dev = [
                 # goldens. Keeps local test runs on the tested rasterization path.
   "reportlab",
   "rlPyCairo",  # reportlab 5.x renderPM backend (Linux); rasterizes SVG->PNG in golden tests
-  "networkx>=3.2",
-  "scikit-learn>=1.5",
-  "scipy>=1.13",
-  "shapely>=2.0",
-  "squarify>=0.4.4",
-  "panel>=1.5",
-  "jupyter_bokeh>=4.0",
-  "param>=2.0",
-  "pyperclip>=1.9",
 ]
+
+# This group carries TEST-ONLY tooling.  It used to re-list the contents of the
+# `layouts`, `interactive` and `export` extras as well, which was two copies of
+# every floor and had already drifted: `svglib<2` here against `svglib>=1.5,<2`
+# there, and bare `reportlab`/`rlPyCairo` against `>=4.0`/`>=0.3`.
+# tools/diff_packaging_prod.sh guards dev-vs-prod, not dev-vs-itself, so nothing
+# would have caught it.  Name the extras at install time instead:
+#
+#   VIRTUAL_ENV="$PWD/.venv" uv pip install -e '.[layouts,interactive,export]' --group dev
+#   uv sync --extra layouts --extra interactive --extra export --group dev
+#
+# mlx stays out of both: the clean-room .venv must not have it (see CLAUDE.md),
+# and .venv-mlx adds it explicitly.  svglib/reportlab/rlPyCairo remain here
+# because the golden-image tests rasterize whether or not `export` is installed.
 
 [project.urls]
 Homepage   = "https://github.com/datrcode/polars2svg"
 Repository = "https://github.com/datrcode/polars2svg"
+Changelog  = "https://github.com/datrcode/polars2svg/blob/main/CHANGELOG.md"
+Issues     = "https://github.com/datrcode/polars2svg/issues"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -177,6 +194,12 @@ testpaths = ["tests"]
 # which also applies this marker; declaring it here keeps `-m interaction` usable
 # and silences PytestUnknownMarkWarning.
 markers = ["interaction: browser-driven Playwright tests (require chromium)"]
+# --strict-markers turns a typo'd @pytest.mark.interation into an error instead of
+# a silently un-gated test that boots a browser in the default run; --strict-config
+# does the same for a misspelt key in this block; xfail_strict makes an xfail that
+# unexpectedly passes a failure, so a fixed bug cannot stay marked broken.
+addopts      = ["--strict-markers", "--strict-config"]
+xfail_strict = true
 
 # polars2svg ships a py.typed marker so downstream type checkers read the type
 # hints the package carries.  Every module in the package is annotated and
@@ -324,9 +347,16 @@ select = [
 "polars2svg/__init__.py" = ["F401"]
 
 [tool.coverage.run]
-branch = true
+branch       = true
 command_line = "-m unittest discover -s tests/"
-source = ["."]
+# source was ["."], which put the 169 test files and tools/ in the denominator --
+# the tests covering themselves.  That reported 81% where the package alone was
+# 68% (measured 2026-09-12).  Nothing published the inflated number (no badge, no
+# README figure, no CI consumer), so this is a straight correction.  PLANNING.md D7.
+source       = ["polars2svg"]
+
+[tool.coverage.report]
+show_missing = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["polars2svg"]
@@ -344,4 +374,5 @@ exclude = [
   "CLAUDE.md",
   "PLANNING.md",
   "20260824_background_record_contract.md",
+  "20260913_fable_code_audit.md",
 ]

@@ -139,7 +139,7 @@ _step_mypy_() {
     if [ "$_rc_" -gt 1 ]; then
         printf 'FAIL (mypy did not run, exit %d)\n' "$_rc_"
         printf '%s\n' "$_out_" | tail -5 | sed 's/^/      /'
-        printf '      is the dev group installed?  VIRTUAL_ENV="$PWD/.venv" uv pip install --group dev -e .\n\n'
+        printf '      is the dev group installed?  VIRTUAL_ENV="$PWD/.venv" uv pip install -e %s --group dev\n\n' "'.[layouts,interactive,export]'" 
         _FAILED_+=('mypy')
         return
     fi

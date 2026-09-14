@@ -202,9 +202,27 @@ jobs:
         run: uv run ruff check .
 
   linux-cleanroom:
-    name: Linux clean-room wheel install + tests
+    name: Linux clean-room wheel install + tests (py${{ matrix.python }})
     runs-on: ubuntu-latest
-    container: python:3.13-slim
+    # 3.14 added 2026-09-14 alongside the `Programming Language :: Python :: 3.14`
+    # classifier, and deliberately in the same change: the classifier is a claim of
+    # support, and this leg is what keeps the claim true.  requires-python has
+    # admitted 3.14 since it shipped, so users were installing there either way --
+    # the only question was whether anything checked.
+    #
+    # The floor and the ceiling of requires-python, not every version between: 3.12
+    # is what the metadata promises and 3.14 is the newest CPython, so a break at
+    # either end shows up.  fail-fast is off so a 3.14 failure does not cancel the
+    # 3.13 leg and hide whether the break is version-specific.
+    #
+    # Verified locally on 3.14.5 before this was added (macOS/arm64: the full suite
+    # and the 219-test interaction suite both green).  That is a different platform
+    # from this job, which is the point of the job.
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.13', '3.14']
+    container: python:${{ matrix.python }}-slim
     steps:
       # git lets actions/checkout use a fast clone instead of the REST tarball.
       # The rest are pycairo's build dependencies: pycairo publishes Windows-only
@@ -234,9 +252,12 @@ jobs:
         # re-listing their contents here — a hand-kept list silently drifts from
         # [project.optional-dependencies] (it had already lost scipy, networkx,
         # shapely and param, which is 15 collection errors and zero tests run).
-        # These three are exactly what [dependency-groups] dev carries. mlx is
-        # deliberately absent: the suite is meant to run without it, which is what
-        # exercises tfdp_layout.py's import guard.
+        # These three are the extras the suite needs.  ([dependency-groups] dev used
+        # to re-list their contents too; that duplication was removed 2026-09-14
+        # because the two copies had drifted, so dev is test-only tooling now and
+        # the extras are named at install time -- here and in CONTRIBUTING.md.)
+        # mlx is deliberately absent: the suite is meant to run without it, which is
+        # what exercises tfdp_layout.py's import guard.
         #
         # export brings svglib+reportlab+rlPyCairo. rlPyCairo is reportlab 5.x's
         # renderPM backend on Linux (macOS has its own); without it svglib

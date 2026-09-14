@@ -352,7 +352,7 @@ class TestMypyErrorRatchet(unittest.TestCase):
     '''
 
     MAX_ERRORS = {
-        'xyp':                                       33,
+        'xyp':                                       9,
         'chordp':                                    9,
         'p2s_render_mixin':                          8,
         'od_flow_layout':                            6,

@@ -1,9 +1,10 @@
 import unittest
 import polars as pl
 import numpy as np
-from datetime import datetime
+from datetime import datetime, date, timedelta
 import random
 from polars2svg import Polars2SVG
+from svg_test_utils import normalize_svg
 
 class Testxyp_xy_ranges(unittest.TestCase):
     def __init__(self, *args, **kwargs):
@@ -176,6 +177,62 @@ class Testxyp_xy_ranges(unittest.TestCase):
                     assert _sy_ == round(_xyp_.wyToSy(_wy_))
                     assert _wx_ == round(_xyp_.sxToWx(_sx_))
                     assert _wy_ == round(_xyp_.syToWy(_sy_))
+
+
+class Testxyp_date_ranges(unittest.TestCase):
+    '''x_range=/y_range= given as `date` rather than `datetime`.
+
+    datetime is a SUBCLASS of date, so the guard that used to admit these --
+    `isinstance(v, datetime) or isinstance(v, date)` -- had exactly one effect beyond
+    plain datetime: it let a pure `date` through.  And a pure date reached two
+    subtractions that cannot take one, `date - datetime` in __resolveRanges__ and
+    `datetime - date` in __renderContext_linearTime__ (which reads self.x_range raw).
+    So the only input the clause existed to accept was the only input it could not
+    handle, and x_range=(date(...), date(...)) was a TypeError.
+
+    test_dateRanges above did not catch it because it builds its bounds with
+    datetime.strptime(), which returns datetimes.  Ranges are now promoted to datetime
+    once in __validateInput__, so a date bound means the same instant as the equivalent
+    datetime bound to every consumer.  PLANNING.md §15.
+    '''
+    def setUp(self):
+        self.p2s = Polars2SVG()
+        _n_        = 60
+        self.df_dt = pl.DataFrame({'t': [datetime(2024, 1, 1) + timedelta(days=i) for i in range(_n_)],
+                                   'v': [float(i % 17) for i in range(_n_)]})
+        self.df_d  = self.df_dt.with_columns(pl.col('t').cast(pl.Date))
+
+    def _svg_(self, df, **kwargs):
+        return normalize_svg(self.p2s.xyp(df, x='t', y='v', wxh=(256, 256), **kwargs).svg)
+
+    def test_date_bounds_render_at_all(self):
+        for _name_, _df_ in (('Datetime column', self.df_dt), ('Date column', self.df_d)):
+            with self.subTest(column=_name_):
+                self.assertIn('<svg', self._svg_(_df_, x_range=(date(2024, 1, 5), date(2024, 2, 5))))
+
+    def test_date_bounds_equal_the_same_instant_as_datetime_bounds(self):
+        for _name_, _df_ in (('Datetime column', self.df_dt), ('Date column', self.df_d)):
+            with self.subTest(column=_name_):
+                _d_  = self._svg_(_df_, x_range=(date(2024, 1, 5),          date(2024, 2, 5)))
+                _dt_ = self._svg_(_df_, x_range=(datetime(2024, 1, 5),      datetime(2024, 2, 5)))
+                self.assertEqual(_d_, _dt_, 'a date bound must mean midnight of that day, '
+                                            'not a differently-rendered axis')
+
+    def test_a_range_may_mix_date_and_datetime(self):
+        # The paired form chose its branch on the MIN and applied it to both, so a mixed
+        # range was unreachable even once date alone worked.
+        for _name_, _df_ in (('Datetime column', self.df_dt), ('Date column', self.df_d)):
+            with self.subTest(column=_name_):
+                _mixed_ = self._svg_(_df_, x_range=(date(2024, 1, 5), datetime(2024, 2, 5)))
+                _dt_    = self._svg_(_df_, x_range=(datetime(2024, 1, 5), datetime(2024, 2, 5)))
+                self.assertEqual(_mixed_, _dt_)
+
+    def test_y_range_takes_dates_too(self):
+        _df_ = self.df_dt.rename({'t': 'v2', 'v': 't'}).select(['t', 'v2'])
+        _svg_ = normalize_svg(self.p2s.xyp(_df_, x='t', y='v2', wxh=(256, 256),
+                                           y_range=(date(2024, 1, 5), date(2024, 2, 5))).svg)
+        self.assertIn('<svg', _svg_)
+
 
 if __name__ == '__main__':
     unittest.main()

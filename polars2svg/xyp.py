@@ -64,6 +64,58 @@ _ROUNDER_FIELDS_: dict[str, dict[str, int]] = {
 
 
 #
+# _axisEpochSeconds_() - one x_range=/y_range= bound as epoch seconds.
+#
+# The axis column these bounds are compared against is epoch SECONDS:
+# __indexXandY_join__ builds __xi__/__yi__ with
+# `(col - datetime(1970,1,1)).dt.total_seconds(fractional=True)`, and polars casts a
+# pl.Date column to midnight on the way through.  This does the same on the Python
+# side so a range and its column agree.
+#
+# It replaces `if isinstance(v, datetime) or isinstance(v, date)` followed by
+# `v - datetime(1970,1,1)`.  datetime is a SUBCLASS of date, so that second clause
+# admitted exactly one case the first did not -- a pure `date` -- and `date -
+# datetime` raises TypeError.  The only input the clause existed to accept was the
+# one input it could not handle: `xyp(df, x='t', y='v', x_range=(date(2024,1,5),
+# date(2024,2,5)))` was a TypeError until 2026-09-14.  It never fired from the data
+# side, where __xi__ is already numeric by this point; only a user-supplied range
+# could reach it.
+#
+# Per value rather than per axis, which also fixes two cases the paired form got
+# wrong: a mixed (date, datetime) range, and a range whose max is None -- the old
+# code chose the branch on the MIN and then applied it to both.
+#
+#
+# _axisRangeToDatetimes_() - promote any date in an x_range=/y_range= pair to a datetime.
+#
+# datetime is a subclass of date, so a pure `date` in a range reaches every consumer
+# looking like "a date-ish thing" while the data-derived side of the same comparison
+# is always a datetime (polars hands back datetime for a Datetime column, and
+# __xi__/__yi__ are numeric).  Mixing the two raises: `date - datetime` in
+# __resolveRanges__ and `datetime - date` in __renderContext_linearTime__, which reads
+# self.x_range RAW through __min__/__max__.  Fixing only the first left the second, and
+# left a date range rendering differently from the identical datetime range.
+#
+# Promoting once, here, is what makes x_range=(date(...), date(...)) mean exactly
+# x_range=(datetime(... midnight), datetime(... midnight)) everywhere downstream --
+# which is also how polars reads a pl.Date column.  PLANNING.md §15.
+#
+def _axisRangeToDatetimes_(rng: Any) -> Any:
+    if rng is None or not isinstance(rng, (tuple, list)): return rng
+    def _one_(v: Any) -> Any:
+        if isinstance(v, datetime): return v
+        if isinstance(v, date):     return datetime(v.year, v.month, v.day)
+        return v
+    return type(rng)(_one_(v) for v in rng)
+
+
+def _axisEpochSeconds_(v: Any) -> Any:
+    if isinstance(v, datetime): return (v - datetime(1970, 1, 1)).total_seconds()
+    if isinstance(v, date):     return (datetime(v.year, v.month, v.day) - datetime(1970, 1, 1)).total_seconds()
+    return v
+
+
+#
 # _joinInSameMode_() - join two frames that use_lazy_execution keeps in step.
 #
 # polars' DataFrame.join and LazyFrame.join each require an operand of their own
@@ -1078,6 +1130,10 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     #
     def __validateInput__(self) -> None:
         self.p2s.checkReservedColumns(self.df, 'XYp')
+        # Before anything reads them: a date in a range must mean the same instant as the
+        # equivalent datetime, to every consumer.  See _axisRangeToDatetimes_.
+        self.x_range = _axisRangeToDatetimes_(self.x_range)
+        self.y_range = _axisRangeToDatetimes_(self.y_range)
         if self.x is None: raise ValueError('XYp.__validateInput__():  x must be specified')
         if self.y is None: raise ValueError('XYp.__validateInput__():  y must be specified')
 
@@ -1797,11 +1853,9 @@ class XYp(P2SBackgroundMixin, ExportMixin):
         else:                    _xmin_, _xmax_ = self.x_range
         if self.y_range is None: _ymin_, _ymax_ = self.df_flat['__yi__'].min(), self.df_flat['__yi__'].max()
         else:                    _ymin_, _ymax_ = self.y_range
-        # 2) time conversions
-        if isinstance(_xmin_, datetime) or isinstance(_xmin_, date):
-            _xmin_, _xmax_ = (_xmin_ - datetime(1970, 1, 1)).total_seconds(), (_xmax_ - datetime(1970, 1, 1)).total_seconds()
-        if isinstance(_ymin_, datetime) or isinstance(_ymin_, date):
-            _ymin_, _ymax_ = (_ymin_ - datetime(1970, 1, 1)).total_seconds(), (_ymax_ - datetime(1970, 1, 1)).total_seconds()
+        # 2) time conversions -- see _axisEpochSeconds_ for why this is per value
+        _xmin_, _xmax_ = _axisEpochSeconds_(_xmin_), _axisEpochSeconds_(_xmax_)
+        _ymin_, _ymax_ = _axisEpochSeconds_(_ymin_), _axisEpochSeconds_(_ymax_)
         # Narrowed once, here, rather than at each use below.  polars types
         # Series.min()/.max() as PythonLiteral -- the ten-way union int|float|
         # Decimal|date|time|timedelta|str|bytes|ndarray|list -- and mypy reports one

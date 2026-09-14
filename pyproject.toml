@@ -135,6 +135,14 @@ all = ["polars2svg[interactive,layouts,export,mlx]"]
 dev = [
   "pytest",
   "coverage",
+  # The two gate tools, pinned to a minor.  CI and tools/preflight.sh used to
+  # invoke them as bare `uvx ruff` / `uvx mypy`, which resolves whatever is
+  # newest into an isolated env: .ruff_cache/ accumulated nine ruff versions
+  # (0.15.21 -> 0.16.7) in a few weeks, so every count recorded in PLANNING.md
+  # or an audit was measured against a moving tool.  Rule sets change between
+  # minors -- pin the minor, raise it deliberately.  See PLANNING.md Q1.
+  "ruff>=0.16,<0.17",
+  "mypy>=2.3,<2.4",
   "fonttools",  # build-time tool for tools/gen_font_metrics.py; here so
                 # tests/test_font_metrics_consistency.py can re-derive the baked
                 # metrics from the bundled TTF and catch a stale generated table
@@ -173,8 +181,16 @@ markers = ["interaction: browser-driven Playwright tests (require chromium)"]
 # polars2svg ships a py.typed marker so downstream type checkers read the type
 # hints the package carries.  Every module in the package is annotated and
 # strictly checked: `disallow_untyped_defs` and `check_untyped_defs` apply
-# package-wide and no error code is disabled, so a green `uvx mypy polars2svg`
-# means what it says.
+# package-wide and no error code is disabled.
+#
+# INTERIM NOTE, 2026-09-13: that does NOT mean a green `uvx mypy polars2svg` is
+# a clean bill of health, as this block used to claim.  `uvx` resolves into an
+# isolated env with no polars, numpy or PIL, so those become Any and the run is
+# vacuous; resolved against .venv the same config reports 730 errors in 17 files.
+# `ignore_missing_imports = true` below is what lets that happen silently.  See
+# PLANNING.md Q1/Q4 and 20260913_fable_code_audit.md F1.  tools/preflight.sh and
+# ci.yml's type-check job both run the resolved check behind a ceiling now.
+# This note comes out when Q4 closes.
 #
 # THE DIRECTION CHANGED TWICE, and the second change is finished.  This block
 # used to say the internals were dynamically typed on purpose and that

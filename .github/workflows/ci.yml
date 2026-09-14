@@ -21,17 +21,78 @@ on:
 jobs:
   # Type-check the public surface (PyPI nice-to-have #1). The package ships a
   # py.typed marker, so downstream checkers read our hints; this guards that the
-  # public signatures stay valid. The [tool.mypy] config in pyproject.toml relaxes
-  # the error codes that fire only on the library's internal dynamic idiom.
+  # public signatures stay valid.
+  #
+  # This job used to run `uvx mypy polars2svg` with nothing installed, and that
+  # check was vacuous. uvx resolves into an isolated environment, so polars,
+  # numpy and PIL were absent; `ignore_missing_imports = true` turned every one
+  # of them into Any, and every operation on a DataFrame, Series or ndarray
+  # type-checked trivially. On 2026-09-13 it printed "Success: no issues found in
+  # 47 source files" while the same config resolved against a real environment
+  # found 730 errors in 17 files.
+  #
+  # The extras are load-bearing, not belt-and-braces: with base dependencies
+  # alone the count is 724 in 14 files, because export.py, p2s_reactive_base.py
+  # and the colour/atlas helpers only resolve once svglib, param and friends are
+  # installed. They are named one by one rather than --all-extras for the same
+  # reason pip-audit names them below: --all-extras pulls mlx-cuda's Linux-only
+  # NVIDIA wheels onto this runner.
   type-check:
     name: mypy (public surface)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - name: Install uv
-        run: pip install --no-cache-dir uv
-      - name: Run mypy
-        run: uvx mypy polars2svg
+      - uses: astral-sh/setup-uv@v7
+
+      - name: Install the project, its extras and the dev group
+        # The dev group pins mypy (>=2.3,<2.4), so uv.lock decides the version
+        # this job runs. `uvx mypy` resolved whatever was newest that morning --
+        # the local .ruff_cache had collected nine ruff versions the same way.
+        run: uv sync --extra layouts --extra interactive --extra export --group dev
+
+      - name: Run mypy against a ceiling
+        # 730 errors stand today and are burned down by module; until that
+        # finishes a plain pass/fail gate would be permanently red, and a gate
+        # that is always red is one people learn to ignore. So: green at or
+        # below the ceiling, red above it. That is enough to catch the drift
+        # that motivated the change (the count moved 725 -> 729 over three
+        # commits in a single day, with this job green throughout).
+        #
+        # Keep this number equal to _MYPY_CEILING_ in tools/preflight.sh.
+        #
+        # The count is a function of the dependency versions as well as the
+        # code, so it only means something against a stated environment. This
+        # one is uv.lock's: polars 1.41.2, numpy 2.4.6, mypy 2.3.1, the three
+        # extras above, no mlx. A .venv built ad-hoc with `uv pip install -e .`
+        # drifts ahead of the lock and reports a different number -- 729 rather
+        # than 730, the odd one in ncp_layout.py -- which is why `uv sync` is
+        # the install step here and why preflight's number matches only while a
+        # local .venv is lock-aligned. A polars bump moving this is a deliberate
+        # re-baseline, not a regression; name the new version when you raise it.
+        run: |
+          _CEILING_=730
+          set +e
+          _out_="$(uv run mypy polars2svg 2>&1)"; _rc_=$?
+          set -e
+          # mypy exits 0 clean, 1 with findings, >=2 on a crash or bad config.
+          # Without this guard a broken run emits no ': error: ' lines, counts
+          # zero, and reports a false green -- which is the exact failure mode
+          # this job is being changed to correct.
+          if [ "$_rc_" -gt 1 ]; then
+              printf '%s\n' "$_out_"
+              echo "::error::mypy did not run (exit $_rc_)"
+              exit 1
+          fi
+          _n_="$(printf '%s\n' "$_out_" | grep -c ': error: ' || true)"
+          if [ "$_n_" -gt "$_CEILING_" ]; then
+              printf '%s\n' "$_out_" | grep ': error: '
+              echo "::error::mypy reports $_n_ errors, ceiling is $_CEILING_"
+              exit 1
+          fi
+          if [ "$_n_" -lt "$_CEILING_" ]; then
+              echo "::warning::mypy reports $_n_ errors; lower the ceiling here and in tools/preflight.sh to $_n_"
+          fi
+          echo "mypy: $_n_ errors (ceiling $_CEILING_)"
 
   # Security/quality automation (PyPI nice-to-have #5).
   security-and-quality:

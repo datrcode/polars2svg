@@ -173,8 +173,16 @@ actually calls them — do the same before tightening one.
 
 The public API surface (`Polars2SVG.__init__`, the component factory methods,
 `tField`, `panelize`, the exported layout classes) has always been typed and
-must stay that way — `uvx mypy polars2svg` runs in CI. Never weaken a public
-annotation to satisfy the checker.
+must stay that way — mypy runs in CI. Never weaken a public annotation to
+satisfy the checker.
+
+> **Interim note, 2026-09-13.** Run `.venv/bin/python -m mypy polars2svg`, not
+> `uvx mypy polars2svg`. The `uvx` form resolves into an isolated env where
+> polars, numpy and PIL are missing and therefore `Any`, so it reports success
+> while the resolved run reports **730 errors in 17 files**. CI ran the `uvx`
+> form until 2026-09-13 and now installs the project and checks against a
+> ceiling; the 730 are being burned down by module, so mypy being green is not
+> yet the same as mypy being clean.
 
 One trap worth knowing: do **not** add `from __future__ import annotations` to
 `polars2svg.py`. It stringifies annotations, and `test_typing_surface.py`
@@ -221,10 +229,19 @@ they reproduce natively (~12s):
 ./tools/preflight.sh
 ```
 
-That runs mypy, bandit, pip-audit and ruff exactly as `ci.yml` does, and reports
-all four rather than stopping at the first failure. Run it before pushing —
-`pytest` passing locally does **not** mean CI is green, since none of these four
-checks are part of the test suite.
+That runs mypy, bandit, pip-audit and ruff and reports all four rather than
+stopping at the first failure. Run it before pushing — `pytest` passing locally
+does **not** mean CI is green, since none of these four checks are part of the
+test suite.
+
+Two things about the mypy step, both deliberate (PLANNING.md **Q1**): it is
+gated on a **ceiling** rather than on success, because 730 errors stand today and
+a permanently red gate is one people learn to ignore; and ruff and mypy are
+pinned in `[dependency-groups].dev` and run from `.venv`, so they no longer
+drift version-to-version the way bare `uvx` did. `ci.yml` carries the same
+ceiling, but installs the project with `uv sync` — so the two agree only while
+your `.venv` matches `uv.lock`. If your local count differs by one or two,
+check whether `uv pip install` has pulled a newer polars than the lock pins.
 
 The Linux clean-room job is deliberately not covered: it exists to exercise
 linux/amd64 inside a stock `python:3.13-slim` container, which is precisely what

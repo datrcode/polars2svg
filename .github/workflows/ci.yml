@@ -48,7 +48,24 @@ jobs:
         # The dev group pins mypy (>=2.3,<2.4), so uv.lock decides the version
         # this job runs. `uvx mypy` resolved whatever was newest that morning --
         # the local .ruff_cache had collected nine ruff versions the same way.
-        run: uv sync --extra layouts --extra interactive --extra export --group dev
+        #
+        # rlPyCairo and pycairo are excluded, and BOTH names are needed.  pycairo
+        # publishes no Linux wheel, so it compiles from its sdist against cairo's
+        # headers, which this runner does not carry -- `uv sync` died as
+        # `Dependency "cairo" not found`, which reads like a network flake and is a
+        # compile.  ci.yml has warned about this since the pip-audit step was written;
+        # that step dodges it with --no-deps --disable-pip.
+        #
+        # Naming fewer extras does not help: rlPyCairo is in [dependency-groups] dev
+        # itself, not only in [export].  Excluding rlpycairo alone is also not enough --
+        # pycairo stays in the resolution and still builds.
+        #
+        # Safe to skip here: rlPyCairo is reportlab's renderPM backend, used only to
+        # rasterize SVG->PNG in the golden-image tests.  These jobs type-check and lint;
+        # they never rasterize.  Verified the mypy count is identical without it.
+        run: |
+          uv sync --extra layouts --extra interactive --extra export --group dev \
+                  --no-install-package rlpycairo --no-install-package pycairo
 
       - name: Run mypy against a ceiling
         # 60 errors stand today and are burned down by module; until that
@@ -107,7 +124,24 @@ jobs:
         # ruff is pinned in the dev group, so uv.lock decides the version this job
         # runs.  bandit and pip-audit below are still `uvx` and still unpinned --
         # they read the repo and an exported requirements file, not the venv.
-        run: uv sync --extra layouts --extra interactive --extra export --group dev
+        #
+        # rlPyCairo and pycairo are excluded, and BOTH names are needed.  pycairo
+        # publishes no Linux wheel, so it compiles from its sdist against cairo's
+        # headers, which this runner does not carry -- `uv sync` died as
+        # `Dependency "cairo" not found`, which reads like a network flake and is a
+        # compile.  ci.yml has warned about this since the pip-audit step was written;
+        # that step dodges it with --no-deps --disable-pip.
+        #
+        # Naming fewer extras does not help: rlPyCairo is in [dependency-groups] dev
+        # itself, not only in [export].  Excluding rlpycairo alone is also not enough --
+        # pycairo stays in the resolution and still builds.
+        #
+        # Safe to skip here: rlPyCairo is reportlab's renderPM backend, used only to
+        # rasterize SVG->PNG in the golden-image tests.  These jobs type-check and lint;
+        # they never rasterize.  Verified the mypy count is identical without it.
+        run: |
+          uv sync --extra layouts --extra interactive --extra export --group dev \
+                  --no-install-package rlpycairo --no-install-package pycairo
 
       - name: bandit (static security scan)
         # Findings are either fixed or annotated in-line with a justified

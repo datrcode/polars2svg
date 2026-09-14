@@ -191,7 +191,7 @@ class P2SGeometryMixin:
 # Welzl's algorithm — iterative, O(n) expected.
 # -------------------------------------------------------------------------
 
-class SmallestEnclosingCircle(object):
+class SmallestEnclosingCircle:
     def __init__(self, points: list) -> None:
         if not points:
             self.center, self.radius = (0, 0), 0

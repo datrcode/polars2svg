@@ -23,15 +23,14 @@ nearest neighbour; the radius is set to half that distance.
 from __future__ import annotations
 
 import math
-from typing import Dict, List, Optional, Tuple, Union
 
 # ---------------------------------------------------------------------------
 # Public types
 # ---------------------------------------------------------------------------
 
 Key      = object
-Point2D  = Tuple[float, float]
-NodeSpec = Union[Tuple[float, float], Tuple[float, float, float]]
+Point2D  = tuple[float, float]
+NodeSpec = tuple[float, float] | tuple[float, float, float]
 
 
 # ---------------------------------------------------------------------------
@@ -45,7 +44,7 @@ class _QTNode:
         self.cx = cx;  self.cy = cy
         self.hw = hw;  self.hh = hh
         self.pts: list = []
-        self.children: Optional[tuple] = None
+        self.children: tuple | None = None
 
     def _contains(self, x: float, y: float) -> bool:
         return (self.cx - self.hw <= x <= self.cx + self.hw and
@@ -90,14 +89,14 @@ class _QTNode:
                     break
         return True
 
-    def _min_dist2_to_child(self, ch: "_QTNode", qx: float, qy: float) -> float:
+    def _min_dist2_to_child(self, ch: _QTNode, qx: float, qy: float) -> float:
         dx = max(0.0, abs(qx - ch.cx) - ch.hw)
         dy = max(0.0, abs(qy - ch.cy) - ch.hh)
         return dx * dx + dy * dy
 
     def query_nearest(
         self, qx: float, qy: float, best_d: float, best_idx: int
-    ) -> Tuple[float, int]:
+    ) -> tuple[float, int]:
         if not self._intersects_circle(qx, qy, best_d):
             return best_d, best_idx
         if self.children is None:
@@ -119,7 +118,7 @@ class _QTNode:
 class QuadTree:
     """2-D quad-tree supporting nearest-neighbour queries (d > 0, excludes self)."""
 
-    def __init__(self, points: List[Point2D]) -> None:
+    def __init__(self, points: list[Point2D]) -> None:
         if not points:
             raise ValueError("QuadTree requires at least one point")
         xs = [p[0] for p in points]
@@ -132,7 +131,7 @@ class QuadTree:
         for i, (x, y) in enumerate(points):
             self._root.insert(x, y, i)
 
-    def nearest(self, x: float, y: float) -> Tuple[float, int]:
+    def nearest(self, x: float, y: float) -> tuple[float, int]:
         """Return (distance, index) of the nearest stored point with distance > 0."""
         d, idx = self._root.query_nearest(x, y, math.inf, -1)
         return d, idx
@@ -143,8 +142,8 @@ class QuadTree:
 # ---------------------------------------------------------------------------
 
 def _clip_half_plane(
-    poly: List[Point2D], a: float, b: float, c: float
-) -> List[Point2D]:
+    poly: list[Point2D], a: float, b: float, c: float
+) -> list[Point2D]:
     """
     Clip a convex polygon to the closed half-plane  a*x + b*y <= c.
 
@@ -153,7 +152,7 @@ def _clip_half_plane(
     """
     if not poly:
         return poly
-    result: List[Point2D] = []
+    result: list[Point2D] = []
     n = len(poly)
     for i in range(n):
         cur = poly[i]
@@ -180,10 +179,10 @@ def _clip_half_plane(
 # ---------------------------------------------------------------------------
 
 def laguerre_voronoi(
-    nodes: Dict[Key, NodeSpec],
+    nodes: dict[Key, NodeSpec],
     *,
     bbox_pad: float = 0.1,
-) -> Dict[Key, Optional[List[Point2D]]]:
+) -> dict[Key, list[Point2D] | None]:
     """
     Compute the Laguerre-Voronoi diagram (power diagram) for a set of circles.
 
@@ -223,10 +222,10 @@ def laguerre_voronoi(
     # ------------------------------------------------------------------
     # 1. Resolve radii
     # ------------------------------------------------------------------
-    raw: List[tuple] = [nodes[k] for k in keys]
-    pts_xy: List[Point2D] = [(float(t[0]), float(t[1])) for t in raw]
+    raw: list[tuple] = [nodes[k] for k in keys]
+    pts_xy: list[Point2D] = [(float(t[0]), float(t[1])) for t in raw]
 
-    circles: List[Tuple[float, float, float]] = []
+    circles: list[tuple[float, float, float]] = []
 
     if n == 1:
         circles.append((pts_xy[0][0], pts_xy[0][1], 0.0))
@@ -255,14 +254,14 @@ def laguerre_voronoi(
     by1 = ymax + span_y * bbox_pad
 
     # CCW bounding-box polygon
-    bbox_poly: List[Point2D] = [
+    bbox_poly: list[Point2D] = [
         (bx0, by0), (bx1, by0), (bx1, by1), (bx0, by1)
     ]
 
     # ------------------------------------------------------------------
     # 3. Compute each Laguerre cell by half-plane intersection
     # ------------------------------------------------------------------
-    result: Dict[Key, Optional[List[Point2D]]] = {}
+    result: dict[Key, list[Point2D] | None] = {}
 
     for i, key in enumerate(keys):
         xi, yi, ri = circles[i]

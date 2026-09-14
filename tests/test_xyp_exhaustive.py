@@ -17,15 +17,15 @@ class Testxyp_exhaustive(unittest.TestCase):
                 df = randomDataFrame(n, na_probability=0.0)
                 for _col0_ in df.columns:
                     for _col1_ in df.columns:
-                        _xyp_ = self.p2s.xyp(df, _col0_, _col1_)
-                        _xyp_ = self.p2s.xyp(df, (_col0_, self.p2s.SETp),    _col1_)
-                        _xyp_ = self.p2s.xyp(df, (_col0_, self.p2s.SCALARp), _col1_)
-                        _xyp_ = self.p2s.xyp(df, _col0_, (_col1_, self.p2s.SETp))
-                        _xyp_ = self.p2s.xyp(df, _col0_, (_col1_, self.p2s.SCALARp))
-                        _xyp_ = self.p2s.xyp(df, (_col0_, self.p2s.SETp),    (_col1_, self.p2s.SETp))
-                        _xyp_ = self.p2s.xyp(df, (_col0_, self.p2s.SCALARp), (_col1_, self.p2s.SETp))
-                        _xyp_ = self.p2s.xyp(df, (_col0_, self.p2s.SCALARp), (_col1_, self.p2s.SCALARp))
-                        _xyp_ = self.p2s.xyp(df, (_col0_, self.p2s.SETp),    (_col1_, self.p2s.SCALARp))
+                        self.p2s.xyp(df, _col0_, _col1_)
+                        self.p2s.xyp(df, (_col0_, self.p2s.SETp),    _col1_)
+                        self.p2s.xyp(df, (_col0_, self.p2s.SCALARp), _col1_)
+                        self.p2s.xyp(df, _col0_, (_col1_, self.p2s.SETp))
+                        self.p2s.xyp(df, _col0_, (_col1_, self.p2s.SCALARp))
+                        self.p2s.xyp(df, (_col0_, self.p2s.SETp),    (_col1_, self.p2s.SETp))
+                        self.p2s.xyp(df, (_col0_, self.p2s.SCALARp), (_col1_, self.p2s.SETp))
+                        self.p2s.xyp(df, (_col0_, self.p2s.SCALARp), (_col1_, self.p2s.SCALARp))
+                        self.p2s.xyp(df, (_col0_, self.p2s.SETp),    (_col1_, self.p2s.SCALARp))
 
 
     def test_exhaustiveSmalls(self, samples=1):
@@ -34,15 +34,15 @@ class Testxyp_exhaustive(unittest.TestCase):
                 df = randomDataFrame(n, na_probability=0.0)
                 for _col0_ in df.columns:
                     for _col1_ in df.columns:
-                        _xyp_ = self.p2s.xyp(df, _col0_, _col1_)
-                        _xyp_ = self.p2s.xyp(df, (_col0_, self.p2s.SETp),    _col1_)
-                        _xyp_ = self.p2s.xyp(df, (_col0_, self.p2s.SCALARp), _col1_)
-                        _xyp_ = self.p2s.xyp(df, _col0_, (_col1_, self.p2s.SETp))
-                        _xyp_ = self.p2s.xyp(df, _col0_, (_col1_, self.p2s.SCALARp))
-                        _xyp_ = self.p2s.xyp(df, (_col0_, self.p2s.SETp),    (_col1_, self.p2s.SETp))
-                        _xyp_ = self.p2s.xyp(df, (_col0_, self.p2s.SCALARp), (_col1_, self.p2s.SETp))
-                        _xyp_ = self.p2s.xyp(df, (_col0_, self.p2s.SCALARp), (_col1_, self.p2s.SCALARp))
-                        _xyp_ = self.p2s.xyp(df, (_col0_, self.p2s.SETp),    (_col1_, self.p2s.SCALARp))
+                        self.p2s.xyp(df, _col0_, _col1_)
+                        self.p2s.xyp(df, (_col0_, self.p2s.SETp),    _col1_)
+                        self.p2s.xyp(df, (_col0_, self.p2s.SCALARp), _col1_)
+                        self.p2s.xyp(df, _col0_, (_col1_, self.p2s.SETp))
+                        self.p2s.xyp(df, _col0_, (_col1_, self.p2s.SCALARp))
+                        self.p2s.xyp(df, (_col0_, self.p2s.SETp),    (_col1_, self.p2s.SETp))
+                        self.p2s.xyp(df, (_col0_, self.p2s.SCALARp), (_col1_, self.p2s.SETp))
+                        self.p2s.xyp(df, (_col0_, self.p2s.SCALARp), (_col1_, self.p2s.SCALARp))
+                        self.p2s.xyp(df, (_col0_, self.p2s.SETp),    (_col1_, self.p2s.SCALARp))
 
     def test_exhaustiveMediums(self, samples=1):
         # One representative pair per type-combination: int×int, int×float, float×float,
@@ -54,15 +54,15 @@ class Testxyp_exhaustive(unittest.TestCase):
             for n in [100, 500]:
                 df = randomDataFrame(n)
                 for _col0_, _col1_ in _representative_pairs_:
-                    _xyp_ = self.p2s.xyp(df, _col0_, _col1_)
-                    _xyp_ = self.p2s.xyp(df, (_col0_, self.p2s.SETp),    _col1_)
-                    _xyp_ = self.p2s.xyp(df, (_col0_, self.p2s.SCALARp), _col1_)
-                    _xyp_ = self.p2s.xyp(df, _col0_, (_col1_, self.p2s.SETp))
-                    _xyp_ = self.p2s.xyp(df, _col0_, (_col1_, self.p2s.SCALARp))
-                    _xyp_ = self.p2s.xyp(df, (_col0_, self.p2s.SETp),    (_col1_, self.p2s.SETp))
-                    _xyp_ = self.p2s.xyp(df, (_col0_, self.p2s.SCALARp), (_col1_, self.p2s.SETp))
-                    _xyp_ = self.p2s.xyp(df, (_col0_, self.p2s.SCALARp), (_col1_, self.p2s.SCALARp))
-                    _xyp_ = self.p2s.xyp(df, (_col0_, self.p2s.SETp),    (_col1_, self.p2s.SCALARp))
+                    self.p2s.xyp(df, _col0_, _col1_)
+                    self.p2s.xyp(df, (_col0_, self.p2s.SETp),    _col1_)
+                    self.p2s.xyp(df, (_col0_, self.p2s.SCALARp), _col1_)
+                    self.p2s.xyp(df, _col0_, (_col1_, self.p2s.SETp))
+                    self.p2s.xyp(df, _col0_, (_col1_, self.p2s.SCALARp))
+                    self.p2s.xyp(df, (_col0_, self.p2s.SETp),    (_col1_, self.p2s.SETp))
+                    self.p2s.xyp(df, (_col0_, self.p2s.SCALARp), (_col1_, self.p2s.SETp))
+                    self.p2s.xyp(df, (_col0_, self.p2s.SCALARp), (_col1_, self.p2s.SCALARp))
+                    self.p2s.xyp(df, (_col0_, self.p2s.SETp),    (_col1_, self.p2s.SCALARp))
 
     #
     # test_structVStack() - tests issue where a struct has to be vstacked
@@ -76,7 +76,7 @@ class Testxyp_exhaustive(unittest.TestCase):
             'd':['a','b','d']
         })
         _xyp_ = self.p2s.xyp(df, [('a','b'),('c','d')], 'a', dot_size=8)
-        _xyp_        
+        _xyp_
 
 if __name__ == '__main__':
     unittest.main()

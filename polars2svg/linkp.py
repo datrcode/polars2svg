@@ -1149,7 +1149,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
     # zero-length links so the row's link string survives
     #
     def __arrowSVGExpr__(self, i: int) -> pl.Expr:
-        _r2_ = lambda c: pl.col(c).round(2)
+        def _r2_(c: str) -> pl.Expr: return pl.col(c).round(2)
         return (
             pl.when(pl.col(f'__arr{i}_mag__') > 1e-9)
               .then(pl.concat_str([
@@ -1236,7 +1236,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
     def __renderLinkLabels__(self, df: pl.DataFrame, i: int, stroke_w_expr: pl.Expr) -> None:
         _fm_sx_, _fm_sy_ = f'__rel{i}_fm_sx__', f'__rel{i}_fm_sy__'
         _to_sx_, _to_sy_ = f'__rel{i}_to_sx__', f'__rel{i}_to_sy__'
-        _f4_    = lambda c: pl.col(c).cast(pl.Float64)
+        def _f4_(c: str) -> pl.Expr: return pl.col(c).cast(pl.Float64)
         _fmlt_  = pl.col('__ll_fmlt__')
         _curve_ = (self.link_shape == 'curve')
 
@@ -1369,7 +1369,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
         if _curve_:
             _cols_ = _cols_ + ['__ll_q0x__', '__ll_q0y__', '__ll_q1x__', '__ll_q1y__',
                                '__ll_q2x__', '__ll_q2y__', '__ll_q3x__', '__ll_q3y__']
-        _r2_ = lambda v: round(float(v), 2)
+        def _r2_(v: Any) -> float: return round(float(v), 2)
         for _row_ in _d_.select(_cols_).iter_rows(named=True):
             # rtsvg parity: keep the label clear of both endpoints on all but short edges
             _mag_   = float(_row_['__ll_mag__'])
@@ -1662,13 +1662,14 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
     # -------------------------------------------------------------------------
     def __onCanvasExpr__(self, xs: list, ys: list, pad: float | pl.Expr = 0.0, pad_y: float | None = None) -> pl.Expr:
         _w_, _h_ = self.wxh
-        _f64_ = lambda c: (pl.col(c) if isinstance(c, str) else c).cast(pl.Float64)
+        def _f64_(c: str | pl.Expr) -> pl.Expr: return (pl.col(c) if isinstance(c, str) else c).cast(pl.Float64)
         # A pad may be an expression (a 'vary' radius or stroke width).  Degrade an absent
         # one to zero rather than letting it decide the test: a null/NaN pad would make
         # every comparison false and cull the whole layer, which is a far worse failure
         # than a box that is one stroke width too tight.
-        _f_pad_ = lambda v: ((v if isinstance(v, pl.Expr) else pl.lit(float(v)))
-                             .cast(pl.Float64).fill_null(0.0).fill_nan(0.0))
+        def _f_pad_(v: float | pl.Expr) -> pl.Expr:
+            return ((v if isinstance(v, pl.Expr) else pl.lit(float(v)))
+                    .cast(pl.Float64).fill_null(0.0).fill_nan(0.0))
         _px_  = _f_pad_(pad)
         _py_  = _px_ if pad_y is None else _f_pad_(pad_y)
         _xs_, _ys_ = [_f64_(c) for c in xs], [_f64_(c) for c in ys]
@@ -1740,7 +1741,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
             # underlying control-point / stroke-width columns keep full precision for
             # __arrowColumns__, __renderLinkLabels__ and the GPU display list, so the
             # numeric mirror those paths verify against is unchanged.
-            _r2_ = lambda c: pl.col(c).round(2)
+            def _r2_(c: str) -> pl.Expr: return pl.col(c).round(2)
 
             if self.link_size == 'vary':
                 _lc_min_, _lc_max_ = self.__countMinMax__(_df_link_['__count__'])
@@ -1862,7 +1863,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
         # collapsed mark is colored by its bin's representative time, not a raw record).
         _dfn_ = _dfn_.with_columns(_r_expr_.alias('__tm_r__'))
 
-        _r2_        = lambda c: pl.col(c).round(2)
+        def _r2_(c: str) -> pl.Expr: return pl.col(c).round(2)
         _all_marks_ = set()
         _dl_tables_ = []   # per-relationship numeric segments, concatenated after the loop
         for i, _rel_ in enumerate(self.relationships):

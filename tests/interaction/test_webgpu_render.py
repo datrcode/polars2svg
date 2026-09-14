@@ -32,7 +32,7 @@ import unittest
 import pytest
 
 pytest.importorskip('PIL', reason='pixel assertions need Pillow')
-from PIL import Image                                    # noqa: E402
+from PIL import Image
 
 #: Components with a webgpu() display list.  chordp/piep/smallp/spreadlinesp are built
 #: by their own fixtures below; these three share the grid dataframe.
@@ -249,7 +249,7 @@ def test_spreadlines_honours_the_viewbox(webgpu_page, gpu_spreadlines):
     _probe_ = _dashed_path_points(gpu_spreadlines)
     assert len(_probe_) >= 5, 'no dashed path to probe the mapping with'
     _meet_ = _to_canvas(gpu_spreadlines, _w_, _h_)
-    _stretch_ = lambda _x_, _y_: ((_x_ - _vx_) * _w_ / _vw_, (_y_ - _vy_) * _h_ / _vh_)
+    def _stretch_(_x_, _y_): return ((_x_ - _vx_) * _w_ / _vw_, (_y_ - _vy_) * _h_ / _vh_)
 
     _meet_hits_ = sum(1 for _c_ in _probe_
                       if _painted_near(_img_, *_meet_(*_c_), _bg_, radius=3))

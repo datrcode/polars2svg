@@ -369,10 +369,10 @@ class TestSpreadLinesPWebGPU(unittest.TestCase):
                                     highlight_nodes=set(_egos_))
         _part_ = _P2S_.spreadlinesp(_DF_, [('fm', 'to')], ego=_egos_, time='ts',
                                     highlight_nodes={_egos_[0]})
-        _n_ = lambda sl: manifest_count(sl.webgpu(), 'line')
+        def _n_(sl): return manifest_count(sl.webgpu(), 'line')
         self.assertGreater(_n_(_full_), _n_(_none_))          # a ring is actually drawn
         self.assertEqual(_n_(_part_), _n_(_full_))            # same ring, different clip
-        _scissored_ = lambda sl: [m for m in sl.webgpu()['manifest'] if 'scissor' in m]
+        def _scissored_(sl): return [m for m in sl.webgpu()['manifest'] if 'scissor' in m]
         self.assertEqual(len(_scissored_(_full_)), 0)         # unclipped when fully selected
         self.assertGreater(len(_scissored_(_part_)), 0)       # clipped when partially
 

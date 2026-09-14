@@ -17,7 +17,8 @@
 #
 
 import time
-from typing import Callable, Optional
+from typing import Optional
+from collections.abc import Callable
 
 
 class Budget:
@@ -37,16 +38,16 @@ class Budget:
     FlowFieldBackground's ``budget_note``.
     '''
 
-    def __init__(self, time_budget: Optional[float] = None,
-                 should_stop: Optional[Callable[[], bool]] = None) -> None:
+    def __init__(self, time_budget: float | None = None,
+                 should_stop: Callable[[], bool] | None = None) -> None:
         if time_budget is not None and float(time_budget) < 0:
             raise ValueError('time_budget must be >= 0')
         self.time_budget = None if time_budget is None else float(time_budget)
         self.should_stop = should_stop
-        self.stopped_at: Optional[int]   = None
-        self.note:       Optional[str]   = None
-        self._t0_:       Optional[float] = None
-        self._total_:    Optional[int]   = None
+        self.stopped_at: int | None   = None
+        self.note:       str | None   = None
+        self._t0_:       float | None = None
+        self._total_:    int | None   = None
         self._done_:     int             = 0
 
     def start(self, total_iterations: int) -> 'Budget':
@@ -87,5 +88,5 @@ class Budget:
     # Convenience for the callers, so each layout does not re-derive it.
     #
     @staticmethod
-    def note_of(budget: Optional['Budget']) -> Optional[str]:
+    def note_of(budget: Optional['Budget']) -> str | None:
         return None if budget is None else budget.note

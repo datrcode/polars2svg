@@ -543,9 +543,9 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     def __isLiteral__(self, _obj_: Any, attr_name: str) -> bool:
         if   isinstance(_obj_, list):
             for i in range(len(_obj_)):
-                if self.__isLiteral__(_obj_[i], attr_name) == False: return False
+                if not self.__isLiteral__(_obj_[i], attr_name): return False
             return True
-        elif isinstance(_obj_, tuple) and len(_obj_) == 1: 
+        elif isinstance(_obj_, tuple) and len(_obj_) == 1:
             return self.__isLiteral__(_obj_[0], attr_name)
         else:
             if   attr_name == 'x':             return False
@@ -592,7 +592,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
         if   isinstance(distribution_param, str): _fields_.append((distribution_param,))
         elif self.__isEnum__(distribution_param): _enums_ |= {distribution_param}
         else:
-            if isinstance(distribution_param, list) == False: distribution_param = list(distribution_param)
+            if not isinstance(distribution_param, list): distribution_param = list(distribution_param)
             for i in range(len(distribution_param)):
                 if   isinstance(distribution_param[i], tuple):
                     _tuple_fields_, _tuple_ints_, _tuple_floats_, _tuple_colors_, _tuple_enums_ = self.__separateAndCleanParam__(list(distribution_param[i]), False)
@@ -638,7 +638,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
         elif len(_ints_)   == 0: _enums_ |= {self.p2s.DISTRIBUTION_AUTOBINp}
         if   len(_floats_) >  1: raise ValueError('XYp.__distributionsParamSetDefaults__():  more than one height percentage found')
         if   len(_colors_) >  1: raise ValueError('XYp.__distributionsParamSetDefaults__():  more than one distribution color found')
-        if   self.p2s.DISTRIBUTION_INSIDEp in _enums_ and self.p2s.DISTRIBUTION_OUTSIDEp in _enums_: 
+        if   self.p2s.DISTRIBUTION_INSIDEp in _enums_ and self.p2s.DISTRIBUTION_OUTSIDEp in _enums_:
             raise ValueError('XYp.__distributionsParamSetDefaults__():  cannot specify both inside and outside distributions')
         _relative_to_ = _enums_ & set(self.p2s.DistributionScaleP)
         if len(_relative_to_) >  1: raise ValueError(f'XYp.__distributionsParamSetDefaults__():  only one relative setting allowed ({_relative_to_})')
@@ -662,7 +662,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
 
         # Ensure that there aren't too many...
         if len(_widths_)    >  1: raise ValueError(f'XYp.__cleanLineParamTuple__() - param "{_param_}" has more than one width')
-        if len(_int_lists_) >  1: raise ValueError(f'XYp.__cleanLineParamTuple__() - only one svg dot array allowed ... param "{_param_}')        
+        if len(_int_lists_) >  1: raise ValueError(f'XYp.__cleanLineParamTuple__() - only one svg dot array allowed ... param "{_param_}')
         if len(_colors_)    >  1: raise ValueError(f'XYp.__cleanLineParamTuple__() - param "{_param_}" has more than one color')
         if len(_fields_)    == 0: raise ValueError(f'XYp.__cleanLineParamTuple__() - param "{_param_}" has no fields -- at least one field required for the group_by')
 
@@ -688,13 +688,13 @@ class XYp(P2SBackgroundMixin, ExportMixin):
         elif len(_lw_enum_) == 0 and len(_widths_) > 0:
             _enums_ |= {self.p2s.LINEWIDTH_DOTSIZE_SPECIFIED}
         elif len(_lw_enum_) == 0:
-            if   len(_lw_parent_) == 1: 
+            if   len(_lw_parent_) == 1:
                 _enums_ |= _lw_parent_
                 if self.p2s.LINEWIDTH_DOTSIZE_SPECIFIED in _lw_parent_:
-                    if len(_widths_) == 0: 
+                    if len(_widths_) == 0:
                         if len(_parent_widths_) == 0: _widths_.append(0.5)  # Default line width is 0.5
                         else:                         _widths_.append(_parent_widths_[0])
-            elif len(_widths_) == 0: 
+            elif len(_widths_) == 0:
                 _widths_.append(0.5)  # Default line width is 0.5
                 _enums_ |= {self.p2s.LINEWIDTH_DOTSIZE_SPECIFIED}
         # If the enum is specified, then make sure the value is in the _widths_ list
@@ -746,7 +746,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
 
     #
     # __lineParamLineColorCleaner__()
-    #    
+    #
     def __lineParamLineColorCleaner__(self, _param_: list | str | tuple, _colors_: list, _enums_: set, _parent_colors_: list, _parent_enums_: set) -> tuple:
         _color_enums_ = set(self.p2s.LineColorP)
         _lc_enum_   = _enums_        & _color_enums_
@@ -811,7 +811,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
         else: raise TypeError(f'XYp.__cleanLineParam__() - param "{_param_}" not of type string, int/float, HexColorString, a render enum, or list of ints')
 
         # Check for exceptions
-        if len(_widths_)    >  1: raise ValueError(f'XYp.__cleanLineParam__() - param "{_param_}" has more than one width')        
+        if len(_widths_)    >  1: raise ValueError(f'XYp.__cleanLineParam__() - param "{_param_}" has more than one width')
         if len(_int_lists_) >  1: raise ValueError(f'XYp.__cleanLineParam__() - only one svg dot array allowed ... param "{_param_}')
         if len(_colors_)    >  1: raise ValueError(f'XYp.__cleanLineParam__() - param "{_param_}" has more than one color')
 
@@ -1017,14 +1017,14 @@ class XYp(P2SBackgroundMixin, ExportMixin):
             self.p2s.warnIfTFieldAliasCollides(_str_, self.df_orig, 'XYp')
         elif isinstance(_str_, self.p2s.HexColorString) or \
              _str_ in self.df.columns                   or \
-             self.p2s.isTField(_str_, df=self.df_orig) == False: return
+             not self.p2s.isTField(_str_, df=self.df_orig): return
         _column_, _enum_    = self.p2s.tFieldTuple(_str_)
         _types_             = self.p2s.tFieldAccepts(_str_)
         _column_dtype_okay_ = False
         for _type_ in _types_:
             if isinstance(self.df.dtypes[self.df.columns.index(_column_)], _type_):
                 _column_dtype_okay_ = True
-        if _column_dtype_okay_ == False: raise ValueError(f'XYp.__validateInput__():  the column {self.df.columns[self.df.columns.index(_column_)]} is not of type {_types_} for t-field {_str_}')
+        if not _column_dtype_okay_: raise ValueError(f'XYp.__validateInput__():  the column {self.df.columns[self.df.columns.index(_column_)]} is not of type {_types_} for t-field {_str_}')
         _needed_columns_.add(_str_)
         _ops_.append(self.p2s.polarsOperationForEnum(_column_, _enum_).alias(_str_))
 
@@ -1289,7 +1289,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
                     _columns_forward_.extend(['__line__', '__line_index__'])
 
                 # Distribution columns
-                for _triple_ in [('__xdists__', '__xdists_color__', self.x_distributions_clean), 
+                for _triple_ in [('__xdists__', '__xdists_color__', self.x_distributions_clean),
                                  ('__ydists__', '__ydists_color__', self.y_distributions_clean)]:
                     _column_name_, _color_name_, _clean_ = _triple_
                     if   _clean_ is not None and len(_clean_['fields']) > 0 and len(_clean_['fields'][i]) == 2: # second part of field is a color (why it's 2 vs 1)
@@ -1442,7 +1442,11 @@ class XYp(P2SBackgroundMixin, ExportMixin):
                              f'rename that value or drop the sentinel')
         # Merging needs one name to stand for many values, so a non-String axis column
         # (integer categories via p2s.SETp) is cast to String and the listed keys with it
-        _cast_ = (lambda _v_: _v_)
+        # Stays a lambda despite E731: _cast_ is a rebindable *variable* -- the branch
+        # below reassigns it to `str` -- not a named function.  A def makes mypy infer
+        # the name as that function and reject `_cast_ = str` (type[str] is not
+        # assignable to Callable[[Any], Any]), which is two errors for no gain.
+        _cast_ = (lambda _v_: _v_)  # noqa: E731
         if _vals_[_src_].dtype != pl.String:
             _df_, _cast_ = _df_.with_columns(pl.col(_src_).cast(pl.String)), str
             _unlisted_   = [str(_u_) for _u_ in _unlisted_]
@@ -1644,7 +1648,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
         if self.y_distributions is not None:
             if self.p2s.DISTRIBUTION_OUTSIDEp in self.y_distributions_clean['enums']:
                 w_distributions = int(self.y_distributions_clean['h_percs'][0] * (w - 2*x_ins - w_context)/2.0)
-        
+
         # Determine if there's enough space for distributions & context & minimums
         _adj_w_ = w - 2*x_ins - w_context - w_distributions
         _adj_h  = h - 2*y_ins - h_context - h_distributions
@@ -2002,7 +2006,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
                                    .then(pl.lit(None))
                                    .otherwise(((pl.col(_field_) - _min_) / bin_width).floor().clip(0, _num_of_bins_ - 1))
                                    .cast(pl.Int64).alias(_bin_field_))
-            
+
             # Do the group_by
             if _color_field_ in self.df_flat.columns: _gb_str_ = [_bin_field_, _color_field_]
             else:                                     _gb_str_ = [_bin_field_]
@@ -2026,7 +2030,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
             _labels_     = [i for i in range(_num_of_bins_)]
             _labels_min_ = [i / _num_of_bins_ for i in range(_num_of_bins_)]
             _labels_max_ = [(i + 1) / _num_of_bins_ for i in range(_num_of_bins_)]
-            
+
             # Create an all-bins dataframe that will be used to create entries for missing bins
             _all_bins_df_ = pl.DataFrame({_bin_field_:_labels_, _min_field_:_labels_min_, _max_field_:_labels_max_})
             if _color_field_ in _df_.columns: _all_bins_df_ = _all_bins_df_.join(pl.DataFrame({_color_field_:list(set(_df_[_color_field_]))}), how='cross')
@@ -2092,8 +2096,8 @@ class XYp(P2SBackgroundMixin, ExportMixin):
             _strs_ = [_ for _ in _first_ if isinstance(_, str)]
             if len(_strs_) != 1: return False
             _first_ = _strs_[0]
-        elif isinstance(_first_, str) == False: return False
-        if self.p2s.isTField(_first_, df=self.df_orig) == False: return False
+        elif not isinstance(_first_, str): return False
+        if not self.p2s.isTField(_first_, df=self.df_orig): return False
         return isinstance(self.p2s.tFieldTuple(_first_)[1], self.p2s.TimePeriodicTypeP)
 
     #
@@ -2133,7 +2137,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
         _left_, _right_  = self.__humanReadableMinAndMax__(cell_min, cell_max, clean_axis)
         # Get the center length -- see if it fills up most of the space... if so, then it's just the center
         c_len   = self.p2s.textLength(_center_, self.txt_h)
-        if c_len + 1*buffer >= sz: 
+        if c_len + 1*buffer >= sz:
             if c_len > sz-2*buffer: _center_ = self.p2s.cropText(_center_, self.txt_h, sz-1*buffer)
             return '', _center_, ''
         # Otherwise, determine the length of the left and right strings
@@ -2161,7 +2165,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
                    x == self.p2s.CMAGNITUDE_MEDIANp or x == self.p2s.CSTRETCHED_MEDIANp or \
                    x == self.p2s.CMAGNITUDE_MEANp   or x == self.p2s.CSTRETCHED_MEANp   or \
                    x == self.p2s.CMAGNITUDE_MAXp    or x == self.p2s.CSTRETCHED_MAXp:
-                    if self.p2s.numericColumn(self.df_flat, '__color__'): 
+                    if self.p2s.numericColumn(self.df_flat, '__color__'):
                         return x
                     else:
                         _dtype_ = self.df_flat.dtypes[self.df_flat.columns.index('__color__')]
@@ -2218,7 +2222,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
             _clear_           = True
             for j in range(self.txt_h):
                 k = screen_coordinate + j
-                if k >= 0 and k < _dim_ and _filled_[k]: 
+                if k >= 0 and k < _dim_ and _filled_[k]:
                     _clear_ = False
                     break
             if not _clear_: continue
@@ -2291,7 +2295,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
             while i < _max_:
                 __line__(__toScreen__(i), round(i, i_nice_decimals))
                 i += i_nice
-        
+
         return _svg_
 
     #
@@ -2515,7 +2519,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
         elif _enum_ == self.p2s.PT_d_Hp:
             if   __distanceBetweenLines__(0,1)     >= pixel_goal:
                 __addDescription__(_enum_, 1, 4)
-                for _day_i_ in range(1, 32): 
+                for _day_i_ in range(1, 32):
                     __line__(_day_i_*24, str(_day_i_), 'major')
                     for _hour_i_ in range(24):
                         if   _hour_i_    == 0: continue
@@ -2524,7 +2528,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
                         else:                  __line__(_day_i_*24 + _hour_i_, None, 'subtick')
             elif __distanceBetweenLines__(0,12)    >= pixel_goal:
                 __addDescription__(_enum_, 2, 4)
-                for _day_i_ in range(1, 32): 
+                for _day_i_ in range(1, 32):
                     __line__(_day_i_*24, str(_day_i_), 'major')
             elif __distanceBetweenLines__(0,24)    >= pixel_goal:
                 __addDescription__(_enum_, 3, 4)
@@ -2553,14 +2557,14 @@ class XYp(P2SBackgroundMixin, ExportMixin):
                             else:                  __line__(_day_i_*24*60 + _hour_i_*60 + _minute_i_, None,            'subtick')
             elif __distanceBetweenLines__(0, 24)    >= pixel_goal:
                 __addDescription__(_enum_, 2, 3)
-                for _day_i_ in range(1, 32): 
+                for _day_i_ in range(1, 32):
                     __line__(_day_i_*24*60, str(_day_i_), 'major')
                     for _hour_i_ in range(0, 24):
                         if _hour_i_%6 == 0: __line__(_day_i_*24*60 + _hour_i_*60, str(_hour_i_), 'tick')
                         else:               __line__(_day_i_*24*60 + _hour_i_*60, None,          'subtick')
             elif __distanceBetweenLines__(0, 24*60) >= pixel_goal:
                 __addDescription__(_enum_, 3, 3)
-                for _day_i_ in range(1, 32): 
+                for _day_i_ in range(1, 32):
                     __line__(_day_i_*24*60, str(_day_i_), 'major')
         #
         # Hour
@@ -2588,7 +2592,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
                         else:                    __line__(_hour_i_*60+_minute_i_, None,          'subtick')
             elif __distanceBetweenLines__(0, 20)   >= pixel_goal:
                 __addDescription__(_enum_, 2, 5)
-                for _hour_i_ in range(0, 24): 
+                for _hour_i_ in range(0, 24):
                     __line__(_hour_i_*60,    str(_hour_i_), 'major')
                     __line__(_hour_i_*60+15, None,          'tick')
                     __line__(_hour_i_*60+30, str(30),       'minor')
@@ -2736,7 +2740,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
                         ('5sec',  5,               '%H:%M:%S',     '%Y-%m-%d %H:%M:%S', timedelta(seconds=5)),
                         ('10sec', 10,              '%H:%M:%S',     '%Y-%m-%d %H:%M:%S', timedelta(seconds=10)),
                         ('15sec', 15,              '%H:%M:%S',     '%Y-%m-%d %H:%M:%S', timedelta(seconds=15)),
-                        ('30sec', 30,              '%H:%M:%S',     '%Y-%m-%d %H:%M:%S', timedelta(seconds=30)),  
+                        ('30sec', 30,              '%H:%M:%S',     '%Y-%m-%d %H:%M:%S', timedelta(seconds=30)),
                         ('45sec', 45,              '%H:%M:%S',     '%Y-%m-%d %H:%M:%S', timedelta(seconds=45)),
                         ('1min',  60*1,            '%H:%M',        '%Y-%m-%d %H:%M:00', timedelta(minutes=1)),
                         ('5min',  60*5,            '%H:%M',        '%Y-%m-%d %H:%M:00', timedelta(minutes=5)),
@@ -2888,15 +2892,15 @@ class XYp(P2SBackgroundMixin, ExportMixin):
                 if col == 'x':
                     if self.x_range is not None: return self.x_range[0]
                     return self.df_flat['__x__'].min()
-                if col == 'y': 
+                if col == 'y':
                     if self.y_range is not None: return self.y_range[0]
                     return self.df_flat['__y__'].min()
                 raise ValueError(f'XYp.__renderContext__().__min__(): Unrecognized axis {col} (shouldn\'t be possible)')
             def __max__(col: str) -> Any:
-                if col == 'x': 
+                if col == 'x':
                     if self.x_range is not None: return self.x_range[1]
                     return self.df_flat['__x__'].max()
-                if col == 'y': 
+                if col == 'y':
                     if self.y_range is not None: return self.y_range[1]
                     return self.df_flat['__y__'].max()
                 raise ValueError(f'XYp.__renderContext__().__max__(): Unrecognized axis {col} (shouldn\'t be possible)')
@@ -2954,11 +2958,11 @@ class XYp(P2SBackgroundMixin, ExportMixin):
                              </defs>'''
             _clip_url_ = f'clip-path="url(#plotClip-{_randid_})"'
             self._clip_rect_ = (xyo[0]-1, xyo[1]-_h_-1, _w_+2, _h_+2)
-        else: 
+        else:
             _context_  = ''
             _svg_defs_ = ''
             _clip_url_ = ''
-        
+
         self.svg_context = _context_
         self.svg_defs    = _svg_defs_
         self.clip_url    = _clip_url_
@@ -2995,14 +2999,14 @@ class XYp(P2SBackgroundMixin, ExportMixin):
             _df_ = _df_.with_columns(pl.when(pl.col(_totals_min_field_) == pl.col(_totals_max_field_))
                                        .then(pl.lit(_clean_['base'] + _clean_['h']))
                                        .otherwise(
-                                           _clean_['base'] + _clean_['sign'] * _clean_['h'] * (pl.col(_totals_field_)     - pl.col(_totals_min_field_)) / 
-                                                                                              (pl.col(_totals_max_field_) - pl.col(_totals_min_field_))                                           
+                                           _clean_['base'] + _clean_['sign'] * _clean_['h'] * (pl.col(_totals_field_)     - pl.col(_totals_min_field_)) /
+                                                                                              (pl.col(_totals_max_field_) - pl.col(_totals_min_field_))
                                        ).alias('v'),
                                      (u_base + u_sign * u_dist * (pl.col(_min_field_)       - pl.col(_min_field_).min())/
                                                                  (pl.col(_max_field_).max() - pl.col(_min_field_).min())).alias('u0'),
                                      (u_base + u_sign * u_dist * (pl.col(_max_field_)       - pl.col(_min_field_).min())/
                                                                  (pl.col(_max_field_).max() - pl.col(_min_field_).min())).alias('u1'))
-            
+
             # Sort by increasing u (these are the bin coordinates)
             _reversed_ = (_axis_ == 'y')
             _df_       = _df_.sort('u0', descending=_reversed_)
@@ -3014,7 +3018,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
             _draw_simple_lines_ = len(set(_df_[_color_field_])) > 1 or \
                                   (self.p2s.DISTRIBUTION_INSIDEp in _clean_['enums'] and self.dot_size_orig is not None) or \
                                   (u_dist//_clean_['bins'][0]) < 5
-                                  
+
             # If it's complicated, just draw the trend line (per color)
             if _draw_simple_lines_:
                 # Per color... create a path for each
@@ -3023,7 +3027,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
                     if _axis_ == 'x':
                         _concat_op_ = self.p2s.polarsConcatString('L {u0:.2f} {v:.2f} L {u1:.2f} {v:.2f}')
                         _start_pt_str_, _end_pt_str_ = f'{u_base} {_clean_["base"]}', f'{u_base + u_sign*u_dist} {_clean_["base"]}'
-                    else:             
+                    else:
                         _concat_op_ = self.p2s.polarsConcatString('L {v:.2f} {u0:.2f} L {v:.2f} {u1:.2f}')
                         _start_pt_str_, _end_pt_str_ = f'{_clean_["base"]} {u_base} ', f'{_clean_["base"]} {u_base + u_sign*u_dist} '
                     # Create the dataframe field for the "line to" path description
@@ -3243,8 +3247,8 @@ class XYp(P2SBackgroundMixin, ExportMixin):
         else: raise ValueError(f'XYp.__renderLines_complex__():  self.p2s.LINEOPACITY_* is not specified ({_enums_=})')
 
         # Per end point determination / i.e., do we need to draw each segment separately or not
-        _per_endpoint_ = len({self.p2s.LINEWIDTH_DOTSIZE_VARIABLE, 
-                              self.p2s.LINECOLOR_FIELD, 
+        _per_endpoint_ = len({self.p2s.LINEWIDTH_DOTSIZE_VARIABLE,
+                              self.p2s.LINECOLOR_FIELD,
                               self.p2s.LINEOPACITY_FIELD_VARIABLE} & _enums_) > 0
         #
         # We have to create each segment independently
@@ -3514,7 +3518,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
                 _shape_template_.append(f'{_svg_attribute_}="{{{_final_column_}}}"')
             elif _flat_column_ in self.df_flat.columns:
                 if self.p2s.SETp in _enums_ or \
-                   self.p2s.numericColumn(self.df_flat, _flat_column_) == False: _agg_ops_.append(pl.col(_flat_column_).unique().len().alias(_sum_column_))
+                   not self.p2s.numericColumn(self.df_flat, _flat_column_): _agg_ops_.append(pl.col(_flat_column_).unique().len().alias(_sum_column_))
                 else:                                                            _agg_ops_.append(pl.col(_flat_column_).sum()         .alias(_sum_column_))
                 _norm_ops_.append(_normalize_)
                 _shape_template_.append(f'{_svg_attribute_}="{{{_final_column_}}}"')
@@ -3775,7 +3779,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
         _df_filtered_ = self.df_flat.filter((pl.col('__xpx__') >= _x0_) &
                                             (pl.col('__xpx__') <= _x1_) &
                                             (pl.col('__ypx__') >= _y0_) &
-                                            (pl.col('__ypx__') <= _y1_))                
+                                            (pl.col('__ypx__') <= _y1_))
         _df_filtered_ = _df_filtered_.drop(set(_df_filtered_.columns) - set(['__p2s_index__']))
         if remove_records: return self.df.join(_df_filtered_, on='__p2s_index__', how='anti').drop('__p2s_index__')
         else:              return self.df.join(_df_filtered_, on='__p2s_index__')            .drop('__p2s_index__')

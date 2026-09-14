@@ -637,7 +637,7 @@ class Piep(ExportMixin):
         for _off_ in _offsets_:
             _ll_ = min(1.0, max(0.0, _l_ + _off_))
             _rr_, _gg_, _bb_ = colorsys.hls_to_rgb(_h_, _ll_, _s_)
-            _out_.append('#%02x%02x%02x' % (round(_rr_ * 255), round(_gg_ * 255), round(_bb_ * 255)))
+            _out_.append(f'#{round(_rr_ * 255):02x}{round(_gg_ * 255):02x}{round(_bb_ * 255):02x}')
         return _out_
 
     def __assignShades__(self, bins: list, shades: list) -> dict:

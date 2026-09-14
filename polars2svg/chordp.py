@@ -973,7 +973,11 @@ class ChP(P2SComponentColorMixin, ExportMixin):
             self.order = _listed_
             return
 
-        _cast_ = (lambda _v_: _v_)
+        # Stays a lambda despite E731: _cast_ is a rebindable *variable* -- the branch
+        # below reassigns it to `str` -- not a named function.  A def makes mypy infer
+        # the name as that function and reject `_cast_ = str` (type[str] is not
+        # assignable to Callable[[Any], Any]), which is two errors for no gain.
+        _cast_ = (lambda _v_: _v_)  # noqa: E731
         if self.df_edge_weights['__fm__'].dtype != pl.String:
             self.df_edge_weights = self.df_edge_weights.with_columns(pl.col('__fm__').cast(pl.String),
                                                                      pl.col('__to__').cast(pl.String))
@@ -1083,7 +1087,7 @@ class ChP(P2SComponentColorMixin, ExportMixin):
             _co_ = (self.node_color if isinstance(self.node_color, self.p2s.HexColorString)
                     else self.p2s.color(str(_nm_)))
             _svg_.append(f'<path d="{_path_}" fill="{_co_}" stroke="{_co_}" stroke-width="0.8" />')
-        
+
         _svg_.append('</svg>')
         self.svg = ''.join(_svg_)
 
@@ -1593,7 +1597,7 @@ class ChP(P2SComponentColorMixin, ExportMixin):
     #   __arr_{lx,ly,rx,ry,to_x,to_y}__, __lc_hex__, and a stroke_w_expr
     #
     def _renderLinkShape_curve_(self, df_link: pl.DataFrame, stroke_w_expr: pl.Expr) -> pl.DataFrame:
-        _r2_ = lambda c: pl.col(c).round(2)
+        def _r2_(c: str) -> pl.Expr: return pl.col(c).round(2)
         _path_ops_ = [
             pl.lit('<path d="M '), _r2_('__fm_x__'), pl.lit(' '), _r2_('__fm_y__'),
             pl.lit(' C '),         _r2_('__cp1_x__'), pl.lit(' '), _r2_('__cp1_y__'),

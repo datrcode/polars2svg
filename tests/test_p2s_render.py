@@ -1,8 +1,6 @@
 import re
 import unittest
 import polars as pl
-import datetime
-import random
 from polars2svg import Polars2SVG
 
 class Testp2s_render(unittest.TestCase):

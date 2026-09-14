@@ -1672,7 +1672,7 @@ class SpreadLinesP(ExportMixin):
         # insert(0) groups end up in reverse emission order in the SVG, so their
         # per-item lists are extended in reverse to match.
         from polars2svg.p2s_displaylist import DisplayList
-        _mkdl_          = lambda: DisplayList(w, h, bg=_bg_co_)
+        def _mkdl_() -> DisplayList: return DisplayList(w, h, bg=_bg_co_)
         _dl_ego_line_   = _mkdl_()      # bottom
         _dl_zigzags_    = []            # per-item, reversed at compose time
         _dl_connects_   = []            # per-item, reversed at compose time

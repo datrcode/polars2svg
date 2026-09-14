@@ -23,8 +23,6 @@ needed.
 """
 import unittest
 
-import pytest
-from playwright.sync_api import expect
 
 CORNER = (2, 2)          # bare canvas on the quad fixture, clear of every node
 

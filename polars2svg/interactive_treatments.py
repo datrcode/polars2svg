@@ -17,7 +17,8 @@
 #
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, Optional, Tuple
+from typing import Any
+from collections.abc import Callable
 
 
 @dataclass(frozen=True)
@@ -48,8 +49,8 @@ class Treatment:
     '''
     truncatable:   bool = False
     killable:      bool = False
-    levers:        Tuple[str, ...] = ()
-    confirm_above: Optional[int] = None
+    levers:        tuple[str, ...] = ()
+    confirm_above: int | None = None
 
 
 @dataclass(frozen=True)

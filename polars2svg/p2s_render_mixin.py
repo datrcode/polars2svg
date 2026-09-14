@@ -132,12 +132,12 @@ class P2SRenderMixin:
         #
         # ROW COUNTING
         #
-        if   count == self.ROW_COUNTp:                                 
+        if   count == self.ROW_COUNTp:
             df_gb = df.group_by(color).len().rename({'len':'__sum__'})
         #
         # VARIATIONS OF SCALAR COUNTING
         #
-        elif isinstance(count, str) and self.numericColumn(df, count): 
+        elif isinstance(count, str) and self.numericColumn(df, count):
             df_gb = df.group_by(color).agg(pl.col(count).sum().alias('__sum__'))
         elif isinstance(count, tuple) and len(count) == 1 and self.numericColumn(df, count[0]):
             df_gb = df.group_by(color).agg(pl.col(count[0]).sum().alias('__sum__'))
@@ -146,7 +146,7 @@ class P2SRenderMixin:
         #
         # VARIATIONS OF SET COUNTING
         #
-        elif isinstance(count, str) and count == color: 
+        elif isinstance(count, str) and count == color:
             df_gb = df.select([color]).unique().with_columns(pl.lit(1.0).alias('__sum__'))
         elif isinstance(count, str) and self.ROW_COUNTp in color_enums:
             df_gb = df.group_by([count, color]).len().group_by(color).len().rename({'len':'__sum__'})

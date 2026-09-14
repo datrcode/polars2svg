@@ -58,7 +58,7 @@ def _default_device() -> Any:
                 _probe = mx.array([1.0, 2.0])
                 mx.eval(mx.sum(_probe * _probe))
             _DEVICE_CACHE = mx.gpu
-        except Exception:  # noqa: BLE001 - any backend failure means "no GPU"
+        except Exception:  # broad on purpose: any backend failure means "no GPU"
             _DEVICE_CACHE = mx.cpu
     return _DEVICE_CACHE
 
@@ -66,7 +66,7 @@ def _default_device() -> Any:
 #
 # ODFlowLayout() - one quadratic Bezier control point per flow (Jenny et al. 2017)
 #
-class ODFlowLayout(object):
+class ODFlowLayout:
     '''
     Force-directed layout of origin-destination flows (Jenny et al., IJGIS 2017).
 

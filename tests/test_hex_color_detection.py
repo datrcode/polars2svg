@@ -15,7 +15,6 @@ These tests pin the single canonical detector (``Polars2SVG.isHexColor`` /
   * a ``#``-prefixed non-hex string is no longer silently accepted as a broken
     fixed color by linkp/chordp (it raises instead of rendering garbage).
 """
-import re
 import unittest
 import polars as pl
 from shapely.geometry import Polygon

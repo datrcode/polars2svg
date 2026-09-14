@@ -17,7 +17,6 @@ still the right thing to do before asserting on browser-only state.
 """
 import unittest
 
-import pytest
 
 #: state.brush_defs = [null, ['circle', 5], ['circle', 15]]
 RADII = {1: '5', 2: '15'}

@@ -423,7 +423,7 @@ def test_f_refills_an_edge_that_was_thinned(multi_edge_page):
     contains, which is the whole point of the binding and is not visible anywhere.
     """
     _view_ = multi_edge_page.app.view()
-    _rows_ = lambda: len(_view_.dfs[_view_.df_level])
+    def _rows_(): return len(_view_.dfs[_view_.df_level])
     _full_ = _rows_()
     assert _full_ == 6
 
@@ -446,7 +446,7 @@ def test_f_cannot_bring_back_a_node_that_was_removed(chain_page):
     The negative half of the pair: without it, the next test would not show that 'F'
     does something 'f' cannot.
     """
-    _circles_ = lambda: chain_page.within('mod', 'circle').count()
+    def _circles_(): return chain_page.within('mod', 'circle').count()
     assert _circles_() == 4
 
     chain_page.hover_node(4)
@@ -476,7 +476,7 @@ def test_shift_f_pulls_back_a_removed_neighbour(chain_page):
     3, so expanding restores it -- and with it the node. That is a change in the
     drawing, so it is asserted there.
     """
-    _circles_ = lambda: chain_page.within('mod', 'circle').count()
+    def _circles_(): return chain_page.within('mod', 'circle').count()
     chain_page.hover_node(4)
     chain_page.press('z')
     chain_page.expect_selected(1)

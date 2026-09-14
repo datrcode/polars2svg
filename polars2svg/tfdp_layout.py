@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any, Optional
+from typing import Any
 
 try:
     import mlx.core as mx
@@ -89,7 +89,7 @@ def _default_device() -> mx.Device:
                 _probe = mx.array([1.0, 2.0])
                 mx.eval(mx.sum(_probe * _probe))
             _DEVICE_CACHE = mx.gpu
-        except Exception as err:  # noqa: BLE001 - any backend failure means "no GPU"
+        except Exception as err:  # broad on purpose: any backend failure means "no GPU"
             logger.warning(
                 'mlx GPU backend unavailable — TFDPLayout falling back to CPU (slower). '
                 'For NVIDIA GPUs install polars2svg[mlx-cuda] (CUDA 12) or '
@@ -213,7 +213,7 @@ def _tfdp_layout_core(
     combine: bool = True,
     rvs_k: int = 64,
     lr: float = 0.1,
-    seed: Optional[int] = None,
+    seed: int | None = None,
     verbose: bool = False,
     device: mx.Device | None = None,
     budget: Any = None,
@@ -319,7 +319,7 @@ def _tfdp_layout_core(
 # Public class — framework interface
 # ---------------------------------------------------------------------------
 
-class TFDPLayout(object):
+class TFDPLayout:
     """
     t-FDP layout algorithm (Zhong et al., IEEE TVCG 2023).
 

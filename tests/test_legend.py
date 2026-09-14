@@ -12,12 +12,10 @@
 #   - set_defaults(legend=...) global + per-component; template flow
 #   - WebGPU parity: the legend is recorded into the DisplayList, not just SVG
 #
-import logging
 import unittest
 
 import polars as pl
 
-import polars2svg
 from polars2svg import Polars2SVG, InvalidSpecError, LegendInfo
 
 _DF_ = pl.DataFrame({

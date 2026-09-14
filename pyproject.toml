@@ -249,17 +249,40 @@ disable_error_code = [
   "has-type", "misc", "dict-item", "return-value",
 ]
 
-# Minimal rule set (PyPI nice-to-have #5): E9 (syntax errors) and F (pyflakes —
-# undefined names, unused imports/variables, duplicate dict keys, ...). This
-# codebase has a distinctive style (aligned assignments, _underscore_ locals,
-# dynamic setattr()-bound enums) that stricter rulesets (style/import-sorting/
-# complexity) would fight, so the wider rule catalog is deliberately not
-# enabled here.
+# Rule set (PyPI nice-to-have #5).  The base is E9 (syntax errors) and F
+# (pyflakes -- undefined names, unused imports/variables, duplicate dict keys);
+# the rest was added by the 2026-09-13 tooling audit and applied in PLANNING.md
+# Q3.  This codebase has a distinctive style (aligned assignments, _underscore_
+# locals, dynamic setattr()-bound enums) that a wider catalog would fight, so
+# what is NOT here is as deliberate as what is:
+#
+#   E501 E701 E702  line length and one-line compound statements -- the house
+#                   style.  line-length below documents the de facto width so the
+#                   intent is machine-readable; E501 is still not selected.
+#   N               the camelCase public API (svgToPNGBytes, recordsAt, tField).
+#   I               import order.       D    docstrings (626 missing).
+#   PL*             complexity metrics.  ruff format is not used at all.
+#   B023            34 closures over loop variables, all read 2026-09-14: every
+#                   one is defined and called inside the same iteration, the safe
+#                   shape.  Enabling it buys no bug and costs 34 noqa lines.
+#   BLE001 E402     deliberate broad excepts and non-top imports.  Where one
+#                   carried a reason it is now a plain `# broad on purpose:`
+#                   comment rather than a noqa for a rule nothing runs.
+#
+# Added: W (trailing/blank-line whitespace), UP (py3.12-floor modernisations),
+# B006 (mutable argument defaults), the E7 comparison/lambda/ambiguous-name
+# subset, and RUF100 (dead noqa directives).
 [tool.ruff]
 target-version = "py312"
+line-length    = 160     # documents the de facto width; E501 is NOT selected
 
 [tool.ruff.lint]
-select = ["E9", "F"]
+select = [
+  "E9", "F", "W", "UP",
+  "B006",
+  "E711", "E712", "E713", "E714", "E721", "E731", "E741",
+  "RUF100",
+]
 
 [tool.ruff.lint.per-file-ignores]
 # __init__.py re-exports the public API (Polars2SVGError, TField, the optional

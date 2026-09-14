@@ -383,7 +383,7 @@ BRUSH_STATES = [
     ('SELECT_HORIZONTALp',  3),    # 6 horizontal band, radius=3
 ]
 
-class InteractionController(object):
+class InteractionController:
     # Constructor
     def __init__(self):
         self.stacks     = {}   # {'name': {'dfs': [df], 'index': 0}}
@@ -556,12 +556,12 @@ R . | cycle brush shape{_z_key_cmd_}{_search_cmd_}{_time_key_cmd_}
 def _interactivePKeyboardHelpSvg_(keyboard_commands: str) -> str:
     """Static SVG for the 'h' help overlay, laid out from the command list."""
     _help_lines_  = keyboard_commands.strip().split('\n')
-    _help_w_      = max(len(l) for l in _help_lines_) * 7 + 20
+    _help_w_      = max(len(_ln_) for _ln_ in _help_lines_) * 7 + 20
     _help_h_      = len(_help_lines_) * 14 + 12
     _help_font_style_ = "font-family: 'Courier New', monospace; font-size: 11px; fill: #222;"
     _help_text_lines_ = ''.join(
-        f'<text x="10" y="{12 + i*14}" style="{_help_font_style_}">{l}</text>'
-        for i, l in enumerate(_help_lines_)
+        f'<text x="10" y="{12 + i*14}" style="{_help_font_style_}">{_ln_}</text>'
+        for i, _ln_ in enumerate(_help_lines_)
     )
     return (
         f'<rect x="0" y="0" width="{_help_w_}" height="{_help_h_}" '
@@ -1849,7 +1849,9 @@ def _warnOversizePanelPayload_(views, websocket_max_message_size=None):
     # Suggest a limit with ~2x headroom over the estimate, rounded up to whole MB.
     _suggested_ = ((int(_raw_ * _WS_PAYLOAD_INFLATION_ * 2) // _MIB_) + 1) * _MIB_
     logging.getLogger('polars2svg_logger').warning(
-        "panelize(): the composed document is ~%.1f MB, at/over the Bokeh WebSocket "
+        # Stays %-formatted: four args over six concatenated lines read better with
+        # the values gathered at the bottom than inlined as {...:.1f} six times.
+        "panelize(): the composed document is ~%.1f MB, at/over the Bokeh WebSocket "  # noqa: UP031
         "message limit of %.1f MB. The browser will likely fail to display it with "
         "'SyntaxError: Unexpected end of JSON input' (a truncated protocol message). "
         "Serve with a larger limit, e.g. panel.show(websocket_max_message_size=%d) or "
@@ -2040,12 +2042,12 @@ z . | select node under mouse by color (shift, ctrl, and ctrl-shift apply)
 
 # Build static SVG for keyboard help overlay
 _help_lines_  = _LINKPI_KEYBOARD_COMMANDS_.strip().split('\n')
-_help_w_      = max(len(l) for l in _help_lines_) * 7 + 20
+_help_w_      = max(len(_ln_) for _ln_ in _help_lines_) * 7 + 20
 _help_h_      = len(_help_lines_) * 14 + 12
 _font_style_  = "font-family: 'Courier New', monospace; font-size: 11px; fill: #222;"
 _text_lines_  = ''.join(
-    f'<text x="10" y="{12 + i*14}" style="{_font_style_}">{l.replace(" ", " ")}</text>'
-    for i, l in enumerate(_help_lines_)
+    f'<text x="10" y="{12 + i*14}" style="{_font_style_}">{_ln_.replace(" ", " ")}</text>'
+    for i, _ln_ in enumerate(_help_lines_)
 )
 _LINKPI_KEYBOARD_HELP_SVG_ = (
     f'<rect x="0" y="0" width="{_help_w_}" height="{_help_h_}" '
@@ -2407,7 +2409,7 @@ _LINKPI_SCRIPTS_ = {
         else if (event.key == "F") { data.key_op_finished = 'F';  } // Node expansion: re-add base rows incident to the currently-visible nodes
         else if (event.key == "Escape") { data.cancel_seq = data.cancel_seq + 1; } // Ask the running layout to stop and keep its best-so-far result
         else if (event.key == "g") { state.layout_op        = true; // Mouse press is layout shape
-                                     state.layout_line_flag = false; } 
+                                     state.layout_line_flag = false; }
         else if (event.key == "G") { state.menu_kind = 'mode';      self.menuOpen(); } // Open the layout-mode picker menu
         else if (event.key == "h") {
             if (data.keyboardhelp_x == -1000) { data.keyboardhelp_x =     5; }
@@ -2537,10 +2539,10 @@ _LINKPI_SCRIPTS_ = {
         data.ctrlkey  = event.ctrlKey;
         data.shiftkey = event.shiftKey;
         if (event.button == 0) {
-                data.allentities_x0      = event.offsetX; 
-                data.allentities_y0      = event.offsetY; 
-                state.x0_drag            = event.offsetX;                
-                state.y0_drag            = event.offsetY;                
+                data.allentities_x0      = event.offsetX;
+                data.allentities_y0      = event.offsetY;
+                state.x0_drag            = event.offsetX;
+                state.y0_drag            = event.offsetY;
                 state.x1_drag            = event.offsetX;
                 state.y1_drag            = event.offsetY;
                 state.unselected_move_op = true;
@@ -2555,8 +2557,8 @@ _LINKPI_SCRIPTS_ = {
             state.y0_drag  = event.offsetY;
             state.x1_drag  = event.offsetX;
             state.y1_drag  = event.offsetY;
-            if (state.layout_op) { 
-                if (state.layout_line_flag) { 
+            if (state.layout_op) {
+                if (state.layout_line_flag) {
                     if      (data.ctrlkey)  { state.layout_op_shape = "v-line"; }
                     else if (data.shiftkey) { state.layout_op_shape = "h-line"; }
                     else                    { state.layout_op_shape = "line";   }
@@ -2575,7 +2577,7 @@ _LINKPI_SCRIPTS_ = {
             state.y0_drag  = state.y1_drag  = event.offsetY;
             state.move_op  = true;
         } else if (event.button == 1) {
-            data.x0_middle = data.x1_middle = event.offsetX; 
+            data.x0_middle = data.x1_middle = event.offsetX;
             data.y0_middle = data.y1_middle = event.offsetY;
         }
     """,
@@ -2591,9 +2593,9 @@ _LINKPI_SCRIPTS_ = {
         } else if (state.layout_op_shape == "sunflower") { reset_sunflower = false;
             layoutsunflower.setAttribute("cx", state.x0_drag);
             layoutsunflower.setAttribute("cy", state.y0_drag);
-            layoutsunflower.setAttribute("r",  Math.sqrt(dx*dx + dy*dy));            
-        } else if (state.layout_op_shape == "grid" || 
-                   state.layout_op_shape == "grid (color)" || 
+            layoutsunflower.setAttribute("r",  Math.sqrt(dx*dx + dy*dy));
+        } else if (state.layout_op_shape == "grid" ||
+                   state.layout_op_shape == "grid (color)" ||
                    state.layout_op_shape == "grid (color, clouds)" ||
                    state.layout_op_shape == "rescale") { reset_rect = false;
             layoutrect.setAttribute("x", Math.min(state.x0_drag, state.x1_drag));
@@ -2631,22 +2633,22 @@ _LINKPI_SCRIPTS_ = {
                 state.shiftkey        = event.shiftKey;
                 state.drag_op         = false;
                 self.myUpdateDragRect();
-                data.drag_x0          = state.x0_drag; 
-                data.drag_y0          = state.y0_drag; 
-                data.drag_x1          = state.x1_drag; 
+                data.drag_x0          = state.x0_drag;
+                data.drag_y0          = state.y0_drag;
+                data.drag_x1          = state.x1_drag;
                 data.drag_y1          = state.y1_drag;
                 data.drag_op_finished = true;
             } else if (state.move_op) {
                 state.move_op         = false;
-                data.drag_x0          = state.x0_drag; 
-                data.drag_y0          = state.y0_drag; 
-                data.drag_x1          = state.x1_drag; 
+                data.drag_x0          = state.x0_drag;
+                data.drag_y0          = state.y0_drag;
+                data.drag_x1          = state.x1_drag;
                 data.drag_y1          = state.y1_drag;
-                data.move_op_finished = true;                    
+                data.move_op_finished = true;
             } else if (state.layout_op_shape != "") {
-                data.drag_x0          = state.x0_drag; 
-                data.drag_y0          = state.y0_drag; 
-                data.drag_x1          = state.x1_drag; 
+                data.drag_x0          = state.x0_drag;
+                data.drag_y0          = state.y0_drag;
+                data.drag_x1          = state.x1_drag;
                 data.drag_y1          = state.y1_drag;
                 data.layout_shape     = state.layout_op_shape;
                 state.layout_op_shape = "";
@@ -2662,9 +2664,9 @@ _LINKPI_SCRIPTS_ = {
                 state.unselected_move_op = false;
             }
         } else if (event.button == 1) {
-            data.x1_middle          = event.offsetX; 
+            data.x1_middle          = event.offsetX;
             data.y1_middle          = event.offsetY;
-            data.middle_op_finished = true;                
+            data.middle_op_finished = true;
         }
     """,
     'myOnMouseWheel':"""
@@ -2688,7 +2690,7 @@ _LINKPI_SCRIPTS_ = {
     """,
     'myUpdateDragRect':"""
         if (state.drag_op) {
-            x = Math.min(state.x0_drag, state.x1_drag); 
+            x = Math.min(state.x0_drag, state.x1_drag);
             y = Math.min(state.y0_drag, state.y1_drag);
             w = Math.abs(state.x1_drag - state.x0_drag)
             h = Math.abs(state.y1_drag - state.y0_drag)
@@ -2835,12 +2837,12 @@ class LINKPI(P2SReactiveHTML):
             timing_spacing_choice=_timing_spacing_cur_,
             menu_items={
                 'operation':      _operation_items_,
-                'mode':           [[m, l] for m, l in _LAYOUT_MODE_MENU_],
-                'background':     [[m, l] for m, l in _BACKGROUND_OP_MENU_],
+                'mode':           [[m, _lbl_] for m, _lbl_ in _LAYOUT_MODE_MENU_],
+                'background':     [[m, _lbl_] for m, _lbl_ in _BACKGROUND_OP_MENU_],
                 'link_size':      _link_size_items_,
                 'link_opacity':   _link_opacity_items_,
                 'node_size':      _node_size_items_,
-                'link_shape':     _annotate_([(m, l) for m, l in _link_shape_items_l_],
+                'link_shape':     _annotate_([(m, _lbl_) for m, _lbl_ in _link_shape_items_l_],
                                              lambda lbl: FLOWMAP if lbl == 'flowmap' else None,
                                              unit='edges'),
                 'timing_spacing': _timing_spacing_items_l_,
@@ -3257,9 +3259,9 @@ class LINKPI(P2SReactiveHTML):
                 _abandoned_ = True   # the timer fired from inside a match that was not returning
 
         if _rejected_ or _unsafe_ or _abandoned_:
-            if   _abandoned_: _why_ = 'abandoned at the %gs time budget' % _budget_
+            if   _abandoned_: _why_ = f'abandoned at the {_budget_:g}s time budget'
             elif _unsafe_:    _why_ = 'catastrophic pattern refused'
-            else:             _why_ = 'pattern over %d characters' % _self_.regex_max_pattern
+            else:             _why_ = f'pattern over {_self_.regex_max_pattern:d} characters'
             # The info line carries this beside the other cost notes ('spring nx: 40 of
             # 200 iterations', ...), so the note stays that short and the log gets the
             # sentence explaining why a pattern was refused without being run.
@@ -3276,7 +3278,7 @@ class LINKPI(P2SReactiveHTML):
     #
     # selectEntities() - set the selected entities
     #
-    def selectEntities(self, 
+    def selectEntities(self,
                        selection,                # string or set
                        set_op       = 'replace', # "replace", "add", "subtract", "intersect"
                        method       = 'exact',   # "exact", "substring", "regex"
@@ -4231,7 +4233,7 @@ class LINKPI(P2SReactiveHTML):
 
             #
             # "Q" - Invert Selection / Common Neighbors
-            #            
+            #
             elif self.key_op_finished == 'q' or self.key_op_finished == 'Q':
                 if   self.key_op_finished == 'Q': # common neighbors
                     inter_set = None
@@ -4388,7 +4390,7 @@ class LINKPI(P2SReactiveHTML):
                         _ln_.view_window = None
                         _ln_.__calculateGeometry__()
                         _rerender_ = True
-                
+
                 if _rerender_:
                     self._propagate_view_changes_(invalidate_all=True)
             #
@@ -4443,7 +4445,7 @@ class LINKPI(P2SReactiveHTML):
 
                 if   self.shiftkey and self.ctrlkey: self.setSelectedEntitiesAndNotifyOthers(self.selected_entities & _match_)
                 elif self.shiftkey:                  self.setSelectedEntitiesAndNotifyOthers(self.selected_entities - _match_)
-                elif self.ctrlkey:                   self.setSelectedEntitiesAndNotifyOthers(self.selected_entities | _match_)  
+                elif self.ctrlkey:                   self.setSelectedEntitiesAndNotifyOthers(self.selected_entities | _match_)
                 else:                                self.setSelectedEntitiesAndNotifyOthers(_match_)
 
                 self.__refreshView__(comp=False, all_ents=False)
@@ -4983,7 +4985,7 @@ class LINKPI(P2SReactiveHTML):
             # layout aggregates flows down to.  It is undirected, so a two-way pair counts
             # once where the layout would see two flows; the count is a lower bound on the
             # real flow count, never an over-estimate that would refuse spuriously.
-            if event.new == 'flowmap' and self._suppress_shape_watcher_ is False:  # noqa: E501
+            if event.new == 'flowmap' and self._suppress_shape_watcher_ is False:
                 _g_ = self.graphs[self.df_level]
                 _edges_ = _g_.number_of_edges() if _g_ is not None else 0
                 if not self.__confirmGate__("link_shape='flowmap'", FLOWMAP,

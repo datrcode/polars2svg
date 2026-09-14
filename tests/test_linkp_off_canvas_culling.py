@@ -196,7 +196,7 @@ class TestLinkPOffCanvasCulling(unittest.TestCase):
         _kw_ = dict(df=_df_, relationships=[('fm', 'to')], pos=_POS_, wxh=_WXH_, time='ts')
         _wide_ = self.p2s.linkp(**_kw_)
         _zoom_ = self.p2s.linkp(view_window=_ZOOM_, **_kw_)
-        _mark_ = lambda lp: lp.svg.count('stroke-width="1.5"')
+        def _mark_(lp): return lp.svg.count('stroke-width="1.5"')
         self.assertGreater(_mark_(_wide_), 0)
         self.assertLess(_mark_(_zoom_), _mark_(_wide_))
         # the SVG marks and their GPU mirror stay the same set

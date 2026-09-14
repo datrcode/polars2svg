@@ -84,7 +84,7 @@ class P2STextMixin:
     #
     def __p2s_text_mixin_init__(self) -> None:
         self.default_font = "'Noto Sans', sans-serif"
-        self._glyph_atlas_: 'GlyphAtlas | None' = None
+        self._glyph_atlas_: GlyphAtlas | None = None
 
     #
     # svgEscape() / svgUnescape() - method routes onto the module-level door above, for the
@@ -153,11 +153,11 @@ class P2STextMixin:
         i = 1
         while self.textLength(txt[:i],txt_h) < w:
             i += 1
-            
+
         # Assumption is the the '...' doesn't add too much...
         if i == 0:
             i += 1
-        return txt[:i-1] + '...' 
+        return txt[:i-1] + '...'
 
     #
     # svgAxisLabels() - Render a 3-part axis label row (left / center / right) with

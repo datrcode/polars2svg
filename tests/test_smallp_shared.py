@@ -290,7 +290,6 @@ class TestSmallpShared(unittest.TestCase):
 
     def test_sm_count_all_key_not_shared(self):
         """The __all__ instance must not receive SM_COUNT normalization parameters."""
-        df_all = pl.concat([self.df_cnt['lo'], self.df_cnt] if False else [self.df_cnt])
         df_lu  = {'lo': self.df_lu_cnt['lo'], 'hi': self.df_lu_cnt['hi'],
                   '__all__': self.df_cnt}
         tmpl = self.p2s.xyp(df=self.df_cnt, x='x', y='y', dot_size='val', wxh=(256, 256),

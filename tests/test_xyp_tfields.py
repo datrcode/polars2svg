@@ -21,10 +21,10 @@ class Testxyp_tfields(unittest.TestCase):
         for _x_enum_ in self.p2s.TimeLinearTypeP:
             for _y_enum_ in self.p2s.TimePeriodicTypeP:
                 for _c_enum_ in self.p2s.TimePeriodicTypeP:
-                    _xyp_test_ = self.p2s.xyp(df, 
-                                              self.p2s.tField('i', _x_enum_), 
-                                              self.p2s.tField('i', _y_enum_), 
-                                              color=(self.p2s.tField('i', _c_enum_), self.p2s.CSETp), 
+                    self.p2s.xyp(df,
+                                              self.p2s.tField('i', _x_enum_),
+                                              self.p2s.tField('i', _y_enum_),
+                                              color=(self.p2s.tField('i', _c_enum_), self.p2s.CSETp),
                                               dot_size=3)
 
     @unittest.skipUnless(_KAGGLEHUB_AVAILABLE, "kagglehub not importable (broken upstream dependency)")
@@ -43,7 +43,7 @@ class Testxyp_tfields(unittest.TestCase):
             self.skipTest(f"kagglehub dataset download unavailable (no network/credentials?): {e}")
         df_orig = pl.read_csv(Path(path, 'GlobalLandTemperaturesByCountry.csv'), try_parse_dates=True)
         df      = df_orig.filter(pl.col('dt') > date.fromisoformat('1990-01-01')).filter(pl.col('Country').is_in(['Tunisia', 'Algeria', 'Cayman Islands']))
-        _xyp_   = self.p2s.xyp(df, self.p2s.tField('dt', self.p2s.PT_mp), 'AverageTemperature', color='Country', 
+        self.p2s.xyp(df, self.p2s.tField('dt', self.p2s.PT_mp), 'AverageTemperature', color='Country',
                               line=('Country', self.p2s.tField('dt', self.p2s.LT_Yp), self.p2s.LINECOLOR_FIELD), wxh=(1024,256))
 
 if __name__ == '__main__':

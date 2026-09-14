@@ -793,7 +793,7 @@ class P2SGraphMixin:
                 # neighborhood; numbering continues past the real cluster labels
                 # so the 'n{...}' namespace stays collision-free. (single_linkage
                 # emits no -1 labels -- isolated nodes are already own clusters.)
-                _next_ = max((int(l) for l in _lbls_ if l >= 0), default=-1) + 1
+                _next_ = max((int(_lb_) for _lb_ in _lbls_ if _lb_ >= 0), default=-1) + 1
                 for _node_, _lab_ in zip(_nodes_, _lbls_):
                     if _lab_ >= 0:
                         _labels_[_node_] = f'n{int(_lab_)}'
@@ -1198,7 +1198,7 @@ class P2SGraphMixin:
         that for a non-tree graph.
         """
         _requireGraphLayoutDeps_()
-        if roots is not None and isinstance(roots, list) == False: roots = list(roots)
+        if roots is not None and not isinstance(roots, list): roots = list(roots)
 
         _graph = nx.to_undirected(_graph)
         S = [_graph.subgraph(c).copy() for c in nx.connected_components(_graph)]
@@ -1290,7 +1290,7 @@ class P2SGraphMixin:
         unaffected.
         """
         _requireGraphLayoutDeps_()
-        if roots is not None and isinstance(roots, list) == False: roots = list(roots)
+        if roots is not None and not isinstance(roots, list): roots = list(roots)
 
         _graph = nx.to_undirected(_graph)
         S = [_graph.subgraph(c).copy() for c in nx.connected_components(_graph)]
@@ -1669,7 +1669,7 @@ class P2SGraphMixin:
             json.dump(linkp.pos, f, indent=2)
 
     def loadPositions(self, filename: str, linkp: Any = None) -> dict:
-        with open(filename, "r") as f:
+        with open(filename) as f:
             pos = json.load(f)
         if linkp is not None and hasattr(linkp, 'all_nodes'):
             file_nodes  = set(pos.keys())

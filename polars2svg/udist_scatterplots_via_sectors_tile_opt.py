@@ -1,9 +1,9 @@
 #
 # Polars implementation of the following:
 #
-# H. Rave, V. Molchanov and L. Linsen, "Uniform Sample Distribution in Scatterplots via Sector-based Transformation," 
-# 2024 IEEE Visualization and Visual Analytics (VIS), St. Pete Beach, FL, USA, 2024, pp. 156-160, 
-# doi: 10.1109/VIS55277.2024.00039. 
+# H. Rave, V. Molchanov and L. Linsen, "Uniform Sample Distribution in Scatterplots via Sector-based Transformation,"
+# 2024 IEEE Visualization and Visual Analytics (VIS), St. Pete Beach, FL, USA, 2024, pp. 156-160,
+# doi: 10.1109/VIS55277.2024.00039.
 # keywords: {Data analysis;Visual analytics;Clutter;Scatterplot de-cluttering;spatial transformation},
 #
 # This version includes the tile optimization...
@@ -19,7 +19,7 @@ from   importlib.resources import files as _pkg_files
 
 from .exceptions import DataError, Polars2SVGError
 
-class UDistScatterPlotsViaSectorsTileOpt(object):
+class UDistScatterPlotsViaSectorsTileOpt:
     #
     # __init__()
     #
@@ -44,11 +44,11 @@ class UDistScatterPlotsViaSectorsTileOpt(object):
     # decay_rate : float, optional
     #     Decay rate, by default None -- how the vector scalar decays with each iteration
     #
-    def __init__(self, x_vals: list = [], y_vals: list = [], weights: list | None = None, colors: list | None = None, static_points: list | None = None, vector_scalar: float = 0.05, iterations: int = 4, num_of_tiles: int = 128, decay_rate: float | None = None) -> None:
+    def __init__(self, x_vals: list | None = None, y_vals: list | None = None, weights: list | None = None, colors: list | None = None, static_points: list | None = None, vector_scalar: float = 0.05, iterations: int = 4, num_of_tiles: int = 128, decay_rate: float | None = None) -> None:
         self.vector_scalar = vector_scalar
         self.iterations    = iterations
         self.num_of_tiles  = num_of_tiles
-        self.time_lu       = {'prepare_df':0.0, 'normalize':0.0, 'all_sectors':0.0, 'explode_points':0.0, 'arctangents':0.0, 'sector_sums':0.0, 
+        self.time_lu       = {'prepare_df':0.0, 'normalize':0.0, 'all_sectors':0.0, 'explode_points':0.0, 'arctangents':0.0, 'sector_sums':0.0,
                               'add_missing_sectors':0.0, 'prepare_sector_angles':0.0, 'join_sector_angles':0.0, 'ray_segment_intersections':0.0,
                               'area_calc':0.0, 'sector_uv_summation':0.0, 'point_update':0.0, 'determine_tile':0.0, 'tile_sums':0.0,
                               'cross_join_tile_offsets':0.0, 'join_sector_info':0.0, 'hard_way_arctangents':0.0,
@@ -56,6 +56,12 @@ class UDistScatterPlotsViaSectorsTileOpt(object):
                               'separate_easy_hard_way (non-easy way)':0.0, 'separate_easy_hard_way (medium way)':0.0,
                               'separate_easy_hard_way (hard way)':0.0,}
 
+
+        # x_vals/y_vals used to default to [] directly -- a shared mutable default.
+        # Nothing mutates them today, so it never bit; the sibling parameters already
+        # guard this way and now these match.
+        if x_vals        is None: x_vals        = []
+        if y_vals        is None: y_vals        = []
 
         # Create weights and static points if none were set
         if weights       is None: weights       = np.ones(len(x_vals))
@@ -66,7 +72,7 @@ class UDistScatterPlotsViaSectorsTileOpt(object):
             x_r,  y_r  = xy_ray
             dx_r, dy_r = uv_ray
             x0,   y0   = xy0_segment
-            x1,   y1   = xy1_segment    
+            x1,   y1   = xy1_segment
             # Segment direction vector
             dx_s, dy_s = x1 - x0, y1 - y0
             # Compute determinant
@@ -99,9 +105,9 @@ class UDistScatterPlotsViaSectorsTileOpt(object):
             _cache_dir         = platformdirs.user_cache_dir('polars2svg')
             os.makedirs(_cache_dir, exist_ok=True)
             self.xoyo_filename = os.path.join(_cache_dir, 'udist_scatterplots_via_sectors_tile_opt.parquet')
-            if exists(self.xoyo_filename) == False: self.createXoYoDataframeFile()
+            if not exists(self.xoyo_filename): self.createXoYoDataframeFile()
         self.df_xoyo_sector = pl.read_parquet(self.xoyo_filename).filter(pl.col('num_of_tiles') == num_of_tiles).drop('num_of_tiles').unique()
-        if len(self.df_xoyo_sector) == 0: raise DataError('No xo/yo sector data found for num_of_tiles = %d' % num_of_tiles)
+        if len(self.df_xoyo_sector) == 0: raise DataError(f'No xo/yo sector data found for num_of_tiles = {num_of_tiles:d}')
         self.time_lu['xoyo_sector_creation'] = time.time() - t
 
         #
@@ -143,14 +149,14 @@ class UDistScatterPlotsViaSectorsTileOpt(object):
             t = time.time()
             df_all_sectors = df.join(pl.DataFrame({'sector': [i for i in range(16)]}), how='cross').drop(['w','c','s'])
             self.time_lu['all_sectors'] += (time.time() - t)
-            
+
             #
             # vvv -- New Performant Version -- vvv
             #
 
             # Determine the x/y tile of each point (xi,yi)
             t = time.time()
-            df_w_tile = df.with_columns((pl.col('x') * num_of_tiles).cast(pl.Int16).alias('xi'), 
+            df_w_tile = df.with_columns((pl.col('x') * num_of_tiles).cast(pl.Int16).alias('xi'),
                                         (pl.col('y') * num_of_tiles).cast(pl.Int16).alias('yi'))
             self.time_lu['determine_tile'] += (time.time() - t)
 
@@ -182,7 +188,7 @@ class UDistScatterPlotsViaSectorsTileOpt(object):
                               .join(df_w_tile.drop(['c']), left_on=['xi_tile_sums','yi_tile_sums'], right_on=['xi','yi']) \
                               .filter(pl.col('__index__') != pl.col('__index___right'))
             self.time_lu['separate_easy_hard_way (non-easy way)'] += (time.time() - t)
-            
+
             t = time.time()
             df_medium_way = df_hard_way.filter(pl.col('u').is_not_null())
             self.time_lu['separate_easy_hard_way (medium way)'] += (time.time() - t)
@@ -194,7 +200,7 @@ class UDistScatterPlotsViaSectorsTileOpt(object):
             # Medium way calculation ... determine the sector based on crossproduct
             t = time.time()
             _x1_, _y1_ = pl.col('x') + pl.col('u'), pl.col('y') + pl.col('v')
-            df_medium_way = df_medium_way.with_columns(pl.when((pl.col('x') - pl.col('x_right')) * (_y1_ - pl.col('y_right')) - 
+            df_medium_way = df_medium_way.with_columns(pl.when((pl.col('x') - pl.col('x_right')) * (_y1_ - pl.col('y_right')) -
                                                                (pl.col('y') - pl.col('y_right')) * (_x1_ - pl.col('x_right')) > 0.0)
                                                          .then     (pl.col('lsector'))
                                                          .otherwise(pl.col('rsector'))
@@ -234,7 +240,7 @@ class UDistScatterPlotsViaSectorsTileOpt(object):
             # ... it will be joined with the points dataframe to calculate the area of each sector for each point
             #
             t = time.time()
-            _lu_: dict = {'sector':[], 
+            _lu_: dict = {'sector':[],
                     'a0':[],       'a0u':[],       'a0v':[],                 # Ray 0 angle & uv components
                     'a1':[],       'a1u':[],       'a1v':[],                 # Ray 1 angle & uv components
                     'corner_x':[], 'corner_y':[],                            # Corner between segment0 and segment 1
@@ -334,8 +340,8 @@ class UDistScatterPlotsViaSectorsTileOpt(object):
             _c2_1p_x_, _c2_1p_y_, _c2_1q_x_, _c2_1q_y_ = pl.col('corner_x'), pl.col('corner_y'), pl.col('r1s1_xi'),  pl.col('r1s1_yi')
             _c2_2p_x_, _c2_2p_y_, _c2_2q_x_, _c2_2q_y_ = pl.col('r1s1_xi'), pl.col('r1s1_yi'),   pl.col('x'),       pl.col('y')
             _c2_3p_x_, _c2_3p_y_, _c2_3q_x_, _c2_3q_y_ = pl.col('x'),       pl.col('y'),         pl.col('r0s0_xi'), pl.col('r0s0_yi')
-            _c2_op_ = (((_c2_0p_x_*_c2_0q_y_ - _c2_0q_x_*_c2_0p_y_) + 
-                        (_c2_1p_x_*_c2_1q_y_ - _c2_1q_x_*_c2_1p_y_) + 
+            _c2_op_ = (((_c2_0p_x_*_c2_0q_y_ - _c2_0q_x_*_c2_0p_y_) +
+                        (_c2_1p_x_*_c2_1q_y_ - _c2_1q_x_*_c2_1p_y_) +
                         (_c2_2p_x_*_c2_2q_y_ - _c2_2q_x_*_c2_2p_y_) +
                         (_c2_3p_x_*_c2_3q_y_ - _c2_3q_x_*_c2_3p_y_))/2.0).abs().alias('area')
             df = df.with_columns(pl.when(pl.col('r0s0_xi').is_not_null() & pl.col('r1s0_xi').is_not_null()).then(_c0_op_)
@@ -360,11 +366,11 @@ class UDistScatterPlotsViaSectorsTileOpt(object):
             if static_points_exist:
                 df_uv     = df_uv.join(df_orig.drop(['x', 'y', 'w', 'c']), on=['__index__'], how='left') # add the static info back in
                 df_uv     = df_uv.with_columns(
-                    pl.when(pl.col('s') == 0).then(pl.col('x') + pl.col('_u_')).otherwise(pl.col('x')).alias('x'), 
+                    pl.when(pl.col('s') == 0).then(pl.col('x') + pl.col('_u_')).otherwise(pl.col('x')).alias('x'),
                     pl.when(pl.col('s') == 0).then(pl.col('y') + pl.col('_v_')).otherwise(pl.col('y')).alias('y')
                 )
             else:
-                df_uv     = df_uv.with_columns((pl.col('x') + pl.col('_u_')).alias('x'), 
+                df_uv     = df_uv.with_columns((pl.col('x') + pl.col('_u_')).alias('x'),
                                                (pl.col('y') + pl.col('_v_')).alias('y'))
             df        = df_uv.join(df_orig, on=['__index__'], how='left') # add the weight back in
             self.time_lu['point_update'] += (time.time() - t)
@@ -415,11 +421,11 @@ class UDistScatterPlotsViaSectorsTileOpt(object):
                    .rename({'x_right':f'x{i}', 'y_right':f'y{i}'})
         df = df.rename({'x':'x0', 'y':'y0'})
 
-        df = df.with_columns(pl.concat_str(x_cols, separator=';').alias('x_values_str'), 
+        df = df.with_columns(pl.concat_str(x_cols, separator=';').alias('x_values_str'),
                              pl.concat_str(y_cols, separator=';').alias('y_values_str'))
 
-        _str_ops_ = [pl.lit(f'<circle r="{r}" fill="'), 
-                     pl.col('c'), 
+        _str_ops_ = [pl.lit(f'<circle r="{r}" fill="'),
+                     pl.col('c'),
                      pl.lit('">'),
                      pl.lit('<animate attributeName="cx" values="'),
                      pl.col('x_values_str'),
@@ -459,7 +465,7 @@ class UDistScatterPlotsViaSectorsTileOpt(object):
             x_r,  y_r  = xy_ray
             dx_r, dy_r = uv_ray
             x0,   y0   = xy0_segment
-            x1,   y1   = xy1_segment    
+            x1,   y1   = xy1_segment
             # Segment direction vector
             dx_s, dy_s = x1 - x0, y1 - y0
             # Compute determinant
@@ -556,7 +562,7 @@ class UDistScatterPlotsViaSectorsTileOpt(object):
                 xo, yo = _xyo_
                 _lu_['xo'].append(xo); _lu_['yo'].append(yo); _lu_['sector'].append(-1)
                 # This shouldn't happen -- if there's an intersection, it should be at least two sectors (if not more)
-                if   _xyo_ in offtiles_to_sectors and len(offtiles_to_sectors[_xyo_]) == 1: 
+                if   _xyo_ in offtiles_to_sectors and len(offtiles_to_sectors[_xyo_]) == 1:
                     raise Polars2SVGError('This should not happen // offtiles_to_sectors[_xyo_] == len(1)')
                 # Two sectors intersected -- this can be used to determine the sector via the cross product
                 elif _xyo_ in offtiles_to_sectors and len(offtiles_to_sectors[_xyo_]) == 2:

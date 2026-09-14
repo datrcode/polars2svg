@@ -4,7 +4,7 @@ lazy vs eager paths, narrow-widget label fitting, and stacked distribution rende
 import unittest
 import polars as pl
 from polars2svg import Polars2SVG
-from histop_dataframes import makeHistoDf, makeOrderedHistoDf
+from histop_dataframes import makeHistoDf
 
 
 class TestHistopValidationErrors(unittest.TestCase):

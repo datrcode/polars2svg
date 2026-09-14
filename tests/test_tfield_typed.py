@@ -25,7 +25,7 @@ import unittest
 
 import polars as pl
 
-from polars2svg import Polars2SVG, TField
+from polars2svg import Polars2SVG
 from svg_test_utils import normalize_svg
 
 
@@ -105,6 +105,7 @@ class TestHijackFixed(_WarningTestBase_):
         df   = self._df()
         xtpl = self.p2s.xyp(x='b', y='b', wxh=(48, 48))
         s = self.p2s.smallp(df, 'price|mp', xtpl, wxh=(256, 256))
+        self.assertIn('<svg', s.svg)
         self.assertEqual(self.deprecationWarnings(), [])
 
 

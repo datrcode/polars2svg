@@ -80,9 +80,10 @@ class TestDependabotConfig(unittest.TestCase):
 
 
 class TestRuffConfig(unittest.TestCase):
-    # Minimal-ruleset ruff config (E9, F) with __init__.py's intentional
-    # public re-exports carved out via per-file-ignores -- see the
-    # [tool.ruff] comment block in pyproject.toml for the reasoning.
+    # ruff config: E9 and F are the floor, with __init__.py's intentional public
+    # re-exports carved out via per-file-ignores -- see the [tool.ruff] comment
+    # block in pyproject.toml for what else is selected and what is deliberately
+    # left out.
 
     def setUp(self):
         _skip_if_missing(_PYPROJECT)
@@ -90,9 +91,12 @@ class TestRuffConfig(unittest.TestCase):
         with open(_PYPROJECT, 'rb') as f:
             self.pyproject = tomllib.load(f)
 
-    def test_select_is_minimal_e9_f(self):
+    def test_select_includes_e9_f(self):
+        # A floor, not an equality: the set grew in 2026-09-14's lint sweep and is
+        # expected to grow again.  What must never happen is E9 or F dropping out
+        # -- syntax errors and pyflakes are the reason the gate exists at all.
         _select_ = self.pyproject['tool']['ruff']['lint']['select']
-        self.assertEqual(set(_select_), {'E9', 'F'})
+        self.assertLessEqual({'E9', 'F'}, set(_select_))
 
     def test_init_py_f401_ignored(self):
         _ignores_ = self.pyproject['tool']['ruff']['lint']['per-file-ignores']

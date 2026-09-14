@@ -47,7 +47,7 @@ class Testp2s_tfields(unittest.TestCase):
         assert df["ts|DoW_Hp"][0]      == 166    # validated / 6*24 + 22
         assert df["ts|DoW_H_Mp"][0]    == 9984   # validated / 6*24*60 + 24*60 + 22*60
         assert df["ts|dp"][0]          == 8      # validated / self-evident
-        assert df["ts|d_Hp"][0]        == 214    # validated 8*24 + 22 
+        assert df["ts|d_Hp"][0]        == 214    # validated 8*24 + 22
         assert df["ts|d_H_Mp"][0]      == 12864  # validated / 8*24*60 + 22*60 + 24
         assert df["ts|Hp"][0]          == 22     # validated / self-evident
         assert df["ts|H_Mp"][0]        == 1344   # validated / 22*60 + 24
@@ -66,7 +66,7 @@ class Testp2s_tfields(unittest.TestCase):
         _lu_  = {'ts':['2026-03-01 10:31:59']}
         df    = pl.DataFrame(_lu_).with_columns(pl.col('ts').str.to_datetime())
         _ops_ = []
-        for _enum_ in self.p2s.TimePeriodicTypeP: 
+        for _enum_ in self.p2s.TimePeriodicTypeP:
             _tfield_ = self.p2s.tField('ts', _enum_)
             _ops_.append(self.p2s.polarsOperationForEnum('ts', _enum_).alias(_tfield_))
         df = df.with_columns(_ops_)
@@ -156,7 +156,7 @@ class Testp2s_tfields(unittest.TestCase):
             _max_ = _xyp_.df_flat['__x__'].max()
             if self.p2s.periodic_ranges[_enum_][0] > _min_: raise Exception(f'test_timePeriodicRanges() - New minimum ({_min_}) seen for {_enum_}')
             if self.p2s.periodic_ranges[_enum_][1] < _max_: raise Exception(f'test_timePeriodicRanges() - New maximum ({_max_}) seen for {_enum_}')
-            _xyp_ = self.p2s.xyp(df, self.p2s.tField('ts',_enum_), 'value', dot_size=3.0, wxh=(256, 128), opacity=0.8, 
+            _xyp_ = self.p2s.xyp(df, self.p2s.tField('ts',_enum_), 'value', dot_size=3.0, wxh=(256, 128), opacity=0.8,
                                  x_distributions=self.p2s.ROW_COUNTp, x_range=self.p2s.timePeriodicRange(_enum_))
             _tiles_.append(_xyp_)
 

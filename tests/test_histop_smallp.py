@@ -1,7 +1,6 @@
 import unittest
 import polars as pl
 from polars2svg import Polars2SVG
-from histop_dataframes import makeHistoDf
 
 
 def _makeSmallpDf(n_per_panel=50):

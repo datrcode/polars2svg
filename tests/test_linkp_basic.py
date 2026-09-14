@@ -80,10 +80,11 @@ class TestLinkPBasic(unittest.TestCase):
     def test_link_shape_flowmap_deterministic(self):
         # compare the link path geometry only (the full SVG embeds a random id)
         import re
-        _mk_ = lambda: sorted(re.findall(r'<path d="[^"]*"',
-                                         self.p2s.linkp(_make_df(), relationships=_rels(),
-                                                        pos=_make_pos(),
-                                                        link_shape='flowmap').svg))
+        def _mk_():
+            return sorted(re.findall(r'<path d="[^"]*"',
+                                     self.p2s.linkp(_make_df(), relationships=_rels(),
+                                                    pos=_make_pos(),
+                                                    link_shape='flowmap').svg))
         self.assertEqual(_mk_(), _mk_())
 
     def test_link_shape_flowmap_multiple_relationships(self):
@@ -198,7 +199,6 @@ class TestLinkPBasic(unittest.TestCase):
         self.assertIn('<svg', lp.svg)
 
     def test_smallp_integration(self):
-        from polars2svg.linkp import LinkP
         df  = _make_df()
         pos = _make_pos()
         template = self.p2s.linkp(df, relationships=_rels(), pos=pos, node_size='medium')

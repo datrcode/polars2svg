@@ -62,7 +62,8 @@ import socket
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any, Callable, Iterator
+from typing import Any
+from collections.abc import Callable, Iterator
 
 import panel as pn
 from playwright.sync_api import Locator, Page, expect

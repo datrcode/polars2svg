@@ -20,7 +20,7 @@ from polars2svg.interactive_controller import (
 )
 
 try:
-    import panel as pn
+    import panel as pn  # noqa: F401 - the import IS the availability probe
     from panel.reactive import ReactiveHTML
     PANEL_AVAILABLE = True
 except ImportError:
@@ -1135,7 +1135,6 @@ class TestLINKPILayoutRegistry(unittest.TestCase):
                          {n for n in g.nodes() if n in ln.pos})
 
     def test_spring_nx_handler_returns_dict_for_empty_selection(self):
-        import networkx as nx
         ln      = self.linkpi_instance.dfs_layout[0]
         g       = self.linkpi_instance.graphs[0]
         handler = self.linkpi_instance._layout_registry[self.linkpi_instance.SPRING_NX].handler
@@ -2605,7 +2604,7 @@ class TestRegexHardStop(unittest.TestCase):
 
     @unittest.skipUnless(hasattr(signal, 'setitimer'), 'no POSIX interval timer')
     def test_it_leaves_the_signal_state_as_it_found_it(self):
-        _sentinel_ = lambda signum, frame: None
+        def _sentinel_(signum, frame): return None
         signal.signal(signal.SIGALRM, _sentinel_)
         with ic._regexHardStop_(0.5) as _armed_:
             self.assertTrue(_armed_)
@@ -2614,7 +2613,7 @@ class TestRegexHardStop(unittest.TestCase):
 
     @unittest.skipUnless(hasattr(signal, 'setitimer'), 'no POSIX interval timer')
     def test_state_is_restored_even_when_the_timer_fires(self):
-        _sentinel_ = lambda signum, frame: None
+        def _sentinel_(signum, frame): return None
         signal.signal(signal.SIGALRM, _sentinel_)
         with self.assertRaises(ic._RegexBudgetExpired_):
             with ic._regexHardStop_(0.2):

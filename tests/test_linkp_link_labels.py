@@ -133,7 +133,7 @@ class TestLinkLabelBasics(_LinkLabelTestBase_):
             _a_ = self.linkp(link_shape=_shape_).svg
             _b_ = self.linkp(link_shape=_shape_).svg
             # ids carry a per-instance random scope; compare with them normalized out
-            _norm_ = lambda s: re.sub(r'p2sll\d+_', 'ID_', s)
+            def _norm_(s): return re.sub(r'p2sll\d+_', 'ID_', s)
             self.assertEqual(_norm_(_a_), _norm_(_b_), f'{_shape_} render not deterministic')
 
 
@@ -330,10 +330,11 @@ class TestLinkLabelPlacement(_LinkLabelTestBase_):
         first in the frame must not move either label.'''
         _fwd_ = pl.DataFrame({'fm': ['a', 'b'], 'to': ['b', 'a'], 'dsc': ['calls', 'answers']})
         _rev_ = _fwd_.reverse()
-        _y_ = lambda df: {t[0]: t[1]['y'] for t in _texts(
-            self.p2s.linkp(df, relationships=[('fm', 'to', 'dsc')],
-                           pos={'a': (0.0, 0.0), 'b': (1.0, 0.0)},
-                           wxh=(400, 200), draw_link_labels=True).svg)}
+        def _y_(df):
+            return {t[0]: t[1]['y'] for t in _texts(
+                self.p2s.linkp(df, relationships=[('fm', 'to', 'dsc')],
+                               pos={'a': (0.0, 0.0), 'b': (1.0, 0.0)},
+                               wxh=(400, 200), draw_link_labels=True).svg)}
         self.assertEqual(_y_(_fwd_), _y_(_rev_))
 
     def test_text_is_never_upside_down(self):
@@ -359,7 +360,7 @@ class TestLinkLabelPlacement(_LinkLabelTestBase_):
     def test_stroke_width_widens_the_clearance(self):
         _thin_ = self._horizontal(link_size=1)
         _fat_  = self._horizontal(link_size=9)
-        _y_ = lambda lp: {t[0]: float(t[1]['y']) for t in _texts(lp.svg)}
+        def _y_(lp): return {t[0]: float(t[1]['y']) for t in _texts(lp.svg)}
         _edge_y_ = float(re.search(r'<line x1="[\d.]+" y1="([\d.]+)"', _thin_.svg).group(1))
         self.assertGreater(_edge_y_ - _y_(_fat_)['calls'], _edge_y_ - _y_(_thin_)['calls'])
 

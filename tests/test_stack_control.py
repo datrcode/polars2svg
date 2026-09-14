@@ -91,7 +91,7 @@ class _StackControlBase(unittest.TestCase):
         skipped: (n-2)*slot + ELL_H <= avail < (n-1)*slot."""
         slot = (self._budget() - _ELL_H_) // (n - 1)
         self.assertGreater(n * slot, self._budget(),
-                           'geometry no longer admits a single-skip case for n=%d' % n)
+                           f'geometry no longer admits a single-skip case for n={n:d}')
         return slot - _HGAP_
 
     def _stack_of(self, n):

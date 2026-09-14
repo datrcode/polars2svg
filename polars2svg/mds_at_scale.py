@@ -18,7 +18,7 @@ from sklearn.decomposition import PCA
 # V. de Silva and J. Tenenbaum. Global versus local methods in nonlinear dimensionality reduction.
 # In Proc. NIPS, pages 721–728, 2003.
 #
-class LandmarkMDSLayout(object):
+class LandmarkMDSLayout:
     '''
     Landmark MDS graph layout (de Silva & Tenenbaum, NIPS 2003).
 
@@ -48,7 +48,7 @@ class LandmarkMDSLayout(object):
     '''
     def __init__(self, g: Any, num_landmarks: int | None = None, dimensions: int = 2, landmarks: list | None = None, landmark_pos: dict | None = None, rt_self: Any = None) -> None:
         # If separate components, split up and process each separately
-        if isinstance(g, nx.Graph) and nx.is_connected(g) == False:
+        if isinstance(g, nx.Graph) and not nx.is_connected(g):
             components = list(nx.connected_components(g))
             _pos_: dict = {}
             for _subgraph_nodes_ in components:
@@ -141,7 +141,7 @@ class LandmarkMDSLayout(object):
 # U. Brandes and C. Pich. Eigensolver methods for progressive multidimensional scaling of large data.
 # In Proceedings 14th Symposium on Graph Drawing (GD), pages 42–53, 2006.
 #
-class PivotMDSLayout(object):
+class PivotMDSLayout:
     '''
     Pivot MDS graph layout (Brandes & Pich, Graph Drawing 2006).
 
@@ -169,7 +169,7 @@ class PivotMDSLayout(object):
     '''
     def __init__(self, g: Any, num_pivots: int | None = None, dimensions: int = 2, rt_self: Any = None) -> None:
         # If separate components, split up and process each separately
-        if isinstance(g, nx.Graph) and nx.is_connected(g) == False:
+        if isinstance(g, nx.Graph) and not nx.is_connected(g):
             components = list(nx.connected_components(g))
             _pos_: dict = {}
             for _subgraph_nodes_ in components:

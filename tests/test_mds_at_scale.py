@@ -1,7 +1,6 @@
 import unittest
 import numpy as np
 import networkx as nx
-from scipy.sparse import csr_matrix
 
 from polars2svg.mds_at_scale import LandmarkMDSLayout, PivotMDSLayout, _tileSideBySide_
 

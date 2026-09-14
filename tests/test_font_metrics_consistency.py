@@ -35,7 +35,7 @@ _FONT_PATH_ = os.path.join(os.path.dirname(os.path.abspath(polars2svg.__file__))
 
 def _fontToolsAvailable_():
     try:
-        import fontTools.ttLib  # noqa: F401
+        import fontTools.ttLib
         import fontTools.pens.boundsPen  # noqa: F401
         return True
     except ImportError:

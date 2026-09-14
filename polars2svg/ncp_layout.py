@@ -485,8 +485,8 @@ def _stage2_repair_targets(pos: np.ndarray, radii: np.ndarray, target_edges: np.
             disp[i] += pos[j] - pos[i]
             hit = True
             continue
-        k, l = blocker
-        c = _weighted_circumcenter(pos, radii, (j, k, l))
+        k, m = blocker
+        c = _weighted_circumcenter(pos, radii, (j, k, m))
         if c is not None:
             disp[i] += c - pos[i]
             hit = True
@@ -551,7 +551,7 @@ def _stage2_optimize(positions: np.ndarray, weights: np.ndarray, edges: np.ndarr
 def _safe_pockets(pos: np.ndarray, radii: np.ndarray) -> list:
     try:
         return _hull_pockets(pos, radii)
-    except Exception:                       # noqa: BLE001 - degenerate hulls
+    except Exception:                       # broad on purpose: degenerate hulls
         return []
 
 
@@ -660,7 +660,7 @@ def _default_radius(positions: np.ndarray) -> Any:
     return 0.5 * span / max(np.sqrt(len(positions)), 1.0)
 
 
-class NeighborhoodPreservingPacking(object):
+class NeighborhoodPreservingPacking:
     """NCP: neighbourhood-preserving non-uniform circle packing (Li et al. 2026).
 
     Screen-space geometry in, screen-space geometry out. Give ``positions``
@@ -799,7 +799,7 @@ def _node_size_weights(g: Any, nodes: list) -> np.ndarray:
     return w
 
 
-class NCPLayout(object):
+class NCPLayout:
     """Neighbourhood-preserving circle packing as a linkp layout operation.
 
     Compacts an existing layout: it reads the current node positions, gives

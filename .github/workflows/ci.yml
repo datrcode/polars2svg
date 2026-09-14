@@ -102,6 +102,12 @@ jobs:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
 
+      - name: Install the project, its extras and the dev group
+        # ruff is pinned in the dev group, so uv.lock decides the version this job
+        # runs.  bandit and pip-audit below are still `uvx` and still unpinned --
+        # they read the repo and an exported requirements file, not the venv.
+        run: uv sync --extra layouts --extra interactive --extra export --group dev
+
       - name: bandit (static security scan)
         # Findings are either fixed or annotated in-line with a justified
         # `# nosec <code> - <reason>` (see SECURITY.md's threat model for why
@@ -184,12 +190,15 @@ jobs:
           echo "::error::pip-audit failed 3 consecutive attempts"
           exit 1
 
-      - name: ruff (E9, F)
-        # Minimal rule set on purpose — see the [tool.ruff] comment in
-        # pyproject.toml. Catches syntax errors and pyflakes issues (undefined
-        # names, unused imports/variables, duplicate dict keys) without
-        # fighting the codebase's distinctive style.
-        run: uvx ruff check polars2svg/
+      - name: ruff
+        # Narrow rule set on purpose, and what is left out is as deliberate as what
+        # is in — see the [tool.ruff] comment in pyproject.toml.
+        #
+        # Scope is the whole tree as of 2026-09-14, not polars2svg/ alone.  tests/
+        # had never been linted by CI or preflight and held 106 E9/F findings,
+        # including an F821 (an undefined name) that sat behind `if False` in the
+        # opt-in interaction suite, where no test run would reach it either.
+        run: uv run ruff check .
 
   linux-cleanroom:
     name: Linux clean-room wheel install + tests

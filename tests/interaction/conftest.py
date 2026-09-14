@@ -23,7 +23,8 @@ functions taking fixtures.
 """
 import os
 import sys
-from typing import Any, Callable, Iterator
+from typing import Any
+from collections.abc import Callable, Iterator
 
 import pytest
 

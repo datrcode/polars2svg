@@ -1,5 +1,4 @@
 import unittest
-import polars as pl
 from polars2svg import Polars2SVG
 from timep_dataframes import makeTimeDf, makeDateDf
 

@@ -10,7 +10,7 @@ import sys
 import time
 import unittest
 import warnings
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from importlib.metadata import PackageNotFoundError, version as _dist_version
 from importlib.util import find_spec
 from pathlib import Path
@@ -67,7 +67,7 @@ def _cpu_model():
             for _line_ in Path('/proc/cpuinfo').read_text().splitlines():
                 if _line_.startswith('model name'):
                     return _line_.split(':', 1)[1].strip()
-    except Exception:   # noqa: BLE001 - identity is best-effort; never fail a timing run
+    except Exception:   # broad on purpose: identity is best-effort; never fail a timing run
         pass
     return _platform_.processor() or _platform_.machine() or 'unknown-cpu'
 
@@ -96,7 +96,7 @@ def _gpu_name():
             _out_ = _proc_.stdout.strip()
             if _proc_.returncode == 0 and _out_:
                 return _out_.splitlines()[0].strip()
-        except Exception:   # noqa: BLE001
+        except Exception:
             pass
     return None
 
@@ -117,12 +117,12 @@ def _accel():
         return 'nomlx', None
     try:
         import mlx.core  # noqa: F401
-    except Exception:   # noqa: BLE001 - front-end without a backend library
+    except Exception:   # broad on purpose: front-end without a backend library
         return 'mlx-nobackend', None
     try:
         from polars2svg.tfdp_layout import gpu_backend
         _backend_ = gpu_backend()
-    except Exception:   # noqa: BLE001
+    except Exception:
         return 'mlx-nobackend', None
     return ({'cpu': 'mlx-cpu'}.get(_backend_, _backend_)), _backend_
 
@@ -188,7 +188,7 @@ def _write_baseline(platform_id, metadata, medians):
     _entries_, _ = _load_baseline()
     _entries_[platform_id] = {
         'platform':  metadata,
-        'recorded':  datetime.now(timezone.utc).isoformat(timespec='seconds'),
+        'recorded':  datetime.now(UTC).isoformat(timespec='seconds'),
         'timings':   medians,
     }
     BASELINE_PATH.write_text(json.dumps(

@@ -4,7 +4,7 @@ import logging
 import copy
 
 from collections.abc import Mapping
-from typing import Any, Union, Unpack, TYPE_CHECKING
+from typing import Any, Unpack, TYPE_CHECKING
 import re
 
 from .exceptions            import Polars2SVGError, InvalidSpecError
@@ -718,11 +718,11 @@ class Polars2SVG(P2SColorsMixin,
             = (field-name, sub-field-name, ...)
             = ['field', 'field2', ...]
             = [(field-name, sub-field-name, ...), (field-name2, sub-field-name2, ...), ...]
-        
+
         For single field names (i.e., non-tuples), the field data-types should match (the frames will be vstacked).
 
         By default, tuples will be converted into structs, sorted, and assigned an integer value.
-        
+
         Additionally, the x or y fields can be modified by the following enumerations:
         - polars2svg.SCALARp  # field contents will be treated as a scalar (default for ints and floats)
         - polars2svg.SETp     # field contents will be treated as a categorical datatype (default for strings or any other non-numeric type)
@@ -785,9 +785,9 @@ class Polars2SVG(P2SColorsMixin,
               = ['field', 'field2', ...]
               = '#RRGGBB'
               = ['#RRGGBB', '#RRGGBB', ...]
-        
+
         The following enumerations can be used with a field(s) to modify the color:
-            - CSETp               # the field will be treated as a categorical field & if there's a unique value 
+            - CSETp               # the field will be treated as a categorical field & if there's a unique value
                                   # at that pixel, it will be assigned that color
             - CSET_MAGNITUDEp     # the number of set elements at a pixel will be used within a spectrum
             - CSET_STRETCHEDp     # the number of set elements will be sorted monotonically and stretched across a spectrum
@@ -801,7 +801,7 @@ class Polars2SVG(P2SColorsMixin,
             - CSTRETCHED_MEDIANp  # ... median value ...
             - CSTRETCHED_MEANp    # ... mean value ...
             - CSTRETCHED_MAXp     # ... max value ...
-        
+
         The specific spectrum used may be modified via the p2s.spectrum_palette variable.
 
         === %< === %< === %< === %< === %< === %< === %< === %< === %< === %< === %< === %< === %< === %<
@@ -827,7 +827,7 @@ class Polars2SVG(P2SColorsMixin,
         === %< === %< === %< === %< === %< === %< === %< === %< === %< === %< === %< === %< === %< === %<
 
         dot opacity is specified as follows:
-        
+
         opacity = None                                  # default — no opacity variation (all dots fully opaque)
                 = polars2svg.ROW_COUNTp
                 = float
@@ -851,7 +851,7 @@ class Polars2SVG(P2SColorsMixin,
              = ('field', sub-field-name, ...)
              = ['field', 'field2', ...]
              = [('field', 'sub-field-name', ...), ('field2', 'sub-field-name2', ...), ...]
-        
+
         By default the order of the line will be determined by the x-axis.  A custom order may be specified
         using the line_order_by parameter:
 
@@ -899,7 +899,7 @@ class Polars2SVG(P2SColorsMixin,
         a single integer may be supplied within the list (or the tuple for a single field) that controls the number of bins
         - by default, if no integer is supplied, then the number of bins will be calculated automatically
 
-        a single floating point value may be supplied within the list (or the tuple for a single field) that controls the 
+        a single floating point value may be supplied within the list (or the tuple for a single field) that controls the
         height of the rendering as a percentage of the chart size
 
         hex colors may be included at either the list-level or within each tuple to force a specific color
@@ -1429,7 +1429,7 @@ class Polars2SVG(P2SColorsMixin,
                        = {p2s.SM_X, p2s.SM_Y}              # share full coordinate space (identical graph layout bounds)**
                        = {p2s.SM_COUNT}                    # share count normalization for link_size='vary' / node_size='vary'
                        = {p2s.SM_COLOR}                    # share color-stat range for magnitude-mode coloring
-        
+
                        ** - note that "use_pos_for_bounds" when True will override SM_X and SM_Y
 
         legend = False (default)                        # no legend -- output identical to pre-legend renders
@@ -1870,7 +1870,7 @@ class Polars2SVG(P2SColorsMixin,
         except ImportError:
             pass
         return isinstance(_template_, tuple(_types_))
-    
+
 
     #
     # columnInDataFrame() - check if a column is in the dataframe
@@ -2111,7 +2111,7 @@ class Polars2SVG(P2SColorsMixin,
     #
     # tField() - create a transformation field
     #
-    def tField(self, column: str, _enum_: 'Union[_enums_.TimeLinearTypeP, _enums_.TimePeriodicTypeP]') -> 'Polars2SVG.TField':
+    def tField(self, column: str, _enum_: '_enums_.TimeLinearTypeP | _enums_.TimePeriodicTypeP') -> 'Polars2SVG.TField':
         '''Build a time-transformation field pairing a timestamp ``column`` with a
         binning ``_enum_`` (a ``TimeLinearTypeP`` or ``TimePeriodicTypeP`` member).
 

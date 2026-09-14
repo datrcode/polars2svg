@@ -13,7 +13,6 @@ Key attributes set after construction:
   _dist_bins_lu_     -- dict {q: [bin_label, ...]}
   _dist_stacked_max_ -- max(stacked.values()) for normalisation
 """
-import re
 import unittest
 from xml.etree import ElementTree as ET
 

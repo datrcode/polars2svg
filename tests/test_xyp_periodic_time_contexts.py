@@ -1,6 +1,5 @@
 import unittest
 import polars as pl
-import datetime
 import random
 from polars2svg import Polars2SVG
 
@@ -23,9 +22,9 @@ class Testxyp_periodic_time_contexts(unittest.TestCase):
     # Determine the coverage of the periodic time contexts
     def coverageInformation(self, _list_):
         _total_, _seen_, _order_ = 0, set(), []
-        for _xyp_ in _list_: 
+        for _xyp_ in _list_:
             _tuple_ = self.caseComment(_xyp_._repr_svg_())
-            if _tuple_ is None: 
+            if _tuple_ is None:
                 print('caseComment() returned None')
                 continue
             if    _total_ == 0:          _total_ = _tuple_[2]

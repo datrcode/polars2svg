@@ -17,7 +17,7 @@ from math import sqrt, acos, pi, atan2
 
 from .exceptions import Polars2SVGError
 
-class CirclePacker(object):
+class CirclePacker:
     """
     Implements the circle packing algorithm from "Visualization of large hierarchical data by circle packing".
     """
@@ -172,7 +172,7 @@ class CirclePacker(object):
         xy0, xy1            = self.rt_self.overlappingCirclesIntersections((cm[0], cm[1], cm[2] + c[2]), (cn[0], cn[1], cn[2] + c[2]))
         c                   = (xy0[0], xy0[1], c[2], c[3])
         circle_placed = False
-        while circle_placed == False:
+        while not circle_placed:
             prev, next        = self.bck[cm_i], self.fwd[cn_i]
             seen              = set([cn_i, cm_i])
             overlapped_after  = None

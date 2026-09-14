@@ -78,7 +78,7 @@ _PALETTE = ('#2b6ca3', '#c8642a', '#4f9d5b', '#8a5fa8', '#b0913b', '#a34f5e')
 # Grid
 # ===========================================================================
 
-class _Grid(object):
+class _Grid:
     """Uniform grid with square cells over the layout's bounding box.
 
     Flat index of cell (ix, iy) is ``iy * nx + ix`` -- row-major with y outer,
@@ -721,7 +721,7 @@ def layerAppearance(k_layers: int, prefix: str = 'flow', colors: Any = None, gly
 # FlowFieldBackground
 # ===========================================================================
 
-class FlowFieldBackground(object):
+class FlowFieldBackground:
     """Layered flow-field background for an existing node layout.
 
     Moves no nodes and returns none: :meth:`cells` is the whole output, a

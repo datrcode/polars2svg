@@ -11,48 +11,48 @@ class Testxyp_xy_ranges(unittest.TestCase):
         self.p2s = Polars2SVG()
         rng = np.random.default_rng()
         n   = 1_000
-        self.df  = pl.DataFrame({'a':rng.normal(loc=2500, scale=10, size=n), 
-                                 'b':rng.normal(loc=500,  scale=3,  size=n)}) 
-        
+        self.df  = pl.DataFrame({'a':rng.normal(loc=2500, scale=10, size=n),
+                                 'b':rng.normal(loc=500,  scale=3,  size=n)})
+
     def test_withoutRanges(self):
-        _xyp0_ = self.p2s.xyp(self.df, 'a', 'b', dot_size=1.25, color=self.p2s.CROW_MAGNITUDEp)
-        _xyp1_ = self.p2s.xyp(self.df, 'a', 'b', dot_size=1.25, color=self.p2s.CROW_MAGNITUDEp, draw_context=False)
-        _xyp0_ = self.p2s.xyp(self.df, 'a', 'b', dot_size=3,    color=self.p2s.CROW_MAGNITUDEp)
-        _xyp1_ = self.p2s.xyp(self.df, 'a', 'b', dot_size=3,    color=self.p2s.CROW_MAGNITUDEp, draw_context=False)
+        self.p2s.xyp(self.df, 'a', 'b', dot_size=1.25, color=self.p2s.CROW_MAGNITUDEp)
+        self.p2s.xyp(self.df, 'a', 'b', dot_size=1.25, color=self.p2s.CROW_MAGNITUDEp, draw_context=False)
+        self.p2s.xyp(self.df, 'a', 'b', dot_size=3,    color=self.p2s.CROW_MAGNITUDEp)
+        self.p2s.xyp(self.df, 'a', 'b', dot_size=3,    color=self.p2s.CROW_MAGNITUDEp, draw_context=False)
 
     def test_subsetRangesFloat(self):
-        _xyp0_ = self.p2s.xyp(self.df, 'a', 'b', dot_size=1.25, color=self.p2s.CROW_STRETCHEDp, x_range=(2480,2500))
-        _xyp1_ = self.p2s.xyp(self.df, 'a', 'b', dot_size=1.25, color=self.p2s.CROW_STRETCHEDp,                      y_range=(500, 505))
-        _xyp2_ = self.p2s.xyp(self.df, 'a', 'b', dot_size=1.25, color=self.p2s.CROW_STRETCHEDp, x_range=(2480,2500), y_range=(500, 505))
+        self.p2s.xyp(self.df, 'a', 'b', dot_size=1.25, color=self.p2s.CROW_STRETCHEDp, x_range=(2480,2500))
+        self.p2s.xyp(self.df, 'a', 'b', dot_size=1.25, color=self.p2s.CROW_STRETCHEDp,                      y_range=(500, 505))
+        self.p2s.xyp(self.df, 'a', 'b', dot_size=1.25, color=self.p2s.CROW_STRETCHEDp, x_range=(2480,2500), y_range=(500, 505))
 
     def test_externalRangesFloat(self):
-        _xyp0_ = self.p2s.xyp(self.df, 'a', 'b', dot_size=1.25, color=self.p2s.CROW_STRETCHEDp, x_range=(2_200, 2_800))
-        _xyp1_ = self.p2s.xyp(self.df, 'a', 'b', dot_size=1.25, color=self.p2s.CROW_STRETCHEDp,                         y_range=(450, 600))
-        _xyp2_ = self.p2s.xyp(self.df, 'a', 'b', dot_size=1.25, color=self.p2s.CROW_STRETCHEDp, x_range=(2_200, 2_800), y_range=(450, 600))
+        self.p2s.xyp(self.df, 'a', 'b', dot_size=1.25, color=self.p2s.CROW_STRETCHEDp, x_range=(2_200, 2_800))
+        self.p2s.xyp(self.df, 'a', 'b', dot_size=1.25, color=self.p2s.CROW_STRETCHEDp,                         y_range=(450, 600))
+        self.p2s.xyp(self.df, 'a', 'b', dot_size=1.25, color=self.p2s.CROW_STRETCHEDp, x_range=(2_200, 2_800), y_range=(450, 600))
 
     def test_externalRangesFloat_distributions(self):
         _param_ = {'x_distributions':self.p2s.ROW_COUNTp, 'y_distributions':self.p2s.ROW_COUNTp}
-        _xyp0_ = self.p2s.xyp(self.df, 'a', 'b', dot_size=1.25, color=self.p2s.CROW_STRETCHEDp, x_range=(2_200, 2_800),                     **_param_)
-        _xyp1_ = self.p2s.xyp(self.df, 'a', 'b', dot_size=1.25, color=self.p2s.CROW_STRETCHEDp,                         y_range=(450, 600), **_param_)
-        _xyp2_ = self.p2s.xyp(self.df, 'a', 'b', dot_size=1.25, color=self.p2s.CROW_STRETCHEDp, x_range=(2_200, 2_800), y_range=(450, 600), **_param_)
+        self.p2s.xyp(self.df, 'a', 'b', dot_size=1.25, color=self.p2s.CROW_STRETCHEDp, x_range=(2_200, 2_800),                     **_param_)
+        self.p2s.xyp(self.df, 'a', 'b', dot_size=1.25, color=self.p2s.CROW_STRETCHEDp,                         y_range=(450, 600), **_param_)
+        self.p2s.xyp(self.df, 'a', 'b', dot_size=1.25, color=self.p2s.CROW_STRETCHEDp, x_range=(2_200, 2_800), y_range=(450, 600), **_param_)
 
     def test_outOfRangeFloat(self):
-        _xyp0_ = self.p2s.xyp(self.df, 'a', 'b', dot_size=1.25, color=self.p2s.CROW_STRETCHEDp, x_range=(12_200, 14_800))
-        _xyp1_ = self.p2s.xyp(self.df, 'a', 'b', dot_size=1.25, color=self.p2s.CROW_STRETCHEDp,                           y_range=(45_000, 46_000))
-        _xyp2_ = self.p2s.xyp(self.df, 'a', 'b', dot_size=1.25, color=self.p2s.CROW_STRETCHEDp, x_range=(12_200, 14_800), y_range=(45_000, 46_000))
+        self.p2s.xyp(self.df, 'a', 'b', dot_size=1.25, color=self.p2s.CROW_STRETCHEDp, x_range=(12_200, 14_800))
+        self.p2s.xyp(self.df, 'a', 'b', dot_size=1.25, color=self.p2s.CROW_STRETCHEDp,                           y_range=(45_000, 46_000))
+        self.p2s.xyp(self.df, 'a', 'b', dot_size=1.25, color=self.p2s.CROW_STRETCHEDp, x_range=(12_200, 14_800), y_range=(45_000, 46_000))
 
 
     def test_outOfRangeFloat_distributions(self):
         _param_ = {'x_distributions':self.p2s.ROW_COUNTp, 'y_distributions':self.p2s.ROW_COUNTp}
-        _xyp0_ = self.p2s.xyp(self.df, 'a', 'b', dot_size=1.25, color=self.p2s.CROW_STRETCHEDp, x_range=(12_200, 14_800),                           **_param_)
-        _xyp1_ = self.p2s.xyp(self.df, 'a', 'b', dot_size=1.25, color=self.p2s.CROW_STRETCHEDp,                           y_range=(45_000, 46_000), **_param_)
-        _xyp2_ = self.p2s.xyp(self.df, 'a', 'b', dot_size=1.25, color=self.p2s.CROW_STRETCHEDp, x_range=(12_200, 14_800), y_range=(45_000, 46_000), **_param_)
+        self.p2s.xyp(self.df, 'a', 'b', dot_size=1.25, color=self.p2s.CROW_STRETCHEDp, x_range=(12_200, 14_800),                           **_param_)
+        self.p2s.xyp(self.df, 'a', 'b', dot_size=1.25, color=self.p2s.CROW_STRETCHEDp,                           y_range=(45_000, 46_000), **_param_)
+        self.p2s.xyp(self.df, 'a', 'b', dot_size=1.25, color=self.p2s.CROW_STRETCHEDp, x_range=(12_200, 14_800), y_range=(45_000, 46_000), **_param_)
 
     def test_outOfRangeFloat_distributions2(self):
         _param_ = {'x_distributions':'a', 'y_distributions':'b'}
-        _xyp3_ = self.p2s.xyp(self.df, 'a', 'b', dot_size=1.25, color=self.p2s.CROW_STRETCHEDp, x_range=(12_200, 14_800),                           **_param_)
-        _xyp4_ = self.p2s.xyp(self.df, 'a', 'b', dot_size=1.25, color=self.p2s.CROW_STRETCHEDp,                           y_range=(45_000, 46_000), **_param_)
-        _xyp5_ = self.p2s.xyp(self.df, 'a', 'b', dot_size=1.25, color=self.p2s.CROW_STRETCHEDp, x_range=(12_200, 14_800), y_range=(45_000, 46_000), **_param_)
+        self.p2s.xyp(self.df, 'a', 'b', dot_size=1.25, color=self.p2s.CROW_STRETCHEDp, x_range=(12_200, 14_800),                           **_param_)
+        self.p2s.xyp(self.df, 'a', 'b', dot_size=1.25, color=self.p2s.CROW_STRETCHEDp,                           y_range=(45_000, 46_000), **_param_)
+        self.p2s.xyp(self.df, 'a', 'b', dot_size=1.25, color=self.p2s.CROW_STRETCHEDp, x_range=(12_200, 14_800), y_range=(45_000, 46_000), **_param_)
 
     def test_datetimeRanges(self):
         _lu_ = {'dt':[], 'value':[]}
@@ -164,7 +164,7 @@ class Testxyp_xy_ranges(unittest.TestCase):
         self.p2s.xyp(**_params_)
 
     def test_screenWorldTransforms(self):
-        df = pl.DataFrame({'x':[1, 2, 3, 4, 5,  6], 
+        df = pl.DataFrame({'x':[1, 2, 3, 4, 5,  6],
                            'y':[5, 7, 9, 3, 4, 15]})
         for _xrange_ in [None, (-10, 10), (2,5)]:
             for _yrange_ in [None, (-10, 10), (2,8)]:

@@ -801,7 +801,6 @@ class TestReplaceBaseDataframe(unittest.TestCase):
     # ── view refresh ─────────────────────────────────────────────────────────
 
     def test_mod_inner_updated_after_replace(self):
-        original_inner = self.ctrl.mod_inner
         new_df = _make_df()
         asyncio.run(self.ctrl.replaceBaseDataframe(new_df))
         # mod_inner should have been refreshed (not guaranteed identical, but set)

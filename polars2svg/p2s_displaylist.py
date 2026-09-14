@@ -339,7 +339,7 @@ def svgToDisplayList(svg_str: str, dl: Any, p2s: Any) -> None:
     _scale_, _tx_, _ty_ = _rootViewBoxTransform_(svg_str)
     def _TX_(x: float) -> float: return x * _scale_ + _tx_
     def _TY_(y: float) -> float: return y * _scale_ + _ty_
-    def _TL_(l: float) -> float: return l * _scale_
+    def _TL_(v: float) -> float: return v * _scale_
     def _TDASH_(d: tuple | None) -> tuple | None: return None if d is None else (d[0] * _scale_, d[1] * _scale_)
     _s_ = re.sub(r'<defs>.*?</defs>', '', svg_str, flags=re.DOTALL)
     _elem_re_ = re.compile(r'<(rect|circle|line|polygon|path|text|use)\b([^>]*?)(/>|>)', re.DOTALL)

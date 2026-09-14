@@ -78,7 +78,7 @@ class P2SColorsMixin:
             ('indicator',     'available'):   '#5f9e5f', # faded green
             ('indicator',     'unavailable'): '#cccccc', # gray, barely perceptible on the default white background
             ('selection',     'default'):   '#ff0000',
-            ('multiset',      'str'):       '#7f8367', # derived from polarsOperation behavior / not used 
+            ('multiset',      'str'):       '#7f8367', # derived from polarsOperation behavior / not used
             ('multiset',      'int'):       '#19d084', # derived from polarsOperation behavior / not used
             ('multiset',      'float'):     '#e3e294', # derived from polarsOperation behavior / not used
         }
@@ -311,18 +311,18 @@ class P2SColorsMixin:
             _conv_i_    = ((_hsv_h_*6).floor().cast(pl.Int8))
             _conv_f_    = ((_hsv_h_*6) - (_hsv_h_*6).floor())
             _conv_p_    = (_hsv_v_ * (1.0 - _hsv_s_))
-            _conv_q_    = (_hsv_v_ * (1.0 - _conv_f_ * _hsv_s_))  
+            _conv_q_    = (_hsv_v_ * (1.0 - _conv_f_ * _hsv_s_))
             _conv_t_    = (_hsv_v_ * (1.0 - (1 - _conv_f_) * _hsv_s_))
             _r_ = pl.when((_conv_i_ == 0) | (_conv_i_ == 5)).then(_hsv_v_)  \
-                    .when((_conv_i_ == 1))                  .then(_conv_q_) \
+                    .when(_conv_i_ == 1)                  .then(_conv_q_) \
                     .when((_conv_i_ == 2) | (_conv_i_ == 3)).then(_conv_p_) \
                     .otherwise(                                   _conv_t_)
-            _g_ = pl.when((_conv_i_ == 0))                  .then(_conv_t_) \
+            _g_ = pl.when(_conv_i_ == 0)                  .then(_conv_t_) \
                     .when((_conv_i_ == 1) | (_conv_i_ == 2)).then(_hsv_v_)  \
-                    .when((_conv_i_ == 3))                  .then(_conv_q_) \
+                    .when(_conv_i_ == 3)                  .then(_conv_q_) \
                     .otherwise(                                   _conv_p_)
             _b_ = pl.when((_conv_i_ == 0) | (_conv_i_ == 1)).then(_conv_p_) \
-                    .when((_conv_i_ == 2))                  .then(_conv_t_) \
+                    .when(_conv_i_ == 2)                  .then(_conv_t_) \
                     .when((_conv_i_ == 3) | (_conv_i_ == 4)).then(_hsv_v_)  \
                     .otherwise(                                   _conv_q_)
             hex_digits = "0123456789abcdef"

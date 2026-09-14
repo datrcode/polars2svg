@@ -16,7 +16,6 @@ an idle page, but it still guards against a ``mod_inner`` redraw landing mid-tes
 """
 import unittest
 
-import pytest
 
 CURSOR = '▋'          # the '▋' the handler appends to the echo
 

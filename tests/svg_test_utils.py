@@ -132,9 +132,10 @@ def assert_svg_matches_golden(svg, name):
 
 
 # The rasterizer now lives in the package (polars2svg.export) so it can back the
-# public save()/savePNG() API.  Re-exported here under the historical names so
-# existing tests keep working through a single implementation.
-from polars2svg.export import _fixSVGForRasterize_ as _fix_svg_for_rasterize
+# public save()/savePNG() API; rasterize_svg() below routes onto it so there is a
+# single implementation.  _fixSVGForRasterize_ used to be re-exported here under
+# its historical name for tests that predated the move -- nothing imports it any
+# more, so it went with the 2026-09-14 lint sweep.
 from polars2svg.export import svgToPNGBytes
 
 

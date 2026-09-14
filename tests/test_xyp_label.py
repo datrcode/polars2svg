@@ -18,7 +18,7 @@ class Testxyp_label(unittest.TestCase):
             df = randomDataFrame(10)
             for _col0_, _col1_ in _representative_pairs_:
                 for _sz_ in [256, 128, 64, 32, 16]:
-                    _xyp_ = self.p2s.xyp(df, _col0_, _col1_, wxh=(_sz_, _sz_))
+                    self.p2s.xyp(df, _col0_, _col1_, wxh=(_sz_, _sz_))
 
     def test_SignXDivUnit(self):
         assert ('',  200,              1,               '')  == self.p2s.__SignXDivUnit__(200)

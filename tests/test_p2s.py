@@ -1,7 +1,6 @@
 import unittest
 import polars as pl
 import datetime
-import random
 from polars2svg import Polars2SVG
 
 
@@ -14,7 +13,7 @@ class Testp2s(unittest.TestCase):
         _seconds_ = 1.0
         while _seconds_ < 1_000_000_000:
             _td_  = datetime.timedelta(seconds=_seconds_)
-            _str_ = self.p2s.humanReadableTimeDelta(_td_)
+            self.p2s.humanReadableTimeDelta(_td_)
             _seconds_ *= 1.1
 
 

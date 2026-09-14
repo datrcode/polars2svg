@@ -39,9 +39,9 @@ class StatisticP(P2SEnum):
     specs for ``order=`` (histop) and magnitude coloring. Exposed on the instance
     as ``p2s.MINp``, ``p2s.MEANp``, etc.'''
     MINp    = 1
-    MEDIANp = 2 
-    MEANp   = 3 
-    MAXp    = 4 
+    MEDIANp = 2
+    MEANp   = 3
+    MAXp    = 4
     STDp    = 5
     SUMp    = 6
 

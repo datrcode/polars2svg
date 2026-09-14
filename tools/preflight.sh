@@ -21,8 +21,9 @@
 #
 #   - mypy is a CEILING, not a clean bill of health -- see _MYPY_CEILING_ below.
 #     730 real errors stand behind it.
-#   - ruff checks polars2svg/ only.  tests/ is unlinted and holds 106 E9/F
-#     findings including an F821; widening the scope is Q3.
+#   - ruff checks the whole tree as of Q3 (2026-09-14), not just polars2svg/.
+#     tests/ had never been linted and held 106 E9/F findings including an F821;
+#     those are fixed and the scope now matches ci.yml's.
 #   - bandit and mypy are pure functions of the repo contents and genuinely
 #     predict CI.  pip-audit is not.  Its result depends on pypi.org being
 #     reachable and on the vulnerability database's contents at the moment CI
@@ -157,7 +158,7 @@ _step_mypy_() {
 
 _step_mypy_
 _step_ 'bandit (security scan)'  uvx bandit -r polars2svg/
-_step_ 'ruff (E9, F)'            .venv/bin/python -m ruff check polars2svg/
+_step_ 'ruff'                    .venv/bin/python -m ruff check .
 
 # Two commands, so it needs a subshell rather than a bare _step_ invocation.
 #

@@ -6,7 +6,6 @@ component test files (test_histop_basic.py, test_histop_extended.py,
 test_timep_basic.py).
 """
 import unittest
-import polars as pl
 
 from polars2svg import Polars2SVG
 from histop_dataframes import makeHistoDf

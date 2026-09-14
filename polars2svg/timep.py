@@ -299,11 +299,11 @@ class Timep(P2SBinComponentMixin, ExportMixin):
 
         # Validate count
         if self.count != self.p2s.ROW_COUNTp:
-            if isinstance(self.count, str) and self.p2s.columnInDataFrame(self.count, self.df) == False:
+            if isinstance(self.count, str) and not self.p2s.columnInDataFrame(self.count, self.df):
                 raise ValueError(f'Timep.__validateInput__(): count field "{self.count}" not found')
             elif isinstance(self.count, tuple):
                 for _f_ in self.count:
-                    if isinstance(_f_, str) and self.p2s.columnInDataFrame(_f_, self.df) == False:
+                    if isinstance(_f_, str) and not self.p2s.columnInDataFrame(_f_, self.df):
                         raise ValueError(f'Timep.__validateInput__(): count field "{_f_}" not found')
 
         # Validate color

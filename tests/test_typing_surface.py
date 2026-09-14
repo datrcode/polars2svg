@@ -584,6 +584,27 @@ class TestAnnotationSanity(unittest.TestCase):
         return [_n_ for _n_ in cls._own_nodes(fn) if isinstance(_n_, ast.Return)]
 
     @classmethod
+    def _admits_none(cls, ann):
+        '''True when the annotation's TOP LEVEL admits None -- `X | None`,
+        `Optional[X]`, or the same written as a string.
+
+        Deliberately structural rather than `'None' in ast.unparse(ann)`, which
+        gets both halves wrong: `Optional[List[X]]` contains no literal "None",
+        so every Optional-spelled return skipped the check silently; and
+        `dict[K, V | None]` does contain one, though the function returns a dict
+        and never returns None.  The substring test only looked right while the
+        package spelled optionals the old way -- modernising them to `V | None`
+        turned the first error into the second.'''
+        if isinstance(ann, ast.Constant) and isinstance(ann.value, str):
+            try:    ann = ast.parse(ann.value, mode='eval').body
+            except SyntaxError: return False
+        if isinstance(ann, ast.Subscript):
+            return ast.unparse(ann.value) in ('Optional', 'typing.Optional')
+        if isinstance(ann, ast.BinOp) and isinstance(ann.op, ast.BitOr):
+            return cls._admits_none(ann.left) or cls._admits_none(ann.right)
+        return isinstance(ann, ast.Constant) and ann.value is None
+
+    @classmethod
     def _none_bound_names(cls, fn):
         '''Locals fn assigns the None literal to, `a, b = None, x` included.'''
         _out_ = set()
@@ -639,7 +660,7 @@ class TestAnnotationSanity(unittest.TestCase):
         for _file_, _n_ in self._functions():
             if _n_.returns is None: continue
             _ann_ = ast.unparse(_n_.returns)
-            if 'None' not in _ann_ or _ann_ in ('None', 'Any'): continue
+            if _ann_ in ('None', 'Any') or not self._admits_none(_n_.returns): continue
             _rs_ = self._own_returns(_n_)
             # A None path is a bare `return`, `return None`, or any returned
             # expression that mentions None -- `return x or None`,

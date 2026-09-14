@@ -395,7 +395,7 @@ class ChP(P2SComponentColorMixin, ExportMixin):
     _legend_region_:    tuple | None
     _legend_stat_max_:  float | None
     _legend_stat_min_:  float | None
-    df:                 Any
+    df:                 pl.DataFrame | None
     df_link:            pl.DataFrame | None
     df_orig:            pl.DataFrame | None
     legend_info:        Any
@@ -883,7 +883,7 @@ class ChP(P2SComponentColorMixin, ExportMixin):
     # __dropNullEdges__() - rows where both endpoints of `rel` are present.
     #
     def __dropNullEdges__(self, rel: tuple) -> pl.DataFrame:
-        return self.df.filter(pl.col(rel[0]).is_not_null() & pl.col(rel[1]).is_not_null())
+        return cast(pl.DataFrame, self.df).filter(pl.col(rel[0]).is_not_null() & pl.col(rel[1]).is_not_null())
 
     #
     # __calculateOrder__()
@@ -891,6 +891,9 @@ class ChP(P2SComponentColorMixin, ExportMixin):
     #
     def __calculateOrder__(self) -> None:
         # Collect all nodes from the data & compute their edge weights
+        # __init__ gates the render stage on `self.df is not None`; the guard is what
+        # lets a checker see it.  PLANNING.md T7.
+        if self.df is None: return
         _dfs_ = []
         _node_series_ = []
         # A null endpoint is not a node: the node series below has always dropped nulls,
@@ -1343,6 +1346,10 @@ class ChP(P2SComponentColorMixin, ExportMixin):
     # - computes link attachment points from df_node arc geometry
     #
     def __renderLinks__(self) -> None:
+        # __init__ gates the render stage on `self.df is not None`, so this cannot
+        # fire; the guard is what lets a checker see it.  Same idiom as the other
+        # components.  PLANNING.md T7.
+        if self.df is None: return
         _WIDE_THRESH_ = 6.0   # px arc-length at inner radius to treat a node as "wide"
         _INSET_PX_    = 2.0   # px inset from each edge of a wide node
         _TENSION_     = 1.0   # max Bezier pull toward center (reached when nodes are opposite)
@@ -2234,7 +2241,7 @@ class ChP(P2SComponentColorMixin, ExportMixin):
         _dx_, _dy_ = _x_ - self.cx, _y_ - self.cy
         _dist_ = sqrt(_dx_*_dx_ + _dy_*_dy_)
         if _dist_ < self.r_inner - threshold or _dist_ > self.r + threshold:
-            return self.df.head(0)
+            return cast(pl.DataFrame, self.df).head(0)
         _angle_ = atan2(_dy_, _dx_)
         if _angle_ < 0: _angle_ += 2.0 * pi
         _nodes_ = set(
@@ -2242,8 +2249,8 @@ class ChP(P2SComponentColorMixin, ExportMixin):
             .filter((pl.col('__a0r__') <= _angle_) & (pl.col('__a1r__') >= _angle_))
             ['__nm__'].cast(pl.String).to_list()
         )
-        if not _nodes_: return self.df.head(0)
-        return self.df.filter(self.__maskForNodes__(list(_nodes_), both=False))
+        if not _nodes_: return cast(pl.DataFrame, self.df).head(0)
+        return cast(pl.DataFrame, self.df).filter(self.__maskForNodes__(list(_nodes_), both=False))
 
     def filterByRectangle(self, bounding_box: tuple, remove_records: bool = False) -> pl.DataFrame:
         _x0_, _y0_, _x1_, _y1_ = bounding_box
@@ -2263,10 +2270,10 @@ class ChP(P2SComponentColorMixin, ExportMixin):
             ['__nm__'].cast(pl.String).to_list()
         )
         if not _nodes_:
-            return self.df.head(0) if not remove_records else self.df
+            return cast(pl.DataFrame, self.df).head(0) if not remove_records else cast(pl.DataFrame, self.df)
         _mask_ = self.__maskForNodes__(list(_nodes_), both=True)
         if remove_records: _mask_ = ~_mask_
-        return self.df.filter(_mask_)
+        return cast(pl.DataFrame, self.df).filter(_mask_)
 
     def filterByOval(self, oval: tuple, remove_records: bool = False) -> pl.DataFrame:
         _cx_, _cy_, _rx_, _ry_ = oval
@@ -2286,10 +2293,10 @@ class ChP(P2SComponentColorMixin, ExportMixin):
             ['__nm__'].cast(pl.String).to_list()
         )
         if not _nodes_:
-            return self.df.head(0) if not remove_records else self.df
+            return cast(pl.DataFrame, self.df).head(0) if not remove_records else cast(pl.DataFrame, self.df)
         _mask_ = self.__maskForNodes__(list(_nodes_), both=True)
         if remove_records: _mask_ = ~_mask_
-        return self.df.filter(_mask_)
+        return cast(pl.DataFrame, self.df).filter(_mask_)
 
     def render_with(self, df: pl.DataFrame, **overrides: Any) -> 'ChP':
         # `overrides` cannot be Unpack[ChPKwargs]: PEP 692 rejects a TypedDict

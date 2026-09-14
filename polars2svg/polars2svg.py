@@ -2182,7 +2182,10 @@ class Polars2SVG(P2SColorsMixin,
     # can itself be a real column in df. The transform still wins (the caller applies it
     # regardless), but a one-time warning flags that the real column is being shadowed.
     #
-    def warnIfTFieldAliasCollides(self, tfield: Any, df: pl.DataFrame, component_name: str) -> None:
+    # df is Optional because callers pass component .df, which is None on a template
+    # instance -- the body has always guarded for it.  The annotation said otherwise
+    # until T7 typed the components' df and the mismatch became visible.
+    def warnIfTFieldAliasCollides(self, tfield: Any, df: pl.DataFrame | None, component_name: str) -> None:
         if df is not None and isinstance(tfield, self.TField) and str(tfield) in df.columns:
             self.logger.warning(f'{component_name}: column {str(tfield)!r} is shadowed by the derived t-field column for {tfield!r}')
 

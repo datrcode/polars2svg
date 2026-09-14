@@ -182,7 +182,7 @@ class SpreadLinesP(ExportMixin):
     _rand_id_:        int
     _ts_enum_:        Any
     _ts_field_:       Any
-    df:               Any
+    df:               pl.DataFrame | None
     df_orig:          pl.DataFrame | None
     legend_info:      Any
     relationships_orig: Any
@@ -437,7 +437,7 @@ class SpreadLinesP(ExportMixin):
         if self.count == self.p2s.ROW_COUNTp:
             return pl.len().alias('__count__')
         elif isinstance(self.count, str):
-            _is_num_ = self.p2s.numericColumn(self.df, self.count)
+            _is_num_ = self.p2s.numericColumn(cast(pl.DataFrame, self.df), self.count)
             self.p2s.logDtypeKeyedCount('SpreadLinesP', self.count, _is_num_)
             if _is_num_:
                 return pl.col(self.count).sum().alias('__count__')
@@ -514,11 +514,14 @@ class SpreadLinesP(ExportMixin):
     def __dataGranularityCap__(self) -> TimeLinearTypeP:
         """Return the finest TimeLinearTypeP allowed by actual data precision."""
         p = self.p2s
-        if p.dateColumn(self.df, self._ts_field_):
+        # Render-stage only: __init__ gates on `self.df is not None`.  One alias rather
+        # than a cast at each use.  PLANNING.md T7.
+        _df_ = cast(pl.DataFrame, self.df)
+        if p.dateColumn(_df_, self._ts_field_):
             return p.LT_Y_m_dp          # Date columns: daily is the finest
-        if len(self.df) == 0:
+        if len(_df_) == 0:
             return p.LT_Y_m_dp
-        _s_ = self.df.select([
+        _s_ = _df_.select([
             pl.col(self._ts_field_).dt.hour()  .n_unique().alias('nh'),
             pl.col(self._ts_field_).dt.minute().n_unique().alias('nm'),
             pl.col(self._ts_field_).dt.second().n_unique().alias('ns'),
@@ -563,7 +566,7 @@ class SpreadLinesP(ExportMixin):
         for _rel_ in self.relationships:
             _fm_col_, _to_col_ = _rel_[0], _rel_[1]
             _ego_dfs_.append(
-                self.df.filter(
+                cast(pl.DataFrame, self.df).filter(
                     pl.col(_fm_col_).cast(pl.String).is_in(self.node_focus) |
                     pl.col(_to_col_).cast(pl.String).is_in(self.node_focus)
                 ).select(self._ts_field_)
@@ -609,6 +612,10 @@ class SpreadLinesP(ExportMixin):
 
     def __calculateLayout__(self) -> None:
         # ── Normalise ego to a frozenset of strings ────────────────────────────
+        # __init__ gates the render stage on `self.df is not None`, so this cannot
+        # fire; the guard is what lets a checker see it.  Same idiom as the other
+        # components.  PLANNING.md T7.
+        if self.df is None: return
         if isinstance(self.ego, (list, set)):
             self.node_focus = frozenset(str(n) for n in self.ego)
         else:

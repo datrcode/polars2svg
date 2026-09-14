@@ -198,7 +198,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
     _time_enum_:            Any
     _time_field_:           Any
     _timing_mark_dl_table_: pl.DataFrame | None
-    df:                     Any
+    df:                     pl.DataFrame | None
     df_link:                pl.DataFrame | None
     df_orig:                pl.DataFrame | None
     legend_info:            Any
@@ -843,6 +843,10 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
     # self._is_periodic_.
     #
     def __resolveTimeField__(self) -> None:
+        # __init__ gates the render stage on `self.df is not None`, so this cannot
+        # fire; the guard is what lets a checker see it.  Same idiom as the other
+        # components.  PLANNING.md T7.
+        if self.df is None: return
         self._time_field_  = None
         self._time_enum_   = None
         self._is_periodic_ = False
@@ -952,6 +956,10 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
     def __calculateGeometry__(self) -> None:
         # Legend strip (if any) comes out of wxh first -- the plot region shrinks,
         # the physical output size does not ("reserve from wxh").
+        # __init__ gates the render stage on `self.df is not None`, so this cannot
+        # fire; the guard is what lets a checker see it.  Same idiom as the other
+        # components.  PLANNING.md T7.
+        if self.df is None: return
         self.__legendPrepare__()
         # Collect all nodes from the data (unique in Polars; only the distinct
         # values cross into Python instead of every row)
@@ -983,35 +991,45 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
             self.ycols += [_fmy_, _toy_]
         self.df = self.df.with_columns(*_operations_)
 
-        # Compute world bounds
-        self.wx0 = self.df[self.xcols[0]].min()
-        self.wy0 = self.df[self.ycols[0]].min()
-        self.wx1 = self.df[self.xcols[0]].max()
-        self.wy1 = self.df[self.ycols[0]].max()
+        # Compute world bounds.
+        #
+        # Accumulated in LOCALS through the None-handling, then assigned once, so that
+        # self.wx0/wy0/wx1/wy1 are plain floats for every later reader.  That matters
+        # because the four transform lambdas built at the end of this method close over
+        # `self` and read the attributes' DECLARED type -- narrowing the attribute here
+        # would not reach inside them.  The values start as polars aggregates, typed as
+        # the ten-way PythonLiteral union, and mypy reports one error per incompatible
+        # operand PAIR: this block and those lambdas came to 782 errors over twelve
+        # lines once `df` was typed honestly.  Same logic as before, same values, just
+        # held somewhere a checker can follow.  PLANNING.md T7.
+        _wx0_ = cast('float | None', self.df[self.xcols[0]].min())
+        _wy0_ = cast('float | None', self.df[self.ycols[0]].min())
+        _wx1_ = cast('float | None', self.df[self.xcols[0]].max())
+        _wy1_ = cast('float | None', self.df[self.ycols[0]].max())
         for i in range(1, len(self.xcols)):
-            _xmin_ = self.df[self.xcols[i]].min()
-            _ymin_ = self.df[self.ycols[i]].min()
-            _xmax_ = self.df[self.xcols[i]].max()
-            _ymax_ = self.df[self.ycols[i]].max()
-            if _xmin_ is not None: self.wx0 = min(self.wx0, _xmin_) if self.wx0 is not None else _xmin_
-            if _ymin_ is not None: self.wy0 = min(self.wy0, _ymin_) if self.wy0 is not None else _ymin_
-            if _xmax_ is not None: self.wx1 = max(self.wx1, _xmax_) if self.wx1 is not None else _xmax_
-            if _ymax_ is not None: self.wy1 = max(self.wy1, _ymax_) if self.wy1 is not None else _ymax_
+            _xmin_ = cast('float | None', self.df[self.xcols[i]].min())
+            _ymin_ = cast('float | None', self.df[self.ycols[i]].min())
+            _xmax_ = cast('float | None', self.df[self.xcols[i]].max())
+            _ymax_ = cast('float | None', self.df[self.ycols[i]].max())
+            if _xmin_ is not None: _wx0_ = min(_wx0_, _xmin_) if _wx0_ is not None else _xmin_
+            if _ymin_ is not None: _wy0_ = min(_wy0_, _ymin_) if _wy0_ is not None else _ymin_
+            if _xmax_ is not None: _wx1_ = max(_wx1_, _xmax_) if _wx1_ is not None else _xmax_
+            if _ymax_ is not None: _wy1_ = max(_wy1_, _ymax_) if _wy1_ is not None else _ymax_
 
         # Extend bounds to include all pos nodes if requested
         if self.use_pos_for_bounds:
             for _node_, _v_ in self.pos.items():
                 _px_, _py_ = float(_v_[0]), float(_v_[1])
-                self.wx0 = min(self.wx0, _px_) if self.wx0 is not None else _px_
-                self.wy0 = min(self.wy0, _py_) if self.wy0 is not None else _py_
-                self.wx1 = max(self.wx1, _px_) if self.wx1 is not None else _px_
-                self.wy1 = max(self.wy1, _py_) if self.wy1 is not None else _py_
+                _wx0_ = min(_wx0_, _px_) if _wx0_ is not None else _px_
+                _wy0_ = min(_wy0_, _py_) if _wy0_ is not None else _py_
+                _wx1_ = max(_wx1_, _px_) if _wx1_ is not None else _px_
+                _wy1_ = max(_wy1_, _py_) if _wy1_ is not None else _py_
 
         # Defaults if still None
-        if self.wx0 is None: self.wx0 = 0.0
-        if self.wy0 is None: self.wy0 = 0.0
-        if self.wx1 is None: self.wx1 = 1.0
-        if self.wy1 is None: self.wy1 = 1.0
+        self.wx0 = 0.0 if _wx0_ is None else _wx0_
+        self.wy0 = 0.0 if _wy0_ is None else _wy0_
+        self.wx1 = 1.0 if _wx1_ is None else _wx1_
+        self.wy1 = 1.0 if _wy1_ is None else _wy1_
 
         # Handle degenerate single-point bounds
         if abs(self.wx1 - self.wx0) < 1e-6: self.wx0, self.wx1 = self.wx0 - 0.5, self.wx1 + 0.5
@@ -1056,6 +1074,10 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
     # - batch convert all world coordinate columns to integer screen coordinates
     #
     def __calculateScreenCoordinates__(self) -> None:
+        # __init__ gates the render stage on `self.df is not None`, so this cannot
+        # fire; the guard is what lets a checker see it.  Same idiom as the other
+        # components.  PLANNING.md T7.
+        if self.df is None: return
         _lg_l_, _lg_r_, _lg_t_, _lg_b_ = self._legend_reserve_
         w,  h  = self.wxh[0] - _lg_l_ - _lg_r_, self.wxh[1] - _lg_t_ - _lg_b_
         xi, yi = self.insets
@@ -1074,7 +1096,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
     def __countMinMax__(self, col: pl.Series) -> tuple:
         if self.count_range_shared is not None:
             return float(self.count_range_shared[0]), float(self.count_range_shared[1])
-        lo, hi = col.min(), col.max()
+        lo, hi = cast('float | None', col.min()), cast('float | None', col.max())
         return (float(lo) if lo is not None else 0.0, float(hi) if hi is not None else 1.0)
 
     def __interpolatedSizeExpr__(self, size_range: tuple, lo: float, hi: float) -> pl.Expr:
@@ -1617,7 +1639,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
         # null control points and an unrenderable path.
         return (
             self.__curveControlPointColumns__(df, i)
-            .join(self._flowmap_cp_,
+            .join(cast(pl.DataFrame, self._flowmap_cp_),
                   left_on=[_fm_sx_, _fm_sy_, _to_sx_, _to_sy_],
                   right_on=['__fmx__', '__fmy__', '__tox__', '__toy__'],
                   how='left')
@@ -1690,6 +1712,10 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
     # - uses Polars group_by + concat_str to build SVG strings without Python row loops
     #
     def __renderLinks__(self) -> None:
+        # __init__ gates the render stage on `self.df is not None`, so this cannot
+        # fire; the guard is what lets a checker see it.  Same idiom as the other
+        # components.  PLANNING.md T7.
+        if self.df is None: return
         _node_size_lu_ = {'small': 1, 'nil': 0.2, 'medium': 3, 'large': 5}
         _sz_           = _node_size_lu_.get(self.link_size, 1.0)
         if isinstance(self.link_size, (int, float)): _sz_ = float(self.link_size)
@@ -1846,8 +1872,8 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
         # Normalized time over the whole df (the "min/max timestamp position for the
         # rendered dataframe") + spectrum color, computed once for every record.
         _dfn_  = self.df.with_columns(self.__timeNumericExpr__().alias('__tm_num__'))
-        _tmin_ = _dfn_['__tm_num__'].min()
-        _tmax_ = _dfn_['__tm_num__'].max()
+        _tmin_ = cast('float | None', _dfn_['__tm_num__'].min())
+        _tmax_ = cast('float | None', _dfn_['__tm_num__'].max())
         if _tmin_ is None or _tmax_ is None:
             return
         _tmin_, _tmax_ = float(_tmin_), float(_tmax_)
@@ -2011,6 +2037,10 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
     # - group by screen coordinates and assemble SVG strings without Python row loops
     #
     def __renderNodes__(self) -> None:
+        # __init__ gates the render stage on `self.df is not None`, so this cannot
+        # fire; the guard is what lets a checker see it.  Same idiom as the other
+        # components.  PLANNING.md T7.
+        if self.df is None: return
         _node_size_lu_ = {'small': 3, 'medium': 5, 'large': 7, 'nil': 0.5}
 
         # Build node DataFrame by concat of fm/to columns for each relationship
@@ -2259,8 +2289,8 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
             _all_counts_.append(self.df_node['__count__'].cast(pl.Float64))
         if _all_counts_:
             _combined_ = pl.concat(_all_counts_)
-            _min_v_ = _combined_.min()
-            _max_v_ = _combined_.max()
+            _min_v_ = cast('float | None', _combined_.min())
+            _max_v_ = cast('float | None', _combined_.max())
             self._count_min_ = float(_min_v_) if _min_v_ is not None else 0.0
             self._count_max_ = float(_max_v_) if _max_v_ is not None else 1.0
 

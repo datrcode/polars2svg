@@ -1,4 +1,4 @@
-from typing import Any, TypedDict, Unpack, cast
+from typing import Any, Literal, TypedDict, Unpack, cast
 import polars as pl
 import time
 import random
@@ -133,7 +133,7 @@ class Piep(ExportMixin):
     _hex_list_:       Any
     _legend_region_:  Any
     _shared_order_:   list | None
-    df:               Any
+    df:               pl.DataFrame | None
     df_orig:          pl.DataFrame | None
     legend_info:      Any
     template:         'Piep | None'
@@ -345,6 +345,10 @@ class Piep(ExportMixin):
     #                linearly (magnitude) or by rank (stretched)
     #
     def __resolveColor__(self) -> None:
+        # __init__ gates the render stage on `self.df is not None`, so this cannot
+        # fire; the guard is what lets a checker see it.  Same idiom as the other
+        # components.  PLANNING.md T7.
+        if self.df is None: return
         self._color_mode_         = 'none'
         self._color_fields_       = []
         self._color_field_        = None
@@ -437,6 +441,10 @@ class Piep(ExportMixin):
             raise ValueError(f'Piep: unsupported color enum {_enum_}')
 
     def __addColumnsToDataFrame__(self) -> None:
+        # __init__ gates the render stage on `self.df is not None`, so this cannot
+        # fire; the guard is what lets a checker see it.  Same idiom as the other
+        # components.  PLANNING.md T7.
+        if self.df is None: return
         _ops_ = []
 
         # Multi-field bin: concatenate to '__bin__' (non-printable separator so distinct
@@ -477,7 +485,7 @@ class Piep(ExportMixin):
         if self.count == self.p2s.ROW_COUNTp:
             return pl.len().alias('__count__')
         elif isinstance(self.count, str):
-            _is_num_ = self.p2s.numericColumn(self.df, self.count)
+            _is_num_ = self.p2s.numericColumn(cast(pl.DataFrame, self.df), self.count)
             self.p2s.logDtypeKeyedCount('Piep', self.count, _is_num_)
             if _is_num_: return pl.col(self.count).sum()    .alias('__count__')
             else:        return pl.col(self.count).n_unique().alias('__count__')
@@ -496,6 +504,10 @@ class Piep(ExportMixin):
     def __computeAggregates__(self) -> None:
         # Coloring mode was resolved in __resolveColor__; expose the two flags the
         # rest of the pipeline (spectrum range, smallp sharing) keys off of.
+        # __init__ gates the render stage on `self.df is not None`, so this cannot
+        # fire; the guard is what lets a checker see it.  Same idiom as the other
+        # components.  PLANNING.md T7.
+        if self.df is None: return
         self._color_is_spectrum_ = (self._color_mode_ == 'spectrum')
         self._color_is_crow_     = (self._color_agg_ == 'rowcount')
 
@@ -1182,14 +1194,14 @@ class Piep(ExportMixin):
     def __binsForBins__(self, bins: list, remove: bool = False) -> pl.DataFrame:
         _bins_ = self.__expandBins__(bins)
         if not _bins_:
-            return self.__dropInternal__(self.df if remove else self.df.clear())
+            return self.__dropInternal__(cast(pl.DataFrame, self.df) if remove else cast(pl.DataFrame, self.df).clear())
         _bin_dtype_   = self.df_agg[self._bin_col_].dtype
         _selected_df_ = pl.DataFrame({self._bin_col_: _bins_}, schema={self._bin_col_: _bin_dtype_})
-        _how_         = 'anti' if remove else 'inner'
+        _how_: Literal['anti', 'inner'] = 'anti' if remove else 'inner'
         # nulls_equal=True: polars joins treat null as unequal to itself by default,
         # which left the "None" slice unable to be selected (inner -> no rows) or
         # filtered out (anti -> nothing removed).
-        return self.__dropInternal__(self.df.join(_selected_df_, on=self._bin_col_,
+        return self.__dropInternal__(cast(pl.DataFrame, self.df).join(_selected_df_, on=self._bin_col_,
                                                   how=_how_, nulls_equal=True))
 
     def __binAtAngleDist__(self, angle_deg: float, dist: float) -> Any:
@@ -1240,7 +1252,7 @@ class Piep(ExportMixin):
             _ang_      = atan2(_dy_, _dx_) * 180.0 / pi
             _bin_      = self.__binAtAngleDist__(_ang_, _dist_)
         if _bin_ is _NO_BIN_:
-            return self.__dropInternal__(self.df.clear())
+            return self.__dropInternal__(cast(pl.DataFrame, self.df).clear())
         return self.__sliceForBin__(_bin_)
 
     def filterByRectangle(self, bounding_box: tuple, remove_records: bool = False) -> pl.DataFrame:
@@ -1307,7 +1319,7 @@ class Piep(ExportMixin):
 
         _selected_ = list(dict.fromkeys(_selected_))
         if not _selected_:
-            return self.__dropInternal__(self.df if remove_records else self.df.clear())
+            return self.__dropInternal__(cast(pl.DataFrame, self.df) if remove_records else cast(pl.DataFrame, self.df).clear())
         return self.__binsForBins__(_selected_, remove=remove_records)
 
     def filterByOval(self, oval: tuple, remove_records: bool = False) -> pl.DataFrame:
@@ -1373,7 +1385,7 @@ class Piep(ExportMixin):
 
         _selected_ = list(dict.fromkeys(_selected_))
         if not _selected_:
-            return self.__dropInternal__(self.df if remove_records else self.df.clear())
+            return self.__dropInternal__(cast(pl.DataFrame, self.df) if remove_records else cast(pl.DataFrame, self.df).clear())
         return self.__binsForBins__(_selected_, remove=remove_records)
 
     def filterBySubstring(self, substring: str, remove_bins: bool = False) -> pl.DataFrame:
@@ -1389,5 +1401,5 @@ class Piep(ExportMixin):
             _matching_ += list(self._other_members_)
         _matching_ = list(dict.fromkeys(_matching_))
         if not _matching_:
-            return self.__dropInternal__(self.df if remove_bins else self.df.clear())
+            return self.__dropInternal__(cast(pl.DataFrame, self.df) if remove_bins else cast(pl.DataFrame, self.df).clear())
         return self.__binsForBins__(_matching_, remove=remove_bins)

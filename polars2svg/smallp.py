@@ -87,11 +87,21 @@ class Smallp(ExportMixin):
     _gpu_dl_:      Any
     _gpu_payload_: dict | None
     category_by:   Any
-    df:            Any
+    df:            pl.DataFrame | None
     df_orig:       pl.DataFrame | None
     sm_template:   Any
     _render_lu_:    dict
     category_to_xy: dict
+    # Declared as bare dict/list on purpose (PLANNING.md T7).  Typing `df` honestly
+    # exposed that these are heterogeneous by design and the inferred types were
+    # wrong: a category key is a str for a list/dict category_by but a TUPLE of
+    # column values for a str/tuple one (see __computeSortedKeys__), and
+    # category_to_df stores None for the '__remainder__' slot when there is no
+    # remainder frame.  dict[str, pl.DataFrame] -- what mypy inferred from the
+    # first assignment it saw -- was narrower than the code has ever been.
+    category_to_df:   dict
+    category_by_dict: dict
+    _sorted_category_keys_: list
     svg:            str
     wxh:            Any
     wxh_actual:     tuple
@@ -194,6 +204,10 @@ class Smallp(ExportMixin):
             return '|'.join(_as_strs_) if len(_tuple_) > 1 else str(_tuple_[0])
 
     def _validate_tfield_column_(self, field: Any) -> None:
+        # __init__ gates the render stage on `self.df is not None`, so this cannot
+        # fire; the guard is what lets a checker see it.  Same idiom as the other
+        # components.  PLANNING.md T7.
+        if self.df is None: return
         _column_, _ = self.p2s.tFieldTuple(field)
         _types_          = self.p2s.tFieldAccepts(field)
         if not any(isinstance(self.df.dtypes[self.df.columns.index(_column_)], t) for t in _types_):
@@ -255,10 +269,15 @@ class Smallp(ExportMixin):
                 pass
             elif self.p2s.isTemplate(arg) and self.sm_template is None:
                 self.sm_template = arg
-            elif isinstance(arg, str) and __isColumn__(self.df, arg):
+            # cast, not a guard: __isColumn__ -> columnInDataFrame does `col in df.columns`
+            # and would raise on None.  A Smallp built from a bare column name with no df
+            # would therefore already fail here; preserving that rather than turning it
+            # into a silent False, which would fall through to a different branch.
+            # PLANNING.md T7 records it with the other latent None path.
+            elif isinstance(arg, str) and __isColumn__(cast(pl.DataFrame, self.df), arg):
                 if self.category_by is not None: raise ValueError('Smallp.__parseInput__(): category_by already set (2)')
                 self.category_by = arg
-            elif isinstance(arg, tuple) and __tupleElementsAreColumns__(self.df, arg):
+            elif isinstance(arg, tuple) and __tupleElementsAreColumns__(cast(pl.DataFrame, self.df), arg):
                 if self.category_by is not None: raise ValueError('Smallp.__parseInput__(): category_by already set (3)')
                 self.category_by = arg
             elif isinstance(arg, list) and __elementsAreDataFrames__(arg):
@@ -326,6 +345,10 @@ class Smallp(ExportMixin):
                         self._validate_tfield_column_(field)
 
     def __addColumnsToDataFrame__(self) -> None:
+        # __init__ gates the render stage on `self.df is not None`, so this cannot
+        # fire; the guard is what lets a checker see it.  Same idiom as the other
+        # components.  PLANNING.md T7.
+        if self.df is None: return
         _ops_ = []
         def __addOp__(field: Any) -> None:
             self.p2s.warnIfTFieldAliasCollides(field, self.df, 'Smallp')
@@ -369,6 +392,10 @@ class Smallp(ExportMixin):
         return pl.len().alias('__order_metric__')
 
     def __computeOrderingStats__(self) -> None:
+        # __init__ gates the render stage on `self.df is not None`, so this cannot
+        # fire; the guard is what lets a checker see it.  Same idiom as the other
+        # components.  PLANNING.md T7.
+        if self.df is None: return
         if isinstance(self.category_by, (str, tuple)):
             _cat_cols_ = [self.category_by] if isinstance(self.category_by, str) else list(self.category_by)
             _agg_df_   = self.df.group_by(_cat_cols_).agg(self.__orderAggExpr__())
@@ -421,9 +448,13 @@ class Smallp(ExportMixin):
         return pl.lit(True) if _pred_ is None else _pred_
 
     def __filterForKey__(self, key: tuple) -> pl.DataFrame:
-        return self.df.filter(self.__predicateForKey__(key))
+        return cast(pl.DataFrame, self.df).filter(self.__predicateForKey__(key))   # post-render; see T7
 
     def __constructGeometry__(self) -> None:
+        # __init__ gates the render stage on `self.df is not None`, so this cannot
+        # fire; the guard is what lets a checker see it.  Same idiom as the other
+        # components.  PLANNING.md T7.
+        if self.df is None: return
         _tiles_needed_ = self._num_categories_
         if self.include_all: _tiles_needed_ += 1
         tmpl_w, tmpl_h = self.sm_template.wxh

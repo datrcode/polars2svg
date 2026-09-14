@@ -28,7 +28,7 @@ class P2SComponentColorMixin:
     # ---------------------------------------------------------------------
     color:                   Any
     color_stat_range_shared: Any
-    df:                      Any
+    df:                      pl.DataFrame | None
     node_color:              Any
     p2s:                     Any
 

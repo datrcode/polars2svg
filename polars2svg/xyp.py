@@ -231,7 +231,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     _gpu_payload_:         dict | None
     _legend_region_:       tuple | None
     color_clean:           list | None
-    df:                    Any
+    df:                    pl.DataFrame | None
     df_flat:               pl.DataFrame
     df_orig:               pl.DataFrame | None
     df_x_distribution:     pl.DataFrame | None
@@ -899,6 +899,10 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     # - must only be called when self.df is not None
     #
     def __applyTimeFieldTransforms__(self) -> None:
+        # __init__ gates the render stage on `self.df is not None`, so this cannot
+        # fire; the guard is what lets a checker see it.  Same idiom as the other
+        # components.  PLANNING.md T7.
+        if self.df is None: return
         _ops_: list
         _needed_columns_: set
         _ops_, _needed_columns_ = [], set()
@@ -935,6 +939,10 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     #
     def __validateColumnTypes__(self) -> None:
         # Most of the column checks are here / with the exception of line, line_order_by, and the x/y distributions
+        # __init__ gates the render stage on `self.df is not None`, so this cannot
+        # fire; the guard is what lets a checker see it.  Same idiom as the other
+        # components.  PLANNING.md T7.
+        if self.df is None: return
         for _triple_ in [(self.x_clean,             self.x_is_lits,             'x'),
                          (self.y_clean,             self.y_is_lits,             'y'),
                          (self.color_clean,         self.color_is_lits,         'color'),
@@ -1012,6 +1020,10 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     # - assumption: string spec items are only ever column names or hex colors
     #
     def __addTransformIfNeeded__(self, _str_: Any, _ops_: list, _needed_columns_: set) -> None:
+        # __init__ gates the render stage on `self.df is not None`, so this cannot
+        # fire; the guard is what lets a checker see it.  Same idiom as the other
+        # components.  PLANNING.md T7.
+        if self.df is None: return
         if _str_ in _needed_columns_: return
         if isinstance(_str_, self.p2s.TField):
             self.p2s.warnIfTFieldAliasCollides(_str_, self.df_orig, 'XYp')
@@ -1036,9 +1048,9 @@ class XYp(P2SBackgroundMixin, ExportMixin):
         if isinstance(_obj_, tuple):
             _as_list_ = []
             for i in range(len(_obj_)):
-                if isinstance(_obj_[i], str): _as_list_.append(self.df.dtypes[self.df.columns.index(_obj_[i])])
+                if isinstance(_obj_[i], str): _as_list_.append(cast(pl.DataFrame, self.df).dtypes[cast(pl.DataFrame, self.df).columns.index(_obj_[i])])
             return tuple(_as_list_)
-        else: return self.df.dtypes[self.df.columns.index(_obj_)]
+        else: return cast(pl.DataFrame, self.df).dtypes[cast(pl.DataFrame, self.df).columns.index(_obj_)]
 
     #
     # __validateInput__()
@@ -1344,7 +1356,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
         if self.spectral_by is not None:
             _by_   = list(self.spectral_by) if isinstance(self.spectral_by, (list, tuple)) else [self.spectral_by]
             _work_ = _base_.select(['__p2s_index__', src_col]).join(
-                         self.df.select(['__p2s_index__', *_by_]), on='__p2s_index__', how='left')
+                         cast(pl.DataFrame, self.df).select(['__p2s_index__', *_by_]), on='__p2s_index__', how='left')
             if len(_by_) == 1:
                 _sig_col_ = _by_[0]
             else:
@@ -1356,7 +1368,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
 
         # Weight each contingency cell: sum a numeric column, else count rows.
         if self.spectral_weight is not None:
-            _work_ = _work_.join(self.df.select(['__p2s_index__', self.spectral_weight]),
+            _work_ = _work_.join(cast(pl.DataFrame, self.df).select(['__p2s_index__', self.spectral_weight]),
                                  on='__p2s_index__', how='left')
             _agg_  = pl.col(self.spectral_weight).sum().alias('__spec_w__')
         else:
@@ -3792,8 +3804,8 @@ class XYp(P2SBackgroundMixin, ExportMixin):
                                             (pl.col('__ypx__') >= _y0_) &
                                             (pl.col('__ypx__') <= _y1_))
         _df_filtered_ = _df_filtered_.drop(set(_df_filtered_.columns) - set(['__p2s_index__']))
-        if remove_records: return self.df.join(_df_filtered_, on='__p2s_index__', how='anti').drop('__p2s_index__')
-        else:              return self.df.join(_df_filtered_, on='__p2s_index__')            .drop('__p2s_index__')
+        if remove_records: return cast(pl.DataFrame, self.df).join(_df_filtered_, on='__p2s_index__', how='anti').drop('__p2s_index__')
+        else:              return cast(pl.DataFrame, self.df).join(_df_filtered_, on='__p2s_index__')            .drop('__p2s_index__')
 
     def filterByOval(self, oval: tuple, remove_records: bool = False) -> pl.DataFrame:
         _cx_, _cy_, _rx_, _ry_ = oval
@@ -3804,8 +3816,8 @@ class XYp(P2SBackgroundMixin, ExportMixin):
              ((pl.col('__ypx__') - _cy_) / _ry_).pow(2)) <= 1.0
         )
         _df_filtered_ = _df_filtered_.drop(set(_df_filtered_.columns) - set(['__p2s_index__']))
-        if remove_records: return self.df.join(_df_filtered_, on='__p2s_index__', how='anti').drop('__p2s_index__')
-        else:              return self.df.join(_df_filtered_, on='__p2s_index__')            .drop('__p2s_index__')
+        if remove_records: return cast(pl.DataFrame, self.df).join(_df_filtered_, on='__p2s_index__', how='anti').drop('__p2s_index__')
+        else:              return cast(pl.DataFrame, self.df).join(_df_filtered_, on='__p2s_index__')            .drop('__p2s_index__')
 
     def filterByColorAtXY(self, xy: tuple, remove_records: bool = False, distance_threshold: float = 2.0) -> pl.DataFrame | None:
         _x_, _y_ = xy
@@ -3813,8 +3825,8 @@ class XYp(P2SBackgroundMixin, ExportMixin):
         # No hexcolor column means all dots share the same default color.
         if '__hexcolor__' not in self.df_pixels.columns:
             _df_all_idx_ = self.df_flat.drop(set(self.df_flat.columns) - set(['__p2s_index__']))
-            if remove_records: return self.df.join(_df_all_idx_, on='__p2s_index__', how='anti').drop('__p2s_index__')
-            else:              return self.df.join(_df_all_idx_, on='__p2s_index__')            .drop('__p2s_index__')
+            if remove_records: return cast(pl.DataFrame, self.df).join(_df_all_idx_, on='__p2s_index__', how='anti').drop('__p2s_index__')
+            else:              return cast(pl.DataFrame, self.df).join(_df_all_idx_, on='__p2s_index__')            .drop('__p2s_index__')
 
         # Find the pixel nearest to the given coordinate and read its color.
         _df_near_ = self.df_pixels.with_columns(
@@ -3833,8 +3845,8 @@ class XYp(P2SBackgroundMixin, ExportMixin):
         _df_filtered_ = self.df_flat.join(_df_same_color_, on=['__xpx__', '__ypx__'], how='inner')
         _df_filtered_ = _df_filtered_.drop(set(_df_filtered_.columns) - set(['__p2s_index__']))
 
-        if remove_records: return self.df.join(_df_filtered_, on='__p2s_index__', how='anti').drop('__p2s_index__')
-        else:              return self.df.join(_df_filtered_, on='__p2s_index__')            .drop('__p2s_index__')
+        if remove_records: return cast(pl.DataFrame, self.df).join(_df_filtered_, on='__p2s_index__', how='anti').drop('__p2s_index__')
+        else:              return cast(pl.DataFrame, self.df).join(_df_filtered_, on='__p2s_index__')            .drop('__p2s_index__')
 
     def recordsAt(self, xy: tuple, shape: SelectShapeP | None = None, threshold: float = 2.0) -> pl.DataFrame:
         if shape is None: shape = self.p2s.SELECT_CIRCLEp # SELECT_HORIZONTALp, SELECT_VERTICALp
@@ -3857,7 +3869,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
         else:
             raise ValueError(f'recordsAt(): unknown shape {shape}')
         _df_filtered_ = _df_filtered_.drop(set(_df_filtered_.columns) - set(['__p2s_index__']))
-        return self.df.join(_df_filtered_, on='__p2s_index__').drop('__p2s_index__')
+        return cast(pl.DataFrame, self.df).join(_df_filtered_, on='__p2s_index__').drop('__p2s_index__')
 
     #
     # __xAxisIsTime__() - True when the x-axis represents linear (date/datetime) time

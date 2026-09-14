@@ -51,7 +51,7 @@ jobs:
         run: uv sync --extra layouts --extra interactive --extra export --group dev
 
       - name: Run mypy against a ceiling
-        # 104 errors stand today and are burned down by module; until that
+        # 97 errors stand today and are burned down by module; until that
         # finishes a plain pass/fail gate would be permanently red, and a gate
         # that is always red is one people learn to ignore. So: green at or
         # below the ceiling, red above it. That is enough to catch the drift
@@ -71,7 +71,7 @@ jobs:
         # local .venv is lock-aligned. A polars bump moving this is a deliberate
         # re-baseline, not a regression; name the new version when you raise it.
         run: |
-          _CEILING_=104
+          _CEILING_=97
           set +e
           _out_="$(uv run mypy polars2svg 2>&1)"; _rc_=$?
           set -e

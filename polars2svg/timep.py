@@ -1,4 +1,4 @@
-from typing import Any, TypedDict, Unpack, cast
+from typing import Any, Literal, TypedDict, Unpack, cast
 import polars as pl
 import polars.selectors as cs
 import time
@@ -119,7 +119,7 @@ class Timep(P2SBinComponentMixin, ExportMixin):
     _legend_region_:  tuple | None
     _numeric_field_:  str | None
     _time_enum_:      Any
-    df:               Any
+    df:               pl.DataFrame | None
     df_orig:          pl.DataFrame | None
     df_swarm:         Any
     legend_info:      Any
@@ -344,6 +344,10 @@ class Timep(P2SBinComponentMixin, ExportMixin):
         if h - 2 * y_ins < 48: self.insets = (self.insets[0], 0            )
 
     def __addColumnsToDataFrame__(self) -> None:
+        # __init__ gates the render stage on `self.df is not None`, so this cannot
+        # fire; the guard is what lets a checker see it.  Same idiom as the other
+        # components.  PLANNING.md T7.
+        if self.df is None: return
         _ops_ = []
 
         # Periodic Time
@@ -468,9 +472,9 @@ class Timep(P2SBinComponentMixin, ExportMixin):
             '1y': 365.25*86400, '3mo': 91.3125*86400, '1mo': 30.4375*86400,
             '1d': 86400, '4h': 14400, '1h': 3600, '15m': 900, '1m': 60, '15s': 15, '1s': 1,
         }
-        if len(self.df) == 0: return _selected_
+        if len(cast(pl.DataFrame, self.df)) == 0: return _selected_
         _tf_       = pl.col(self._time_field_)
-        _mn_, _mx_ = self.df.select(_tf_.min().alias('__mn__'), _tf_.max().alias('__mx__')).row(0)
+        _mn_, _mx_ = cast(pl.DataFrame, self.df).select(_tf_.min().alias('__mn__'), _tf_.max().alias('__mx__')).row(0)
         if _mn_ is None or _mx_ is None: return _selected_
         _span_s_   = (_mx_ - _mn_).total_seconds()
         _is_date_  = self.p2s.dateColumn(self.df, self._time_field_)
@@ -501,7 +505,7 @@ class Timep(P2SBinComponentMixin, ExportMixin):
                 _tf_.dt.second().min()     .alias('__s0__'),
             ]
         try:
-            _stats_ = self.df.select(_exprs_).row(0, named=True)
+            _stats_ = cast(pl.DataFrame, self.df).select(_exprs_).row(0, named=True)
         except Exception:
             return _selected_
 
@@ -555,6 +559,10 @@ class Timep(P2SBinComponentMixin, ExportMixin):
         return set()
 
     def __computeAggregates2__(self) -> None:
+        # __init__ gates the render stage on `self.df is not None`, so this cannot
+        # fire; the guard is what lets a checker see it.  Same idiom as the other
+        # components.  PLANNING.md T7.
+        if self.df is None: return
         '''Faster linear aggregation: truncate + group_by + spine join (O(n) vs O(n log n)).
         Periodic branch is unchanged from __computeAggregates__.
         Boxplot style falls back to sort+group_by_dynamic (fill_null(0) is wrong for stats).'''
@@ -694,9 +702,9 @@ class Timep(P2SBinComponentMixin, ExportMixin):
                 # remainder_threshold into a single '(other)' bucket.  This bounds
                 # df_agg to O(bins × visible_colors) regardless of input cardinality.
                 _est_plot_h_  = float(self.wxh[1])
-                _max_bt_      = float(_partial_.group_by('__bin__')
+                _max_bt_      = float(cast('float | None', _partial_.group_by('__bin__')
                                                .agg(pl.col('__count__').sum().alias('__bt__'))
-                                               ['__bt__'].max() or 1.0)
+                                               ['__bt__'].max()) or 1.0)
                 # Use max count of each color in any single bin (not the total across bins).
                 # A color that appears in many bins but contributes < remainder_threshold px
                 # in each individual bin should be collapsed into the remainder bucket.
@@ -806,9 +814,9 @@ class Timep(P2SBinComponentMixin, ExportMixin):
                                          .agg(self.__countAggExpr__()) \
                                          .sort(['__time_bin__', self._color_field_])
                 _est_plot_h_  = float(self.wxh[1])
-                _max_bt_      = float(self.df_agg.group_by('__time_bin__')
+                _max_bt_      = float(cast('float | None', self.df_agg.group_by('__time_bin__')
                                                   .agg(pl.col('__count__').sum().alias('__bt__'))
-                                                  ['__bt__'].max() or 1.0)
+                                                  ['__bt__'].max()) or 1.0)
                 _color_stats_ = (self.df_agg.group_by(self._color_field_)
                                             .agg(pl.col('__count__').max().alias('__max_in_bin__'))
                                             .with_columns(
@@ -858,10 +866,10 @@ class Timep(P2SBinComponentMixin, ExportMixin):
             if self._agg_type_ == 'stacked':
                 _bin_col_   = '__time_bin__' if self._is_periodic_ else self._time_field_
                 _totals_    = self.df_agg.group_by(_bin_col_).agg(pl.col('__count__').sum())
-                _max_total_ = _totals_['__count__'].max()
+                _max_total_ = cast('float | None', _totals_['__count__'].max())
                 self._count_max_ = _max_total_ if _max_total_ is not None and _max_total_ > 0 else 1
             else:
-                _m_ = self.df_agg['__count__'].max() if len(self.df_agg) > 0 else 1
+                _m_ = cast('float | None', self.df_agg['__count__'].max()) if len(self.df_agg) > 0 else 1
                 self._count_max_ = _m_ if _m_ is not None and _m_ > 0 else 1
 
         # ── COLOR STAT RANGE (for spectrum coloring) ──────────────────────
@@ -875,8 +883,8 @@ class Timep(P2SBinComponentMixin, ExportMixin):
             else:
                 _valid_ser_ = self.df_agg.filter(pl.col('__count__') > 0)['__color_stat__'].drop_nulls()
                 if len(_valid_ser_) > 0:
-                    self._color_stat_min_ = round(float(_valid_ser_.min()), 3)
-                    self._color_stat_max_ = round(float(_valid_ser_.max()), 3)
+                    self._color_stat_min_ = round(float(cast(float, _valid_ser_.min())), 3)
+                    self._color_stat_max_ = round(float(cast(float, _valid_ser_.max())), 3)
 
     def __findNumericCountField__(self) -> str | None:
         if isinstance(self.count, str) and self.p2s.numericColumn(self.df, self.count):
@@ -916,8 +924,8 @@ class Timep(P2SBinComponentMixin, ExportMixin):
             self.legend_info = self.p2s.legendInfoColorbar(_title_)
             if self._color_is_cset_spectrum_:
                 # per-segment spectrum: domain = segment count range (mirrors __renderSVG__)
-                _vmin_ = round(float(self.df_agg['__count__'].min() or 0), 3)
-                _vmax_ = round(float(self.df_agg['__count__'].max() or 1), 3)
+                _vmin_ = round(float(cast('float | None', self.df_agg['__count__'].min()) or 0), 3)
+                _vmax_ = round(float(cast('float | None', self.df_agg['__count__'].max()) or 1), 3)
             else:
                 _vmin_, _vmax_ = self._color_stat_min_, self._color_stat_max_
             self.p2s.legendInfoColorbarFinalize(self.legend_info, _spec_, _vmin_, _vmax_)
@@ -1084,8 +1092,8 @@ class Timep(P2SBinComponentMixin, ExportMixin):
                             )
                         )
                     else:
-                        _seg_min_ = round(float(_df_render_['__count__'].min() or 0), 3)
-                        _seg_max_ = round(float(_df_render_['__count__'].max() or 1), 3)
+                        _seg_min_ = round(float(cast('float | None', _df_render_['__count__'].min()) or 0), 3)
+                        _seg_max_ = round(float(cast('float | None', _df_render_['__count__'].max()) or 1), 3)
                         _cspan_   = max(_seg_max_ - _seg_min_, 1e-9)
                         _df_render_ = (_df_render_
                             .with_columns(
@@ -1431,7 +1439,7 @@ class Timep(P2SBinComponentMixin, ExportMixin):
         if _x0_ > _x1_: _x0_, _x1_ = _x1_, _x0_
         if _y0_ > _y1_: _y0_, _y1_ = _y1_, _y0_
         _span_ = max(float(self._count_max_) - float(self._count_min_), 1.0)
-        _join_ = 'anti' if remove_records else 'inner'
+        _join_: Literal['anti', 'inner'] = 'anti' if remove_records else 'inner'
 
         if self._is_periodic_:
             # For stacked, sum counts per bin so bar height reflects total
@@ -1458,7 +1466,7 @@ class Timep(P2SBinComponentMixin, ExportMixin):
                 )
                 .select('__time_bin__')
             )
-            _df_result_ = self.df.join(_selected_, on='__time_bin__', how=_join_)
+            _df_result_ = cast(pl.DataFrame, self.df).join(_selected_, on='__time_bin__', how=_join_)
             return _df_result_.drop([c for c in ['__p2s_index__', '__time_bin__']
                                      if c in _df_result_.columns])
 
@@ -1494,7 +1502,7 @@ class Timep(P2SBinComponentMixin, ExportMixin):
                 )
                 .select(self._time_field_)
             )
-            _df_with_bin_ = self.df.with_columns(
+            _df_with_bin_ = cast(pl.DataFrame, self.df).with_columns(
                 pl.col(self._time_field_).dt.truncate(_trunc_).alias('__bin_key__')
             )
             _selected_renamed_ = _selected_.rename({self._time_field_: '__bin_key__'})
@@ -1507,7 +1515,7 @@ class Timep(P2SBinComponentMixin, ExportMixin):
         # A plain click arrives as a zero-radius oval: keep it covering the pixel under the cursor.
         _rx_, _ry_ = max(float(_rx_), 0.5), max(float(_ry_), 0.5)
         _span_ = max(float(self._count_max_) - float(self._count_min_), 1.0)
-        _join_ = 'anti' if remove_records else 'inner'
+        _join_: Literal['anti', 'inner'] = 'anti' if remove_records else 'inner'
 
         # Exact ellipse-vs-bar (axis-aligned AABB) overlap test: clamp the oval center to the
         # bar's box, then check that closest point against the ellipse.
@@ -1536,7 +1544,7 @@ class Timep(P2SBinComponentMixin, ExportMixin):
                 .filter(_overlap_)
                 .select('__time_bin__')
             )
-            _df_result_ = self.df.join(_selected_, on='__time_bin__', how=_join_)
+            _df_result_ = cast(pl.DataFrame, self.df).join(_selected_, on='__time_bin__', how=_join_)
             return _df_result_.drop([c for c in ['__p2s_index__', '__time_bin__']
                                      if c in _df_result_.columns])
 
@@ -1569,7 +1577,7 @@ class Timep(P2SBinComponentMixin, ExportMixin):
                 .filter(_overlap_)
                 .select(self._time_field_)
             )
-            _df_with_bin_ = self.df.with_columns(
+            _df_with_bin_ = cast(pl.DataFrame, self.df).with_columns(
                 pl.col(self._time_field_).dt.truncate(_trunc_).alias('__bin_key__')
             )
             _selected_renamed_ = _selected_.rename({self._time_field_: '__bin_key__'})
@@ -1605,8 +1613,8 @@ class Timep(P2SBinComponentMixin, ExportMixin):
 
         # Helper: return a correctly-schemed empty DataFrame
         def _empty_() -> pl.DataFrame:
-            _drop_ = [c for c in ['__p2s_index__', '__time_bin__'] if c in self.df.columns]
-            return self.df.drop(_drop_).clear()
+            _drop_ = [c for c in ['__p2s_index__', '__time_bin__'] if c in cast(pl.DataFrame, self.df).columns]
+            return cast(pl.DataFrame, self.df).drop(_drop_).clear()
 
         if self._is_periodic_:
             _bin_value_ = self._bin_min_ + _idx_
@@ -1615,7 +1623,7 @@ class Timep(P2SBinComponentMixin, ExportMixin):
                 return _empty_()
             _selected_ = pl.DataFrame({'__time_bin__': [_bin_value_]},
                                        schema={'__time_bin__': pl.Int64})
-            _df_result_ = self.df.join(_selected_, on='__time_bin__', how='inner')
+            _df_result_ = cast(pl.DataFrame, self.df).join(_selected_, on='__time_bin__', how='inner')
             return _df_result_.drop([c for c in ['__p2s_index__', '__time_bin__']
                                      if c in _df_result_.columns])
 
@@ -1625,9 +1633,9 @@ class Timep(P2SBinComponentMixin, ExportMixin):
                       if self._agg_type_ == 'stacked'
                       else self.df_agg[self._time_field_].to_list())
             if _idx_ < 0 or _idx_ >= len(_bins_):
-                return self.df.drop([c for c in ['__p2s_index__'] if c in self.df.columns]).clear()
+                return cast(pl.DataFrame, self.df).drop([c for c in ['__p2s_index__'] if c in cast(pl.DataFrame, self.df).columns]).clear()
             _bin_ts_ = _bins_[_idx_]
-            _df_with_bin_ = self.df.with_columns(
+            _df_with_bin_ = cast(pl.DataFrame, self.df).with_columns(
                 pl.col(self._time_field_).dt.truncate(_trunc_).alias('__bin_key__')
             )
             _df_result_ = _df_with_bin_.filter(pl.col('__bin_key__') == _bin_ts_)

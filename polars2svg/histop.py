@@ -1,4 +1,4 @@
-from typing import Any, TypedDict, Unpack, cast
+from typing import Any, Literal, TypedDict, Unpack, cast
 import polars as pl
 import time
 import random
@@ -116,7 +116,7 @@ class Histop(P2SBinComponentMixin, ExportMixin):
     _color_stat_min_: Any
     _legend_region_:  tuple | None
     _numeric_field_:  str | None
-    df:               Any
+    df:               pl.DataFrame | None
     df_orig:          pl.DataFrame | None
     df_swarm:         Any
     legend_info:      Any
@@ -329,6 +329,11 @@ class Histop(P2SBinComponentMixin, ExportMixin):
             self.bar_h = self.txt_h + 4 if self.draw_context else 5
 
     def __addColumnsToDataFrame__(self) -> None:
+        # __init__ gates the whole render stage on `self.df is not None`, so this
+        # cannot fire -- but the guard is what lets a checker see it, and it matches
+        # the idiom already used in __validateInput__ and across the other
+        # components.  PLANNING.md T7.
+        if self.df is None: return
         _ops_ = []
 
         # Multi-field bin: concatenate to '__bin__' (non-printable separator so distinct
@@ -421,6 +426,11 @@ class Histop(P2SBinComponentMixin, ExportMixin):
     # ── Aggregation ─────────────────────────────────────────────────────────
 
     def __computeAggregates__(self) -> None:
+        # __init__ gates the whole render stage on `self.df is not None`, so this
+        # cannot fire -- but the guard is what lets a checker see it, and it matches
+        # the idiom already used in __validateInput__ and across the other
+        # components.  PLANNING.md T7.
+        if self.df is None: return
         # Determine color field and whether it's categorical
         self._color_field_            = None
         self._color_is_categorical_   = False
@@ -526,9 +536,9 @@ class Histop(P2SBinComponentMixin, ExportMixin):
             # is below remainder_threshold into an '(other)' bucket.  Mirrors the
             # logic in timep.__computeAggregates2__ (linear lines 415-441, periodic 515-537).
             _est_plot_w_  = float(self.wxh[0])
-            _max_bt_      = float(self.df_agg.group_by(self._bin_col_)
+            _max_bt_      = float(cast('float | None', self.df_agg.group_by(self._bin_col_)
                                               .agg(pl.col('__count__').sum().alias('__bt__'))
-                                              ['__bt__'].max() or 1.0)
+                                              ['__bt__'].max()) or 1.0)
             _color_stats_ = (self.df_agg.group_by(self._color_field_)
                                          .agg(pl.col('__count__').max().alias('__max_in_bin__'))
                                          .with_columns(
@@ -590,13 +600,13 @@ class Histop(P2SBinComponentMixin, ExportMixin):
             self._count_min_ = 0
             if self._agg_type_ == 'stacked':
                 _bin_totals_     = self.df_agg.group_by(self._bin_col_).agg(pl.col('__count__').sum())
-                _max_total_      = _bin_totals_['__count__'].max()
+                _max_total_      = cast('float | None', _bin_totals_['__count__'].max())
                 self._count_max_ = _max_total_ if _max_total_ is not None and _max_total_ > 0 else 1
             elif self._agg_type_ == 'boxplot':
-                _m_ = self.df_agg['__box_max__'].max() if len(self.df_agg) > 0 else 1
+                _m_ = cast('float | None', self.df_agg['__box_max__'].max()) if len(self.df_agg) > 0 else 1
                 self._count_max_ = _m_ if _m_ is not None and _m_ > 0 else 1
             else:
-                _m_ = self.df_agg['__count__'].max() if len(self.df_agg) > 0 else 1
+                _m_ = cast('float | None', self.df_agg['__count__'].max()) if len(self.df_agg) > 0 else 1
                 self._count_max_ = _m_ if _m_ is not None and _m_ > 0 else 1
 
         # ── COLOR STAT RANGE (for spectrum coloring) ──────────────────────
@@ -610,8 +620,8 @@ class Histop(P2SBinComponentMixin, ExportMixin):
             else:
                 _vals_ = self.df_agg.filter(pl.col('__count__') > 0)['__color_stat__'].drop_nulls()
                 if len(_vals_) > 0:
-                    self._color_stat_min_ = round(float(_vals_.min()), 3)
-                    self._color_stat_max_ = round(float(_vals_.max()), 3)
+                    self._color_stat_min_ = round(float(cast(float, _vals_.min())), 3)
+                    self._color_stat_max_ = round(float(cast(float, _vals_.max())), 3)
 
     # ── Geometry ────────────────────────────────────────────────────────────
 
@@ -645,8 +655,8 @@ class Histop(P2SBinComponentMixin, ExportMixin):
             self.legend_info = self.p2s.legendInfoColorbar(_title_)
             if self._color_is_cset_spectrum_:
                 # per-segment spectrum: domain = segment count range (mirrors __renderSVG__)
-                _vmin_ = round(float(self.df_agg['__count__'].min() or 0), 3)
-                _vmax_ = round(float(self.df_agg['__count__'].max() or 1), 3)
+                _vmin_ = round(float(cast('float | None', self.df_agg['__count__'].min()) or 0), 3)
+                _vmax_ = round(float(cast('float | None', self.df_agg['__count__'].max()) or 1), 3)
             else:
                 _vmin_, _vmax_ = self._color_stat_min_, self._color_stat_max_
             self.p2s.legendInfoColorbarFinalize(self.legend_info, _spec_, _vmin_, _vmax_)
@@ -883,8 +893,8 @@ class Histop(P2SBinComponentMixin, ExportMixin):
                             )
                         )
                     else:
-                        _seg_min_ = round(float(_df_render_['__count__'].min() or 0), 3)
-                        _seg_max_ = round(float(_df_render_['__count__'].max() or 1), 3)
+                        _seg_min_ = round(float(cast('float | None', _df_render_['__count__'].min()) or 0), 3)
+                        _seg_max_ = round(float(cast('float | None', _df_render_['__count__'].max()) or 1), 3)
                         _cspan_   = max(_seg_max_ - _seg_min_, 1e-9)
                         _df_render_ = (_df_render_
                             .with_columns(
@@ -1173,9 +1183,13 @@ class Histop(P2SBinComponentMixin, ExportMixin):
     def __recordsForBins__(self, bins: list, remove: bool = False) -> pl.DataFrame:
         _bin_dtype_   = self.df_agg[self._bin_col_].dtype
         _selected_df_ = pl.DataFrame({self._bin_col_: bins}, schema={self._bin_col_: _bin_dtype_})
-        _how_         = 'anti' if remove else 'inner'
+        _how_: Literal['anti', 'inner'] = 'anti' if remove else 'inner'
+        # Reached only after a render, which __init__ gates on `self.df is not None`;
+        # cast rather than guard so a misuse on a template instance still fails the way
+        # it always has, rather than quietly returning an empty frame.  PLANNING.md T7.
         return self.__dropInternal__(
-            self.df.join(_selected_df_, on=self._bin_col_, how=_how_, nulls_equal=True))
+            cast(pl.DataFrame, self.df).join(_selected_df_, on=self._bin_col_,
+                                             how=_how_, nulls_equal=True))
 
     def filterByRectangle(self, bounding_box: tuple, remove_records: bool = False) -> pl.DataFrame:
         _x0_, _y0_, _x1_, _y1_ = bounding_box
@@ -1351,7 +1365,7 @@ class Histop(P2SBinComponentMixin, ExportMixin):
 
         # Helper: return a correctly-schemed empty DataFrame
         def _empty_() -> pl.DataFrame:
-            return self.__dropInternal__(self.df).clear()
+            return self.__dropInternal__(cast(pl.DataFrame, self.df)).clear()   # post-render; see T7 note above
 
         if self._dist_h_ > 0 and self._dist_bins_lu_:
             _strip_y0_ = self._dist_strip_y0_

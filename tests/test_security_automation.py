@@ -80,10 +80,13 @@ class TestDependabotConfig(unittest.TestCase):
 
 
 class TestRuffConfig(unittest.TestCase):
-    # ruff config: E9 and F are the floor, with __init__.py's intentional public
-    # re-exports carved out via per-file-ignores -- see the [tool.ruff] comment
-    # block in pyproject.toml for what else is selected and what is deliberately
-    # left out.
+    # ruff config: E9 and F are the floor -- see the [tool.ruff] comment block in
+    # pyproject.toml for what else is selected and what is deliberately left out.
+    # __init__.py's public re-exports used to be carved out via per-file-ignores;
+    # they are explicit `Y as Y` aliases now, which ruff reads as re-exports and
+    # does not flag, so there are no per-file-ignores at all.  The last test here
+    # guards the aliases, since removing them would silently re-break the public
+    # API for type checkers.
 
     def setUp(self):
         _skip_if_missing(_PYPROJECT)
@@ -98,9 +101,24 @@ class TestRuffConfig(unittest.TestCase):
         _select_ = self.pyproject['tool']['ruff']['lint']['select']
         self.assertLessEqual({'E9', 'F'}, set(_select_))
 
-    def test_init_py_f401_ignored(self):
-        _ignores_ = self.pyproject['tool']['ruff']['lint']['per-file-ignores']
-        self.assertIn('F401', _ignores_.get('polars2svg/__init__.py', []))
+    def test_init_reexports_are_explicit(self):
+        # polars2svg ships py.typed, which makes a plain `from .x import Y` in
+        # __init__.py PRIVATE under the typing spec: pyright/Pylance reject
+        # `from polars2svg import Polars2SVG` with reportPrivateImportUsage and
+        # mypy --strict with attr-defined.  Every relative import must therefore
+        # use the redundant `Y as Y` form.  [tool.mypy] no_implicit_reexport is
+        # the other half of this guard, at the type level.  Audit 20260915 H1.
+        import ast
+        _init_ = os.path.join(_REPO_ROOT, 'polars2svg', '__init__.py')
+        _skip_if_missing(_init_)
+        with open(_init_, encoding='utf-8') as f:
+            _tree_ = ast.parse(f.read())
+        _bad_ = [f'{_a_.name} (line {_n_.lineno})'
+                 for _n_ in ast.walk(_tree_)
+                 if isinstance(_n_, ast.ImportFrom) and _n_.level > 0
+                 for _a_ in _n_.names if _a_.asname != _a_.name]
+        self.assertEqual(_bad_, [], 'implicit re-exports in polars2svg/__init__.py: '
+                                    + ', '.join(_bad_))
 
 
 if __name__ == '__main__':

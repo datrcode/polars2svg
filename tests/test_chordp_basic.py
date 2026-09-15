@@ -60,7 +60,7 @@ class TestChordPBasic(unittest.TestCase):
         self.assertIn('width="128"', cp.svg)
 
     def test_duplicate_df_raises(self):
-        with self.assertRaises(Exception):
+        with self.assertRaises(ValueError):
             self.p2s.chordp(_DF_, df=_DF_, relationships=_RELS_)
 
     # --- geometry ---
@@ -307,15 +307,17 @@ class TestChordPBasic(unittest.TestCase):
         self.assertIn('<svg', cp.svg)
 
     def test_missing_relationships_raises(self):
-        with self.assertRaises(Exception):
-            _p(relationships=None)
+        p2s = Polars2SVG()
+        with self.assertRaisesRegex(TypeError, 'not iterable'):
+            p2s.chordp(df=_DF_, relationships=None)
 
     def test_unknown_field_raises(self):
-        with self.assertRaises(Exception):
-            _p(relationships=[('no_such_field', 'to')])
+        p2s = Polars2SVG()
+        with self.assertRaisesRegex(ValueError, 'no_such_field'):
+            p2s.chordp(df=_DF_, relationships=[('no_such_field', 'to')])
 
     def test_invalid_label_style_raises(self):
-        with self.assertRaises(Exception):
+        with self.assertRaises(ValueError):
             _p(label_style='banana')
 
 

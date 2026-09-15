@@ -26,8 +26,15 @@ import numpy as np
 
 # MLX is optional (polars2svg[mlx] / [mlx-cuda]).  Absent it, everything runs on
 # the NumPy path; import failure must never break ODFlowLayout.
+# `mx` is bound by ASSIGNMENT rather than by `import mlx.core as mx`, and that is
+# deliberate.  stack_control._mlxCudaStatus_() and tests/test_od_flow_layout.py
+# both read od_flow_layout.mx as the canonical "is mlx available" probe, and under
+# [tool.mypy] no_implicit_reexport an imported name is private to the module that
+# imported it, while a module-level assignment is public.  Same reasoning as
+# TField in __init__.py.  See 20260915_fable_code_audit.md H1/H4b.
 try:
-    import mlx.core as mx
+    import mlx.core
+    mx = mlx.core
 except ImportError:
     mx = None
 

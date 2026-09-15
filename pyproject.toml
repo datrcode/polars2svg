@@ -13,7 +13,12 @@ description     = "Visualization Package Leveraging Polars and SVG in Jupyter No
 readme          = { file = "README.md", content-type = "text/markdown" }
 requires-python = ">=3.12"
 license         = "Apache-2.0"
-license-files   = ["LICENSE"]
+# NOTICE ships too: Apache-2.0 §4(d) requires a redistributed work to carry the
+# NOTICE file's contents, and the wheel is the redistribution most users get.  It
+# also carries the bundled third-party attributions -- Noto Sans (OFL 1.1) and the
+# ColorBrewer Spectral palette, whose licence requires attribution.  Both land in
+# dist-info/licenses/.  Audit 20260915 H3; the sdist already had NOTICE.
+license-files   = ["LICENSE", "NOTICE"]
 keywords        = ["polars", "svg", "visualization", "jupyter", "dataframe", "charts"]
 # Lower bounds are recent, py3.12-compatible floors with headroom below the
 # versions pinned in uv.lock (the known-good set). They guard against an install
@@ -203,17 +208,20 @@ xfail_strict = true
 
 # polars2svg ships a py.typed marker so downstream type checkers read the type
 # hints the package carries.  Every module in the package is annotated and
-# strictly checked: `disallow_untyped_defs` and `check_untyped_defs` apply
-# package-wide and no error code is disabled.
+# checked with `disallow_untyped_defs`, `disallow_incomplete_defs` and
+# `check_untyped_defs` package-wide, no error code disabled, plus every --strict
+# flag measured at zero cost (the 2026-09-14 six, and no_implicit_reexport /
+# disallow_subclassing_any from 2026-09-15).  It is NOT mypy --strict: the four
+# remaining flags cost +31 / +47 / +104 / +798 as measured on 2026-09-15
+# (20260915_fable_code_audit.md H4) and are adopted only through the ratchet.
 #
-# INTERIM NOTE, 2026-09-13: that does NOT mean a green `uvx mypy polars2svg` is
-# a clean bill of health, as this block used to claim.  `uvx` resolves into an
-# isolated env with no polars, numpy or PIL, so those become Any and the run is
-# vacuous; resolved against .venv the same config reports 730 errors in 17 files.
-# `ignore_missing_imports = true` below is what lets that happen silently.  See
-# PLANNING.md Q1/Q4 and 20260913_fable_code_audit.md F1.  tools/preflight.sh and
-# ci.yml's type-check job both run the resolved check behind a ceiling now.
-# This note comes out when Q4 closes.
+# Run `.venv/bin/python -m mypy polars2svg`, never `uvx mypy polars2svg`: uvx
+# resolves into an isolated env with no polars, numpy or PIL, so those become Any
+# and the run is vacuous.  That was CI's false green until 2026-09-13 (PLANNING.md
+# Q1/Q4, 20260913_fable_code_audit.md F1).  The resolved count now sits behind a
+# ceiling in tools/preflight.sh, ci.yml and TestMypyErrorRatchet -- a floor to
+# ratchet down, not a target of zero (PLANNING.md D5).  The number is kept out of
+# this comment on purpose; three tested places already hold it.
 #
 # THE DIRECTION CHANGED TWICE, and the second change is finished.  This block
 # used to say the internals were dynamically typed on purpose and that
@@ -245,7 +253,7 @@ disallow_untyped_defs    = true
 disallow_incomplete_defs = true
 check_untyped_defs       = true
 # Added 2026-09-14 (PLANNING.md Q4 / audit F6).  Each of these cost exactly zero
-# errors when measured against the 730 baseline, so they are free to hold from
+# errors when measured against the then-730 baseline, so they are free to hold from
 # here on; warn_unused_ignores cost four, and those four dead `# type: ignore`
 # comments were removed rather than kept.
 warn_unused_configs      = true
@@ -254,6 +262,17 @@ warn_unused_ignores      = true
 strict_equality          = true
 extra_checks             = true
 disallow_untyped_decorators = true
+# Added 2026-09-15 (20260915_fable_code_audit.md H1/H4b).  Costs zero against the
+# 60 baseline once __init__.py's re-exports are explicit -- and it is the type-level
+# half of that guard: an implicit `from .x import Y` added back to __init__.py, or
+# any other module's imported name relied on from outside it, fails the package
+# check here.  test_init_reexports_are_explicit is the AST half.
+no_implicit_reexport     = true
+# Also added 2026-09-15 (audit H4a): zero errors against the 60 baseline, so it is
+# free to hold from here on.  Nothing in the package subclasses an Any-typed base
+# today; this keeps it that way, since such a subclass silently disables checking
+# of every member it inherits.
+disallow_subclassing_any = true
 
 # Third-party libraries that ship no type information.  This replaces a GLOBAL
 # `ignore_missing_imports = true`, which silently turned every unresolved import
@@ -308,7 +327,12 @@ disable_error_code = [
 # Rule set (PyPI nice-to-have #5).  The base is E9 (syntax errors) and F
 # (pyflakes -- undefined names, unused imports/variables, duplicate dict keys);
 # the rest was added by the 2026-09-13 tooling audit and applied in PLANNING.md
-# Q3.  This codebase has a distinctive style (aligned assignments, _underscore_
+# Q3, plus B017 on 2026-09-15 (20260915_fable_code_audit.md H8): assertRaises(
+# Exception) passes on any exception, including a typo, and all ten sites in the
+# suite now name the exception they mean.  Two of the ten were vacuous -- they
+# went through a helper that already supplied the argument under test, so they
+# asserted Python's own argument binding and never reached the component.
+# This codebase has a distinctive style (aligned assignments, _underscore_
 # locals, dynamic setattr()-bound enums) that a wider catalog would fight, so
 # what is NOT here is as deliberate as what is:
 #
@@ -335,16 +359,16 @@ line-length    = 160     # documents the de facto width; E501 is NOT selected
 [tool.ruff.lint]
 select = [
   "E9", "F", "W", "UP",
-  "B006",
+  "B006", "B017",
   "E711", "E712", "E713", "E714", "E721", "E731", "E741",
   "RUF100",
 ]
 
-[tool.ruff.lint.per-file-ignores]
-# __init__.py re-exports the public API (Polars2SVGError, TField, the optional
-# layout classes, ...) purely for `import polars2svg as p2s; p2s.X` access —
-# every name is intentionally "unused" within the file itself.
-"polars2svg/__init__.py" = ["F401"]
+# No per-file-ignores.  __init__.py used to carry one for F401: its re-exports
+# were the implicit `from .x import Y` form, which reads as an unused import.
+# They are `Y as Y` now (2026-09-15, audit H1) -- the typing spec's explicit
+# re-export idiom, which ruff recognises as a re-export and does not flag, and
+# which is what makes the public API visible to pyright and mypy --strict.
 
 [tool.coverage.run]
 branch       = true
@@ -375,4 +399,5 @@ exclude = [
   "PLANNING.md",
   "20260824_background_record_contract.md",
   "20260913_fable_code_audit.md",
+  "20260915_fable_code_audit.md",
 ]

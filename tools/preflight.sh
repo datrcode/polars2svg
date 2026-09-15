@@ -33,6 +33,10 @@
 #     .venv, so they no longer drift version-to-version (Q1).  bandit and
 #     pip-audit are still bare `uvx` and still resolve unpinned, so CI can run
 #     a newer one than you just did.
+#   - the editable-install step is LOCAL-ONLY -- it has no ci.yml counterpart
+#     and needs none, since CI installs fresh into a clean runner.  It is
+#     here because the copy-instead-of-link failure has recurred three
+#     times and is invisible from the repo root (audit 20260915 H2).
 #
 # The third CI job (`Linux clean-room wheel install + tests`) is deliberately
 # NOT here: it builds the wheel and runs the suite inside a stock
@@ -99,6 +103,28 @@ _step_() {
 
 printf '\npreflight (mirrors ci.yml fast jobs)\n\n'
 
+# The project's editable install has reverted to a site-packages COPY three times
+# (20260913_fable_code_audit.md §8.6, 20260915_fable_code_audit.md H2).  A copy is
+# byte-identical to source until the next edit and silently stale after it, for
+# anything that imports from outside the repo root -- the two notebooks CLAUDE.md
+# requires updating start their kernel in notebooks/ and are exactly that.  The
+# `cd /tmp` is the whole point: from the repo root sys.path[0] hides the problem.
+#
+# This one is LOCAL-ONLY and not a divergence from ci.yml: CI installs fresh into a
+# clean runner every run and cannot have the problem.
+_step_editable_() {
+    printf '  %-34s' 'editable install is a link'
+    local _f_
+    _f_="$(cd /tmp && "$_ROOT_/.venv/bin/python" -c 'import polars2svg.xyp as m; print(m.__file__)' 2>&1)"
+    case "$_f_" in
+        "$_ROOT_/polars2svg/"*) printf 'ok\n' ;;
+        *)  printf 'FAIL (site-packages copy, not a link)\n      %s\n' "$_f_"
+            printf '      reinstall: VIRTUAL_ENV="$PWD/.venv" uv pip install -e . --reinstall-package polars2svg\n\n'
+            _FAILED_+=('editable') ;;
+    esac
+}
+
+
 # mypy runs from .venv rather than uvx, and that changes what it means.  `uvx mypy`
 # resolves into an isolated env with no polars, numpy or PIL, so every operation on
 # a DataFrame/Series/ndarray is Any and type-checks trivially: it printed "Success:
@@ -122,10 +148,16 @@ printf '\npreflight (mirrors ci.yml fast jobs)\n\n'
 # dev`) and this agrees with CI exactly; a polars bump legitimately moves it and
 # is a deliberate re-baseline, not a regression.
 #
-# Lower _MYPY_CEILING_ as Q4 burns the count down; never raise it except as such
-# a re-baseline, with the new dependency version named.  Q4 step 1 replaces this
-# with the per-module ratchet in tests/test_typing_surface.py, at which point
-# this goes back to a plain _step_ invocation.
+# Lower _MYPY_CEILING_ opportunistically, when a module is touched for other
+# reasons; never raise it except as a named re-baseline, with the reason given (a
+# dependency bump, or a newly adopted strictness flag).
+#
+# Q4's per-module ratchet (TestMypyErrorRatchet in tests/test_typing_surface.py)
+# landed 2026-09-14 and this ceiling step stayed, by design: a test ties the two
+# numbers together along with ci.yml's _CEILING_, so the three cannot drift, and
+# preflight reports the count without needing the suite.  Driving the count to
+# zero was considered and declined (PLANNING.md D5) -- this is a floor to ratchet
+# down, not a target.
 _MYPY_CEILING_=60
 
 _step_mypy_() {
@@ -156,6 +188,7 @@ _step_mypy_() {
     fi
 }
 
+_step_editable_
 _step_mypy_
 _step_ 'bandit (security scan)'  uvx bandit -r polars2svg/
 _step_ 'ruff'                    .venv/bin/python -m ruff check .

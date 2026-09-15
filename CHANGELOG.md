@@ -80,6 +80,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`NOTICE` ships in the wheel.** `license-files` named only `LICENSE`, so the
+  wheel -- the redistribution most users actually receive -- carried no `NOTICE`.
+  Apache-2.0 §4(d) requires a redistributed work to carry that file's contents,
+  and it also holds the bundled third-party attributions: the Noto Sans subset
+  (SIL OFL 1.1) and the ColorBrewer Spectral palette, whose licence requires
+  attribution. README's "License / Notices" section already pointed readers at a
+  file the wheel did not contain. Both files now land in `dist-info/licenses/`.
+  The sdist was unaffected -- it always carried `NOTICE`.
+
+- **Every public name is now an explicit re-export.** polars2svg ships
+  `py.typed`, and under the typing spec a name imported into a module is
+  *private* unless it is re-exported explicitly. `polars2svg/__init__.py` used
+  the implicit `from .x import Y` form throughout, which made
+  `from polars2svg import Polars2SVG` an **error** under pyright/Pylance
+  (`reportPrivateImportUsage`, its default mode -- what VS Code runs) and under
+  `mypy --strict` -- and the first names to break were the `<Component>Kwargs`
+  TypedDicts, which exist only so callers can type-check their own kwargs dicts.
+  The imports now use the `Y as Y` idiom; a checked consumer importing the
+  documented public surface goes from 7 errors to 0 under both checkers.
+  `od_flow_layout.mx`, which `stack_control` and the test suite read as the
+  canonical "is mlx available" probe, is bound by assignment for the same reason.
+  Runtime behaviour is unchanged, including the absence of the optional-extra
+  names (`TFDPLayout`, the MDS layouts, `NCPLayout`, `ChPKwargs`) when their
+  extra is not installed.
+
 - **PNG goldens could not see what they were meant to catch.** The bitmap golden
   check compared a render against its stored PNG with a single RMS tolerance of
   5.0, chosen to absorb anti-aliasing variation. It also absorbed goldens that had

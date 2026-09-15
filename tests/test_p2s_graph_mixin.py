@@ -11,7 +11,7 @@ from unittest.mock import patch
 import networkx as nx
 import polars as pl
 
-from polars2svg import Polars2SVG
+from polars2svg import Polars2SVG, InvalidSpecError
 
 
 def _make_df():
@@ -900,19 +900,19 @@ class TestNeighborhoodLayout(unittest.TestCase):
 
     def test_invalid_mode_raises(self):
         g = nx.Graph(); g.add_node('x')
-        with self.assertRaises(Exception):
+        with self.assertRaises(InvalidSpecError):
             self.p2s.neighborhoodLayout(g, pos={'x': (0, 0)}, mode='bogus')
 
     def test_spatial_mode_requires_pos(self):
         g = nx.Graph(); g.add_node('x')
-        with self.assertRaises(Exception):
+        with self.assertRaises(InvalidSpecError):
             self.p2s.neighborhoodLayout(g, mode='spatial')
 
     # --- spatial mode (clustering over the existing layout) ---
 
     def test_spatial_rejects_unknown_method(self):
         g, pos = _blobbed_graph_and_pos()
-        with self.assertRaises(Exception):
+        with self.assertRaises(InvalidSpecError):
             self.p2s.neighborhoodLayout(g, pos=pos, mode='spatial', spatial_method='bogus')
 
     def test_spatial_default_method_is_hdbscan(self):

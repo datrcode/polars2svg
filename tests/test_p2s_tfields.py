@@ -2,7 +2,7 @@ import unittest
 import polars as pl
 import datetime
 import random
-from polars2svg import Polars2SVG, TField
+from polars2svg import Polars2SVG, TField, InvalidSpecError
 
 class Testp2s_tfields(unittest.TestCase):
     def __init__(self, *args, **kwargs):
@@ -204,7 +204,7 @@ class TestTField(unittest.TestCase):
         self.assertIn('PT_mp', repr(tf))
 
     def test_unknown_enum_raises(self):
-        with self.assertRaises(Exception):
+        with self.assertRaises(InvalidSpecError):
             self.p2s.tField('ts', 'not-an-enum')
 
     def test_direct_construction_matches_tField_factory(self):

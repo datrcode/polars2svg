@@ -1,6 +1,6 @@
 import unittest
 import polars as pl
-from polars2svg import Polars2SVG
+from polars2svg import Polars2SVG, InvalidSpecError
 
 
 class TestColorizeOrder(unittest.TestCase):
@@ -99,7 +99,7 @@ class TestColorizeOrder(unittest.TestCase):
 
     def test_unknown_count_raises(self):
         '''Unrecognized count type raises an exception.'''
-        with self.assertRaises(Exception):
+        with self.assertRaises(InvalidSpecError):
             self.p2s.colorizeOrder(self._df_, object(), 'clr')
 
 

@@ -287,7 +287,7 @@ class TestChordPPos(unittest.TestCase):
         self.assertIn('<svg', cp.svg)
 
     def test_pos_positional_and_kwarg_raises(self):
-        with self.assertRaises(Exception):
+        with self.assertRaises(ValueError):
             self.p2s.chordp(_DF_CONN_, _RELS_, _POS_CONN_, pos=_POS_CONN_)
 
     def test_pos_default_is_empty_dict(self):

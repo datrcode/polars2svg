@@ -105,11 +105,29 @@ functions) — this keeps every test file independently runnable as a script.
 
 ## Style conventions
 
-The codebase does not run a full linter/formatter — CI only runs `ruff check`
-with the minimal `E9,F` ruleset (syntax errors and pyflakes: undefined names,
-unused imports/variables, duplicate dict keys). This is deliberate: the
-project has a distinctive, consistent style that a stricter ruleset (import
-sorting, line length, complexity) would fight rather than support. Match the
+The codebase does not run a formatter, and the linter is deliberately narrow.
+CI runs `ruff check .` over the **whole tree** — package, tests, tools, `docs/`
+and the notebooks — with the rule set in `[tool.ruff.lint] select`:
+
+- `E9` (syntax and IO errors) and `F` (pyflakes: undefined names, unused
+  imports and variables, duplicate dict keys). These two are the floor and the
+  reason the gate exists at all; a test pins them.
+- `W` (pycodestyle warnings) and `UP` (pyupgrade, at the py312 floor).
+- `B006` — mutable argument defaults.
+- `B017` — `assertRaises(Exception)` in tests. A test that passes on *any*
+  exception passes on a typo in the code it is exercising; name the exception
+  you mean. Added 2026-09-15, when two of the ten sites in the suite turned out
+  to be asserting Python's argument binding rather than the component.
+- `E711`, `E712`, `E713`, `E714` — comparisons to `None`/`True`/`False` and
+  negated membership/identity tests.
+- `E721` (type compared with `==`), `E731` (lambda bound to a name) and `E741`
+  (ambiguous names such as `l`).
+- `RUF100` — dead `# noqa` directives.
+
+What is *not* selected matters as much: line length (`E501`), one-line compound
+statements (`E701`), naming (`N`), import sorting (`I`) and docstrings (`D`)
+would fight the house style rather than support it. That is decided, not
+deferred — PLANNING.md **Q6** — and is not to be reopened. Match the
 surrounding code rather than reflowing it to a generic style guide:
 
 - **Aligned assignments** — consecutive related assignments/dict entries are
@@ -143,9 +161,12 @@ Two ratchets enforce it, and both only move one way:
 
 - `[tool.mypy]` in `pyproject.toml` holds every module to `disallow_untyped_defs`,
   `disallow_incomplete_defs` and `check_untyped_defs` with no error codes
-  disabled. `[[tool.mypy.overrides]]` holds exactly one entry, the
-  `interactive_controller` exemption; do not add a module to it — coming off
-  strict checking is a regression, not a config change.
+  disabled, plus every `--strict` flag that has been measured at zero cost. It
+  is *not* mypy `--strict`; see "What "strict" means here" below.
+  `[[tool.mypy.overrides]]` holds two entries: `ignore_missing_imports` for the
+  ten third-party libraries that ship no type information, and one *relaxing*
+  entry, the `interactive_controller` exemption. Do not add a module to that
+  second kind — coming off strict checking is a regression, not a config change.
 - `TestAnnotationCoverageRatchet` in `tests/test_typing_surface.py` caps the
   number of unannotated functions per module. Adding an untyped function fails
   the suite; annotating one means lowering that module's number in the same
@@ -181,13 +202,32 @@ The public API surface (`Polars2SVG.__init__`, the component factory methods,
 must stay that way — mypy runs in CI. Never weaken a public annotation to
 satisfy the checker.
 
-> **Interim note, 2026-09-13.** Run `.venv/bin/python -m mypy polars2svg`, not
-> `uvx mypy polars2svg`. The `uvx` form resolves into an isolated env where
-> polars, numpy and PIL are missing and therefore `Any`, so it reports success
-> while the resolved run reports **730 errors in 17 files**. CI ran the `uvx`
-> form until 2026-09-13 and now installs the project and checks against a
-> ceiling; the 730 are being burned down by module, so mypy being green is not
-> yet the same as mypy being clean.
+**Run `.venv/bin/python -m mypy polars2svg`, never `uvx mypy polars2svg`.** The
+`uvx` form resolves into an isolated environment where polars, numpy and PIL are
+missing and therefore `Any`, so it reports success while checking nothing. CI ran
+that form until 2026-09-13; it now installs the project and checks the resolved
+run against a ceiling.
+
+**What "strict" means here.** Mypy runs package-wide with
+`disallow_untyped_defs`, `disallow_incomplete_defs` and `check_untyped_defs`,
+no error code disabled, plus every `--strict` flag measured at zero cost —
+`warn_unused_configs`, `warn_redundant_casts`, `warn_unused_ignores`,
+`strict_equality`, `extra_checks`, `disallow_untyped_decorators` (2026-09-14)
+and `no_implicit_reexport`, `disallow_subclassing_any` (2026-09-15). It is **not**
+mypy `--strict`: the four remaining flags were measured on 2026-09-15
+(`20260915_fable_code_audit.md` H4) at +31 `disallow_untyped_calls`, +47
+`warn_unreachable`, +104 `warn_return_any` and +798 `disallow_any_generics`.
+Those are adopted through the ratchet if at all, never ad hoc.
+
+**The resolved run stands at a documented, ratcheted floor, not at zero.** The
+number lives in three places that are tested against each other —
+`_MYPY_CEILING_` in `tools/preflight.sh`, `_CEILING_` in `ci.yml`, and the
+per-module table in `TestMypyErrorRatchet` — deliberately not in this prose,
+because a count written into a document is a count that goes stale. Lower it
+opportunistically when you touch a module for other reasons; never raise it
+except as a named re-baseline with the reason given (a dependency bump, or a
+newly adopted flag). Driving it to zero was considered and declined —
+PLANNING.md **D5**.
 
 One trap worth knowing: do **not** add `from __future__ import annotations` to
 `polars2svg.py`. It stringifies annotations, and `test_typing_surface.py`
@@ -219,7 +259,7 @@ Following the repo's own `CLAUDE.md` rules when adding a new render component:
   threat model and how findings are annotated with `# nosec <code> - <reason>`
   rather than blanket-suppressed)
 - `pip-audit` against the full resolved dependency graph
-- `ruff check` (the `E9,F` ruleset described above)
+- `ruff check .` (the rule set described above, over the whole tree)
 - A Linux clean-room job: builds the wheel, installs it into a stock
   `python:3.13-slim` container, and runs the test suite against the installed
   wheel (excluding the machine-local perf baseline and network-dependent
@@ -240,8 +280,8 @@ does **not** mean CI is green, since none of these four checks are part of the
 test suite.
 
 Two things about the mypy step, both deliberate (PLANNING.md **Q1**): it is
-gated on a **ceiling** rather than on success, because 730 errors stand today and
-a permanently red gate is one people learn to ignore; and ruff and mypy are
+gated on a **ceiling** rather than on success, because a documented non-zero
+floor stands (see above) and a permanently red gate is one people learn to ignore; and ruff and mypy are
 pinned in `[dependency-groups].dev` and run from `.venv`, so they no longer
 drift version-to-version the way bare `uvx` did. `ci.yml` carries the same
 ceiling, but installs the project with `uv sync` — so the two agree only while

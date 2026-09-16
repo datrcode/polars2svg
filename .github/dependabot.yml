@@ -15,6 +15,33 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    ignore:
+      # svglib is capped at <2 on purpose, in the [export] extra and in the dev
+      # group.  svglib 1.x passes an SVG's unitless width/height straight through
+      # as reportlab points, so renderPM at its default 72dpi maps one SVG user
+      # unit to one PNG pixel -- the rasterization every PNG golden was recorded
+      # against.  svglib 2 applies the CSS px->pt conversion instead.  Measured
+      # 2026-09-16 against a real xyp render (width="256", no unit):
+      #
+      #     svglib 1.6.0 -> drawing 256.0 x 256.0 pt
+      #     svglib 2.2.0 -> drawing 192.0 x 192.0 pt     (exactly 0.75)
+      #
+      # so every savePNG()/save('*.png') would silently shrink to three-quarter
+      # scale, and nested <svg> tiles (smallp/spreadlinesp) mis-scale outright.
+      #
+      # This is ignored rather than merely closed because CI CANNOT catch the
+      # regression: the PNG-RMS goldens are macOS-only and CI is Linux, so a
+      # major-version bump arrives with a full green check set (PR #10 did).
+      # Re-opening it weekly puts a green, wrong PR in front of a tired
+      # maintainer -- see polars2svg/export.py's note above svgToPNGBytes().
+      #
+      # Majors ONLY.  1.x patch and security updates still come through, which
+      # is the whole reason this is not a blanket dependency-name ignore.
+      # Lifting the cap means re-recording the PNG goldens and re-verifying the
+      # stream/source_path property in TestRasterizeDoesNotReadLocalFiles, whose
+      # guarantee is currently scoped to svglib 1.5.0-1.6.0.
+      - dependency-name: "svglib"
+        update-types: ["version-update:semver-major"]
 
   # GitHub Actions used by ci.yml / release.yml.
   - package-ecosystem: "github-actions"

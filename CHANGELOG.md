@@ -174,6 +174,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Selected nodes show their complete labels, in the browser, without
+  re-rendering the graph.** Selecting one or more nodes in a `linkpi` view now
+  draws each one's full label centred underneath it, word-wrapped over as many
+  lines as it takes -- the feature the original java racetrack had in
+  `RTGraphPanel.drawSelectedEntities`. Unlike a rendered node label, which stops at
+  `label_max_lines` and ellipsizes, a selection label is never cropped: the same
+  `_wrap_label_` is called with an unlimited line count and no ellipsis.
+
+  It is capped, at 32 selected nodes by default (`max_selection_labels` on the
+  view). Past the cap nothing is labeled at all and `info_str` says
+  `(labels capped)` -- all-or-nothing, as the java original was at 100. A lasso
+  around half the graph is not a request to read anything.
+
+  **Nothing re-renders.** `LinkP.__createSelectedLabels__()` returns label
+  geometry -- position, wrapped lines, and each block's measured width -- and the
+  view carries it in a new `selection_labels` param that rides the very same
+  refresh which already rebuilds `selectionpath`, so a selection change costs one
+  extra object in a message that was being sent anyway, and the link-node render is
+  neither re-run nor invalidated. Every selection path in the controller (drag,
+  invert, expand, search, the degree keys) feeds it with no further plumbing.
+
+  Three details are deliberate. The payload is a `param.Dict` and not a string of
+  SVG, because a string param is run through panel's HTML sanitizer -- which
+  strips SVG to nothing -- and the child path that exempts `mod_inner` from it
+  re-renders the subtree and destroys every JS-only variable in the view
+  (**U5**). The browser builds the elements, so each line reaches the DOM as
+  `textContent` and a node name can never become markup. And the overlay is SVG in
+  both render modes, including WebGPU, where there is no per-node DOM to hang a
+  label on at all.
+
+  Two behaviours differ from the rendered node labels, both on purpose: a node the
+  `node_labels=` dict does not name keeps its own name here rather than going
+  unlabeled (the overlay exists to answer "what did I just select"), and several
+  entities collapsed onto one screen pixel get one summarizing `"n nodes"` label
+  rather than the name of whichever sorted first. Labels also track a drag of the
+  selection, and are culled off-canvas exactly as the rendered ones are.
+
 - **`tests/test_png_golden_integrity.py`** -- guards on the golden mechanism
   itself rather than on any one render: that the drift threshold stays strictly
   tighter than the visual one (their collapse *is* the bug above), that a golden

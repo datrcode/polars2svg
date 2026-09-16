@@ -2105,6 +2105,7 @@ _LINKPI_SVG_ROOT_ = """
           onmouseover="${script('myOnMouseOver')}"      onmouseout="${script('myOnMouseOut')}"
           onmousedown="${script('downMove')}"           onmousemove="${script('myOnMouseMove')}"
           onmouseup="${script('myOnMouseUp')}" />
+    <g id="selectedlabels" pointer-events="none"></g>
     <text id="searchtext" x="{{ svg_w // 2 }}" y="{{ svg_h - 2 }}" text-anchor="middle" fill="#0000cc" font-size="11px" font-family="monospace" pointer-events="none"></text>
     <g id="brushindicator" pointer-events="none"></g>
     <g id="brushmodelabel" pointer-events="none"></g>
@@ -2135,6 +2136,7 @@ _LINKPI_SCRIPTS_ = {
         infostr.innerHTML        = data.info_str;
         allentitieslayer.setAttribute("d", data.allentitiespath);
         selectionlayer.setAttribute("d", data.selectionpath);
+        self.renderSelectedLabels();
         state.x0_drag            = state.y0_drag = -10;
         state.x1_drag            = state.y1_drag =  -5;
         // Only seed the mouse position on first render; this script re-runs
@@ -2519,7 +2521,9 @@ _LINKPI_SCRIPTS_ = {
         state.x1_drag     = event.offsetX;
         state.y1_drag     = event.offsetY;
         if (state.drag_op)               { self.myUpdateDragRect(); }
-        if (state.move_op)               { selectionlayer.setAttribute("transform", "translate(" + (state.x1_drag - state.x0_drag) + "," + (state.y1_drag - state.y0_drag) + ")"); }
+        if (state.move_op)               { var _tr_ = "translate(" + (state.x1_drag - state.x0_drag) + "," + (state.y1_drag - state.y0_drag) + ")";
+                                           selectionlayer.setAttribute("transform", _tr_);
+                                           selectedlabels.setAttribute("transform", _tr_); }
         if (state.unselected_move_op)    { selectionlayer.setAttribute("transform", "translate(" + (state.x1_drag - state.x0_drag) + "," + (state.y1_drag - state.y0_drag) + ")"); }
         if (state.layout_op_shape != "") { self.myUpdateLayoutOp(); }
         if (data.brush_state > 0) {
@@ -2685,6 +2689,60 @@ _LINKPI_SCRIPTS_ = {
         selectionlayer.setAttribute("d", data.selectionpath);
         selectionlayer.setAttribute("transform", "");
     """,
+
+    # ── selection labels ──
+    # Python sends geometry (position, wrapped lines, measured width) and this builds
+    # the elements.  It is a param.Dict rather than a string of markup on purpose: a
+    # param.String is run through panel's HTML sanitizer, which strips SVG to nothing,
+    # and the child path that exempts mod_inner from it re-renders the subtree and
+    # destroys every JS-only variable in the view (PLANNING.md U5).  Neither the label
+    # payload nor this script is ever a re-render of the graph -- it rides the same
+    # message that already carries selectionpath.
+    #
+    # Lines arrive already wrapped and already measured, from the same baked font table
+    # the rendered labels use, so nothing here measures text.  Each line is written with
+    # textContent, so a node name is text in the DOM and can never be markup.
+    'selection_labels':"""
+        self.renderSelectedLabels();
+    """,
+    'renderSelectedLabels':"""
+        while (selectedlabels.firstChild) { selectedlabels.removeChild(selectedlabels.firstChild); }
+        // New geometry is absolute, so it cancels any translate a node-move left behind.
+        selectedlabels.setAttribute("transform", "");
+        var _d_ = data.selection_labels;
+        if (!_d_ || !_d_.labels || _d_.labels.length === 0) { return; }
+        var _NS_ = "http://www.w3.org/2000/svg", _h_ = _d_.h, _ls_ = _d_.labels;
+        // Backdrops first, in one pass, so a neighbouring label's backdrop can never
+        // land on top of this one's text (the java original's clearStr, which drew each
+        // string onto its own cleared box).
+        for (var _i_ = 0; _i_ < _ls_.length; _i_++) {
+            var _e_ = _ls_[_i_];
+            var _r_ = document.createElementNS(_NS_, "rect");
+            _r_.setAttribute("x",      _e_.x - _e_.w / 2 - 2);
+            _r_.setAttribute("y",      _e_.y - _h_);
+            _r_.setAttribute("width",  _e_.w + 4);
+            _r_.setAttribute("height", _e_.lines.length * _h_ + 3);
+            _r_.setAttribute("fill",   _d_.bg);
+            _r_.setAttribute("fill-opacity", "0.75");
+            selectedlabels.appendChild(_r_);
+        }
+        for (var _i_ = 0; _i_ < _ls_.length; _i_++) {
+            var _e_ = _ls_[_i_];
+            var _t_ = document.createElementNS(_NS_, "text");
+            _t_.setAttribute("x", _e_.x); _t_.setAttribute("y", _e_.y);
+            _t_.setAttribute("text-anchor", "middle");
+            _t_.setAttribute("font-size", _h_ + "px");
+            _t_.setAttribute("fill", _d_.fg);
+            for (var _j_ = 0; _j_ < _e_.lines.length; _j_++) {
+                var _s_ = document.createElementNS(_NS_, "tspan");
+                _s_.setAttribute("x", _e_.x);
+                _s_.setAttribute("dy", _j_ === 0 ? 0 : _h_);
+                _s_.textContent = _e_.lines[_j_];
+                _t_.appendChild(_s_);
+            }
+            selectedlabels.appendChild(_t_);
+        }
+    """,
     'info_str': """
         infostr.innerHTML = data.info_str;
     """,
@@ -2743,6 +2801,11 @@ class LINKPI(P2SReactiveHTML):
     # gpu_payload / gpu_error live on LINKPI_GPU only.
     allentitiespath               = param.String(default="M -100 -100 l 10 0 l 0 10 l -10 0 l 0 -10 Z")
     selectionpath                 = param.String(default="M -100 -100 l 10 0 l 0 10 l -10 0 l 0 -10 Z")
+    # Geometry for the selected-node label overlay -- see the 'renderSelectedLabels'
+    # script for why this is a Dict and not a string of SVG.  max_selection_labels caps
+    # the SELECTION: past it nothing is labeled, and info_str says so.
+    selection_labels              = param.Dict(default={})
+    max_selection_labels          = param.Integer(default=32)
     # info_str is deliberately NOT bound as ${info_str} in _template, and putting it
     # back re-opens PLANNING.md U5.  A content binding -- ${p} between tags, as opposed
     # to an attribute binding inside a tag -- registers the param as a ReactiveHTML
@@ -4105,11 +4168,16 @@ class LINKPI(P2SReactiveHTML):
             # 'positions'-linked views (they diff & skip when nothing moved).
             self.mvc.positionsUpdate(self, _ln_.pos)
         if (info):
-            self.info_str = f'{len(self.selected_entities)} Selected | {self.label_mode} | {self.layout_mode} | {self.layout_operation} | {self.__backgroundStateLabel__()}'
+            _cap_ = (' (labels capped)'
+                     if len(self.selected_entities) > self.max_selection_labels else '')
+            self.info_str = f'{len(self.selected_entities)} Selected{_cap_} | {self.label_mode} | {self.layout_mode} | {self.layout_operation} | {self.__backgroundStateLabel__()}'
             if self._last_cost_note_ is not None:
                 self.info_str += f' | {self._last_cost_note_}'
         if (all_ents): self.allentitiespath  = self.dfs_layout[self.df_level].__createPathDescriptionForAllEntities__()
-        if (sel_ents): self.selectionpath    = self.dfs_layout[self.df_level].__createPathDescriptionOfSelectedEntities__(my_selection=self.selected_entities)
+        if (sel_ents):
+            self.selectionpath    = self.dfs_layout[self.df_level].__createPathDescriptionOfSelectedEntities__(my_selection=self.selected_entities)
+            self.selection_labels = self.dfs_layout[self.df_level].__createSelectedLabels__(
+                my_selection=self.selected_entities, max_nodes=self.max_selection_labels)
 
     #
     # popStack() - as long as there are items on the stack, go up the stack

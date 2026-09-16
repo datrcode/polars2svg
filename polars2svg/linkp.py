@@ -2730,6 +2730,83 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
                 ['__svg__']
         )
 
+    #
+    # __createSelectedLabels__() - label geometry for the interactive view's selection overlay
+    #
+    # The interactive counterpart of the node labels __renderNodes__ emits, and deliberately
+    # not the same thing: a selection label is the COMPLETE name, wrapped over as many lines
+    # as it takes, where a rendered node label stops at label_max_lines and ellipsizes.  Same
+    # wrap function, called with (-1, False) instead.
+    #
+    # It returns data, not markup, because the view carries it in a param.Dict and the browser
+    # builds the elements: a param.String would be run through panel's HTML sanitizer, which
+    # strips SVG to nothing (see P2SReactiveHTML's header note), and going through the
+    # sanitizer-exempt child path instead re-renders the subtree and destroys every JS-only
+    # variable in the view (PLANNING.md U5).  Building the elements on the browser side also
+    # means a node name reaches the DOM as textContent and can never be markup.
+    #
+    # max_nodes caps the SELECTION, not the number of labels drawn: past it nothing is
+    # labeled at all, which is what the java original did at 100 (RTGraphPanel.
+    # drawSelectedEntities).  A lasso around half the graph is not a request to read
+    # anything, and the cap is what keeps it from becoming a wall of text.
+    #
+    def __createSelectedLabels__(self, my_selection: list | set | None = None,
+                                 max_nodes: int = 32) -> dict:
+        _empty_: dict = {'labels': []}
+        if not my_selection or len(my_selection) > max_nodes: return _empty_
+        _df_ = self.__filterNodesBySelection__(my_selection)
+        if len(_df_) == 0: return _empty_
+
+        # node_size as a name, for the vertical offset.  __renderNodes__ computes this
+        # inline and leaves an unrecognized name (i.e. 'vary') a str, which is safe only
+        # because a 'vary' render also carries a per-node __sz__ column that shadows it;
+        # this returns a number for every input and prefers __sz__ wherever it exists.
+        _sz_lu_  = {'small': 3, 'medium': 5, 'large': 7, 'nil': 0.5}
+        if   isinstance(self.node_size, str): _sz_dflt_ = float(_sz_lu_.get(self.node_size, 5))
+        elif self.node_size is None:          _sz_dflt_ = 5.0
+        else:                                 _sz_dflt_ = float(self.node_size)
+        _has_sz_ = '__sz__' in _df_.columns
+
+        # node_labels renames a node for display.  __renderNodes__ also DROPS whatever the
+        # dict does not name; this keeps the node's own name instead, because the overlay
+        # exists to answer "what did I just select" and a selected node with no label
+        # answers nothing.
+        _label_map_ = ({str(k): str(v) for k, v in self.node_labels.items()}
+                       if self.node_labels else {})
+
+        # One label per screen coordinate, ordered so the payload is stable across renders.
+        _cols_  = ['__sx__', '__sy__', '__nodes__', '__first__'] + (['__sz__'] if _has_sz_ else [])
+        _rows_  = _df_.unique(subset=['__sx__', '__sy__']).sort(['__sx__', '__sy__']).select(_cols_)
+        _out_   = []
+        for _row_ in _rows_.iter_rows(named=True):
+            _sx_, _sy_ = _row_['__sx__'], _row_['__sy__']
+            _sz_       = float(_row_['__sz__']) if _has_sz_ and _row_['__sz__'] is not None else _sz_dflt_
+            # A collapsed coordinate draws one cloud glyph for several entities, so it gets
+            # one summarizing label rather than the name of whichever entity sorted first.
+            if _row_['__nodes__'] > 1:
+                _label_ = f"{_row_['__nodes__']} nodes"
+            else:
+                _label_ = _label_map_.get(_row_['__first__'], _row_['__first__'])
+                if _label_.startswith(self.p2s.NULL_NODE_PREFIX):
+                    _label_ = self.p2s.nullNodeDisplay(_label_)
+            if not _label_: continue
+            _lines_ = self._wrap_label_(_label_, self.label_line_width, -1, False)
+            if not _lines_: continue
+            _w_  = max(self.p2s.textLength(_l_, self.txt_h) for _l_ in _lines_)
+            _y0_ = _sy_ + _sz_ + self.txt_h
+            # Culled on the label's own ink box, exactly as __renderNodes__ culls the
+            # rendered ones: text-anchor is middle, so it straddles __sx__, the first line
+            # rises one txt_h above its baseline and each further line drops one below.
+            if not self.__onCanvas__(_sx_ - _w_ / 2.0, _y0_ - self.txt_h,
+                                     _sx_ + _w_ / 2.0, _y0_ + len(_lines_) * self.txt_h):
+                continue
+            _out_.append({'x': round(float(_sx_), 2), 'y': round(float(_y0_), 2),
+                          'w': round(float(_w_), 2), 'lines': _lines_})
+        if not _out_: return _empty_
+        return {'labels': _out_, 'h': float(self.txt_h),
+                'fg': self.p2s.colorTyped('label', 'defaultfg'),
+                'bg': self.p2s.colorTyped('background', 'default')}
+
     def __moveSelectedEntities__(self, dxy: tuple, my_selection: set | None = None) -> dict:
         if not my_selection:
             return {}

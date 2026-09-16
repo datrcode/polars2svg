@@ -3016,5 +3016,224 @@ class TestLINKPIStackDepthLimit(_UnfilteredLoggerMixin, unittest.TestCase):
         self.assertEqual(ctrl.df_level, 3)
 
 
+@unittest.skipUnless(PANEL_AVAILABLE, 'panel not installed')
+class TestLINKPISelectionLabels(unittest.TestCase):
+    """The selected-node label overlay, on the controller side.
+
+    The feature's whole point is that a selection change reaches the browser without
+    re-rendering the graph, so the load-bearing assertion here is the negative one:
+    mod_inner must be untouched while selection_labels changes.  What the labels SAY
+    is tested in test_linkp_selection_labels.py.
+    """
+
+    def _make_ctrl(self, **kwargs):
+        from polars2svg.interactive_controller import linkpi
+        p2s    = Polars2SVG()
+        _linkp_ = p2s.linkp(_make_link_df(), relationships=[('fm', 'to')],
+                            pos=_make_pos(), **kwargs)
+        return linkpi(_linkp_)
+
+    def _select_all(self, ctrl):
+        """Drive the real drag handler, not __refreshView__ directly.
+
+        Which refresh applyDragOp asks for is half of what is under test here, so a
+        helper that calls __refreshView__ itself would pass over a handler that had
+        started re-rendering the graph on every selection.
+        """
+        async def _go():
+            ctrl.drag_x0, ctrl.drag_y0 = -10, -10
+            ctrl.drag_x1, ctrl.drag_y1 = ctrl.w + 10, ctrl.h + 10
+            ctrl.drag_op_finished      = True
+            await ctrl.applyDragOp(None)
+        asyncio.run(_go())
+
+    # ── the constraint the feature exists for ────────────────────────────────
+    #
+    # Comparing mod_inner before and after proves nothing: a re-render of an
+    # unchanged graph returns the CACHED svg (renderSVG() early-returns unless
+    # _render_invalid_), so the string matches either way and the assertion passes
+    # over a full re-render.  The sharp probes are that the render is never
+    # invalidated and renderSVG() is never called.
+    def test_selecting_does_not_invalidate_the_render(self):
+        ctrl = self._make_ctrl()
+        self.assertFalse(ctrl.dfs_layout[0]._render_invalid_, 'fixture should start valid')
+        self._select_all(ctrl)
+        self.assertFalse(ctrl.dfs_layout[0]._render_invalid_,
+                         'a selection change invalidated the link-node render')
+
+    def test_selecting_does_not_call_rendersvg(self):
+        ctrl    = self._make_ctrl()
+        _linkp_ = ctrl.dfs_layout[0]
+        _calls_ = []
+        _real_  = _linkp_.renderSVG
+        _linkp_.renderSVG = lambda *a, **k: (_calls_.append(1), _real_(*a, **k))[1]
+        self._select_all(ctrl)
+        self.assertEqual(_calls_, [], 'a selection change re-rendered the whole graph')
+
+    def test_the_probe_would_catch_a_rerender(self):
+        """Guard the two tests above: a refresh that DOES re-render must trip them."""
+        ctrl    = self._make_ctrl()
+        _linkp_ = ctrl.dfs_layout[0]
+        _calls_ = []
+        _real_  = _linkp_.renderSVG
+        _linkp_.renderSVG = lambda *a, **k: (_calls_.append(1), _real_(*a, **k))[1]
+        ctrl.__refreshView__()
+        self.assertEqual(len(_calls_), 1)
+
+    def test_the_sticky_label_path_is_the_expensive_one(self):
+        """The contrast the overlay exists to avoid: label_only invalidates the render.
+
+        Sticky labels are drawn by re-rendering the graph with label_only set, which is
+        correct for a persistent mode and is exactly what a transient selection must not
+        do.  If this ever stops invalidating, the two paths have converged and the
+        assertions above stop meaning anything.
+        """
+        ctrl = self._make_ctrl()
+        ctrl.dfs_layout[0].labelOnly({'a'})
+        self.assertTrue(ctrl.dfs_layout[0]._render_invalid_)
+
+    def test_the_overlay_draws_outside_the_rendered_svg(self):
+        """The labels are a view overlay, so they must not appear in the graph markup.
+
+        The marker label is deliberately unlike anything else in an SVG document: the
+        node names themselves are single letters, and 'a' occurs in the root element's
+        own font-family.
+        """
+        _marker_ = 'QQZZ-selection-label-marker'
+        ctrl = self._make_ctrl(node_labels={'a': _marker_})
+        self._select_all(ctrl)
+        _texts_ = [' '.join(_e_['lines']) for _e_ in ctrl.selection_labels['labels']]
+        self.assertIn(_marker_, _texts_, 'the overlay should carry the marker')
+        self.assertNotIn(_marker_, ctrl.mod_inner)
+
+    def test_selecting_populates_the_overlay(self):
+        ctrl = self._make_ctrl()
+        self.assertEqual(ctrl.selection_labels, {})
+        self._select_all(ctrl)
+        self.assertEqual(len(ctrl.selection_labels['labels']), 3)
+
+    def test_clearing_the_selection_clears_the_overlay(self):
+        ctrl = self._make_ctrl()
+        self._select_all(ctrl)
+        ctrl.setSelectedEntitiesAndNotifyOthers(set())
+        ctrl.__refreshView__(comp=False, all_ents=False)
+        self.assertEqual(ctrl.selection_labels, {'labels': []})
+
+    def test_the_overlay_rides_the_same_branch_as_the_outline(self):
+        """sel_ents=False must leave BOTH alone -- they are one update, not two."""
+        ctrl = self._make_ctrl()
+        self._select_all(ctrl)
+        _path_, _labels_ = ctrl.selectionpath, ctrl.selection_labels
+        ctrl.selected_entities = set()
+        ctrl.__refreshView__(comp=False, all_ents=False, sel_ents=False)
+        self.assertEqual(ctrl.selectionpath,    _path_)
+        self.assertEqual(ctrl.selection_labels, _labels_)
+
+    # ── the cap ──────────────────────────────────────────────────────────────
+    def test_default_cap_is_32(self):
+        self.assertEqual(self._make_ctrl().max_selection_labels, 32)
+
+    def test_over_the_cap_nothing_is_labeled(self):
+        ctrl = self._make_ctrl()
+        ctrl.max_selection_labels = 2
+        self._select_all(ctrl)
+        self.assertEqual(ctrl.selection_labels, {'labels': []})
+
+    def test_over_the_cap_info_str_says_so(self):
+        ctrl = self._make_ctrl()
+        ctrl.max_selection_labels = 2
+        self._select_all(ctrl)
+        self.assertIn('labels capped', ctrl.info_str)
+
+    def test_under_the_cap_info_str_is_unchanged(self):
+        ctrl = self._make_ctrl()
+        self._select_all(ctrl)
+        self.assertNotIn('capped', ctrl.info_str)
+        self.assertTrue(ctrl.info_str.startswith('3 Selected |'))
+
+    def test_the_cap_is_settable_per_view(self):
+        from polars2svg.interactive_controller import linkpi
+        p2s     = Polars2SVG()
+        _linkp_ = p2s.linkp(_make_link_df(), relationships=[('fm', 'to')], pos=_make_pos())
+        self.assertEqual(linkpi(_linkp_, max_selection_labels=8).max_selection_labels, 8)
+
+    # ── template / script wiring ─────────────────────────────────────────────
+    def test_template_carries_the_overlay_layer(self):
+        cls = type(self._make_ctrl())
+        self.assertIn('id="selectedlabels"', cls._template)
+
+    def test_the_overlay_layer_is_not_a_hit_target(self):
+        """It sits above the graph; taking pointer events would break node picking."""
+        cls    = type(self._make_ctrl())
+        _line_ = [_l_ for _l_ in cls._template.split('\n') if 'id="selectedlabels"' in _l_][0]
+        self.assertIn('pointer-events="none"', _line_)
+
+    def test_scripts_are_registered(self):
+        cls = type(self._make_ctrl())
+        for _s_ in ('selection_labels', 'renderSelectedLabels'):
+            self.assertIn(_s_, cls._scripts)
+
+    def test_render_redraws_the_overlay(self):
+        """The render script runs on every refresh; the overlay must survive one."""
+        self.assertIn('self.renderSelectedLabels();',
+                      type(self._make_ctrl())._scripts['render'])
+
+    def test_the_script_names_the_dom_node_it_writes(self):
+        """panel only injects a node variable into a script whose text names it."""
+        self.assertIn('selectedlabels',
+                      type(self._make_ctrl())._scripts['renderSelectedLabels'])
+
+    def test_lines_reach_the_dom_as_text_not_markup(self):
+        """A node name must never be parsed as markup -- see SECURITY.md profile A."""
+        _js_ = type(self._make_ctrl())._scripts['renderSelectedLabels']
+        self.assertIn('.textContent', _js_)
+        self.assertNotIn('innerHTML', _js_)
+
+    def test_labels_track_a_move_of_the_selection(self):
+        """The same translate the outline gets, so labels do not lag a node drag."""
+        _js_ = type(self._make_ctrl())._scripts['myOnMouseMove']
+        _mv_ = [_l_ for _l_ in _js_.split('\n') if 'state.move_op' in _l_][0]
+        self.assertIn('selectedlabels.setAttribute("transform"', _js_)
+        self.assertIn('selectionlayer.setAttribute("transform"', _js_)
+        self.assertIn('_tr_', _mv_)
+
+    def test_an_unselected_node_drag_does_not_move_the_labels(self):
+        """unselected_move_op drags a node that is NOT selected; the labels stay put."""
+        _js_ = type(self._make_ctrl())._scripts['myOnMouseMove']
+        _ln_ = [_l_ for _l_ in _js_.split('\n') if 'state.unselected_move_op' in _l_][0]
+        self.assertNotIn('selectedlabels', _ln_)
+
+    def test_new_geometry_cancels_a_leftover_translate(self):
+        _js_ = type(self._make_ctrl())._scripts['renderSelectedLabels']
+        self.assertIn('selectedlabels.setAttribute("transform", "");', _js_)
+
+    # ── the payload is a Dict on purpose (PLANNING.md U5) ────────────────────
+    def test_the_payload_is_not_a_string_param(self):
+        """A param.String is sanitized (SVG -> ''), and the child path that exempts
+        mod_inner from it re-renders the subtree and destroys all JS state."""
+        import param as _param_
+        _p_ = type(self._make_ctrl()).param['selection_labels']
+        self.assertIsInstance(_p_, _param_.Dict)
+
+    def test_the_payload_is_not_bound_into_the_template(self):
+        """A ${} content binding would make it a child -- exactly the U5 failure."""
+        self.assertNotIn('${selection_labels}', type(self._make_ctrl())._template)
+
+
+@unittest.skipUnless(PANEL_AVAILABLE, 'panel not installed')
+class TestLINKPIGPUSelectionLabels(unittest.TestCase):
+    """The overlay is SVG over the canvas, so the WebGPU view gets it unchanged.
+
+    This is the reason the labels were not pushed through the glyph atlas: the GPU
+    view has no per-node DOM to hang them on, and an SVG overlay works for both.
+    """
+
+    def test_gpu_view_carries_the_layer_and_the_scripts(self):
+        from polars2svg.interactive_controller import LINKPI_GPU
+        self.assertIn('id="selectedlabels"', LINKPI_GPU._template)
+        for _s_ in ('selection_labels', 'renderSelectedLabels'):
+            self.assertIn(_s_, LINKPI_GPU._scripts)
+
+
 if __name__ == '__main__':
     unittest.main()

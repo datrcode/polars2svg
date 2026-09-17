@@ -1,7 +1,10 @@
 import itertools
 import json
 import math
+import os
 import random
+import subprocess
+import sys
 import tempfile
 import types
 import unittest
@@ -112,6 +115,26 @@ def _proper_crossings(edges, pos):
     return total
 
 
+_TREEMAP_HASH_SRC_ = (
+    "import hashlib, random, networkx as nx\n"
+    "from polars2svg import Polars2SVG\n"
+    "rnd = random.Random(1)\n"
+    "ips = [f'10.{i%4}.{(i*7)%16}.{i}' for i in range(60)]\n"
+    "g = nx.Graph()\n"
+    "g.add_edges_from((rnd.choice(ips), rnd.choice(ips)) for _ in range(150))\n"
+    "pos = Polars2SVG().ipSubnetTreeMapLayout(g)\n"
+    "items = sorted((str(k), round(v[0], 6), round(v[1], 6)) for k, v in pos.items())\n"
+    "print(hashlib.md5(repr(items).encode()).hexdigest())\n"
+)
+
+def _treemap_hash_under_seed(seed):
+    """Hash of an ipSubnetTreeMapLayout() result in a subprocess with PYTHONHASHSEED set."""
+    _out_ = subprocess.run([sys.executable, '-c', _TREEMAP_HASH_SRC_],
+                           env={**os.environ, 'PYTHONHASHSEED': seed},
+                           capture_output=True, text=True, check=True)
+    return _out_.stdout.strip()
+
+
 class TestCreateNetworkXGraph(unittest.TestCase):
 
     @classmethod
@@ -147,6 +170,58 @@ class TestCreateNetworkXGraph(unittest.TestCase):
         self.assertGreater(g.number_of_nodes(), 0)
         for node in g.nodes():
             self.assertIsInstance(node, str)
+
+    # An undirected edge used to keep ONE direction's count -- add_edge() replaces the
+    # attributes of an existing edge, and (a -> b) / (b -> a) are the same undirected
+    # edge -- so which direction won moved with the unordered group_by.
+
+    def test_undirected_edge_sums_both_directions(self):
+        df = pl.DataFrame({'fm': ['a'] * 5 + ['b'], 'to': ['b'] * 5 + ['a']})
+        g  = self.p2s.createNetworkXGraph(df, [('fm', 'to')])
+        self.assertEqual(g['a']['b']['weight'], 6)
+
+    def test_digraph_keeps_the_two_directions_apart(self):
+        df = pl.DataFrame({'fm': ['a'] * 5 + ['b'], 'to': ['b'] * 5 + ['a']})
+        g  = self.p2s.createNetworkXGraph(df, [('fm', 'to')], use_digraph=True)
+        self.assertEqual(g['a']['b']['weight'], 5)
+        self.assertEqual(g['b']['a']['weight'], 1)
+
+    def test_self_loop_counts_its_rows_once(self):
+        # (a, a) is a single group in either direction -- nothing to sum, and no
+        # double-count from the accumulate branch.
+        df = pl.DataFrame({'fm': ['a', 'a', 'b'], 'to': ['a', 'a', 'a']})
+        g  = self.p2s.createNetworkXGraph(df, [('fm', 'to')])
+        self.assertEqual(g['a']['a']['weight'], 2)
+
+    def test_three_tuple_sums_weight_and_keeps_lowest_sorted_attribute(self):
+        # Grouping by the attribute splits one pair across three groups; the weights
+        # sum and the attribute keeps the lowest-sorted value ('x'), per the docstring.
+        df = pl.DataFrame({'fm': ['a', 'a', 'b'], 'to': ['b', 'b', 'a'], 'w': ['x', 'y', 'z']})
+        g  = self.p2s.createNetworkXGraph(df, [('fm', 'to', 'w')])
+        self.assertEqual(g['a']['b']['weight'], 3)
+        self.assertEqual(g['a']['b']['w'], 'x')
+
+    def test_attribute_survives_a_two_part_relationship_naming_the_same_pair(self):
+        # The 2-tuple creates the edge with no attribute; the 3-tuple must still set it
+        # rather than skip it as an already-seen edge.
+        df = pl.DataFrame({'fm': ['a', 'a'], 'to': ['b', 'b'], 'w': ['x', 'x']})
+        g  = self.p2s.createNetworkXGraph(df, [('fm', 'to'), ('fm', 'to', 'w')])
+        self.assertEqual(g['a']['b']['w'], 'x')
+        self.assertEqual(g['a']['b']['weight'], 4)
+
+    def test_undirected_weight_totals_every_row(self):
+        # Four distinct pairs over 10 rows: every row lands in exactly one edge weight.
+        df = pl.DataFrame({
+            'fm': ['a', 'b', 'a', 'c', 'a', 'b', 'c', 'a', 'd', 'a'],
+            'to': ['b', 'a', 'c', 'a', 'b', 'a', 'a', 'd', 'a', 'c'],
+        })
+        g = self.p2s.createNetworkXGraph(df, [('fm', 'to')])
+        self.assertEqual(sum(_d_['weight'] for _u_, _v_, _d_ in g.edges(data=True)), len(df))
+
+    def test_numeric_count_sums_across_both_directions(self):
+        df = pl.DataFrame({'fm': ['a', 'b'], 'to': ['b', 'a'], 'bytes': [10, 32]})
+        g  = self.p2s.createNetworkXGraph(df, [('fm', 'to')], count='bytes')
+        self.assertEqual(g['a']['b']['weight'], 42)
 
 
 class TestCreateNetworkXGraphExceptions(unittest.TestCase):
@@ -815,6 +890,28 @@ class TestIpSubnetTreeMapLayout(unittest.TestCase):
         self.assertEqual(set(cells.keys()), {'1.2.3.0/24'})
         self.assertNotIn('non-IPv4', cells)
         self.assertEqual(set(pos.keys()), {'1.2.3.4:443', '1.2.3.9:80'})
+
+    # Nodes are bucketed into sets, and rectangularLayout() places them in iteration
+    # order, so every node used to land somewhere else in every process.
+
+    def test_layout_ignores_node_insertion_order(self):
+        _ips_ = [f'10.0.0.{i}' for i in range(8)] + [f'10.0.1.{i}' for i in range(5)]
+        g1, g2 = nx.Graph(), nx.Graph()
+        g1.add_nodes_from(_ips_)
+        g2.add_nodes_from(reversed(_ips_))
+        self.assertEqual(self.p2s.ipSubnetTreeMapLayout(g1), self.p2s.ipSubnetTreeMapLayout(g2))
+
+    def test_collapse_layout_ignores_node_insertion_order(self):
+        _ips_ = [f'10.0.0.{i}' for i in range(8)] + [f'10.0.1.{i}' for i in range(5)]
+        g1, g2 = nx.Graph(), nx.Graph()
+        g1.add_nodes_from(_ips_)
+        g2.add_nodes_from(reversed(_ips_))
+        self.assertEqual(self.p2s.ipSubnetTreeMapLayout(g1, collapse=True),
+                         self.p2s.ipSubnetTreeMapLayout(g2, collapse=True))
+
+    def test_layout_is_identical_across_hash_seeds(self):
+        # String hashing is seeded at interpreter start, so this one needs subprocesses.
+        self.assertEqual(_treemap_hash_under_seed('0'), _treemap_hash_under_seed('1'))
 
 
 class TestIpSubnetForceDirectedLayout(unittest.TestCase):

@@ -139,6 +139,21 @@ class P2SGraphMixin:
                             relationships: list,
                             use_digraph: bool  = False,
                             count: Any        = None) -> Any:
+        """Build a NetworkX graph from ``df`` using ``relationships``.
+
+        Each relationship is a 2-tuple ``(fm, to)`` or a 3-tuple
+        ``(fm, to, attribute)``; either endpoint may itself be a tuple of
+        columns, which is concatenated into a single node name.
+
+        ``weight`` is the total ``count=`` over every row that produced the
+        edge. More than one group can land on a single edge -- on an undirected
+        graph ``(a, b)`` and ``(b, a)`` are the same edge, and a 3-tuple groups
+        by its attribute as well -- and those groups are summed. For an
+        ``n_unique``-style ``count=`` that sum double-counts a value that
+        appears in more than one of the groups; ``ROW_COUNTp`` and numeric sums
+        are exact. A 3-tuple's ``attribute`` keeps the lowest-sorted group's
+        value, because non-numeric values cannot be merged.
+        """
         _requireGraphLayoutDeps_()
         if count is None: count = self.ROW_COUNTp
 
@@ -171,11 +186,35 @@ class P2SGraphMixin:
         for rel_tuple in new_relationships:
             df_filtered = self.polarsFilterColumnsWithNaNs(df, self.flattenTuple(rel_tuple))
             counter = df_filtered.group_by(list(rel_tuple)).agg(self.__graphCountAggExpr__(df_filtered, count))
+            # group_by() is unordered and multithreaded, so its row order changes from one
+            # process to the next. The weights below accumulate, and addition commutes, so
+            # the sort is not what makes them correct -- it fixes WHICH group a three-part
+            # relationship takes its attribute from, which would otherwise be a coin flip.
+            counter = counter.sort(list(rel_tuple))
             for i in range(len(counter)):
-                _row_  = counter[i]
-                params = {}
+                _row_ = counter[i]
+                _fm_, _to_ = _row_[rel_tuple[0]][0], _row_[rel_tuple[1]][0]
+                _weight_   = _row_['__count__'][0]
+                params     = {}
                 if len(rel_tuple) == 3: params[rel_tuple[2]] = _row_[rel_tuple[2]][0]
-                nx_g.add_edge(_row_[rel_tuple[0]][0], _row_[rel_tuple[1]][0], weight=_row_['__count__'][0], **params)
+                # Accumulate, do not overwrite. Several groups can land on one edge: on an
+                # undirected graph (a -> b) and (b -> a) ARE one edge, and a three-part
+                # relationship groups by its attribute too, so a single pair yields a group
+                # per attribute value. add_edge() replaces the attributes of an edge that
+                # already exists, so the weight used to be whichever group happened to come
+                # last -- an undirected edge carried one direction's traffic, not both, and
+                # which direction won moved from process to process. The attribute keeps
+                # its first (lowest-sorted) value; see the docstring. It is still set on an
+                # edge that already exists but does not carry it yet, so a three-part
+                # relationship does not lose its attribute to a two-part one that named the
+                # same pair first.
+                if nx_g.has_edge(_fm_, _to_):
+                    _edge_data_ = nx_g[_fm_][_to_]
+                    _edge_data_['weight'] += _weight_
+                    for _k_, _v_ in params.items():
+                        if _k_ not in _edge_data_: _edge_data_[_k_] = _v_
+                else:
+                    nx_g.add_edge(_fm_, _to_, weight=_weight_, **params)
 
             # Every entity named in an endpoint column is a node of this graph, including
             # the ones whose rows never became an edge: polarsFilterColumnsWithNaNs() above
@@ -521,7 +560,7 @@ class P2SGraphMixin:
 
             _ccx_, _ccy_ = (_x0_ + _x1_) / 2.0, (_y0_ + _y1_) / 2.0
             if collapse:
-                for _node_ in _nodes_: pos[_node_] = (_ccx_, _ccy_)
+                for _node_ in sorted(_nodes_, key=str): pos[_node_] = (_ccx_, _ccy_)
                 continue
 
             # Lay out within the full cell, then recenter the node cloud on the
@@ -530,7 +569,13 @@ class P2SGraphMixin:
             # edges, so its output is not centered; recentering on the cloud's
             # own bounding box (not the cell) makes every node count land
             # centered, and the scale leaves a (cell_inset/2) gutter per side.
-            self.rectangularLayout(g, _nodes_, pos=pos, bounds=(_x0_, _y0_, _x1_, _y1_))
+            # sorted(): _nodes_ is a set and rectangularLayout() places nodes in iteration
+            # order, so an unsorted set handed every node a different position in every
+            # process -- Python seeds string hashing per interpreter. key=str because some
+            # callers mix str and int node ids, which are not orderable against each other.
+            # (The group ordering above is already sorted, and the min/max below are
+            # order-free; this call was the only leak.)
+            self.rectangularLayout(g, sorted(_nodes_, key=str), pos=pos, bounds=(_x0_, _y0_, _x1_, _y1_))
             _scale_ = (1.0 - cell_inset) if (cell_inset > 0.0 and cell_inset < 1.0) else 1.0
             _xs_ = [pos[_node_][0] for _node_ in _nodes_]
             _ys_ = [pos[_node_][1] for _node_ in _nodes_]

@@ -59,6 +59,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   coordinates onto a 4096² canvas so the element count, not the row count, sets
   the work.
 
+### Fixed
+
+- **An undirected graph from `createNetworkXGraph()` now carries both directions
+  of a bidirectional pair.** The method groups by the *directed* `(fm, to)` pair
+  and called `add_edge()` once per group; on an `nx.Graph` `(a, b)` and `(b, a)`
+  are the same edge, and `add_edge()` **replaces** the attributes of an edge that
+  already exists. An undirected edge therefore kept one direction's count rather
+  than the sum of both — and because `group_by()` is unordered and multithreaded,
+  which direction survived changed from process to process. On a VAST 2013
+  netflow subset 1,634 of 4,208 ordered pairs were bidirectional, and one pair
+  scored 708 in one run and 1 in the next.
+
+  Weights now accumulate onto an existing edge: `weight` is the total `count=`
+  over every row that produced the edge. A three-part relationship was losing
+  counts the same way, since grouping by the attribute splits one pair across a
+  group per attribute value; those are summed too, and the attribute keeps the
+  lowest-sorted group's value — the grouped frame is now sorted, so "first" is
+  well defined instead of a coin flip, and non-numeric values cannot be merged.
+  `use_digraph=True` is unaffected: the two directions are separate edges and
+  keep separate weights.
+
+  One caveat, now documented on the method: for an `n_unique`-style `count=` the
+  sum double-counts a value appearing in more than one of the merged groups.
+  `ROW_COUNTp` and numeric sums are exact.
+
+  The wrong numbers reached everything weight-sensitive —
+  `neighborhoodLayout(mode='graph')` hands `weight` to Louvain,
+  `ipSubnetForceDirectedLayout` accumulates it, and any `count=`-driven link
+  thickness renders it — so communities, layouts and pictures moved run to run
+  for what looked like algorithm instability.
+
+- **`ipSubnetTreeMapLayout()` returns the same layout in every process.** Nodes
+  are bucketed into a `set` per subnet and `rectangularLayout()` places them in
+  iteration order. Python seeds string hashing per interpreter, so every node
+  landed somewhere different in every process: the same 60-node graph gave three
+  different position hashes under `PYTHONHASHSEED=0`, `1` and `2`. Each bucket is
+  now sorted before being laid out, in the `collapse=True` branch as well. The
+  group ordering was already deterministic, and `ipSubnetForceDirectedLayout` was
+  never affected.
+
+  Anything treating a layout as a fixed input — rendered-SVG baselines, cached
+  position files, A/B comparisons of routing quality — was silently comparing
+  different pictures.
+
 ## [0.3.0] — 2026-09-16
 
 ### Security

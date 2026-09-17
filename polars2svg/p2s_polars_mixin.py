@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, cast
 import polars as pl
 import re
 import operator
@@ -55,6 +55,20 @@ class P2SPolarsMixin:
         return df.filter(reduce(operator.and_, exprs))
 
     # -------------------------------------------------------------------------
+
+    #
+    # polarsJoinSVG() - concatenate a String column of SVG fragments into one str.
+    #
+    # The obvious ''.join(df[col]) walks the Series from Python, materializing one
+    # Python str per row before the join ever starts; at a million elements that
+    # dominates the render.  str.join('') does the same concatenation inside Polars
+    # and hands back a single str.  Byte-identical output, nulls skipped rather than
+    # raising TypeError (''.join would raise -- no caller relies on that).
+    #
+    def polarsJoinSVG(self, df: pl.DataFrame, col: str = '__svg__') -> str:
+        if len(df) == 0: return ''
+        _joined_ = df.select(pl.col(col).str.join('')).item()
+        return '' if _joined_ is None else cast(str, _joined_)
 
     #
     # polarsConcatString - for a given string, return a list of polars expressions for use with pl.concat_str

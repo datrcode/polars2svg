@@ -1726,7 +1726,11 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
         _lk_sw_attr_      = '' if self.link_size == 'vary' else f' stroke-width="{_sz_}"'
         _link_group_open_ = f'<g fill="none"{_lk_sw_attr_} opacity="{self.link_opacity}">'
 
-        _all_svg_ = set()
+        # Per-relationship SVG fragments, deduped+sorted natively after the loop.
+        # A Python set()/sorted() over hundreds of thousands of edge strings costs
+        # more than the Polars pipeline that produced them; unique().sort() is the
+        # same result (UTF-8 byte order == code-point order) at ~2.5x.
+        _all_svg_: list = []
         self.df_link = None
         # Link labels (populated by __renderLinkLabels__ from pass 2; _seen_ dedupes
         # identical labels drawn by more than one relationship)
@@ -1830,9 +1834,10 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
                 _visible_ = _df_link_.filter(
                     self.__onCanvasExpr__(_cull_x_, _cull_y_, pad=_stroke_w_ / 2.0)
                 )
-                _all_svg_ |= set(_visible_.drop_nulls(subset=[_link_col_])[_link_col_].unique())
+                _all_svg_.append(_visible_.drop_nulls(subset=[_link_col_])[_link_col_])
 
-        _sorted_links_        = sorted(_all_svg_)
+        _sorted_links_        = (pl.concat(_all_svg_).unique().sort().to_list()
+                                 if _all_svg_ else [])
         self._link_svg_list_  = ([_link_group_open_] + _sorted_links_ + ['</g>']
                                   if _sorted_links_ else [])
 

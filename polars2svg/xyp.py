@@ -3744,11 +3744,11 @@ class XYp(P2SBackgroundMixin, ExportMixin):
         if self.dot_size_orig is not None:
             if isinstance(self.dot_size_orig, int):
                 _svg_style_ = f'<style> .rect-group-{_randid_} rect {{ width: {self.dot_size_orig}px; height: {self.dot_size_orig}px; }} </style>'
-                _svg_plot_  = f'''<g class="rect-group-{_randid_}" stroke="none" fill="{_color_default_}">''' + ''.join(self.df_pixels['__svg__']) + '''</g>'''
+                _svg_plot_  = f'''<g class="rect-group-{_randid_}" stroke="none" fill="{_color_default_}">''' + self.p2s.polarsJoinSVG(self.df_pixels) + '''</g>'''
             else:
                 if isinstance(self.dot_size_orig, float): _svg_style_ = f'<style> .circle-group-{_randid_} circle {{ r: {self.dot_size_orig}px; }} </style>'
                 else:                                     _svg_style_ = f'<style> .circle-group-{_randid_} </style>'
-                _svg_plot_  = f'''<g class="circle-group-{_randid_}" stroke="none" fill="{_color_default_}" {self.clip_url}>''' + ''.join(self.df_pixels['__svg__']) + '''</g>'''
+                _svg_plot_  = f'''<g class="circle-group-{_randid_}" stroke="none" fill="{_color_default_}" {self.clip_url}>''' + self.p2s.polarsJoinSVG(self.df_pixels) + '''</g>'''
         else:
             _svg_style_, _svg_plot_ = '', ''
 

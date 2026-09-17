@@ -549,7 +549,8 @@ class DisplayList:
         _arr_ = df.select([e.alias(f'__c{i}__') for i, e in enumerate(exprs)]).to_numpy().astype(np.float32)
         _svg_ = ''
         if svg_col is not None:
-            _svg_ = ''.join(df[svg_col].to_list())
+            _joined_ = df.select(pl.col(svg_col).str.join('')).item()
+            _svg_ = '' if _joined_ is None else _joined_
             self._svg_.append(_svg_)
         self._ops_.append((kind, _arr_, scissor))
         return _svg_

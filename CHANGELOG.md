@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **SVG fragment columns are concatenated inside Polars, not in Python.** Every
+  component builds its elements with `pl.concat_str` already, but the finished
+  `__svg__` column was collapsed with `''.join(df['__svg__'])` — which walks the
+  Series from Python and materializes one `str` object per element before the
+  join begins. On an 800k-element `xyp` render that single line was **62% of the
+  total render time** (807,744 `Series.__iter__` calls in the profile). The new
+  `Polars2SVG.polarsJoinSVG(df, col='__svg__')` does the concatenation natively
+  with `str.join('')` and hands back one `str`.
+
+  Applied at six sites: the three `colorize*Bars*` returns in
+  `p2s_render_mixin.py`, both `__renderSVG__` branches in `xyp.py`, and
+  `DisplayList._df_to_op_()` (which additionally dropped a `.to_list()`).
+  `linkp.__renderLinks__()` had a second Python-side hot spot — a `set()` union
+  across relationships followed by `sorted()` over hundreds of thousands of edge
+  strings — and now accumulates per-relationship Series and finishes with
+  `pl.concat(...).unique().sort()`.
+
+  Measured on `darwin-arm64-apple-m5-max-nomlx`, median of 5:
+
+  | workload | before | after | |
+  | --- | ---: | ---: | ---: |
+  | `xyp`, 1M rows, 4096² canvas (807k elements) | 77.5 ms | 53.0 ms | 1.46× |
+  | `xyp`, 1M rows, 1024² canvas (216k elements) | 31.3 ms | 24.5 ms | 1.28× |
+  | `linkp`, 1M rows, 20k nodes | 642.3 ms | 271.1 ms | 2.37× |
+  | `histop`, 1M rows (control) | 5.5 ms | 6.5 ms | unchanged |
+
+  Output is byte-identical — the golden suite is the proof, and `histop` is in
+  the table as the control: components whose output is bounded by bins rather
+  than rows have nothing to gain and do not move.
+
+  Two behaviours worth knowing:
+
+  - `str.join('')` **skips nulls** where `''.join(series)` raises `TypeError`.
+    Strictly more forgiving, so no working caller changes, but a null in an
+    `__svg__` column is now silently dropped instead of failing loudly.
+  - The dedup in `linkp` relies on Polars sorting strings by UTF-8 bytes and
+    Python by code point agreeing. UTF-8 is order-preserving so they do; it is
+    asserted rather than assumed (non-ASCII node labels included).
+
+### Added
+
+- **A high-element-count perf workload (`xyp_dense`).** The existing `xyp`
+  baseline feeds 1M rows but emits only **24,240 elements** — `a` is
+  `integers(0, 101)`, so x collapses to 101 columns — and `linkp`'s 100 nodes
+  yield ~0.5 MB of SVG. Those workloads measure row-ingest cost; element-emit
+  cost scales independently and was invisible to them, which is why the 1.46×
+  above does not appear in the committed timings. `xyp_dense` renders continuous
+  coordinates onto a 4096² canvas so the element count, not the row count, sets
+  the work.
+
 ## [0.3.0] — 2026-09-16
 
 ### Security

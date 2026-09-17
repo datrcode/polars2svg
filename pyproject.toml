@@ -400,4 +400,6 @@ exclude = [
   "20260824_background_record_contract.md",
   "20260913_fable_code_audit.md",
   "20260915_fable_code_audit.md",
+  "20260917_fable_least_confidence.md",
+  "20260917_fable_what_am_i_missing.md",
 ]

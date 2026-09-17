@@ -36,6 +36,17 @@ _POS_LINK_ = {
 
 _N_CHORD_NODES_ = 20
 
+# High-element-count workloads.  The workloads above feed 1M rows but aggregate down
+# hard before anything is emitted -- xyp's 'a' is integers(0, 101), so x collapses to
+# 101 columns and only ~24k <circle> elements are written; linkp's 100 nodes yield
+# ~0.5 MB of SVG.  That measures row-ingest cost.  Element-emit cost -- building the
+# fragment strings and concatenating them -- scales with the element count instead,
+# and these two make it the dominant term so a regression there is visible.
+# xyp_dense exercises the concat_str/join path; linkp_dense exercises the separate
+# per-edge dedup+sort.  Keep both: neither covers the other's code.
+_DENSE_WXH_       = (4096, 4096)
+_N_DENSE_LK_NODES_ = 20_000
+
 # Accelerated-layout workloads. Sized so a single run lands in the tens-to-hundreds
 # of milliseconds on the GPU path — big enough that the kernels dominate interpreter
 # overhead, small enough that 3 runs stay cheap.
@@ -242,7 +253,24 @@ def _make_frames():
         'ts':   pl.Series(rng.integers(ts_start, ts_end, _N_SL_ROWS_)).cast(pl.Datetime('us')),
     }).filter(pl.col('fm') != pl.col('to'))
 
-    return df_histo, df_time, df_xy, df_link, df_chord, df_spread
+    # Dense frames are drawn LAST on purpose: `rng` is shared, so building them earlier
+    # would shift the stream and silently change df_chord/df_spread -- whose baselines on
+    # the other platforms were recorded before these existed.
+    #
+    # Continuous coordinates on a 4096 canvas give ~800k distinct pixels from 1M rows,
+    # against ~24k for df_xy above.
+    df_xy_dense = pl.DataFrame({
+        'a': pl.Series(rng.normal(0.0, 1.0, N_ROWS)),
+        'c': pl.Series(rng.normal(0.0, 1.0, N_ROWS)),
+    })
+
+    df_link_dense = pl.DataFrame({
+        'fm': pl.Series(rng.integers(0, _N_DENSE_LK_NODES_, N_ROWS)).cast(pl.Utf8),
+        'to': pl.Series(rng.integers(0, _N_DENSE_LK_NODES_, N_ROWS)).cast(pl.Utf8),
+    })
+
+    return (df_histo, df_time, df_xy, df_link, df_chord, df_spread,
+            df_xy_dense, df_link_dense)
 
 
 def _fmt_ms(seconds):
@@ -274,7 +302,8 @@ class TestPerformanceRegression(unittest.TestCase):
 
     def _make_workloads(self):
         p2s = Polars2SVG()
-        df_histo, df_time, df_xy, df_link, df_chord, df_spread = _make_frames()
+        (df_histo, df_time, df_xy, df_link, df_chord, df_spread,
+         df_xy_dense, df_link_dense) = _make_frames()
 
         # webgpu(): time only the payload build (buffers + base64), not the render
         class _TimedResult_:
@@ -299,6 +328,17 @@ class TestPerformanceRegression(unittest.TestCase):
             "spreadlinesp": lambda: p2s.spreadlinesp(df_spread, [('fm', 'to')], ego='0', time='ts'),
             "xyp_webgpu_payload": lambda: _webgpu_payload_(lambda: p2s.xyp(df_xy, 'a', 'c')),
         }
+
+        # --- high element counts -------------------------------------------------
+        # Same 1M rows as "xyp"/"linkp", but the aggregation no longer collapses them,
+        # so the render is dominated by emitting and concatenating element strings
+        # rather than by ingesting rows.  See the note by _DENSE_WXH_.
+        _pos_dense_ = {str(i): (float(i % 200) / 199.0, float(i // 200) / 99.0)
+                       for i in range(_N_DENSE_LK_NODES_)}
+        workloads["xyp_dense"]   = lambda: p2s.xyp(df_xy_dense, 'a', 'c', wxh=_DENSE_WXH_)
+        workloads["linkp_dense"] = lambda: p2s.linkp(df=df_link_dense,
+                                                     relationships=[('fm', 'to')],
+                                                     pos=_pos_dense_)
 
         # --- composition ---------------------------------------------------------
         # tile() places finished renderings, so its children are rendered once here and

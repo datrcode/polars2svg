@@ -26,6 +26,7 @@ class P2SRenderMixin:
     colorizeColumnPolarsOperations: Any
     numericColumn:                  Any
     polarsConcatString:             Any
+    polarsJoinSVG:                  Any
     rgbFromHexPolarsOperations:     Any
 
     def __init__(self) -> None:
@@ -222,7 +223,7 @@ class P2SRenderMixin:
             _rgba_ = ('__r_f__', '__g_f__', '__b_f__')
             if orientation == 'horizontal': return dl.rects_table(df, '__px__', _y_, '__h_in_px__', bar_w, _rgba_)
             else:                           return dl.rects_table(df, _x_, '__px__', bar_w, '__h_in_px__', _rgba_)
-        return ''.join(df['__svg__'])
+        return self.polarsJoinSVG(df)
 
     #
     # colorizeAllBarsVertical() - render all vertical stacked bars in one Polars pipeline
@@ -306,7 +307,7 @@ class P2SRenderMixin:
         if dl is not None:
             df = df.with_columns(self.rgbFromHexPolarsOperations('__hexcolor__', '__r_f__', '__g_f__', '__b_f__'))
             return dl.rects_table(df, '__x__', '__py__', bar_w, '__h_in_px__', ('__r_f__', '__g_f__', '__b_f__'))
-        return ''.join(df['__svg__'])
+        return self.polarsJoinSVG(df)
 
     #
     # colorizeAllBarsHorizontal() - render all horizontal stacked bars in one Polars pipeline
@@ -392,5 +393,5 @@ class P2SRenderMixin:
         if dl is not None:
             df = df.with_columns(self.rgbFromHexPolarsOperations('__hexcolor__', '__r_f__', '__g_f__', '__b_f__'))
             return dl.rects_table(df, '__px__', '__y__', '__w_in_px__', bar_h, ('__r_f__', '__g_f__', '__b_f__'))
-        return ''.join(df['__svg__'])
+        return self.polarsJoinSVG(df)
 

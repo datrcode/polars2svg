@@ -107,7 +107,7 @@ class TestRuffConfig(unittest.TestCase):
         # `from polars2svg import Polars2SVG` with reportPrivateImportUsage and
         # mypy --strict with attr-defined.  Every relative import must therefore
         # use the redundant `Y as Y` form.  [tool.mypy] no_implicit_reexport is
-        # the other half of this guard, at the type level.  Audit 20260915 H1.
+        # the other half of this guard, at the type level.
         import ast
         _init_ = os.path.join(_REPO_ROOT, 'polars2svg', '__init__.py')
         _skip_if_missing(_init_)

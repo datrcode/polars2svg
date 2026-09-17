@@ -104,7 +104,7 @@ _step_() {
 printf '\npreflight (mirrors ci.yml fast jobs)\n\n'
 
 # The project's editable install has reverted to a site-packages COPY three times
-# (20260913_fable_code_audit.md §8.6, 20260915_fable_code_audit.md H2).  A copy is
+# (2026-09-14 x2, 2026-09-15).  A copy is
 # byte-identical to source until the next edit and silently stale after it, for
 # anything that imports from outside the repo root -- the two notebooks CLAUDE.md
 # requires updating start their kernel in notebooks/ and are exactly that.  The

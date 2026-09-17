@@ -335,7 +335,7 @@ class TestMypyErrorRatchet(unittest.TestCase):
     where polars, numpy and PIL are absent; `ignore_missing_imports` turned them
     into Any, so every operation on a DataFrame, Series or ndarray type-checked
     trivially and the gate printed Success over 730 real errors.  See PLANNING.md
-    Q1/Q4 and 20260913_fable_code_audit.md F1.
+    Q1/Q4.
 
     Same rule as its sibling: these numbers may fall, never rise.  Fixing errors
     in a module means lowering its entry; a ceiling left above the real count

@@ -212,13 +212,13 @@ xfail_strict = true
 # `check_untyped_defs` package-wide, no error code disabled, plus every --strict
 # flag measured at zero cost (the 2026-09-14 six, and no_implicit_reexport /
 # disallow_subclassing_any from 2026-09-15).  It is NOT mypy --strict: the four
-# remaining flags cost +31 / +47 / +104 / +798 as measured on 2026-09-15
-# (20260915_fable_code_audit.md H4) and are adopted only through the ratchet.
+# remaining flags cost +31 / +47 / +104 / +798 as measured on 2026-09-15 and
+# are adopted only through the ratchet.
 #
 # Run `.venv/bin/python -m mypy polars2svg`, never `uvx mypy polars2svg`: uvx
 # resolves into an isolated env with no polars, numpy or PIL, so those become Any
-# and the run is vacuous.  That was CI's false green until 2026-09-13 (PLANNING.md
-# Q1/Q4, 20260913_fable_code_audit.md F1).  The resolved count now sits behind a
+# and the run is vacuous.  That was CI's false green until 2026-09-13
+# (PLANNING.md Q1/Q4).  The resolved count now sits behind a
 # ceiling in tools/preflight.sh, ci.yml and TestMypyErrorRatchet -- a floor to
 # ratchet down, not a target of zero (PLANNING.md D5).  The number is kept out of
 # this comment on purpose; three tested places already hold it.
@@ -262,7 +262,7 @@ warn_unused_ignores      = true
 strict_equality          = true
 extra_checks             = true
 disallow_untyped_decorators = true
-# Added 2026-09-15 (20260915_fable_code_audit.md H1/H4b).  Costs zero against the
+# Added 2026-09-15.  Costs zero against the
 # 60 baseline once __init__.py's re-exports are explicit -- and it is the type-level
 # half of that guard: an implicit `from .x import Y` added back to __init__.py, or
 # any other module's imported name relied on from outside it, fails the package
@@ -327,7 +327,7 @@ disable_error_code = [
 # Rule set (PyPI nice-to-have #5).  The base is E9 (syntax errors) and F
 # (pyflakes -- undefined names, unused imports/variables, duplicate dict keys);
 # the rest was added by the 2026-09-13 tooling audit and applied in PLANNING.md
-# Q3, plus B017 on 2026-09-15 (20260915_fable_code_audit.md H8): assertRaises(
+# Q3, plus B017 on 2026-09-15: assertRaises(
 # Exception) passes on any exception, including a typo, and all ten sites in the
 # suite now name the exception they mean.  Two of the ten were vacuous -- they
 # went through a helper that already supplied the argument under test, so they
@@ -397,7 +397,6 @@ exclude = [
   "pypi_instructions.txt",
   "CLAUDE.md",
   "PLANNING.md",
-  "20260824_background_record_contract.md",
   "20260913_fable_code_audit.md",
   "20260915_fable_code_audit.md",
   "20260917_fable_least_confidence.md",

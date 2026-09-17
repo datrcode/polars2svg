@@ -45,7 +45,7 @@ class TestContributing(unittest.TestCase):
         # CONTRIBUTING called the rule set "the minimal E9,F ruleset" for a day
         # short of forever after PLANNING.md Q3 widened it, and the only test
         # looking at this checked that the four tool NAMES appeared -- which it
-        # still did (20260915_fable_code_audit.md H5).  Every selected rule must
+        # still did (measured 2026-09-15).  Every selected rule must
         # be named, in a code span, so widening `select` without documenting it
         # fails here.
         if not os.path.exists(_PYPROJECT):

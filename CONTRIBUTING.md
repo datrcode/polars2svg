@@ -214,8 +214,8 @@ no error code disabled, plus every `--strict` flag measured at zero cost —
 `warn_unused_configs`, `warn_redundant_casts`, `warn_unused_ignores`,
 `strict_equality`, `extra_checks`, `disallow_untyped_decorators` (2026-09-14)
 and `no_implicit_reexport`, `disallow_subclassing_any` (2026-09-15). It is **not**
-mypy `--strict`: the four remaining flags were measured on 2026-09-15
-(`20260915_fable_code_audit.md` H4) at +31 `disallow_untyped_calls`, +47
+mypy `--strict`: the four remaining flags were measured on 2026-09-15 at
++31 `disallow_untyped_calls`, +47
 `warn_unreachable`, +104 `warn_return_any` and +798 `disallow_any_generics`.
 Those are adopted through the ratchet if at all, never ad hoc.
 

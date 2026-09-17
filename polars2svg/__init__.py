@@ -21,9 +21,8 @@ except PackageNotFoundError:
 # honoured by static checkers.  The alias form needs no list and works per-name
 # inside a try.
 #
-# See 20260915_fable_code_audit.md H1.  Two things guard it: [tool.mypy]
-# no_implicit_reexport, and test_init_reexports_are_explicit in
-# tests/test_security_automation.py.
+# Two things guard it: [tool.mypy] no_implicit_reexport, and
+# test_init_reexports_are_explicit in tests/test_security_automation.py.
 from .exceptions                   import (Polars2SVGError  as Polars2SVGError,
                                            InvalidSpecError as InvalidSpecError,
                                            DataError        as DataError)

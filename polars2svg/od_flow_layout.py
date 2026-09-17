@@ -31,7 +31,7 @@ import numpy as np
 # both read od_flow_layout.mx as the canonical "is mlx available" probe, and under
 # [tool.mypy] no_implicit_reexport an imported name is private to the module that
 # imported it, while a module-level assignment is public.  Same reasoning as
-# TField in __init__.py.  See 20260915_fable_code_audit.md H1/H4b.
+# TField in __init__.py.
 try:
     import mlx.core
     mx = mlx.core

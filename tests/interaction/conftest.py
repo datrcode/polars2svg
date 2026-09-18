@@ -127,12 +127,34 @@ if _PLAYWRIGHT_AVAILABLE_:
         is the case where a colour-based selection has to cross that boundary.  That
         is the exact shape of the ``z`` bug PLANNING.md 2.1 names as the harness's
         validation case.
+
+        **Positions are pinned, and that is what keeps the colour counts honest.**
+        Without ``pos=`` linkp lays the nodes out at random on every construction, and
+        the fixture is function-scoped, so each test drew a fresh layout.  ``z`` selects
+        via ``entitiesAtPoint``, which returns *every* entity overlapping a +/-5px box
+        around the cursor -- so whenever two nodes happened to land within one box,
+        ``_select_by_attribute_at_mouse_`` collected both their colours and unioned both
+        groups.  Over 2,000 constructions of this graph 0.15% produced such a hover
+        (closest pair seen: 2.2px apart), which is how a green suite went red on an
+        unrelated dependabot bump on 2026-09-18 -- ``expect_selected(1)`` saw
+        ``2 Selected``.  ``view_window`` is pinned with it for the reason
+        ``quad_linkp`` spells out: without it the auto-fit pushes the pinned
+        coordinates straight back out to the canvas edges.
+
+        The triangle sits left, the pair right, and the gap between them keeps the two
+        points the tests hover as bare canvas -- (200, 150) for the keys that only need
+        focus, and (2, 2) for ``test_z_over_empty_space_clears_the_selection``.  Nodes
+        land ~99px apart at the closest.  Tests read real coordinates from ``df_node``
+        rather than trusting these numbers.
         """
         _p2s_ = Polars2SVG()
         _df_  = pl.DataFrame({'fm':  [1, 2, 3, 4, 5],
                               'to':  [2, 3, 1, 5, 4],
                               'grp': ['x', 'x', 'x', 'y', 'y']})
-        _lp_  = _p2s_.linkp(_df_, relationships=[('fm', 'to')], node_color='grp', wxh=(400, 300))
+        _lp_  = _p2s_.linkp(_df_, relationships=[('fm', 'to')], node_color='grp', wxh=(400, 300),
+                            view_window=(0.0, 0.0, 1.0, 1.0),
+                            pos={1: (0.17, 0.74), 2: (0.17, 0.26), 3: (0.35, 0.50),
+                                 4: (0.81, 0.74), 5: (0.81, 0.26)})
         _lp_._repr_svg_()          # materialise pos / df_node / color_nodes_final
         return _lp_
 
@@ -754,12 +776,28 @@ if _PLAYWRIGHT_AVAILABLE_:
 
         A dict ``node_color`` is what buys the one-node-per-colour property; a column
         would colour by row and leave the interior nodes in two groups at once.
+
+        **And pinned positions are what let that property survive the hit test.**  One
+        colour per node bounds the selection at one only while the cursor is over one
+        node: ``entitiesAtPoint`` returns everything overlapping a +/-5px box, so a
+        random layout that dropped two of these four within one box made ``z`` union two
+        colour groups and ``expect_selected(1)`` see ``2 Selected``.  That is the
+        2026-09-18 flake; ``two_color_linkp`` carries the measurement and the same fix.
+        ``view_window`` is pinned with ``pos`` or the auto-fit undoes it (``quad_linkp``).
+
+        The four corners of an inset rectangle, so the chain reads 1-2-3-4 around three
+        sides: ~160px apart at the closest, with (200, 150) and (2, 2) clear of every
+        node *and* every edge -- the three chain_page tests that press ``Q``/``f``/``F``
+        hover the centre only to take focus.
         """
         _p2s_ = Polars2SVG()
         _df_  = pl.DataFrame({'fm': [1, 2, 3], 'to': [2, 3, 4]})
         _lp_  = _p2s_.linkp(_df_, relationships=[('fm', 'to')], wxh=(400, 300),
                             node_color={1: '#e41a1c', 2: '#377eb8',
-                                        3: '#4daf4a', 4: '#984ea3'})
+                                        3: '#4daf4a', 4: '#984ea3'},
+                            view_window=(0.0, 0.0, 1.0, 1.0),
+                            pos={1: (0.15, 0.77), 2: (0.15, 0.23),
+                                 3: (0.83, 0.23), 4: (0.83, 0.77)})
         _lp_._repr_svg_()
         return _lp_
 

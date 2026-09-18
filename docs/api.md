@@ -34,6 +34,50 @@ dependencies.
 
 ::: polars2svg.FlowFieldBackground
 
+## Output contract
+
+The Profile A enforcement point — see [Output contract](guides/output-contract.md) for
+when you need it. `checkOutputContract()` returns the violations it found;
+`assertOutputContract()` raises `OutputContractError` on the first non-empty result. Both
+**report rather than rewrite**: a violation means the render is not fit to serve, not that
+it has been made fit. Neither is a sanitizer.
+
+`ALLOWED_ELEMENTS` and `ALLOWED_ATTRIBUTES` are the allow-list the check is built from —
+the elements and attributes the components actually emit. They are exported so you can
+assert against them directly if you are composing renders yourself.
+
+::: polars2svg.checkOutputContract
+::: polars2svg.assertOutputContract
+::: polars2svg.Violation
+::: polars2svg.OutputContractError
+
+## Component keyword TypedDicts
+
+Every component factory is typed `**kwargs: Unpack[<Component>Kwargs]`, so a type checker
+flags a misspelled parameter at the call site and editors complete the parameter set. They
+are exported so you can annotate a kwargs dict of your own and pass it with `**`:
+
+```python
+opts: p2s.XYpKwargs = {'dot_size': 6, 'wxh': (400, 300)}
+p2s.xyp(df, 'x', 'y', **opts)
+```
+
+!!! note "`ChPKwargs` needs the `layouts` extra"
+
+    It sits behind the same guard as `ChP` itself — chordp's node ordering needs scipy, so
+    importing it eagerly would make a bare `import polars2svg` require the extra. The other
+    eight are always available.
+
+::: polars2svg.XYpKwargs
+::: polars2svg.HistopKwargs
+::: polars2svg.TimepKwargs
+::: polars2svg.PiepKwargs
+::: polars2svg.LinkPKwargs
+::: polars2svg.ChPKwargs
+::: polars2svg.SpreadLinesPKwargs
+::: polars2svg.SmallpKwargs
+::: polars2svg.TileKwargs
+
 ## Layouts
 
 !!! note "These require the `layouts` extra"

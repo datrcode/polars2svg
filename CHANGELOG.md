@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`SECURITY.md` claimed the supported release line was `0.2.x`.** It was not
+  updated for 0.3.0 and so went two releases stale, telling anyone who read the
+  policy that the version they were running was unsupported. The file ships in
+  the sdist, so the wrong text travelled with the package. Now `0.3.x`.
+
 ## [0.3.1] — 2026-09-18
 
 ### Changed

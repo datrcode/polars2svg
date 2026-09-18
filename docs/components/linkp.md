@@ -70,6 +70,7 @@ field per layer keeps both directions visible. Every edge lands in exactly one
 layer. Each cell carries its own appearance, so no `background_*` arguments
 accompany it. Full signature in the [API reference](../api.md#backgrounds).
 
-Interactive variant: `p2s.linkpi(...)` is a full graph editor — drag, wheel
-zoom, layout pickers, keyboard shortcuts, layout save/load. See
-[Interactivity](../guides/interactivity.md).
+Interactive variant: `p2s.linkpi(lp)` wraps a built `linkp` into a full graph
+editor — drag, wheel zoom, layout pickers, keyboard shortcuts, layout save/load,
+and a selection-label overlay capped by `max_selection_labels=` (default `32`).
+See [Interactivity](../guides/interactivity.md#selection-labels).

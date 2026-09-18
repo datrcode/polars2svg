@@ -1,10 +1,19 @@
 # Interactivity
 
 Every component has a linked, interactive variant — `xypi`, `histopi`,
-`timepi`, `chordpi`, `linkpi`, `spreadlinepi`, `smallpi` — built on
-[Panel](https://panel.holoviz.org) `ReactiveHTML` wrappers. They share the
-static components' signatures, so promoting a chart to interactive is usually
-a one-letter change.
+`timepi`, `piepi`, `chordpi`, `linkpi`, `spreadlinepi`, `smallpi` — built on
+[Panel](https://panel.holoviz.org) `ReactiveHTML` wrappers.
+
+Each one **wraps a component you have already built**, rather than taking the
+DataFrame again:
+
+```python
+xyp = p2s.xyp(df, "x", "y", color="group")   # the static component
+p2s.xypi(xyp)                                # the interactive view of it
+```
+
+So the static call keeps its full signature and the `*i` call adds view options on
+top. `linkpi` additionally takes `mvc=` to join an existing coordination hub.
 
 Requires the `[interactive]` extra:
 `pip install polars2svg[interactive]` (includes `[layouts]`). Interactive
@@ -13,11 +22,14 @@ views need a live Python kernel (a Jupyter notebook or a Panel server).
 ## `panelize()` — linked views in one call
 
 ```python
-layout = [[p2s.xypi(df, "x", "y", color="group")],
-          [p2s.histopi(df, "group"), p2s.timepi(df, "timestamp")]]
+layout = [[p2s.xypi(p2s.xyp(df, "x", "y", color="group"))],
+          [p2s.histopi(p2s.histop(df, "group")),
+           p2s.timepi(p2s.timep(df, "timestamp"))]]
 
 p2s.panelize(layout)
 ```
+
+(`timep` needs a real date/datetime column — a string one raises `ValueError`.)
 
 `panelize()` composes the views into a dashboard and auto-wires the
 coordination hub (an MVC `InteractionController`) behind them:
@@ -46,6 +58,27 @@ The interactive network view goes well beyond brushing:
   layout (press the help key in the view for the overlay listing them all);
 - clipboard copy of the current view;
 - **layout save/load** to persist hand-tuned node positions.
+
+### Selection labels
+
+`linkpi` draws a label overlay on the current selection, capped by
+`max_selection_labels=` (default `32`). The cap is on the **selection**, not on the
+labels: past it nothing is labelled rather than the first 32 being labelled, because a
+partial overlay reads as a complete one and is worse than none. The info line says
+`(labels capped)` when that happens, so the view tells you which regime you are in.
+
+`linkpi()` wraps a **built `linkp`** rather than taking the DataFrame itself, and
+forwards keywords to the view:
+
+```python
+lp = p2s.linkp(df, [("src", "dst")], wxh=(400, 360))
+
+p2s.linkpi(lp, max_selection_labels=100)   # label larger selections
+p2s.linkpi(lp, max_selection_labels=0)     # never label
+```
+
+Raise it when your nodes are few and named; leave it alone on a large graph, where the
+overlay costs a redraw per selection change and covers the drawing it annotates.
 
 ## WebGPU rendering for large frames
 

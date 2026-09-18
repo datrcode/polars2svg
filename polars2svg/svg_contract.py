@@ -244,11 +244,19 @@ def _checkStyleText_(tag: str, text: str, out: list[Violation]) -> None:
 
 #
 # checkOutputContract() - every way `svg` fails the Profile A contract
-# - returns [] for a conforming document; never raises for contract reasons, so a
-#   caller can report all findings at once (a malformed document is itself
-#   reported as a violation rather than propagating the parser's exception)
 #
 def checkOutputContract(svg: str) -> list[Violation]:
+    """Every way `svg` fails the Profile A output contract.
+
+    Returns `[]` for a conforming document.  It never raises for contract
+    reasons, so a caller can report all findings at once -- a malformed document
+    is itself reported as a violation rather than propagating the parser's
+    exception.
+
+    It **reports; it does not rewrite** -- this is not a sanitizer.  A non-empty
+    result means the render is not fit to serve, not that it has been made fit.
+    See SECURITY.md, *Profile A -- Appliance*, for when that distinction matters.
+    """
     _out_: list[Violation] = []
 
     # Refuse a DOCTYPE outright rather than parsing it carefully.  polars2svg
@@ -311,10 +319,18 @@ def checkOutputContract(svg: str) -> list[Violation]:
 
 #
 # assertOutputContract() - raise unless `svg` conforms
-# - the gate an appliance puts in front of a response; OutputContractError
-#   carries every violation on .violations, not just the one in the message
 #
 def assertOutputContract(svg: str) -> None:
+    """Raise unless `svg` conforms to the Profile A output contract.
+
+    This is the gate an appliance puts in front of a response.  Returns `None`
+    for a conforming document; otherwise raises `OutputContractError`, which
+    carries **every** violation on `.violations`, not just the one named in the
+    message.
+
+    Like `checkOutputContract()` it reports rather than rewrites: catching the
+    exception and serving the input anyway defeats the point.
+    """
     _violations_ = checkOutputContract(svg)
     if _violations_:
         raise OutputContractError(_violations_)

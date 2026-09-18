@@ -7,7 +7,7 @@ build-backend = "hatchling.build"
 
 [project]
 name            = "polars2svg"
-version         = "0.3.0"
+version         = "0.3.1"
 authors         = [{ name = "D. Trimm", email = "dave.trimm+polars2svg@gmail.com" }]
 description     = "Visualization Package Leveraging Polars and SVG in Jupyter Notebooks"
 readme          = { file = "README.md", content-type = "text/markdown" }
@@ -25,7 +25,13 @@ keywords        = ["polars", "svg", "visualization", "jupyter", "dataframe", "ch
 # resolving an ancient release while staying wide enough to avoid downstream
 # dependency conflicts. Exception: pillow's floor is security-driven, not a
 # compatibility floor — 12.3 is the first release fixing PYSEC-2026-2253..2257,
-# so it sits at the locked version with no headroom on purpose.
+# so it sits at the locked version with no headroom on purpose.  polars is the
+# other exception: 1.36 is a *measured* minimum, not a floor with headroom.  The
+# suite was stepped across releases against the declared floors (PLANNING.md R8,
+# 2026-09-17) and fails 95 tests at 1.25-1.33 and 6 at 1.35.2, reaching 0 only at
+# 1.36.  Dominant cause is `dt.total_seconds(fractional=True)`, absent below 1.35,
+# which every dated or datetime xyp axis calls; 1.36 is also the first release
+# with `explode(empty_as_null=)`.  Do not lower it without re-running that sweep.
 #
 # Core is deliberately slim: xyp/histop/timep/piep/smallp/spreadlinesp only need
 # polars + numpy (+ pyarrow/pillow/platformdirs for I/O). linkp's/chordp's
@@ -39,7 +45,7 @@ keywords        = ["polars", "svg", "visualization", "jupyter", "dataframe", "ch
 # previous "batteries included" install.
 dependencies    = [
   "numpy>=1.26",
-  "polars>=1.25",
+  "polars>=1.36",
   "pyarrow>=16",
   "pillow>=12.3",
   "platformdirs>=4.0",

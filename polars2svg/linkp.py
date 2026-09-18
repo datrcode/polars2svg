@@ -2713,7 +2713,12 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
 
     def __filterNodesBySelection__(self, my_selection: list | set) -> pl.DataFrame:
         _strs_ = {str(e) for e in my_selection}
-        return self.df_node.explode('__nm__').filter(pl.col('__nm__').is_in(_strs_))
+        # empty_as_null= is explicit because polars 2.0 flips the default to False
+        # (PLANNING R9).  Either setting gives the same rows here -- the is_in()
+        # filter below drops nulls and empty lists alike -- so this is forward
+        # compatibility, not a behavior change.  Needs polars >= 1.36.
+        return (self.df_node.explode('__nm__', empty_as_null=False)
+                            .filter(pl.col('__nm__').is_in(_strs_)))
 
     def __createPathDescriptionForAllEntities__(self) -> str:
         return ' '.join(

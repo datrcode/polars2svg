@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] — 2026-09-18
+
 ### Changed
 
 - **SVG fragment columns are concatenated inside Polars, not in Python.** Every
@@ -61,6 +63,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The declared `polars` floor was wrong: `>=1.25` became `>=1.36`.** The
+  package advertised a minimum it had never been run against, and the suite does
+  not pass anywhere near it — stepping polars across releases with every other
+  core dependency held at its declared floor gives **95 failures at 1.25–1.33**
+  (115 at 1.29), **6 at 1.35.2**, and **0 from 1.36.1 onward**.
+
+  The dominant cause, 45 tests, is that `xyp` passes
+  `dt.total_seconds(fractional=True)` when it builds a temporal axis, and that
+  keyword does not exist below polars 1.35 — so on a resolver that honoured the
+  old floor, **every dated or datetime `xyp` render raised `TypeError`** instead
+  of the install being refused. Below 1.33 there were also 23 golden mismatches,
+  meaning output *differed* rather than merely erroring.
+
+  Nothing caught it because `uv.lock` pins a recent polars and every CI job and
+  local interpreter resolves through the lock, so the declared floor was never
+  exercised. It was also unfalsifiable by construction: the suite's shared-frame
+  helper casts ISO strings inside the `pl.DataFrame` constructor, which below
+  1.36 fails at collection — the suite could not be run at the floor it declared.
+
+  1.36 is the measured minimum, not a guess with headroom, and it is also the
+  first release carrying `explode(empty_as_null=)`. Users already on a modern
+  polars are unaffected; anyone pinned below 1.36 now gets a resolver refusal at
+  install time rather than a `TypeError` at render time.
+
+- **`linkp` selection filtering is explicit about `explode(empty_as_null=)`.**
+  `__filterNodesBySelection__()` called `explode('__nm__')` with the default,
+  which polars 2.0 flips from `True` to `False`. Both settings produce the same
+  rows here — the `is_in()` filter that follows drops nulls and empty lists
+  alike — so this is forward compatibility rather than a behaviour change, and
+  it was the only polars-2.0 deprecation anywhere in library code.
+
 - **An undirected graph from `createNetworkXGraph()` now carries both directions
   of a bidirectional pair.** The method groups by the *directed* `(fm, to)` pair
   and called `add_edge()` once per group; on an `nx.Graph` `(a, b)` and `(b, a)`
@@ -102,6 +135,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Anything treating a layout as a fixed input — rendered-SVG baselines, cached
   position files, A/B comparisons of routing quality — was silently comparing
   different pictures.
+
+### Known issues
+
+- **`save('.png')` silently drops `<textPath>` elements.** A `linkp` drawn with
+  `link_shape='curve'` and `draw_link_labels=True` rasterizes without its edge
+  labels — svglib has no `textPath` handling, and there is no warning. The SVG
+  itself is correct, and `link_shape='line'` is unaffected because it rotates
+  real `<text>`. Curve link labels are the only `<textPath>` the package emits.
+- **`chordp(df=…)` with no relationships raises `TypeError: 'NoneType' object is
+  not iterable`** instead of a named `InvalidSpecError` the way every
+  neighbouring validation path does.
 
 ## [0.3.0] — 2026-09-16
 
@@ -2835,7 +2879,8 @@ large frames.
 - **SECURITY.md** documenting the SVG-injection threat model (row-data label text
   is HTML-escaped; component configuration is trusted).
 
-[Unreleased]: https://github.com/datrcode/polars2svg/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/datrcode/polars2svg/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/datrcode/polars2svg/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/datrcode/polars2svg/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/datrcode/polars2svg/compare/v0.1.2...v0.2.0
 [0.1.2]: https://github.com/datrcode/polars2svg/compare/v0.1.1...v0.1.2

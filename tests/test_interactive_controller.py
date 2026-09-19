@@ -7,7 +7,10 @@ import time
 import unittest
 from datetime import datetime, timedelta
 
+import param
 import polars as pl
+from view_js_utils import (component_js, component_markup, component_script,
+                          has_script, named_scripts)
 
 from polars2svg import Polars2SVG
 from polars2svg import interactive_controller as ic
@@ -20,8 +23,10 @@ from polars2svg.interactive_controller import (
 )
 
 try:
-    import panel as pn  # noqa: F401 - the import IS the availability probe
-    from panel.reactive import ReactiveHTML
+    # The import IS the availability probe.  It no longer needs a noqa: pn is used
+    # directly now (pn.viewable.Viewable), where this block used to also import
+    # ReactiveHTML purely to assert isinstance against it.
+    import panel as pn
     PANEL_AVAILABLE = True
 except ImportError:
     PANEL_AVAILABLE = False
@@ -478,12 +483,11 @@ class TestNoReservedBrowserChords(unittest.TestCase):
     def test_no_binding_requires_a_reserved_chord(self):
         _offences_ = []
         for _name_, _component_ in self._components().items():
-            for _script_name_, _script_ in type(_component_)._scripts.items():
-                _text_ = '\n'.join(_script_ if isinstance(_script_, list) else [_script_])
+            for _script_name_, _text_ in named_scripts(_component_).items():
                 for _chord_ in sorted(_ctrl_chords_required_by(_text_)):
                     if _chord_ in _RESERVED_BROWSER_CHORDS_:
                         _offences_.append(
-                            f'{_name_}._scripts[{_script_name_!r}] requires {_chord_}, which '
+                            f'{_name_} script {_script_name_!r} requires {_chord_}, which '
                             f'{_RESERVED_BROWSER_CHORDS_[_chord_]} -- the binding can never run '
                             f'off macOS.  Give the operation a modifier-free key instead; see '
                             f'PLANNING.md U2 and U10.')
@@ -498,10 +502,7 @@ class TestNoReservedBrowserChords(unittest.TestCase):
         bindings went away.
         """
         _linkpi_ = self._components()['LINKPI']
-        _found_ = set()
-        for _script_ in type(_linkpi_)._scripts.values():
-            _text_ = '\n'.join(_script_ if isinstance(_script_, list) else [_script_])
-            _found_ |= _ctrl_chords_required_by(_text_)
+        _found_ = _ctrl_chords_required_by(component_js(_linkpi_))
         self.assertIn('ctrl-l', _found_)
         self.assertIn('ctrl-p', _found_)
 
@@ -555,8 +556,8 @@ class TestP2SInteractiveMethods(unittest.TestCase):
 
     # ── xypi ─────────────────────────────────────────────────────────────────
 
-    def test_xypi_returns_reactive_html(self):
-        self.assertIsInstance(self.p2s.xypi(self.xyp_obj), ReactiveHTML)
+    def test_xypi_returns_a_panel_view(self):
+        self.assertIsInstance(self.p2s.xypi(self.xyp_obj), pn.viewable.Viewable)
 
     def test_xypi_class_name_is_XYPI(self):
         self.assertEqual(type(self.p2s.xypi(self.xyp_obj)).__name__, 'XYPI')
@@ -576,24 +577,24 @@ class TestP2SInteractiveMethods(unittest.TestCase):
 
     # ── histopi ───────────────────────────────────────────────────────────────
 
-    def test_histopi_returns_reactive_html(self):
-        self.assertIsInstance(self.p2s.histopi(self.histop_obj), ReactiveHTML)
+    def test_histopi_returns_a_panel_view(self):
+        self.assertIsInstance(self.p2s.histopi(self.histop_obj), pn.viewable.Viewable)
 
     def test_histopi_class_name_is_HISTOPI(self):
         self.assertEqual(type(self.p2s.histopi(self.histop_obj)).__name__, 'HISTOPI')
 
     # ── timepi ────────────────────────────────────────────────────────────────
 
-    def test_timepi_returns_reactive_html(self):
-        self.assertIsInstance(self.p2s.timepi(self.timep_obj), ReactiveHTML)
+    def test_timepi_returns_a_panel_view(self):
+        self.assertIsInstance(self.p2s.timepi(self.timep_obj), pn.viewable.Viewable)
 
     def test_timepi_class_name_is_TIMEPI(self):
         self.assertEqual(type(self.p2s.timepi(self.timep_obj)).__name__, 'TIMEPI')
 
     # ── linkpi ────────────────────────────────────────────────────────────────
 
-    def test_linkpi_returns_reactive_html(self):
-        self.assertIsInstance(self.p2s.linkpi(self.linkp_obj), ReactiveHTML)
+    def test_linkpi_returns_a_panel_view(self):
+        self.assertIsInstance(self.p2s.linkpi(self.linkp_obj), pn.viewable.Viewable)
 
     def test_linkpi_class_name_is_LINKPI(self):
         self.assertEqual(type(self.p2s.linkpi(self.linkp_obj)).__name__, 'LINKPI')
@@ -1894,14 +1895,16 @@ class TestLINKPIPickerMenu(unittest.TestCase):
     # ── template / script wiring ──────────────────────────────────────────────
     def test_template_contains_picker_overlay(self):
         cls = type(self._make_ctrl())
-        self.assertIn('pickermenu', cls._template)
+        self.assertIn('pickermenu', component_markup(cls))
 
     def test_render_script_seeds_menu_items(self):
         # The menus are per view now: the render script reads them out of the data
         # model, so the labels have to be asserted on the param, not on the JS text.
         from polars2svg.interactive_controller import _LAYOUT_MODE_MENU_, _LAYOUT_OP_MENU_
         ctrl = self._make_ctrl()
-        self.assertIn('state.menu_items = data.menu_items', type(ctrl)._scripts['render'])
+        # The render script seeded `state.menu_items` from the param; the ESM module does the
+        # same in its `state` initialiser, which is where that line lives now.
+        self.assertIn('menu_items: model.menu_items', component_script(ctrl, 'render'))
         _labels_ = {_i_[1] for _items_ in ctrl.menu_items.values() for _i_ in _items_}
         for _, label in _LAYOUT_OP_MENU_ + _LAYOUT_MODE_MENU_:
             self.assertIn(label, _labels_)
@@ -1909,7 +1912,7 @@ class TestLINKPIPickerMenu(unittest.TestCase):
     def test_menu_scripts_exist(self):
         cls = type(self._make_ctrl())
         for script in ('menuOpen', 'menuRender', 'menuCommit', 'menuClose', 'menuArmTimer'):
-            self.assertIn(script, cls._scripts)
+            self.assertTrue(has_script(cls, script))
 
     def test_keyboard_help_mentions_picker(self):
         cls = type(self._make_ctrl())
@@ -1962,7 +1965,7 @@ class TestLINKPICircleByColorLayout(unittest.TestCase):
         # The JS shape preview must treat it exactly like 'circle' (layoutcircle),
         # not fall through to the rectangle branch.
         cls   = type(self._make_ctrl())
-        shape = cls._scripts['myUpdateLayoutOp']
+        shape = component_script(cls, 'myUpdateLayoutOp')
         self.assertIn('state.layout_op_shape == "circle (color)"', shape)
         _circle_branch_ = shape.split('reset_circle = false;')[0]
         self.assertIn('"circle (color)"', _circle_branch_)
@@ -2154,12 +2157,12 @@ class TestLINKPISizeCycleMenus(unittest.TestCase):
         # The two ways this menu used to commit without an Enter: the single-character
         # mnemonic, and the 2.5s inactivity timeout.  Asserted against the emitted JS
         # because that is where the behaviour lives.
-        _scripts_ = type(self._make_ctrl())._scripts
-        _keydown_ = _scripts_['myOnKeyDown']
+        _ctrl_    = self._make_ctrl()
+        _keydown_ = component_script(_ctrl_, 'myOnKeyDown')
         _at_ = _keydown_.index('_items_[_i_][0] === event.key')
         self.assertIn('_items_[_i_][3]', _keydown_[_at_:_at_ + 800],
                       'mnemonic commit does not check the guard flag')
-        self.assertIn('_sel_[3]', _scripts_['menuArmTimer'],
+        self.assertIn('_sel_[3]', component_script(_ctrl_, 'menuArmTimer'),
                       'the inactivity timeout does not check the guard flag')
 
     # ── 'a' toggles link arrows on and off ────────────────────────────────────
@@ -2190,7 +2193,7 @@ class TestLINKPISizeCycleMenus(unittest.TestCase):
             self.assertIn(kind, _items_)
 
     def test_commit_script_handles_new_kinds(self):
-        commit = type(self._make_ctrl())._scripts['menuCommit']
+        commit = component_script(self._make_ctrl(), 'menuCommit')
         for field in ('link_size_choice', 'link_opacity_choice', 'node_size_choice', 'link_shape_choice'):
             self.assertIn(field, commit)
 
@@ -2261,7 +2264,7 @@ class TestLINKPITimingSpacingPicker(unittest.TestCase):
         self.assertIn('timing_spacing', self._make_ctrl().menu_items)
 
     def test_commit_script_handles_timing_spacing(self):
-        self.assertIn('timing_spacing_choice', type(self._make_ctrl())._scripts['menuCommit'])
+        self.assertIn('timing_spacing_choice', component_script(self._make_ctrl(), 'menuCommit'))
 
     def test_keyboard_help_mentions_spacing_picker(self):
         cmds = type(self._make_ctrl())._keyboard_commands_
@@ -2441,33 +2444,77 @@ class TestLINKPITimingMarksCycle(unittest.TestCase):
 class TestPanelizePayloadGuard(_UnfilteredLoggerMixin, unittest.TestCase):
     '''panelize() warns (with the measured MB) when the composed SVG document would
     exceed the Bokeh WebSocket message limit -- the size condition behind the browser's
-    "SyntaxError: Unexpected end of JSON input". The guard operates on the embedded
-    ReactiveHTML _template, so it is exercised here with lightweight fakes rather than a
-    netflow-sized render.'''
+    "SyntaxError: Unexpected end of JSON input". The guard sums the view's param values
+    (the SVG rides in mod_inner), so it is exercised here with lightweight param-bearing
+    fakes rather than a netflow-sized render.  TestPayloadEstimateTracksTheDocument
+    below is the one that checks it against a really serialised document.'''
 
-    class _FakeView:
-        def __init__(self, template):
-            self._template = template
+    class _FakeView(param.Parameterized):
+        mod_inner = param.String(default='')
 
     def _view(self, nbytes):
-        return self._FakeView('x' * nbytes)
+        return self._FakeView(mod_inner='x' * nbytes)
 
-    def test_estimate_sums_template_bytes(self):
+    def test_estimate_sums_param_bytes(self):
         from polars2svg import interactive_controller as ic
         self.assertEqual(ic._estimate_panel_payload_bytes_([self._view(1000), self._view(2000)]), 3000)
 
-    def test_estimate_ignores_views_without_template(self):
+    def test_estimate_ignores_objects_without_params(self):
         from polars2svg import interactive_controller as ic
         self.assertEqual(ic._estimate_panel_payload_bytes_([object()]), 0)
+
+    def test_estimate_excludes_the_name_param(self):
+        '''param gives every Parameterized a 'name' -- counting it would make an empty
+        view cost its own class name, which is noise, not payload.'''
+        from polars2svg import interactive_controller as ic
+        self.assertEqual(ic._estimate_panel_payload_bytes_([self._view(0)]), 0)
+
+    def test_estimate_counts_dict_payloads(self):
+        '''gpu_payload is a param.Dict, so a Dict value has to be sized, not skipped.'''
+        from polars2svg import interactive_controller as ic
+
+        class _GpuFake(param.Parameterized):
+            gpu_payload = param.Dict(default={})
+
+        _v_ = _GpuFake(gpu_payload={'svg': 'y' * 5000})
+        self.assertGreaterEqual(ic._estimate_panel_payload_bytes_([_v_]), 5000)
+
+    def test_estimate_samples_rather_than_walks_long_sequences(self):
+        '''A long numeric buffer is estimated from a sample; the result still has to
+        scale with the buffer, or the guard would under-report a webgpu payload.'''
+        from polars2svg import interactive_controller as ic
+
+        class _BufFake(param.Parameterized):
+            buf = param.List(default=[])
+
+        _small_ = ic._estimate_panel_payload_bytes_([_BufFake(buf=[1.0] * 1_000)])
+        _big_   = ic._estimate_panel_payload_bytes_([_BufFake(buf=[1.0] * 100_000)])
+        self.assertGreater(_big_, _small_ * 50)
 
     def test_warns_over_default_limit(self):
         from polars2svg import interactive_controller as ic
         with self.assertLogs('polars2svg_logger', level='WARNING') as cm:
-            ic._warnOversizePanelPayload_([self._view(25 * 1024 * 1024)])   # 25 MB > 20 MB default
+            ic._warnOversizePanelPayload_([self._view(25 * 1024 * 1024)])   # 25 MB raw
         _msg_ = '\n'.join(cm.output)
         self.assertIn('Unexpected end of JSON input', _msg_)
         self.assertIn('websocket_max_message_size', _msg_)
-        self.assertIn('25.0 MB', _msg_)                                     # measured size surfaced
+        # The SHIPPED size is what crosses the limit and what the message must name:
+        # 25 MB of param bytes ride as ~62.5 MB once inflated.  Reporting the raw 25 MB
+        # against a 20 MB limit read as a contradiction.
+        self.assertIn(f'{25 * ic._WS_PAYLOAD_INFLATION_:.1f} MB', _msg_)
+
+    def test_warning_reports_a_size_that_exceeds_the_limit_it_names(self):
+        '''Regression: the guard compared the inflated estimate but printed the raw one,
+        so it could warn "~15.3 MB, at/over the ... limit of 20.0 MB".'''
+        from polars2svg import interactive_controller as ic
+        with self.assertLogs('polars2svg_logger', level='WARNING') as cm:
+            ic._warnOversizePanelPayload_([self._view(20 * 1024 * 1024)],
+                                          websocket_max_message_size=20 * 1024 * 1024)
+        _msg_ = '\n'.join(cm.output)
+        _reported_, _named_ = (float(_x_) for _x_ in
+                               re.findall(r'~?([\d.]+) MB', _msg_)[:2])
+        self.assertGreaterEqual(_reported_, _named_,
+                                f'warned that {_reported_} MB is at/over a {_named_} MB limit')
 
     def test_quiet_under_default_limit(self):
         from polars2svg import interactive_controller as ic
@@ -2485,6 +2532,61 @@ class TestPanelizePayloadGuard(_UnfilteredLoggerMixin, unittest.TestCase):
         with self.assertLogs('polars2svg_logger', level='WARNING'):
             ic._warnOversizePanelPayload_([self._view(5 * 1024 * 1024)],    # 5 MB
                                           websocket_max_message_size=4 * 1024 * 1024)
+
+
+@unittest.skipUnless(PANEL_AVAILABLE, 'panel not installed')
+class TestPayloadEstimateTracksTheDocument(_UnfilteredLoggerMixin, unittest.TestCase):
+    '''The guard is only useful if its estimate follows the real serialised document.
+
+    It previously measured ``_template``, which stopped carrying the plot when the views
+    became static classes on 2026-09-13.  Nothing noticed, because every test asserted
+    the estimator against fakes it had built itself -- so the estimate stayed a constant
+    3,041 bytes for an xypi whether the render was 4.7 KB or 1.17 MB, and the warning
+    could never fire.  These tests compare against a really serialised bokeh document,
+    which is the only thing that would have caught it.'''
+
+    def _views_and_doc_bytes(self, n):
+        '''Build an xypi over n rows; return (view, raw estimate, real document bytes).'''
+        import json
+        import random
+
+        from bokeh.document import Document
+
+        random.seed(0)
+        _p2s_ = Polars2SVG()
+        _df_  = pl.DataFrame({'x': [random.random() for _ in range(n)],
+                              'y': [random.random() for _ in range(n)]})
+        _view_ = _p2s_.xypi(_p2s_.xyp(_df_, 'x', 'y'))
+        _doc_  = Document()
+        _doc_.add_root(_view_.get_root(_doc_))
+        _ser_  = _doc_.to_json()
+        _real_ = len(json.dumps(_ser_.content).encode('utf-8')) + sum(len(b) for b in _ser_.buffers)
+        return _view_, ic._estimate_panel_payload_bytes_([_view_]), _real_
+
+    def test_estimate_grows_with_the_render(self):
+        '''The bug in one assertion: a 100x bigger plot must not estimate the same.'''
+        _small_v_, _small_, _ = self._views_and_doc_bytes(50)
+        _big_v_,   _big_,   _ = self._views_and_doc_bytes(20_000)
+        self.assertGreater(len(_big_v_.mod_inner), len(_small_v_.mod_inner) * 10,
+                           'fixture is wrong -- the big render is not actually bigger')
+        self.assertGreater(_big_, _small_ * 10,
+                           f'estimate barely moved ({_small_} -> {_big_}) while mod_inner grew '
+                           f'{len(_small_v_.mod_inner)} -> {len(_big_v_.mod_inner)}; the estimator '
+                           f'is measuring something that is not the payload again')
+
+    def test_inflated_estimate_is_the_right_order_as_the_document(self):
+        '''The inflation factor turns raw param bytes into shipped bytes.  Pin it: the
+        inflated estimate must land within 2x either side of the real document, so a
+        change in how panel encodes the payload fails here rather than silently making
+        the guard quiet.'''
+        for _n_ in (20_000, 120_000):
+            with self.subTest(rows=_n_):
+                _v_, _est_, _real_ = self._views_and_doc_bytes(_n_)
+                _inflated_ = ic._shipped_panel_payload_bytes_([_v_])
+                self.assertGreater(_inflated_, _real_ / 2,
+                                   f'estimate {_inflated_:.0f} under-reports document {_real_}')
+                self.assertLess(_inflated_, _real_ * 2,
+                                f'estimate {_inflated_:.0f} over-reports document {_real_}')
 
 
 @unittest.skipUnless(PANEL_AVAILABLE, 'panel not installed')
@@ -3160,38 +3262,42 @@ class TestLINKPISelectionLabels(unittest.TestCase):
     # ── template / script wiring ─────────────────────────────────────────────
     def test_template_carries_the_overlay_layer(self):
         cls = type(self._make_ctrl())
-        self.assertIn('id="selectedlabels"', cls._template)
+        # The ESM module writes the id as a JS string rather than as markup.
+        self.assertIn('selectedlabels', component_markup(cls))
 
     def test_the_overlay_layer_is_not_a_hit_target(self):
         """It sits above the graph; taking pointer events would break node picking."""
         cls    = type(self._make_ctrl())
-        _line_ = [_l_ for _l_ in cls._template.split('\n') if 'id="selectedlabels"' in _l_][0]
-        self.assertIn('pointer-events="none"', _line_)
+        _src_  = component_markup(cls)
+        _at_   = _src_.index("id: 'selectedlabels'")
+        # The attrs object the element is built from, which is where pointer-events now
+        # lives -- the template had them on one line, so this reads the same neighbourhood.
+        self.assertIn("'pointer-events': 'none'", _src_[_at_ - 200:_at_ + 200])
 
     def test_scripts_are_registered(self):
         cls = type(self._make_ctrl())
         for _s_ in ('selection_labels', 'renderSelectedLabels'):
-            self.assertIn(_s_, cls._scripts)
+            self.assertTrue(has_script(cls, _s_))
 
     def test_render_redraws_the_overlay(self):
         """The render script runs on every refresh; the overlay must survive one."""
-        self.assertIn('self.renderSelectedLabels();',
-                      type(self._make_ctrl())._scripts['render'])
+        self.assertIn('renderSelectedLabels();',
+                      component_script(self._make_ctrl(), 'render'))
 
     def test_the_script_names_the_dom_node_it_writes(self):
         """panel only injects a node variable into a script whose text names it."""
         self.assertIn('selectedlabels',
-                      type(self._make_ctrl())._scripts['renderSelectedLabels'])
+                      component_script(self._make_ctrl(), 'renderSelectedLabels'))
 
     def test_lines_reach_the_dom_as_text_not_markup(self):
         """A node name must never be parsed as markup -- see SECURITY.md profile A."""
-        _js_ = type(self._make_ctrl())._scripts['renderSelectedLabels']
+        _js_ = component_script(self._make_ctrl(), 'renderSelectedLabels')
         self.assertIn('.textContent', _js_)
         self.assertNotIn('innerHTML', _js_)
 
     def test_labels_track_a_move_of_the_selection(self):
         """The same translate the outline gets, so labels do not lag a node drag."""
-        _js_ = type(self._make_ctrl())._scripts['myOnMouseMove']
+        _js_ = component_script(self._make_ctrl(), 'myOnMouseMove')
         _mv_ = [_l_ for _l_ in _js_.split('\n') if 'state.move_op' in _l_][0]
         self.assertIn('selectedlabels.setAttribute("transform"', _js_)
         self.assertIn('selectionlayer.setAttribute("transform"', _js_)
@@ -3199,12 +3305,12 @@ class TestLINKPISelectionLabels(unittest.TestCase):
 
     def test_an_unselected_node_drag_does_not_move_the_labels(self):
         """unselected_move_op drags a node that is NOT selected; the labels stay put."""
-        _js_ = type(self._make_ctrl())._scripts['myOnMouseMove']
+        _js_ = component_script(self._make_ctrl(), 'myOnMouseMove')
         _ln_ = [_l_ for _l_ in _js_.split('\n') if 'state.unselected_move_op' in _l_][0]
         self.assertNotIn('selectedlabels', _ln_)
 
     def test_new_geometry_cancels_a_leftover_translate(self):
-        _js_ = type(self._make_ctrl())._scripts['renderSelectedLabels']
+        _js_ = component_script(self._make_ctrl(), 'renderSelectedLabels')
         self.assertIn('selectedlabels.setAttribute("transform", "");', _js_)
 
     # ── the payload is a Dict on purpose (PLANNING.md U5) ────────────────────
@@ -3217,7 +3323,7 @@ class TestLINKPISelectionLabels(unittest.TestCase):
 
     def test_the_payload_is_not_bound_into_the_template(self):
         """A ${} content binding would make it a child -- exactly the U5 failure."""
-        self.assertNotIn('${selection_labels}', type(self._make_ctrl())._template)
+        self.assertNotIn('${selection_labels}', component_markup(self._make_ctrl()))
 
 
 @unittest.skipUnless(PANEL_AVAILABLE, 'panel not installed')
@@ -3230,9 +3336,9 @@ class TestLINKPIGPUSelectionLabels(unittest.TestCase):
 
     def test_gpu_view_carries_the_layer_and_the_scripts(self):
         from polars2svg.interactive_controller import LINKPI_GPU
-        self.assertIn('id="selectedlabels"', LINKPI_GPU._template)
+        self.assertIn('selectedlabels', component_markup(LINKPI_GPU))
         for _s_ in ('selection_labels', 'renderSelectedLabels'):
-            self.assertIn(_s_, LINKPI_GPU._scripts)
+            self.assertTrue(has_script(LINKPI_GPU, _s_))
 
 
 if __name__ == '__main__':

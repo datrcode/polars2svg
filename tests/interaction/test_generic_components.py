@@ -21,6 +21,33 @@ import pytest
 from playwright.sync_api import expect
 
 
+@pytest.mark.parametrize('fixture_name', ['xypi_page', 'histopi_page', 'timepi_page'])
+def test_the_component_is_sized_per_instance(request, fixture_name):
+    """The root <svg> and its inner layers carry this view's own width/height.
+
+    This replaces `test_reactive_first_paint.py::test_the_rendered_template_is_sized_per_instance`,
+    which read jinja's output. There is no jinja since the JSComponent port (PLANNING.md
+    W1) -- the module reads `model.svg_w` / `model.svg_h` when it builds the DOM -- and
+    the size only ever mattered in the browser anyway, so it is asserted there now.
+
+    Worth keeping rather than dropping: one compiled class serves every size, so a bug
+    that baked one instance's geometry into the shared module would show up exactly here.
+    """
+    _ip_ = request.getfixturevalue(fixture_name)
+    _w_, _h_ = _ip_.plot.wxh
+
+    for _id_ in ('mod', 'screen'):
+        _el_ = _ip_.el(_id_)
+        assert _el_.get_attribute('width') == str(_w_), f'#{_id_} width'
+        assert _el_.get_attribute('height') == str(_h_), f'#{_id_} height'
+
+    assert _ip_.root.get_attribute('width') == str(_w_)
+    assert _ip_.root.get_attribute('height') == str(_h_)
+    # #infostr sits just above the bottom edge -- svg_h - 3 in the template, and a
+    # number the module now computes itself.
+    assert _ip_.el('infostr').get_attribute('y') == str(_h_ - 3)
+
+
 def _brush_shape(ip):
     """Which primitive the brush cursor drew: circle, vertical or horizontal line."""
     _html_ = ip.el('brushindicator').inner_html() or ''
@@ -73,6 +100,44 @@ def test_F_opens_the_selection_shape_picker(request, fixture):
     _ip_.press('F')
     _ip_.expect_menu_open('rectangle')
     assert 'oval' in _ip_.menu_text()
+
+
+@pytest.mark.parametrize('fixture', ['xypi_page', 'histopi_page', 'timepi_page'])
+def test_the_picker_highlights_the_current_shape_and_moves_with_the_keys(request, fixture):
+    """Which row is highlighted, not just that a menu appeared.
+
+    The highlight is a `<rect>` whose `y` says which item is selected, and it had no
+    coverage on these components -- `test_F_opens_the_selection_shape_picker` reads the
+    menu's *text*, which an off-by-one highlight does not change. The parity goldens
+    cannot see it either: the DOM digest records `#pickermenu`'s tag, child count and
+    text, and a misplaced highlight changes none of the three. A mutation that shifted
+    every highlight down one row passed the whole suite.
+
+    LINKPI has had this covered all along (`test_menu_state_machine.py`); these
+    components share the row geometry but not the tests.
+    """
+    _ip_ = request.getfixturevalue(fixture)
+    _ip_.settle()
+    _ip_.hover(200, 150)
+    _ip_.press('F')
+    _ip_.expect_menu_open('rectangle')
+
+    # menu_items is [['r','rectangle'], ['o','oval']] and the fresh shape is rectangle,
+    # so the picker must open *on* it rather than at the top of the list by default.
+    # This assertion alone is what a misplaced highlight fails.
+    _ip_.expect_menu_index(0)
+
+    # One navigation step, not several.  `menuArmTimer` auto-commits 2500ms after the
+    # last keystroke, and an earlier version of this test chained four moves into one
+    # open menu: the first three assertions passed and the fourth found the menu already
+    # committed and gone.  The LINKPI menu suite covers j/k/wrap exhaustively already
+    # (`test_menu_state_machine.py`); what is new here is that *these* components have a
+    # picker at all, that it opens on the current shape, and that it responds to the keys.
+    _ip_.press('ArrowDown', wait_idle=False)
+    _ip_.expect_menu_index(1)
+
+    _ip_.press('Escape', wait_idle=False)
+    _ip_.expect_menu_closed()
 
 
 # ── the per-kind brush sequences ─────────────────────────────────────────────

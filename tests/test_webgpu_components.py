@@ -10,6 +10,7 @@ import re
 import unittest
 
 import polars as pl
+from view_js_utils import component_js, component_markup, component_node_ids, has_script
 
 import polars2svg
 from polars2svg.p2s_displaylist import (CLOUD_ICON_H, CLOUD_ICON_RX, CLOUD_ICON_W,
@@ -401,7 +402,7 @@ class TestSmallpWebGPU(unittest.TestCase):
         from polars2svg.interactive_controller import smallpi
         v = smallpi(self._smallp_(), use_webgpu=True)
         self.assertIsNotNone(v.gpu_payload)
-        self.assertIn('gpucanvas', type(v)._template)
+        self.assertIn('gpucanvas', component_markup(v))
 
 
 class TestXYpGradientLines(unittest.TestCase):
@@ -433,20 +434,20 @@ class TestLinkpiView(unittest.TestCase):
         v = linkpi(self._linkp_())
         self.assertNotIn('gpu_payload', type(v).param)
         self.assertNotIn('gpu_error', type(v).param)
-        self.assertNotIn('gpucanvas', type(v)._template)
-        self.assertNotIn('gpucanvas', v._get_template()[1])
-        self.assertNotIn(P2S_GPU_JS, type(v)._scripts['render'])
-        self.assertNotIn('gpu_payload', type(v)._scripts)
+        self.assertNotIn('gpucanvas', component_markup(v))
+        self.assertNotIn('gpucanvas', component_node_ids(v))
+        self.assertNotIn(P2S_GPU_JS, component_js(v))
+        self.assertFalse(has_script(v, 'gpu_payload'))
 
     def test_gpu_mode_payload_and_canvas(self):
         from polars2svg.interactive_controller import linkpi
         v = linkpi(self._linkp_(), use_webgpu=True)
         self.assertIsInstance(v.gpu_payload, dict)
-        self.assertIn('gpucanvas', type(v)._template)
-        self.assertIn('gpucanvas', v._get_template()[1])
+        self.assertIn('gpucanvas', component_markup(v))
+        self.assertIn('gpucanvas', component_node_ids(v))
         self.assertEqual(v.mod_inner, '')                       # plot is on the canvas
-        self.assertIn('__P2S_GPU__', type(v)._scripts['render'])
-        self.assertIn('gpu_payload', type(v)._scripts)
+        self.assertIn('__P2S_GPU__', component_js(v))
+        self.assertTrue(has_script(v, 'gpu_payload'))
 
     def test_refresh_regenerates_payload_after_relayout(self):
         from polars2svg.interactive_controller import linkpi
@@ -478,20 +479,20 @@ class TestSpreadlinepiView(unittest.TestCase):
         v = spreadlinepi(self._spread_())
         self.assertNotIn('gpu_payload', type(v).param)
         self.assertNotIn('gpu_error', type(v).param)
-        self.assertNotIn('gpucanvas', type(v)._template)
-        self.assertNotIn('gpucanvas', v._get_template()[1])
-        self.assertNotIn(P2S_GPU_JS, type(v)._scripts['render'])
-        self.assertNotIn('gpu_payload', type(v)._scripts)
+        self.assertNotIn('gpucanvas', component_markup(v))
+        self.assertNotIn('gpucanvas', component_node_ids(v))
+        self.assertNotIn(P2S_GPU_JS, component_js(v))
+        self.assertFalse(has_script(v, 'gpu_payload'))
 
     def test_gpu_mode_payload_and_canvas(self):
         from polars2svg.spreadlinepi import spreadlinepi
         v = spreadlinepi(self._spread_(), use_webgpu=True)
         self.assertIsInstance(v.gpu_payload, dict)
-        self.assertIn('gpucanvas', type(v)._template)
-        self.assertIn('gpucanvas', v._get_template()[1])
+        self.assertIn('gpucanvas', component_markup(v))
+        self.assertIn('gpucanvas', component_node_ids(v))
         self.assertEqual(v.mod_inner, '')
-        self.assertIn('__P2S_GPU__', type(v)._scripts['render'])
-        self.assertIn('gpu_payload', type(v)._scripts)
+        self.assertIn('__P2S_GPU__', component_js(v))
+        self.assertTrue(has_script(v, 'gpu_payload'))
 
     def test_selection_regenerates_payload(self):
         from polars2svg.spreadlinepi import spreadlinepi

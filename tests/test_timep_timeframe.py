@@ -17,6 +17,8 @@ On a periodic time axis the feature is inert (every call returns None).
 """
 import asyncio
 import unittest
+
+from view_js_utils import component_script
 from datetime import datetime, timedelta
 
 import polars as pl
@@ -145,7 +147,7 @@ class TestTimepiTimeframeDispatch(unittest.TestCase):
 
     def test_help_and_js_wiring_present(self):
         self.assertIn('unfilter rows within the visible timeframe', self.tpi._keyboard_commands_)
-        kd = type(self.tpi)._scripts['myOnKeyDown']
+        kd = component_script(self.tpi, 'myOnKeyDown')
         self.assertIn("== 'u'", kd)
         self.assertIn("== 'e'", kd)
 

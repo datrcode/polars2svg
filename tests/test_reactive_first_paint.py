@@ -29,6 +29,7 @@ import math
 import unittest
 
 import polars as pl
+from view_js_utils import component_js
 
 from polars2svg import Polars2SVG
 
@@ -108,15 +109,6 @@ class TestFirstPaintCarriesThePlot(unittest.TestCase):
         self.assertEqual(_ma_.data.svg_w, 256)
         self.assertEqual(_mb_.data.svg_w, 512)
 
-    def test_the_rendered_template_is_sized_per_instance(self):
-        """{{ svg_w }} / {{ svg_h }} resolve per view, not per class."""
-        _a_ = self.p2s.xypi(self.p2s.xyp(_df(), 'x', 'y', wxh=(256, 256)))
-        _b_ = self.p2s.xypi(self.p2s.xyp(_df(), 'x', 'y', wxh=(512, 128)))
-        _ha_, _, _ = _a_._get_template()
-        _hb_, _, _ = _b_._get_template()
-        self.assertIn('width="256" height="256"', _ha_)
-        self.assertIn('width="512" height="128"', _hb_)
-
 
 @unittest.skipUnless(PANEL_AVAILABLE, 'panel not installed')
 class TestOneClassPerComponent(unittest.TestCase):
@@ -173,8 +165,8 @@ class TestWebGpuRuntimeIsNotOnSvgViews(unittest.TestCase):
         from polars2svg.p2s_webgpu_runtime import P2S_GPU_JS
         for _name_, (_svg_, _gpu_) in self._pairs().items():
             with self.subTest(component=_name_):
-                _svg_js_ = '\n'.join(type(_svg_)._scripts.values())
-                _gpu_js_ = '\n'.join(type(_gpu_)._scripts.values())
+                _svg_js_ = component_js(_svg_)
+                _gpu_js_ = component_js(_gpu_)
                 self.assertNotIn(P2S_GPU_JS, _svg_js_,
                                  f'{_name_}: the SVG view ships the WebGPU runtime')
                 self.assertIn(P2S_GPU_JS, _gpu_js_,

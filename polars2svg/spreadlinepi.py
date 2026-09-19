@@ -22,9 +22,11 @@ import asyncio
 import polars as pl
 import param
 
-from .p2s_reactive_base import P2SReactiveHTML
+from panel.custom import JSComponent
 
-from .interactive_controller import InteractionController, _gpu_error_overlay, _withGpuScripts_
+from .p2s_esm import esm
+
+from .interactive_controller import InteractionController, _gpu_error_overlay
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -127,102 +129,32 @@ def _filter_out_nodes(spread: Any, df: pl.DataFrame, nodes: set) -> pl.DataFrame
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Panel template / JS
+# The ESM module
 #
-# Both are plain static text on the class -- no f-strings, so no doubled braces.
-# Per-instance values reach them two ways:
-#   {{ param }}  jinja, substituted per instance by ReactiveHTML._get_template()
-#   data.param   the same value read from the synced data model inside _scripts
-# The GPU canvas wrapper and the ~14 KB WebGPU runtime live on SLPI_GPU, not
-# here: an SVG view never calls into them and should not carry them.
+# There is no template and no script table: the module builds its own DOM and reads
+# every per-instance value from `model.<param>` at render time, where the template used
+# jinja `{{ param }}` and the scripts used `data.param`.  The GPU canvas wrapper and the
+# ~14 KB WebGPU runtime are in the SLPI_GPU composition only: an SVG view never calls
+# into them and should not carry them.
 # ─────────────────────────────────────────────────────────────────────────────
 
-_SLPI_GPU_HEAD_ = (
-    "<div id='gpuwrap' style='position:relative;width:{{ svg_w }}px;height:{{ svg_h }}px;'>"
-    "<canvas id='gpucanvas' width='{{ svg_w }}' height='{{ svg_h }}'"
-    " style='position:absolute;left:0;top:0;'></canvas>"
-)
+# The browser half lives in polars2svg/js/p2s_slpi.js (PLANNING.md W1).  Only the
+# *_GPU composition carries the ~14 KB WebGPU runtime, which is what keeps it off the
+# SVG view -- the reason the subclass split exists.
+_SLPI_ESM_ = esm('fragments/p2s_dom.js',
+                 'p2s_slpi.js')
 
-_SLPI_SVG_ROOT_ = (
-    "<svg id='svgparentslpi' width='{{ svg_w }}' height='{{ svg_h }}' tabindex='0'"
-    "{%- if use_webgpu %} style='position:absolute;left:0;top:0;'{% endif %}"
-    " onkeydown=\"${script('myOnKeyDown')}\">"
-    "<svg id='mod' x='0' y='0' width='{{ svg_w }}' height='{{ svg_h }}'>${mod_inner}</svg>"
-    "<rect id='screen' x='0' y='0' width='{{ svg_w }}' height='{{ svg_h }}'"
-    " style='fill:none;pointer-events:all;'"
-    " onmouseover=\"${script('myOnMouseOver')}\""
-    " onmousedown=\"${script('myOnMouseDown')}\""
-    " onmousemove=\"${script('myOnMouseMove')}\""
-    " onmouseup=\"${script('myOnMouseUp')}\""
-    " onmouseleave=\"${script('myOnMouseLeave')}\"/>"
-    "<rect id='drag_rect' x='0' y='0' width='0' height='0'"
-    " style='fill:rgba(128,128,128,0.08);stroke:#000000;stroke-width:1;pointer-events:none;stroke-dasharray:4,2;'/>"
-    "</svg>"
-)
-
-# The SVG class's template is the root alone -- no canvas.  SLPI_GPU wraps it.
-_SLPI_TEMPLATE_     = _SLPI_SVG_ROOT_
-_SLPI_GPU_TEMPLATE_ = _SLPI_GPU_HEAD_ + _SLPI_SVG_ROOT_ + "</div>"
-
-_SLPI_SCRIPTS_ = {
-    'render': (
-        "state.dragging = false; state.x0_drag = state.y0_drag = state.x1_drag = state.y1_drag = 0;"
-        "state.shiftkey = false; state.ctrlkey = false;"
-        "mod.innerHTML = data.mod_inner;"
-    ),
-    'mod_inner':     "mod.innerHTML = data.mod_inner;",
-    'myOnMouseOver': "svgparentslpi.focus();",
-    'myOnMouseDown': (
-        "state.x0_drag = state.x1_drag = event.offsetX;"
-        "state.y0_drag = state.y1_drag = event.offsetY;"
-        "state.shiftkey = event.shiftKey; state.ctrlkey = event.ctrlKey;"
-        "state.dragging = true;"
-        "data.drag_x0 = Math.round(event.offsetX); data.drag_y0 = Math.round(event.offsetY);"
-        "self.myUpdateDragRect();"
-    ),
-    'myOnMouseMove': (
-        "data.x_mouse = event.offsetX; data.y_mouse = event.offsetY;"
-        "if (state.dragging) {"
-        "  state.x1_drag = event.offsetX; state.y1_drag = event.offsetY;"
-        "  state.shiftkey = event.shiftKey; state.ctrlkey = event.ctrlKey;"
-        "  self.myUpdateDragRect();"
-        "}"
-    ),
-    'myOnMouseUp': (
-        "if (!state.dragging) return; state.dragging = false;"
-        "data.drag_x1 = Math.round(event.offsetX); data.drag_y1 = Math.round(event.offsetY);"
-        "data.ctrlkey = event.ctrlKey; data.shiftkey = event.shiftKey;"
-        "self.myUpdateDragRect();"
-        "data.drag_op_finished = !data.drag_op_finished;"
-    ),
-    'myOnMouseLeave': (
-        "state.dragging = false; self.myUpdateDragRect();"
-    ),
-    'myUpdateDragRect': (
-        "if (state.dragging) {"
-        "  var x = Math.min(state.x0_drag, state.x1_drag);"
-        "  var y = Math.min(state.y0_drag, state.y1_drag);"
-        "  var w = Math.abs(state.x1_drag - state.x0_drag);"
-        "  var h = Math.abs(state.y1_drag - state.y0_drag);"
-        "  drag_rect.setAttribute('x', x); drag_rect.setAttribute('y', y);"
-        "  drag_rect.setAttribute('width', w); drag_rect.setAttribute('height', h);"
-        "  if      (state.shiftkey && state.ctrlkey) drag_rect.setAttribute('stroke', '#0000ff');"
-        "  else if (state.shiftkey)                  drag_rect.setAttribute('stroke', '#ff0000');"
-        "  else if (state.ctrlkey)                   drag_rect.setAttribute('stroke', '#00ff00');"
-        "  else                                       drag_rect.setAttribute('stroke', '#000000');"
-        "} else {"
-        "  drag_rect.setAttribute('width', 0); drag_rect.setAttribute('height', 0);"
-        "}"
-    ),
-    'myOnKeyDown':    "event.stopPropagation(); var k=event.key; if(k==='X'){data.key_op_finished='X';} else if(k==='x'){data.key_op_finished='x';} else if(k==='c'){data.key_op_finished='c';}",
-}
+_SLPI_GPU_ESM_ = esm('fragments/p2s_dom.js',
+                     'fragments/p2s_gpu_runtime.js',
+                     'fragments/p2s_gpu_mount.js',
+                     'p2s_slpi.js')
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Interactive wrapper
 # ─────────────────────────────────────────────────────────────────────────────
 
-class SLPI(P2SReactiveHTML):
+class SLPI(JSComponent):
     """Panel view for SpreadLinesP.
 
     A single static class: size and GPU mode are ordinary params, so one
@@ -250,8 +182,7 @@ class SLPI(P2SReactiveHTML):
     ctrlkey:          Any = param.Boolean(default=False)
     key_op_finished:  Any = param.String(default='')
 
-    _template = _SLPI_TEMPLATE_
-    _scripts  = _SLPI_SCRIPTS_
+    _esm = _SLPI_ESM_
 
     # Read by panelize() to decide what this view broadcasts; inherited by SLPI_GPU.
     _broadcasts_selection_ = True
@@ -269,15 +200,15 @@ class SLPI(P2SReactiveHTML):
     def __init__(self, _spread_: Any, use_webgpu: bool = False, **kwargs: Any) -> None:
         _mvc_    = kwargs.pop('mvc', None)
         _w_, _h_ = _spread_.wxh
+        # mod_inner goes through the constructor like any other param.  Under
+        # ReactiveHTML it could not: bound as a content ${mod_inner} it was a *child*,
+        # which ReactiveHTML rejects as a constructor kwarg and which was also the only
+        # way past panel's HTML sanitizer.  The ESM path has neither.
         super().__init__(
             svg_w=_w_, svg_h=_h_, use_webgpu=use_webgpu,
+            mod_inner=('' if use_webgpu else _spread_._repr_svg_()),
             **({'gpu_payload': _spread_.webgpu()} if use_webgpu else {}),
             **kwargs)
-        # Assigned rather than passed to super(): `mod_inner` is a content
-        # binding (${mod_inner} between tags), so ReactiveHTML treats it as a
-        # child and rejects a str passed as a constructor kwarg.  The dynamic
-        # class carried the SVG as the param *default* for the same reason.
-        self.mod_inner = '' if use_webgpu else _spread_._repr_svg_()
         self.lock = asyncio.Lock()
         # The base plot every render_with() starts from.  'c' (change ego)
         # replaces it, which is why it is instance state rather than a constant.
@@ -414,8 +345,7 @@ class SLPI_GPU(SLPI):
     gpu_payload: Any = param.Dict(default={})
     gpu_error:   Any = param.String(default='')
 
-    _template = _SLPI_GPU_TEMPLATE_
-    _scripts  = _withGpuScripts_(_SLPI_SCRIPTS_)
+    _esm = _SLPI_GPU_ESM_
 
 
 def spreadlinepi(_spread_: Any, use_webgpu: bool = False, **kwargs: Any) -> Any:

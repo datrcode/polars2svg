@@ -1,0 +1,146 @@
+{
+  "params_watched": [
+    "ctrlkey",
+    "drag_op_finished",
+    "drag_x0",
+    "drag_x1",
+    "drag_y0",
+    "drag_y1",
+    "key_op_finished",
+    "mod_inner",
+    "name",
+    "shiftkey",
+    "svg_h",
+    "svg_w",
+    "use_webgpu",
+    "x_mouse",
+    "y_mouse"
+  ],
+  "gestures": [
+    {
+      "gesture": "hover-centre",
+      "writes": [
+        [
+          "x_mouse",
+          "tracked",
+          null
+        ],
+        [
+          "y_mouse",
+          "tracked",
+          null
+        ]
+      ],
+      "dom": {
+        "svgparentslpi": {
+          "tag": "svg",
+          "kids": 3,
+          "text": "12"
+        },
+        "mod": {
+          "tag": "svg",
+          "kids": 1,
+          "text": "12"
+        },
+        "screen": {
+          "tag": "rect",
+          "kids": 0,
+          "text": ""
+        },
+        "drag_rect": {
+          "tag": "rect",
+          "kids": 0,
+          "text": ""
+        }
+      }
+    },
+    {
+      "gesture": "drag-select",
+      "writes": [
+        [
+          "drag_op_finished",
+          true,
+          1
+        ],
+        [
+          "drag_x0",
+          240,
+          1
+        ],
+        [
+          "drag_x1",
+          360,
+          1
+        ],
+        [
+          "drag_y0",
+          110,
+          1
+        ],
+        [
+          "drag_y1",
+          190,
+          1
+        ],
+        [
+          "x_mouse",
+          "tracked",
+          null
+        ],
+        [
+          "y_mouse",
+          "tracked",
+          null
+        ]
+      ],
+      "dom": {
+        "svgparentslpi": {
+          "tag": "svg",
+          "kids": 3,
+          "text": "12"
+        },
+        "mod": {
+          "tag": "svg",
+          "kids": 1,
+          "text": "12"
+        },
+        "screen": {
+          "tag": "rect",
+          "kids": 0,
+          "text": ""
+        },
+        "drag_rect": {
+          "tag": "rect",
+          "kids": 0,
+          "text": ""
+        }
+      }
+    },
+    {
+      "gesture": "escape",
+      "writes": [],
+      "dom": {
+        "svgparentslpi": {
+          "tag": "svg",
+          "kids": 3,
+          "text": "12"
+        },
+        "mod": {
+          "tag": "svg",
+          "kids": 1,
+          "text": "12"
+        },
+        "screen": {
+          "tag": "rect",
+          "kids": 0,
+          "text": ""
+        },
+        "drag_rect": {
+          "tag": "rect",
+          "kids": 0,
+          "text": ""
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,193 @@
+{
+  "params_watched": [
+    "brush_changed",
+    "brush_leave_done",
+    "brush_on",
+    "drag_op_finished",
+    "drag_x0",
+    "drag_x1",
+    "drag_y0",
+    "drag_y1",
+    "key_op_finished",
+    "mod_inner",
+    "name",
+    "shiftkey",
+    "svg_h",
+    "svg_w",
+    "use_webgpu",
+    "x_mouse",
+    "y_mouse"
+  ],
+  "gestures": [
+    {
+      "gesture": "hover-centre",
+      "writes": [
+        [
+          "x_mouse",
+          "tracked",
+          null
+        ],
+        [
+          "y_mouse",
+          "tracked",
+          null
+        ]
+      ],
+      "dom": {
+        "svgparentsmallpi": {
+          "tag": "svg",
+          "kids": 3,
+          "text": ".rect-group-N rect { width: 1px; height: 1px; } ...x...1...y9... a .rect-group-N rect { width: 1px; height: 1px; } ...x."
+        },
+        "mod": {
+          "tag": "svg",
+          "kids": 1,
+          "text": ".rect-group-N rect { width: 1px; height: 1px; } ...x...1...y9... a .rect-group-N rect { width: 1px; height: 1px; } ...x."
+        },
+        "smallp_N": {
+          "tag": "svg",
+          "kids": 13,
+          "text": ".rect-group-N rect { width: 1px; height: 1px; } ...x...1...y9... a .rect-group-N rect { width: 1px; height: 1px; } ...x."
+        },
+        "xyp_N": {
+          "tag": "svg",
+          "kids": 12,
+          "text": ".rect-group-N rect { width: 1px; height: 1px; } ...x...1...y9..."
+        },
+        "plotClip-N": {
+          "tag": "clippath",
+          "kids": 1,
+          "text": ""
+        },
+        "selbox": {
+          "tag": "rect",
+          "kids": 0,
+          "text": ""
+        },
+        "screen": {
+          "tag": "rect",
+          "kids": 0,
+          "text": ""
+        }
+      }
+    },
+    {
+      "gesture": "drag-select",
+      "writes": [
+        [
+          "drag_op_finished",
+          true,
+          1
+        ],
+        [
+          "drag_x0",
+          132,
+          1
+        ],
+        [
+          "drag_x1",
+          252,
+          1
+        ],
+        [
+          "drag_y0",
+          132,
+          1
+        ],
+        [
+          "drag_y1",
+          252,
+          1
+        ],
+        [
+          "x_mouse",
+          "tracked",
+          null
+        ],
+        [
+          "y_mouse",
+          "tracked",
+          null
+        ]
+      ],
+      "dom": {
+        "svgparentsmallpi": {
+          "tag": "svg",
+          "kids": 3,
+          "text": ".rect-group-N rect { width: 1px; height: 1px; } ...x...1...y9... a .rect-group-N rect { width: 1px; height: 1px; } ...x."
+        },
+        "mod": {
+          "tag": "svg",
+          "kids": 1,
+          "text": ".rect-group-N rect { width: 1px; height: 1px; } ...x...1...y9... a .rect-group-N rect { width: 1px; height: 1px; } ...x."
+        },
+        "smallp_N": {
+          "tag": "svg",
+          "kids": 13,
+          "text": ".rect-group-N rect { width: 1px; height: 1px; } ...x...1...y9... a .rect-group-N rect { width: 1px; height: 1px; } ...x."
+        },
+        "xyp_N": {
+          "tag": "svg",
+          "kids": 12,
+          "text": ".rect-group-N rect { width: 1px; height: 1px; } ...x...1...y9..."
+        },
+        "plotClip-N": {
+          "tag": "clippath",
+          "kids": 1,
+          "text": ""
+        },
+        "selbox": {
+          "tag": "rect",
+          "kids": 0,
+          "text": ""
+        },
+        "screen": {
+          "tag": "rect",
+          "kids": 0,
+          "text": ""
+        }
+      }
+    },
+    {
+      "gesture": "escape",
+      "writes": [],
+      "dom": {
+        "svgparentsmallpi": {
+          "tag": "svg",
+          "kids": 3,
+          "text": ".rect-group-N rect { width: 1px; height: 1px; } ...x...1...y9... a .rect-group-N rect { width: 1px; height: 1px; } ...x."
+        },
+        "mod": {
+          "tag": "svg",
+          "kids": 1,
+          "text": ".rect-group-N rect { width: 1px; height: 1px; } ...x...1...y9... a .rect-group-N rect { width: 1px; height: 1px; } ...x."
+        },
+        "smallp_N": {
+          "tag": "svg",
+          "kids": 13,
+          "text": ".rect-group-N rect { width: 1px; height: 1px; } ...x...1...y9... a .rect-group-N rect { width: 1px; height: 1px; } ...x."
+        },
+        "xyp_N": {
+          "tag": "svg",
+          "kids": 12,
+          "text": ".rect-group-N rect { width: 1px; height: 1px; } ...x...1...y9..."
+        },
+        "plotClip-N": {
+          "tag": "clippath",
+          "kids": 1,
+          "text": ""
+        },
+        "selbox": {
+          "tag": "rect",
+          "kids": 0,
+          "text": ""
+        },
+        "screen": {
+          "tag": "rect",
+          "kids": 0,
+          "text": ""
+        }
+      }
+    }
+  ]
+}

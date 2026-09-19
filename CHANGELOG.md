@@ -7,7 +7,261 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`LINKPI` / `LINKPI_GPU` ported to `JSComponent`. The migration is complete —
+  no view in the package derives from `ReactiveHTML` any more** (PLANNING.md W1).
+  The largest contract by a wide margin: 26 scripts, ~37 KB of JavaScript, a
+  12.5 KB `myOnKeyDown` with ~50 bindings, and four layout-preview shapes.
+
+  The handler bodies were converted mechanically rather than retyped, because at
+  that size a transcription slip is the likeliest way to break something no test
+  covers. Element names are unchanged for the same reason — every id'd node
+  becomes a closure `const` of exactly that name — which is why `svgparent` is the
+  root's name here where the smaller modules say `root`.
+
+  With the last view ported, the scaffolding goes too: **`p2s_reactive_base.py` is
+  deleted** (`P2SReactiveHTML` existed only to re-seed child params past Panel's
+  HTML sanitizer, and the ESM path has neither), along with `_withGpuScripts_`,
+  `_GPU_RENDER_JS_` and `_GPU_PAYLOAD_JS_`. `ReactiveHTML` is still imported for
+  one `isinstance` in `panelize()`, which accepts third-party views through the
+  `panelWrapper()` extension point.
+
+- **`_WS_PAYLOAD_INFLATION_` collapses back to a single rate, 1.25.** The two-rate
+  scheme existed only because a half-migrated layout held both kinds of view.
+  Re-measured now that every view is ESM, on a 60k-row `xypi`: `mod_inner`
+  1,139,906 B → document 1,430,387 B, **1.25×**, with no `data:image/svg+xml`
+  copy anywhere. It was 2.5× under `ReactiveHTML`, which shipped the SVG twice.
+
+- **Fixed: `myUpdateDragRect` assigned four undeclared variables.** `x`, `y`, `w`
+  and `h` were written without `var`. A `_scripts` body ran as a sloppy-mode
+  function, so those became implicit globals and worked; **an ES module is strict
+  mode automatically**, where the same assignment throws `ReferenceError`. Ported
+  verbatim it took out all five of LINKPI's rubber-band tests and nothing else —
+  the failure is silent until that exact handler runs.
+
+  `node --check` does not catch it (a runtime error, not a syntax one) and no
+  linter in this project reads JavaScript, so `TestNoImplicitGlobals` now checks
+  every assignment in every module against the names declared around it. It was
+  the only instance in ~58 KB of ported JavaScript.
+
+- **Fixed: `p2sGpuWrap` overwrote the root's `style` attribute** instead of
+  appending to it. Only LINKPI noticed — it is the one root carrying a style of
+  its own (`user-select:none`), which the GPU variant would have silently dropped.
+
+- **The five generic components ported to `JSComponent`.** `TIMEPI`, `HISTOPI`,
+  `XYPI`, `CHORDPI`, `PIEPI` and their `*_GPU` subclasses — ten classes, and the
+  largest contract so far at 19 scripts and ~16 KB of JavaScript. **`LINKPI` is
+  the only view left on `ReactiveHTML`.** All three generic parity goldens pass
+  unchanged.
+
+  `interactive_controller.py` loses 468 lines. Five near-identical template and
+  script pairs become **one** shared ESM module: what was substituted into each
+  class's own copy — the root `<svg>`'s id and the pre-laid-out keyboard-help
+  overlay — is read from the new `svg_parent_id` / `kbd_help_svg` params at render
+  time instead. `_bindInteractivePText_`, `_bindInteractivePScripts_` and
+  `_bindInteractivePGpuScripts_` go with them.
+
+  `myOnMouseWheel` is **not** carried over. It was unreachable: no `onwheel`
+  attribute bound it, no param shared its name, and nothing called
+  `self.myOnMouseWheel()`. The wheel has always been handled by the non-passive
+  listener `render` attaches to `#screen`, which is ported as-is.
+
+- **The generic components' selection-shape picker now has a highlight test.**
+  `test_F_opens_the_selection_shape_picker` read the menu's *text*, which an
+  off-by-one highlight does not change, and the parity goldens cannot see it
+  either — the DOM digest records `#pickermenu`'s tag, child count and text, and a
+  misplaced highlight changes none of the three. A mutation shifting every
+  highlight down one row passed the entire suite. LINKPI has had this covered all
+  along; these components share the row geometry but not the tests.
+
+- **Fixed: the parity recorder could miss a gesture's param writes.**
+  `ParityTrace.gesture()` stopped watching after `wait_until_idle()`, which returns
+  as soon as the controller lock looks free — and a keystroke whose Python
+  operation has not *yet* acquired the lock leaves it trivially free. The writes
+  then landed after the watcher was removed, going missing from the recording or
+  being attributed to the next gesture.
+
+  This was the `test_linkpi_search_parity` flake, seen in roughly one whole-suite
+  run in three and never in isolation. An earlier fix addressed a different,
+  inferred cause (a keystroke dropped under load) and did not stop it. The
+  recorder now waits for the write stream itself to go quiet, which is the general
+  form — it waits for whatever the gesture set off rather than for a proxy. The
+  committed goldens pass unchanged under the fix, so it closes a race without
+  changing what is recorded.
+
+- **Fixed: harness lookups were not scoped to their component.** Panel's per-model
+  id suffix used to make `#mod` unique across a page; ported components emit bare
+  ids, so the stack control beside its plot gives two `#mod` elements. Playwright
+  pierces shadow roots, so a page-level locator matches both — reported as a
+  strict-mode violation, which was the good case. The bad case was
+  `wait_for_mod_change()`, which resolved the id document-wide and could poll the
+  wrong component indefinitely. Every inner-id lookup now goes through
+  `self.root.locator(...)`.
+
+- **`SLPI` / `SLPI_GPU` and `STACKCONTROLI` ported to `JSComponent`.** Three of
+  the five interactive contracts are now on the ESM API; `_InteractivePBase`
+  (the five generic components) and `LINKPI` remain. Both parity goldens pass
+  unchanged and no interaction test needed an edit.
+
+  The two shared fragments carried over as designed — `p2s_dom.js` unchanged,
+  `p2s_gpu_mount.js` picking up `SLPI_GPU` with no edit at all, which is the
+  first evidence that the `*_GPU` scaffold generalises rather than having been
+  fitted to SMALLPI.
+
+  Two per-contract details worth recording:
+
+  - `STACKCONTROLI`'s keyboard-help overlay was a module constant concatenated
+    into `_template`. An ESM module has no markup to concatenate it into, so it
+    travels as a new `kbd_help_svg` param. Same bytes on the wire (the template
+    shipped per view too), and the markup stays out of the JavaScript.
+  - `SLPI`'s rubber band is deliberately **not** shared with LINKPI's yet.
+    LINKPI draws an oval as well as a rect and parks the band off-canvas when
+    idle; the generic components encode a different set of modifier states.
+    Phase 4/5 decides whether a common implementation actually falls out, rather
+    than forcing one now.
+
+- **`#drag_rect`, SLPI's selection rubber band, now has tests** — the same gap
+  `#selbox` had on SMALLPI, and for the same reason: `InteractivePage.drag_rect()`
+  reads `#drag`, which is LINKPI's element, so nothing in the suite had ever
+  looked at SLPI's. Covers geometry in both drag directions, clearing on release,
+  and the stroke colour that encodes the set-operation.
+
+  The colour tests deliberately take no focus first. LINKPI's band colours come
+  from `data.ctrlkey`, which only its `myOnKeyDown` sets, so a modifier pressed
+  while focus is elsewhere never reaches the band — that path is where the two
+  dead colours of **U8** hid. SLPI reads `event.shiftKey` / `event.ctrlKey`
+  straight off the mouse event, so its colours are correct without focus, and
+  that difference is now asserted rather than assumed. Mutation-tested: a
+  reconstruction of the exact U8 typo (`shftkey`) is caught.
+
+- **`SMALLPI` / `SMALLPI_GPU` are the first views on Panel's 2nd-generation (ESM)
+  component API.** `_template` and `_scripts` are gone; the browser half is
+  `polars2svg/js/p2s_smallpi.js` plus two shared fragments. Behaviour is
+  unchanged — the parity golden recorded from the `ReactiveHTML` implementation
+  passes against the port untouched, and **none of the 234 pre-existing
+  interaction tests needed an edit**, which was the gate condition.
+
+  Three things simply stop existing, rather than being reimplemented:
+
+  - `P2SReactiveHTML._init_params()`. `mod_inner` goes through the constructor
+    like any other param now. It could not before: bound as a content
+    `${mod_inner}` it was a Panel *child*, and `_init_params()` both dropped
+    children from the initial data model and ran plain string params through
+    panel's HTML sanitizer, which strips an SVG to nothing. The ESM path has
+    neither. (`P2SReactiveHTML` stays for the four contracts not yet ported.)
+  - The subtree rebuild. With no `Child` params, `render()` runs once per mount,
+    so the scripts' defensive `state` re-seeding became plain initialisation.
+  - The six jinja GPU head/tail constants and `_withGpuScripts_`, replaced by one
+    `if (model.use_webgpu)` branch in `js/fragments/p2s_gpu_mount.js`. The
+    subclass split is unchanged, so an SVG view still ships none of the ~14 KB
+    runtime.
+
+  **Measured on the wire** (60k-row render, panel 1.9.2 / bokeh 3.9.0), which was
+  the open question the spike existed to answer:
+
+  | view | mod_inner | document | per byte of SVG |
+  | --- | --- | --- | --- |
+  | `SMALLPI` (ESM) | 768,249 B | 947,649 B | **1.23×** |
+  | `XYPI` (ReactiveHTML) | 1,139,912 B | 2,913,305 B | **2.56×** |
+
+  An ESM view has no child, so the base64 `data:image/svg+xml` copy is gone and
+  the SVG ships once. The cost is a fixed **+3,059 bytes per view** (the ESM
+  module is larger than the template plus script table it replaces), which a
+  render of more than ~2.4 KB of SVG already repays.
+
+  `_warnOversizePanelPayload_` therefore charges each view its own rate —
+  `_WS_PAYLOAD_INFLATION_` 2.5 for `ReactiveHTML`, 1.25 for ESM, conservative for
+  anything unrecognised. A flat rate would have warned at half the real limit for
+  ported views, and every layout holds both kinds until the migration finishes.
+
+- **`#selbox`, SMALLPI's selection rubber band, now has tests.** It had none: it
+  is browser-only state, and it only exists *during* a drag, so the parity
+  goldens cannot see it either — they digest the DOM after the gesture, by which
+  time `myOnMouseUp` has hidden it. A mutant that never drew the box passed the
+  goldens and the entire suite. Two mid-drag assertions cover appearance,
+  min/abs geometry in both drag directions, and clearing on release.
+
+- **Groundwork for the `ReactiveHTML` → `JSComponent` migration (PLANNING.md W1),
+  with no change to what any component does.** Phase 1 of the plan: build the
+  seams the port needs and record what the components do *before* anything moves.
+
+  - **New `polars2svg/p2s_esm.py` and `polars2svg/js/`.** The project's
+    JavaScript is moving out of Python string literals into real `.js` files,
+    which ruff/mypy/bandit cannot see but an editor can. `p2s_esm.esm(*names)`
+    concatenates fragments into one ES module. **Concatenation rather than
+    `import`**, because `ReactiveESM._render_esm()` only emits a *URL* for a
+    file-valued `_esm` when it is the class's `_bundle_path` *and* a real server
+    session exists — otherwise it inlines the text into a blob URL, which has no
+    base for a relative specifier. A sibling `import` would therefore work under
+    `panel serve` and fail in a notebook, which is the primary target. `panel
+    compile` is the supported alternative and needs node + esbuild.
+  - **`P2S_GPU_JS` is the first asset moved**, from a 362-line raw string in
+    `p2s_webgpu_runtime.py` to `js/fragments/p2s_gpu_runtime.js` — byte-identical,
+    verified against the previous revision. One copy now feeds both the Panel
+    views and `standalone_html()`, which is why fragments must stay `export`-free.
+  - **New `tests/view_js_utils.py`**, the seam between ~45 assertions and however
+    a view carries its JavaScript. `component_js`, `component_script`,
+    `component_markup`, `component_node_ids`, `named_scripts` and `has_script`
+    read `_scripts`/`_template` today and an `_esm` module after a port, so each
+    assertion site changed once, now, rather than during the port.
+    `component_script` brace-matches a named function out of an ESM module so
+    that an assertion *about* `menuCommit` cannot pass on text that happens to
+    live in `myOnKeyDown`.
+  - **New `tests/interaction/test_param_trace_parity.py` and
+    `tests/interaction/parity/*.json`** — 10 recordings of what each of the five
+    contracts does. Every JS→Python hop in this codebase is a param write plus a
+    `param.watch`, so a gesture's param writes are its observable behaviour;
+    the DOM digest beside them covers the picker menu, brush cursor, search
+    buffer and selection labels, which never cross into Python. Because each
+    contract cuts over in place there is no second implementation to diff against
+    at port time, so these files are the only durable statement of the
+    "before". **They are recorded once and must not be re-recorded to make a port
+    pass.**
+  - `panelize()` now accepts `panel.custom.ReactiveESM` alongside `ReactiveHTML`,
+    so porting a view is a change to that view alone.
+  - `tests/interaction/interaction_harness.py` resolves the interaction root by
+    bare id *or* Panel's per-model suffix. `ReactiveHTML` rewrites `id="svgparent"`
+    to `id="svgparent-p1015"`; an ESM view emits it bare, and `suffix` then
+    resolves to `''`, which leaves every other lookup in the harness correct
+    without a branch.
+
 ### Fixed
+
+- **`panelize()`'s WebSocket payload guard measured the wrong thing and could
+  never fire.** `_estimate_panel_payload_bytes_()` summed each view's
+  `_template`, which was correct while the SVG was baked into the template by
+  the per-call `type('XYZ', (ReactiveHTML,), {...})` class factory. The
+  2026-09-13 static-class rework moved the plot into the `mod_inner` param and
+  the guard did not follow, so it had been returning a **constant** ever since —
+  3,041 bytes for an `xypi` whether the render was 4.7 KB or 1.17 MB. The whole
+  point of the guard is to warn before Bokeh truncates the protocol message and
+  the browser reports `SyntaxError: Unexpected end of JSON input`; it had been
+  silent for every render that could actually cross the limit.
+
+  It now sums the view's **param values** rather than a named few, so a payload
+  param added later is counted without touching the function — that is the
+  failure mode being fixed, not just the symptom. Measured on a 20k-row `xypi`
+  (panel 1.9.2 / bokeh 3.9.0): estimate 3,041 → 395,419 bytes, against a real
+  serialized document of 1,049,112 bytes. The inflated estimate now lands within
+  2–6% of the real document at sizes that matter.
+
+  `_WS_PAYLOAD_INFLATION_` goes 1.1 → 2.5, because the SVG turns out to ride in
+  the document **twice**: once raw in `data.mod_inner` (462,935 B once JSON-
+  escaped) and once again at `children[...].text` as a base64 `data:image/svg+xml`
+  URI (527,199 B), which is what the ReactiveHTML *child* mechanism does with a
+  string param bound between tags. One SVG therefore costs ~2.5× its raw size on
+  the wire.
+
+  The warning also now reports the **shipped** size rather than the raw one. It
+  had always compared the inflated figure but printed the uninflated one — only
+  10% off at the old constant, but at 2.5× it read as a contradiction
+  (`~15.3 MB, at/over the ... limit of 20.0 MB`).
+
+  New `TestPayloadEstimateTracksTheDocument` checks the estimate against a really
+  serialized Bokeh document. Every existing test asserted the estimator against
+  fakes the test had built itself, which is why a guard that returned a constant
+  looked correct for five days.
 
 - **`SECURITY.md` claimed the supported release line was `0.2.x`.** It was not
   updated for 0.3.0 and so went two releases stale, telling anyone who read the

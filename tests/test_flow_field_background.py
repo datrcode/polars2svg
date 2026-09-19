@@ -3,6 +3,7 @@ import unittest
 
 import numpy as np
 import polars as pl
+from view_js_utils import component_js
 
 from polars2svg import (BackgroundShape, INHERIT, LayoutAlgorithm, Polars2SVG,
                         FlowFieldBackground)
@@ -472,14 +473,14 @@ class TestBackgroundOperationLifecycle(unittest.TestCase):
         self.assertFalse(set(mnemonics) & set('jkWG'), 'mnemonic collides with navigation')
 
     def test_the_javascript_offers_the_picker(self):
-        js = '\n'.join(str(v) for v in type(self.view)._scripts.values())
-        self.assertIn("state.menu_kind = 'background'; self.menuOpen();", js)
+        js = component_js(self.view)
+        self.assertIn("state.menu_kind = 'background'; menuOpen();", js)
         # The menu contents are per view and reach the JS through the data model,
         # so the entry is asserted on the param rather than on the script text.
         self.assertEqual(self.view.menu_items['background'][0], ['f', 'flow field (2 layers)'])
-        self.assertIn('data.background_op_seq   = data.background_op_seq + 1', js)
+        self.assertIn('model.background_op_seq   = model.background_op_seq + 1', js)
         # 'b' must still cycle visibility rather than opening the picker.
-        self.assertIn('else if (event.key == "b") { data.key_op_finished = \'b\';  }', js)
+        self.assertIn('else if (event.key == "b") { model.key_op_finished = \'b\';  }', js)
 
     def test_state_label_names_the_producer(self):
         self._run_flow_field()

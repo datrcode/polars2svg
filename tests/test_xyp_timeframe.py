@@ -19,6 +19,8 @@ asserting the resulting stack sizes.
 """
 import asyncio
 import unittest
+
+from view_js_utils import component_script
 from datetime import datetime, timedelta
 
 import polars as pl
@@ -152,7 +154,7 @@ class TestXYpiTimeframeDispatch(unittest.TestCase):
         self.assertIn('expand timeframe forward', self.xypi._keyboard_commands_)
 
     def test_keydown_js_captures_u_and_e(self):
-        kd = type(self.xypi)._scripts['myOnKeyDown']
+        kd = component_script(self.xypi, 'myOnKeyDown')
         self.assertIn("== 'u'", kd)
         self.assertIn("== 'e'", kd)
 

@@ -1,6 +1,7 @@
 import asyncio
 import unittest
 import polars as pl
+from view_js_utils import component_script
 from polars2svg import Polars2SVG
 from polars2svg.interactive_controller import linkpi, InteractionController
 
@@ -1515,9 +1516,9 @@ class TestEdgeUnfilter(unittest.TestCase):
         self.assertEqual(self._len_here(), 7)
 
     def test_keydown_js_captures_f_and_F(self):
-        kd = type(self.ctrl)._scripts['myOnKeyDown']
-        self.assertIn("data.key_op_finished = 'f'", kd)
-        self.assertIn("data.key_op_finished = 'F'", kd)
+        kd = component_script(self.ctrl, 'myOnKeyDown')
+        self.assertIn("model.key_op_finished = 'f'", kd)
+        self.assertIn("model.key_op_finished = 'F'", kd)
 
     def test_help_text_advertises_f_and_F(self):
         self.assertIn('edge unfilter',  self.ctrl._keyboard_commands_)

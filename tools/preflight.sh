@@ -158,7 +158,7 @@ _step_editable_() {
 # preflight reports the count without needing the suite.  Driving the count to
 # zero was considered and declined (PLANNING.md D5) -- this is a floor to ratchet
 # down, not a target.
-_MYPY_CEILING_=60
+_MYPY_CEILING_=59
 
 _step_mypy_() {
     printf '  %-34s' "mypy (resolved, ceiling $_MYPY_CEILING_)"

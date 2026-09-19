@@ -26,6 +26,22 @@ each is a trap that silently produces an empty selector rather than an error:
    in the page has the bare id, so ``#svgparent`` matches zero elements.  The
    harness resolves the suffix once from the root and applies it to every lookup.
 
+   This is a ``ReactiveHTML`` behaviour, and the JSComponent migration (PLANNING.md
+   **W1**) removes it: an ESM view builds its own DOM, so its ids reach the browser
+   exactly as written.  The harness handles both -- the root locator matches the bare
+   id *or* a suffixed one, and :attr:`InteractivePage.suffix` then resolves to ``''``.
+
+   **Inner ids are therefore no longer unique across a page, and every lookup here is
+   scoped to the component root because of it.**  The suffix used to make ``#mod``
+   unique document-wide; with two ported components on one page (the stack control
+   beside its plot) there are two bare ``#mod`` elements, and a page-level locator
+   matches both -- Playwright reports a strict-mode violation, which is the good case.
+   The bad case was :meth:`wait_for_mod_change`, which resolved the id document-wide and
+   could have polled the wrong component indefinitely.  Shadow roots scope ids for
+   ``getElementById``, but *not* for Playwright's CSS engine, which pierces them (fact
+   2) -- so scoping has to be explicit: ``self.root.locator(...)``, never
+   ``self.page.locator(...)``, for anything inside a component.
+
 4. **Hovering focuses; clicking would not be safe; and the focus must be waited
    for.**  ``myOnMouseOver`` calls ``svgparent.focus()``, so a plain ``mouse.move()``
    over the plot both sets ``state.cur_mouse_x/y`` *and* gives the SVG keyboard
@@ -47,6 +63,13 @@ each is a trap that silently produces an empty selector rather than an error:
    detached node forever; a JS listener installed on the root is gone (probes are
    re-installed before every keystroke); and **keyboard focus is lost**, so a second
    key press needs a fresh hover first (:meth:`InteractivePage.press_at`).
+
+   This is the ``mod_inner``-as-child rebuild, and it is also ``ReactiveHTML``-only:
+   an ESM view has no ``Child`` params, so ``render()`` runs once per mount and the
+   DOM it builds is never replaced under it.  A ported component therefore makes
+   :meth:`settle` a no-op, the probe re-installation redundant and the re-hover in
+   :meth:`press_at` unnecessary -- all three stay, because they cost a few
+   milliseconds on an idle page and are what the un-ported components still need.
 
 Assertions live at the DOM layer on purpose (PLANNING.md 2.1, "Decide before
 writing test #1").  The bug class this suite exists to catch is *handler fires,
@@ -263,11 +286,17 @@ class InteractivePage:
         # multi-component page `[id^="svgparent"]` also matches svgparentxypi and
         # friends, so addressing "the LINKPI" by index would silently depend on the
         # order Panel happened to emit the models in.
-        self.root = page.locator(
-            f'[id^="{self.root_id}-"]' if root_id else '[id^="svgparent-"]').nth(index)
+        #
+        # Both spellings are matched because both occur: `ReactiveHTML` suffixes the id
+        # per model (`svgparent-p1015`, harness fact 3) while an ESM view emits it bare.
+        # The exact-match arm is listed first but CSS `,` is unordered, so the `-` in the
+        # prefix arm is what keeps `svgparent` from also matching `svgparentxypi`.
+        _bare_ = self.root_id
+        self.root = page.locator(f'[id="{_bare_}"], [id^="{_bare_}-"]').nth(index)
         self.root.wait_for(state='attached', timeout=timeout_ms)
         _root_id_ = self.root.get_attribute('id') or ''
-        #: Panel's per-model id suffix, e.g. ``-p1015``.
+        #: Panel's per-model id suffix, e.g. ``-p1015`` -- ``''`` for an ESM view, which
+        #: leaves every ``[id="...{suffix}"]`` lookup below correct without a branch.
         self.suffix = _root_id_[len(self.root_id):]
         self._install_probes()
 
@@ -315,10 +344,10 @@ class InteractivePage:
 
     def el(self, template_id: str) -> Locator:
         """Locator for a ``_template`` id, with Panel's per-model suffix applied."""
-        return self.page.locator(f'[id="{template_id}{self.suffix}"]')
+        return self.root.locator(f'[id="{template_id}{self.suffix}"]')
 
     def within(self, template_id: str, css: str) -> Locator:
-        return self.page.locator(f'[id="{template_id}{self.suffix}"] {css}')
+        return self.root.locator(f'[id="{template_id}{self.suffix}"] {css}')
 
     @property
     def mod(self) -> Locator:
@@ -370,7 +399,7 @@ class InteractivePage:
         plot's chrome (background, border, clip rect) is a rect too -- but always a
         big one.
         """
-        _marks_ = self.page.locator(
+        _marks_ = self.root.locator(
             f'[id="mod{self.suffix}"] circle, [id="mod{self.suffix}"] rect'
         ).evaluate_all("""els => els.map(e => {
             const b = e.getBBox();
@@ -647,7 +676,7 @@ class InteractivePage:
         catch.
         """
         return {_c_['id']: (float(_c_['cx']), float(_c_['cy']))
-                for _c_ in self.page.locator(
+                for _c_ in self.root.locator(
                     f'[id="mod{self.suffix}"] circle').evaluate_all(
                         "els => els.map(e => ({id: e.getAttribute('id') || "
                         "(e.getAttribute('cx') + ',' + e.getAttribute('cy')), "
@@ -742,7 +771,7 @@ class InteractivePage:
 
     def menu_index(self) -> int:
         """The highlighted row, recovered from the highlight rect's y offset."""
-        _y_ = self.page.locator(
+        _y_ = self.root.locator(
             f'[id="pickermenu{self.suffix}"] rect[fill="{self.MENU_HILITE}"]'
         ).get_attribute('y', timeout=self.timeout_ms)
         if _y_ is None:
@@ -756,7 +785,7 @@ class InteractivePage:
         by JS on every cycle keystroke, and reading the index eagerly would race it.
         """
         _y_ = self.MENU_ROW_Y0 + (index + 1) * self.MENU_ROW_H
-        expect(self.page.locator(
+        expect(self.root.locator(
             f'[id="pickermenu{self.suffix}"] rect[fill="{self.MENU_HILITE}"]'
         )).to_have_attribute('y', str(_y_), timeout=self.timeout_ms)
 
@@ -779,7 +808,7 @@ class InteractivePage:
         or fewer things in it".  Comparing innerHTML works but is momentary: a brush
         that paints and clears again inside one poll interval reads as unchanged.
         """
-        return self.page.locator(f'[id="mod{self.suffix}"] circle, '
+        return self.root.locator(f'[id="mod{self.suffix}"] circle, '
                                  f'[id="mod{self.suffix}"] rect, '
                                  f'[id="mod{self.suffix}"] path')
 
@@ -806,19 +835,21 @@ class InteractivePage:
         the stale handle, so a length-changing operation can pass while a colour-only
         one on the same code path hangs.)
 
-        So the lookup is redone from ``document`` on every tick, walking open shadow
-        roots -- ``document.querySelector`` alone cannot reach the component, which
-        sits three shadow roots deep.
+        So the lookup is redone on every tick rather than held as a handle.  It is done
+        through :meth:`mod_html`, which resolves ``#mod`` **within this component's
+        root**, and that scoping is load-bearing now: a page can hold two components
+        whose inner ids are both bare (see fact 3), so a document-wide search for
+        ``#mod`` -- which is what this used to do -- could poll the other one and wait
+        forever on a node nothing was going to change.
         """
-        self.page.wait_for_function(
-            _DEEP_FIND_JS + """
-            ([targetId, prev]) => {
-                const el = __p2sDeepFind(targetId);
-                return el !== null && el.innerHTML !== prev;
-            }""",
-            arg=[f'mod{self.suffix}', before],
-            timeout=self.timeout_ms)
-        return self.mod_html()
+        _deadline_ = time.monotonic() + self.timeout_ms / 1000
+        while time.monotonic() < _deadline_:
+            _now_ = self.mod_html()
+            if _now_ != before:
+                return _now_
+            time.sleep(0.05)
+        raise AssertionError(
+            f'#mod never changed within {self.timeout_ms}ms of the operation')
 
     # ── preventDefault observation ────────────────────────────────────────────
 

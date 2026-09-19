@@ -25,6 +25,7 @@ import re
 import unittest
 
 import polars as pl
+from view_js_utils import component_markup
 
 from polars2svg import Polars2SVG
 from polars2svg.interactive_controller import InteractionController
@@ -321,15 +322,29 @@ class TestStackControlKeyOps(_StackControlBase):
         sc = self._make_sc()
         self._key(sc, 'collapse')   # must not raise
 
-    def test_help_overlay_hidden_by_default_and_baked_into_template(self):
+    def test_help_overlay_is_hidden_by_default_and_driven_by_display(self):
+        """The help chrome ships, the widget builds a node for it, and it is hidden by
+        `display` rather than parked off-screen.
+
+        The overlay is wider than this (narrow) widget and the root <svg> is
+        overflow:visible, so an off-screen copy would spill past the left edge into the
+        neighbouring component instead of being clipped away -- which is why
+        `translate(-1000 ...)`, the idiom LINKPI uses for its own help, is wrong here.
+
+        The markup itself used to be concatenated into `_template`; since the
+        JSComponent port (PLANNING.md W1) it travels as the `kbd_help_svg` param, because
+        an ESM module has no markup to concatenate it into.  Asserted in the two places
+        it now lives rather than pretending it is still one string.
+        """
         sc = self._make_sc()
-        self.assertEqual(sc.help_display, 'none')              # not rendered until toggled
-        self.assertIn('toggle help', sc._template)             # help chrome is present
-        self.assertIn('keyboardhelp', sc._template)
-        # Hidden via display (not an off-screen translate), so it can't spill into a
-        # neighbouring component while the root <svg> has overflow:visible.
-        self.assertIn('display="${help_display}"', sc._template)
-        self.assertNotIn('translate(-1000', sc._template)
+        _markup_ = component_markup(sc)
+        self.assertEqual(sc.help_display, 'none')          # not rendered until toggled
+        self.assertIn('toggle help', sc.kbd_help_svg)      # the chrome itself
+        self.assertIn('keyboardhelp', _markup_)            # ...and the node it goes into
+        self.assertIn('kbd_help_svg', _markup_)            # ...wired to the param
+        self.assertIn('help_display', _markup_)            # ...shown/hidden by this one
+        self.assertNotIn('translate(-1000', _markup_)
+        self.assertNotIn('translate(-1000', sc.kbd_help_svg)
 
 
 class TestStackControlDisplay(_StackControlBase):

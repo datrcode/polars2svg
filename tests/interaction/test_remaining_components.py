@@ -28,6 +28,56 @@ def test_smallpi_renders_its_tiles(smallpi_page):
     assert len(smallpi_page.mod_html()) > 0
 
 
+def test_smallpi_selection_box_tracks_the_drag_and_clears_on_release(smallpi_page):
+    """`#selbox` is the rubber band SMALLPI draws while a selection drag is in flight.
+
+    It is browser-only state -- nothing about it crosses into Python -- and it had **no
+    coverage at all** before the JSComponent port (PLANNING.md W1) rewrote the code that
+    draws it.  The parity goldens cannot reach it either: they digest the DOM *after* a
+    gesture completes, and `myOnMouseUp` has hidden the box again by then.  A mutant that
+    never showed the box passed both the goldens and the whole suite.
+
+    Asserted mid-drag, with the button still down, which is the only moment it exists.
+    """
+    _ip_ = smallpi_page
+    _box_ = _ip_.el('selbox')
+
+    assert _box_.get_attribute('display') == 'none', 'the band is visible before any drag'
+
+    _ip_.mouse_down(80, 80)
+    _ip_.mouse_move_to(200, 170)
+    try:
+        assert _box_.get_attribute('display') == 'block', 'the band never appeared during the drag'
+        # Geometry is min/abs of the two corners, so it is orientation-independent.
+        assert int(float(_box_.get_attribute('x'))) == 80
+        assert int(float(_box_.get_attribute('y'))) == 80
+        assert int(float(_box_.get_attribute('width'))) == 120
+        assert int(float(_box_.get_attribute('height'))) == 90
+    finally:
+        _ip_.mouse_up()
+
+    _wait_for(lambda: _box_.get_attribute('display') == 'none',
+              'the band outlived the drag that drew it')
+
+
+def test_smallpi_selection_box_is_drawn_for_an_upward_drag(smallpi_page):
+    """The min/abs geometry, exercised in the direction that would break a naive
+    implementation writing (x0, y0, x1-x0, y1-y0) straight through."""
+    _ip_ = smallpi_page
+    _box_ = _ip_.el('selbox')
+
+    _ip_.mouse_down(220, 190)
+    _ip_.mouse_move_to(100, 90)
+    try:
+        assert _box_.get_attribute('display') == 'block'
+        assert int(float(_box_.get_attribute('x'))) == 100
+        assert int(float(_box_.get_attribute('y'))) == 90
+        assert int(float(_box_.get_attribute('width'))) == 120
+        assert int(float(_box_.get_attribute('height'))) == 100
+    finally:
+        _ip_.mouse_up()
+
+
 def test_smallpi_r_toggles_the_brush_flag(smallpi_page):
     """SMALLPI's brush is a plain boolean, not the radius cycle LINKPI has.
 
@@ -102,6 +152,78 @@ def test_slpi_bindings_reach_python_as_themselves(slpi_page, key):
     slpi_page.press(key)
     _wait_for(lambda: key in _seen_,
               f'{key!r} never arrived as key_op_finished (saw {_seen_})')
+
+
+def _slpi_band(ip):
+    """`#drag_rect`'s geometry and stroke.
+
+    Not `InteractivePage.drag_rect()` -- that helper reads `#drag`, which is LINKPI's
+    band.  SLPI draws its own into a differently-named element, which is why nothing
+    in this suite had ever looked at it.
+    """
+    _el_ = ip.el('drag_rect')
+    return {_a_: (_el_.get_attribute(_a_) or '') for _a_ in
+            ('x', 'y', 'width', 'height', 'stroke')}
+
+
+def test_slpi_drag_rect_tracks_the_drag_and_clears_on_release(slpi_page):
+    """SLPI's rubber band had no coverage before the JSComponent port (PLANNING.md W1)
+    rewrote the code that draws it -- the same gap `#selbox` had on SMALLPI.
+
+    The parity goldens cannot reach it: they digest the DOM after a gesture, and
+    `myOnMouseUp` has already collapsed the band to 0x0 by then.
+    """
+    _ip_ = slpi_page
+    _ip_.mouse_down(150, 90)
+    _ip_.mouse_move_to(330, 210)
+    try:
+        _band_ = _slpi_band(_ip_)
+        assert (_band_['x'], _band_['y']) == ('150', '90')
+        assert (_band_['width'], _band_['height']) == ('180', '120')
+    finally:
+        _ip_.mouse_up()
+
+    _wait_for(lambda: _slpi_band(_ip_)['width'] == '0',
+              'the band outlived the drag that drew it')
+
+
+def test_slpi_drag_rect_normalises_a_backwards_drag(slpi_page):
+    """min/abs geometry, in the direction a naive (x0, y0, x1-x0, y1-y0) breaks on."""
+    _ip_ = slpi_page
+    _ip_.mouse_down(330, 210)
+    _ip_.mouse_move_to(150, 90)
+    try:
+        _band_ = _slpi_band(_ip_)
+        assert (_band_['x'], _band_['y']) == ('150', '90')
+        assert (_band_['width'], _band_['height']) == ('180', '120')
+    finally:
+        _ip_.mouse_up()
+
+
+@pytest.mark.parametrize('shift,ctrl,stroke', [(False, False, '#000000'),
+                                               (True,  False, '#ff0000'),
+                                               (False, True,  '#00ff00'),
+                                               (True,  True,  '#0000ff')])
+def test_slpi_drag_rect_stroke_encodes_the_set_operation(slpi_page, shift, ctrl, stroke):
+    """The colour is the only feedback for which set-operation the drag will perform.
+
+    **No focus dance here, unlike LINKPI.** LINKPI's band colours come from
+    `data.ctrlkey`, which only its `myOnKeyDown` sets, so a modifier pressed while focus
+    is elsewhere never reaches the band (see `test_mouse_gestures.py`, and PLANNING.md U8
+    for the two colours that were dead code because of a typo in that path). SLPI reads
+    `event.shiftKey` / `event.ctrlKey` straight off the mouse event in `myOnMouseDown`
+    and `myOnMouseMove`, so the colour is correct without focus ever being taken. That
+    difference is behaviour the port had to preserve, and it is asserted rather than
+    assumed by deliberately *not* hovering first.
+    """
+    _ip_ = slpi_page
+    with _ip_.holding(shift=shift, ctrl=ctrl):
+        _ip_.mouse_down(150, 90)
+        _ip_.mouse_move_to(330, 210)
+        try:
+            assert _slpi_band(_ip_)['stroke'] == stroke
+        finally:
+            _ip_.mouse_up()
 
 
 # ── the stack control ────────────────────────────────────────────────────────

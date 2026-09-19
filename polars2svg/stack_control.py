@@ -1,7 +1,9 @@
 from typing import Any
 import polars as pl
 import param
-from .p2s_reactive_base import P2SReactiveHTML
+from panel.custom import JSComponent
+
+from .p2s_esm import esm
 
 from . import od_flow_layout as _ofl_
 
@@ -176,7 +178,7 @@ _STACK_HELP_SVG_ = _stackKeyboardHelpSvg_()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Panel template / JS -- static text on the class.
+# The ESM module
 #
 # The help box is wider than the (narrow) widget, so the root <svg> needs
 # overflow:visible for it to show in full when open.  That means the help must
@@ -184,59 +186,23 @@ _STACK_HELP_SVG_ = _stackKeyboardHelpSvg_()
 # an off-screen copy would spill past the widget's left edge into the
 # neighbouring component instead of being clipped away.
 #
-# {{ svg_w }} / {{ svg_h }} are jinja: ReactiveHTML._get_template() renders the
-# template once per instance with that instance's params, so one compiled class
-# serves every widget size.  _STACK_HELP_SVG_ is a module constant and is
-# concatenated in once, here.
+# Sizes come from `model.svg_w` / `model.svg_h` at render time, where the template used
+# jinja.  _STACK_HELP_SVG_ is no longer concatenated into markup here -- there is no
+# markup to concatenate it into -- so it travels as the `kbd_help_svg` param instead.
 # ─────────────────────────────────────────────────────────────────────────────
 
-_STACK_CONTROL_TEMPLATE_ = (
-    '<svg id="svgstackcontrol" width="{{ svg_w }}" height="{{ svg_h }}" tabindex="0"'
-    ' style="overflow: visible;" onkeydown="${script(\'myOnKeyDown\')}">'
-    '<svg id="mod" width="{{ svg_w }}" height="{{ svg_h }}">${mod_inner}</svg>'
-    '<g id="keyboardhelp" transform="translate(5 0)" display="${help_display}">'
-    + _STACK_HELP_SVG_ +
-    '</g>'
-    '<rect id="screen" x="0" y="0" width="{{ svg_w }}" height="{{ svg_h }}" opacity="0"'
-    ' style="cursor:pointer;" onclick="${script(\'myOnClick\')}"'
-    ' onmouseover="${script(\'focusSelf\')}" />'
-    '</svg>'
-)
-
-_STACK_CONTROL_SCRIPTS_ = {
-    'render':    'mod.innerHTML = data.mod_inner;',
-    'mod_inner': 'mod.innerHTML = data.mod_inner;',
-    'myOnClick': 'data.click_y = Math.round(event.offsetY); data.click_op_finished = !data.click_op_finished;',
-    # grab focus on hover so the widget receives key events (matches the
-    # other interactive components)
-    'focusSelf': 'svgstackcontrol.focus();',
-    # 'h' toggles the help overlay (JS-only, shown/hidden via display);
-    # 'c' collapses to base+current; ctrl+shift+c rebases the visible
-    # dataframe as the new base.  Both ops funnel through key_op_finished,
-    # which the Python watcher reads & resets.
-    'myOnKeyDown': (
-        "event.stopPropagation();\n"
-        "var k = event.key;\n"
-        "if (k === 'h') {\n"
-        "    data.help_display = (data.help_display === 'none') ? 'inline' : 'none';\n"
-        "    event.preventDefault();\n"
-        "} else if ((k === 'c' || k === 'C') && event.ctrlKey && event.shiftKey) {\n"
-        "    data.key_op_finished = 'rebase';\n"
-        "    event.preventDefault();\n"
-        "} else if (k === 'c' && !event.ctrlKey && !event.shiftKey && !event.altKey && !event.metaKey) {\n"
-        "    data.key_op_finished = 'collapse';\n"
-        "    event.preventDefault();\n"
-        "}"
-    ),
-}
+# The browser half lives in polars2svg/js/p2s_stack_control.js (PLANNING.md W1).  No GPU
+# variant: this widget has no plot to rasterise.
+_STACK_CONTROL_ESM_ = esm('fragments/p2s_dom.js',
+                          'p2s_stack_control.js')
 
 
-class STACKCONTROLI(P2SReactiveHTML):
+class STACKCONTROLI(JSComponent):
     """Stack navigator widget.
 
-    One static class for every widget size: ``svg_w`` / ``svg_h`` are params the
-    jinja template reads, so this no longer needs to be built per call with
-    ``type()``.  The frame renderer stays a closure built by
+    One static class for every widget size: ``svg_w`` / ``svg_h`` are params the ESM
+    module reads when it builds the DOM, so this no longer needs to be built per call
+    with ``type()``.  The frame renderer stays a closure built by
     :func:`stack_controli` (it carries the geometry settled there) and is handed
     to the instance rather than captured by a generated class.
     """
@@ -248,19 +214,22 @@ class STACKCONTROLI(P2SReactiveHTML):
     click_op_finished: Any = param.Boolean(default=False)
     key_op_finished:   Any = param.String(default='')
     help_display:      Any = param.String(default='none')
+    # The keyboard-help overlay markup.  It was concatenated straight into the template
+    # before; it is a param now because the ESM module has no markup of its own to
+    # concatenate it into.  Same bytes on the wire either way -- the template shipped per
+    # view too -- and it keeps the SVG out of the JavaScript.
+    kbd_help_svg:      Any = param.String(default=_STACK_HELP_SVG_)
 
-    _template = _STACK_CONTROL_TEMPLATE_
-    _scripts  = _STACK_CONTROL_SCRIPTS_
+    _esm = _STACK_CONTROL_ESM_
 
     def __init__(self, wxh: tuple, stack_name: str, render_svg_content: Any,
                  initial_svg: str, initial_frame_map: list, initial_cache: dict,
                  **kwargs: Any) -> None:
         mvc = kwargs.pop('mvc', None)
-        super().__init__(svg_w=wxh[0], svg_h=wxh[1], **kwargs)
-        # mod_inner is a content binding (a ReactiveHTML child), so it cannot be
-        # passed to super(); P2SReactiveHTML._init_params puts this value into
-        # the data model for first paint.
-        self.mod_inner            = initial_svg
+        # mod_inner goes through the constructor like any other param.  Under
+        # ReactiveHTML it could not: bound as a content ${mod_inner} it was a *child*,
+        # and a _init_params() override existed to seed it for first paint.
+        super().__init__(svg_w=wxh[0], svg_h=wxh[1], mod_inner=initial_svg, **kwargs)
         self.wxh                  = wxh       # read by _sketch_placeholder_html()
         self._stack_name_         = stack_name
         self._render_svg_content_ = render_svg_content
@@ -522,10 +491,10 @@ def stack_controli(component: Any, stack_name: str = 'default', insets: tuple = 
         return ''.join(_svg_), frame_map
 
     # Pre-compute the initial SVG so the widget paints its real content on the
-    # first frame.  It reaches the browser through
-    # P2SReactiveHTML._init_params(), which seeds the data model with this
-    # instance's child values -- ReactiveHTML itself would leave data.mod_inner
-    # at the class default.  If mvc already carries a populated stack the
+    # first frame.  It reaches the browser as an ordinary constructor param now; under
+    # ReactiveHTML it needed an _init_params() override to seed the data model,
+    # because mod_inner was a *child* and ReactiveHTML left data.mod_inner at the class
+    # default.  If mvc already carries a populated stack the
     # initial render must reflect it too, or the browser paints just the base
     # frame.  Also pre-populates the tile cache so __init__ starts warm.
     _initial_mvc_ = kwargs.get('mvc')

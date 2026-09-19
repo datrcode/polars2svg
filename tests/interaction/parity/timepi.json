@@ -1,0 +1,598 @@
+{
+  "params_watched": [
+    "brush_changed",
+    "brush_leave_done",
+    "brush_seq",
+    "brush_state",
+    "brushing_mode",
+    "ctrlkey",
+    "drag_op_finished",
+    "drag_x0",
+    "drag_x1",
+    "drag_y0",
+    "drag_y1",
+    "has_focus",
+    "has_search",
+    "has_time_keys",
+    "has_z_key",
+    "info_str",
+    "key_op_finished",
+    "keyboardhelp_x",
+    "last_key",
+    "middle_op_finished",
+    "mod_inner",
+    "name",
+    "search_op_finished",
+    "search_str",
+    "select_shape",
+    "shiftkey",
+    "svg_h",
+    "svg_w",
+    "use_webgpu",
+    "wheel_op_finished",
+    "wheel_rots",
+    "wheel_x",
+    "wheel_y",
+    "x0_middle",
+    "x1_middle",
+    "x_mouse",
+    "y0_middle",
+    "y1_middle",
+    "y_mouse"
+  ],
+  "gestures": [
+    {
+      "gesture": "hover-centre",
+      "writes": [
+        [
+          "has_focus",
+          true,
+          1
+        ]
+      ],
+      "dom": {
+        "svgparenttimepi": {
+          "tag": "svg",
+          "kids": 9,
+          "text": "Feb102024-01-01daily2024-02-27h . | toggle help displayq . | subtract the current from the topF . | pick selection shape"
+        },
+        "mod": {
+          "tag": "svg",
+          "kids": 1,
+          "text": "Feb102024-01-01daily2024-02-27"
+        },
+        "timep_N": {
+          "tag": "svg",
+          "kids": 86,
+          "text": "Feb102024-01-01daily2024-02-27"
+        },
+        "brushindicator": {
+          "tag": "g",
+          "kids": 0,
+          "text": ""
+        },
+        "brushmodelabel": {
+          "tag": "g",
+          "kids": 0,
+          "text": ""
+        },
+        "keyboardhelp": {
+          "tag": "g",
+          "kids": 10,
+          "text": "h . | toggle help displayq . | subtract the current from the topF . | pick selection shape (rectangle | oval)r . | toggl"
+        },
+        "drag": {
+          "tag": "rect",
+          "kids": 0,
+          "text": ""
+        },
+        "dragoval": {
+          "tag": "ellipse",
+          "kids": 0,
+          "text": ""
+        },
+        "screen": {
+          "tag": "rect",
+          "kids": 0,
+          "text": ""
+        },
+        "infostr": {
+          "tag": "text",
+          "kids": 0,
+          "text": ""
+        },
+        "pickermenu": {
+          "tag": "g",
+          "kids": 0,
+          "text": ""
+        }
+      }
+    },
+    {
+      "gesture": "drag-select",
+      "writes": [
+        [
+          "drag_op_finished",
+          false,
+          2
+        ],
+        [
+          "drag_x0",
+          160,
+          1
+        ],
+        [
+          "drag_x1",
+          240,
+          1
+        ],
+        [
+          "drag_y0",
+          110,
+          1
+        ],
+        [
+          "drag_y1",
+          190,
+          1
+        ],
+        [
+          "mod_inner",
+          "str:written",
+          1
+        ]
+      ],
+      "dom": {
+        "svgparenttimepi": {
+          "tag": "svg",
+          "kids": 9,
+          "text": "Feb102024-01-25daily2024-02-03h . | toggle help displayq . | subtract the current from the topF . | pick selection shape"
+        },
+        "mod": {
+          "tag": "svg",
+          "kids": 1,
+          "text": "Feb102024-01-25daily2024-02-03"
+        },
+        "timep_N": {
+          "tag": "svg",
+          "kids": 22,
+          "text": "Feb102024-01-25daily2024-02-03"
+        },
+        "brushindicator": {
+          "tag": "g",
+          "kids": 0,
+          "text": ""
+        },
+        "brushmodelabel": {
+          "tag": "g",
+          "kids": 0,
+          "text": ""
+        },
+        "keyboardhelp": {
+          "tag": "g",
+          "kids": 10,
+          "text": "h . | toggle help displayq . | subtract the current from the topF . | pick selection shape (rectangle | oval)r . | toggl"
+        },
+        "drag": {
+          "tag": "rect",
+          "kids": 0,
+          "text": ""
+        },
+        "dragoval": {
+          "tag": "ellipse",
+          "kids": 0,
+          "text": ""
+        },
+        "screen": {
+          "tag": "rect",
+          "kids": 0,
+          "text": ""
+        },
+        "infostr": {
+          "tag": "text",
+          "kids": 0,
+          "text": ""
+        },
+        "pickermenu": {
+          "tag": "g",
+          "kids": 0,
+          "text": ""
+        }
+      }
+    },
+    {
+      "gesture": "shift-drag-select",
+      "writes": [
+        [
+          "drag_op_finished",
+          false,
+          2
+        ],
+        [
+          "mod_inner",
+          "str:written",
+          1
+        ],
+        [
+          "shiftkey",
+          false,
+          2
+        ],
+        [
+          "x_mouse",
+          "tracked",
+          null
+        ],
+        [
+          "y_mouse",
+          "tracked",
+          null
+        ]
+      ],
+      "dom": {
+        "svgparenttimepi": {
+          "tag": "svg",
+          "kids": 9,
+          "text": "102024-01-28daily2024-01-28h . | toggle help displayq . | subtract the current from the topF . | pick selection shape (r"
+        },
+        "mod": {
+          "tag": "svg",
+          "kids": 1,
+          "text": "102024-01-28daily2024-01-28"
+        },
+        "timep_N": {
+          "tag": "svg",
+          "kids": 9,
+          "text": "102024-01-28daily2024-01-28"
+        },
+        "brushindicator": {
+          "tag": "g",
+          "kids": 0,
+          "text": ""
+        },
+        "brushmodelabel": {
+          "tag": "g",
+          "kids": 0,
+          "text": ""
+        },
+        "keyboardhelp": {
+          "tag": "g",
+          "kids": 10,
+          "text": "h . | toggle help displayq . | subtract the current from the topF . | pick selection shape (rectangle | oval)r . | toggl"
+        },
+        "drag": {
+          "tag": "rect",
+          "kids": 0,
+          "text": ""
+        },
+        "dragoval": {
+          "tag": "ellipse",
+          "kids": 0,
+          "text": ""
+        },
+        "screen": {
+          "tag": "rect",
+          "kids": 0,
+          "text": ""
+        },
+        "infostr": {
+          "tag": "text",
+          "kids": 0,
+          "text": ""
+        },
+        "pickermenu": {
+          "tag": "g",
+          "kids": 0,
+          "text": ""
+        }
+      }
+    },
+    {
+      "gesture": "wheel-in",
+      "writes": [
+        [
+          "wheel_op_finished",
+          true,
+          1
+        ],
+        [
+          "wheel_rots",
+          -1200,
+          1
+        ],
+        [
+          "wheel_x",
+          200,
+          1
+        ],
+        [
+          "wheel_y",
+          150,
+          1
+        ]
+      ],
+      "dom": {
+        "svgparenttimepi": {
+          "tag": "svg",
+          "kids": 9,
+          "text": "102024-01-28daily2024-01-28h . | toggle help displayq . | subtract the current from the topF . | pick selection shape (r"
+        },
+        "mod": {
+          "tag": "svg",
+          "kids": 1,
+          "text": "102024-01-28daily2024-01-28"
+        },
+        "timep_N": {
+          "tag": "svg",
+          "kids": 9,
+          "text": "102024-01-28daily2024-01-28"
+        },
+        "brushindicator": {
+          "tag": "g",
+          "kids": 0,
+          "text": ""
+        },
+        "brushmodelabel": {
+          "tag": "g",
+          "kids": 0,
+          "text": ""
+        },
+        "keyboardhelp": {
+          "tag": "g",
+          "kids": 10,
+          "text": "h . | toggle help displayq . | subtract the current from the topF . | pick selection shape (rectangle | oval)r . | toggl"
+        },
+        "drag": {
+          "tag": "rect",
+          "kids": 0,
+          "text": ""
+        },
+        "dragoval": {
+          "tag": "ellipse",
+          "kids": 0,
+          "text": ""
+        },
+        "screen": {
+          "tag": "rect",
+          "kids": 0,
+          "text": ""
+        },
+        "infostr": {
+          "tag": "text",
+          "kids": 0,
+          "text": ""
+        },
+        "pickermenu": {
+          "tag": "g",
+          "kids": 0,
+          "text": ""
+        }
+      }
+    },
+    {
+      "gesture": "brush-on",
+      "writes": [
+        [
+          "brush_changed",
+          1,
+          1
+        ],
+        [
+          "brush_state",
+          1,
+          1
+        ],
+        [
+          "brushing_mode",
+          true,
+          1
+        ],
+        [
+          "x_mouse",
+          "tracked",
+          null
+        ],
+        [
+          "y_mouse",
+          "tracked",
+          null
+        ]
+      ],
+      "dom": {
+        "svgparenttimepi": {
+          "tag": "svg",
+          "kids": 9,
+          "text": "102024-01-28daily2024-01-28circ r=5h . | toggle help displayq . | subtract the current from the topF . | pick selection "
+        },
+        "mod": {
+          "tag": "svg",
+          "kids": 1,
+          "text": "102024-01-28daily2024-01-28"
+        },
+        "timep_N": {
+          "tag": "svg",
+          "kids": 9,
+          "text": "102024-01-28daily2024-01-28"
+        },
+        "brushindicator": {
+          "tag": "g",
+          "kids": 1,
+          "text": ""
+        },
+        "brushmodelabel": {
+          "tag": "g",
+          "kids": 2,
+          "text": "circ r=5"
+        },
+        "keyboardhelp": {
+          "tag": "g",
+          "kids": 10,
+          "text": "h . | toggle help displayq . | subtract the current from the topF . | pick selection shape (rectangle | oval)r . | toggl"
+        },
+        "drag": {
+          "tag": "rect",
+          "kids": 0,
+          "text": ""
+        },
+        "dragoval": {
+          "tag": "ellipse",
+          "kids": 0,
+          "text": ""
+        },
+        "screen": {
+          "tag": "rect",
+          "kids": 0,
+          "text": ""
+        },
+        "infostr": {
+          "tag": "text",
+          "kids": 0,
+          "text": ""
+        },
+        "pickermenu": {
+          "tag": "g",
+          "kids": 0,
+          "text": ""
+        }
+      }
+    },
+    {
+      "gesture": "brush-off",
+      "writes": [
+        [
+          "brush_changed",
+          2,
+          1
+        ],
+        [
+          "brush_state",
+          0,
+          1
+        ],
+        [
+          "brushing_mode",
+          false,
+          1
+        ]
+      ],
+      "dom": {
+        "svgparenttimepi": {
+          "tag": "svg",
+          "kids": 9,
+          "text": "102024-01-28daily2024-01-28h . | toggle help displayq . | subtract the current from the topF . | pick selection shape (r"
+        },
+        "mod": {
+          "tag": "svg",
+          "kids": 1,
+          "text": "102024-01-28daily2024-01-28"
+        },
+        "timep_N": {
+          "tag": "svg",
+          "kids": 9,
+          "text": "102024-01-28daily2024-01-28"
+        },
+        "brushindicator": {
+          "tag": "g",
+          "kids": 0,
+          "text": ""
+        },
+        "brushmodelabel": {
+          "tag": "g",
+          "kids": 0,
+          "text": ""
+        },
+        "keyboardhelp": {
+          "tag": "g",
+          "kids": 10,
+          "text": "h . | toggle help displayq . | subtract the current from the topF . | pick selection shape (rectangle | oval)r . | toggl"
+        },
+        "drag": {
+          "tag": "rect",
+          "kids": 0,
+          "text": ""
+        },
+        "dragoval": {
+          "tag": "ellipse",
+          "kids": 0,
+          "text": ""
+        },
+        "screen": {
+          "tag": "rect",
+          "kids": 0,
+          "text": ""
+        },
+        "infostr": {
+          "tag": "text",
+          "kids": 0,
+          "text": ""
+        },
+        "pickermenu": {
+          "tag": "g",
+          "kids": 0,
+          "text": ""
+        }
+      }
+    },
+    {
+      "gesture": "escape",
+      "writes": [],
+      "dom": {
+        "svgparenttimepi": {
+          "tag": "svg",
+          "kids": 9,
+          "text": "102024-01-28daily2024-01-28h . | toggle help displayq . | subtract the current from the topF . | pick selection shape (r"
+        },
+        "mod": {
+          "tag": "svg",
+          "kids": 1,
+          "text": "102024-01-28daily2024-01-28"
+        },
+        "timep_N": {
+          "tag": "svg",
+          "kids": 9,
+          "text": "102024-01-28daily2024-01-28"
+        },
+        "brushindicator": {
+          "tag": "g",
+          "kids": 0,
+          "text": ""
+        },
+        "brushmodelabel": {
+          "tag": "g",
+          "kids": 0,
+          "text": ""
+        },
+        "keyboardhelp": {
+          "tag": "g",
+          "kids": 10,
+          "text": "h . | toggle help displayq . | subtract the current from the topF . | pick selection shape (rectangle | oval)r . | toggl"
+        },
+        "drag": {
+          "tag": "rect",
+          "kids": 0,
+          "text": ""
+        },
+        "dragoval": {
+          "tag": "ellipse",
+          "kids": 0,
+          "text": ""
+        },
+        "screen": {
+          "tag": "rect",
+          "kids": 0,
+          "text": ""
+        },
+        "infostr": {
+          "tag": "text",
+          "kids": 0,
+          "text": ""
+        },
+        "pickermenu": {
+          "tag": "g",
+          "kids": 0,
+          "text": ""
+        }
+      }
+    }
+  ]
+}

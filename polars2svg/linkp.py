@@ -2750,7 +2750,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
     #
     # It returns data, not markup, because the view carries it in a param.Dict and the browser
     # builds the elements: a param.String would be run through panel's HTML sanitizer, which
-    # strips SVG to nothing (see P2SReactiveHTML's header note), and going through the
+    # stripped SVG to nothing under the old ReactiveHTML views, and going through the
     # sanitizer-exempt child path instead re-renders the subtree and destroys every JS-only
     # variable in the view (PLANNING.md U5).  Building the elements on the browser side also
     # means a node name reaches the DOM as textContent and can never be markup.

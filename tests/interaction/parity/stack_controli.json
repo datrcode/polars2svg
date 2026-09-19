@@ -1,0 +1,145 @@
+{
+  "params_watched": [
+    "click_op_finished",
+    "click_y",
+    "help_display",
+    "key_op_finished",
+    "mod_inner",
+    "name",
+    "svg_h",
+    "svg_w"
+  ],
+  "gestures": [
+    {
+      "gesture": "toggle-help-on",
+      "writes": [
+        [
+          "help_display",
+          "inline",
+          1
+        ]
+      ],
+      "dom": {
+        "svgstackcontrol": {
+          "tag": "svg",
+          "kids": 3,
+          "text": "MLX: unavailableCUDA: unavailable20.0 Rowsbase .rect-group-N rect { width: 1px; height: 1px; } 10.0x90.010.0y90.02040608"
+        },
+        "mod": {
+          "tag": "svg",
+          "kids": 1,
+          "text": "MLX: unavailableCUDA: unavailable20.0 Rowsbase .rect-group-N rect { width: 1px; height: 1px; } 10.0x90.010.0y90.02040608"
+        },
+        "xyp_N": {
+          "tag": "svg",
+          "kids": 28,
+          "text": ".rect-group-N rect { width: 1px; height: 1px; } 10.0x90.010.0y90.02040608020406080"
+        },
+        "plotClip-N": {
+          "tag": "clippath",
+          "kids": 1,
+          "text": ""
+        },
+        "keyboardhelp": {
+          "tag": "g",
+          "kids": 4,
+          "text": "h . | toggle helpc . | keep base + currentctrl+shift+c . | current -> base"
+        },
+        "screen": {
+          "tag": "rect",
+          "kids": 0,
+          "text": ""
+        }
+      }
+    },
+    {
+      "gesture": "toggle-help-off",
+      "writes": [
+        [
+          "help_display",
+          "none",
+          1
+        ]
+      ],
+      "dom": {
+        "svgstackcontrol": {
+          "tag": "svg",
+          "kids": 3,
+          "text": "MLX: unavailableCUDA: unavailable20.0 Rowsbase .rect-group-N rect { width: 1px; height: 1px; } 10.0x90.010.0y90.02040608"
+        },
+        "mod": {
+          "tag": "svg",
+          "kids": 1,
+          "text": "MLX: unavailableCUDA: unavailable20.0 Rowsbase .rect-group-N rect { width: 1px; height: 1px; } 10.0x90.010.0y90.02040608"
+        },
+        "xyp_N": {
+          "tag": "svg",
+          "kids": 28,
+          "text": ".rect-group-N rect { width: 1px; height: 1px; } 10.0x90.010.0y90.02040608020406080"
+        },
+        "plotClip-N": {
+          "tag": "clippath",
+          "kids": 1,
+          "text": ""
+        },
+        "keyboardhelp": {
+          "tag": "g",
+          "kids": 4,
+          "text": "h . | toggle helpc . | keep base + currentctrl+shift+c . | current -> base"
+        },
+        "screen": {
+          "tag": "rect",
+          "kids": 0,
+          "text": ""
+        }
+      }
+    },
+    {
+      "gesture": "click-frame",
+      "writes": [
+        [
+          "click_op_finished",
+          true,
+          1
+        ],
+        [
+          "click_y",
+          170,
+          1
+        ]
+      ],
+      "dom": {
+        "svgstackcontrol": {
+          "tag": "svg",
+          "kids": 3,
+          "text": "MLX: unavailableCUDA: unavailable20.0 Rowsbase .rect-group-N rect { width: 1px; height: 1px; } 10.0x90.010.0y90.02040608"
+        },
+        "mod": {
+          "tag": "svg",
+          "kids": 1,
+          "text": "MLX: unavailableCUDA: unavailable20.0 Rowsbase .rect-group-N rect { width: 1px; height: 1px; } 10.0x90.010.0y90.02040608"
+        },
+        "xyp_N": {
+          "tag": "svg",
+          "kids": 28,
+          "text": ".rect-group-N rect { width: 1px; height: 1px; } 10.0x90.010.0y90.02040608020406080"
+        },
+        "plotClip-N": {
+          "tag": "clippath",
+          "kids": 1,
+          "text": ""
+        },
+        "keyboardhelp": {
+          "tag": "g",
+          "kids": 4,
+          "text": "h . | toggle helpc . | keep base + currentctrl+shift+c . | current -> base"
+        },
+        "screen": {
+          "tag": "rect",
+          "kids": 0,
+          "text": ""
+        }
+      }
+    }
+  ]
+}

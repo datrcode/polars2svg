@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Fixed: `has_focus` now survives a re-render.** `ReactiveHTML`'s `render` script
+  re-ran on every subtree rebuild and reset `data.has_focus` to false, so a component
+  stopped believing it had focus each time its plot redrew. That is the defect
+  `InteractivePage.press_at()` exists for, and documents: "a second keystroke after an
+  operation that re-rendered is silently swallowed unless the mouse is moved back over
+  the plot first". An ESM `render` runs once per mount, so the reset is plain
+  initialisation now and the flag tracks the pointer as it always should have.
+
+  Found by the parity oracle, not by reasoning, and only on the Linux CI runner: five
+  corpora — `linkpi`, `linkpi_wheel_multiplicity`, `xypi`, `histopi`, `timepi` — lost
+  `('has_focus', True, 1)` from their first gesture there and nowhere else. Playwright's
+  cursor sits at viewport `(0, 0)` until something moves it, and Panel lays the component
+  flush into that corner (measured: the root's box is `(0, 0, 400, 300)`), so that
+  browser dispatches a mouseover at mount. Under `ReactiveHTML` the next rebuild wiped
+  the resulting true; under ESM it survives, which makes the first hover's
+  `model.has_focus = true` a no-op that param never reports. For four of those corpora
+  that single write was the whole of the first gesture.
+
+  `InteractivePage.park_pointer()` moves the pointer clear of the component before the
+  first gesture, so the transition is a real one on every platform. **The goldens are
+  unchanged** — which is the point. Re-recording would have baked one browser's layout
+  into the oracle, and a macOS recording would have failed on Linux all over again.
+
 - **`LINKPI` / `LINKPI_GPU` ported to `JSComponent`. The migration is complete —
   no view in the package derives from `ReactiveHTML` any more** (PLANNING.md W1).
   The largest contract by a wide margin: 26 scripts, ~37 KB of JavaScript, a

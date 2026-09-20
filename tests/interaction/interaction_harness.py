@@ -431,6 +431,68 @@ class InteractivePage:
 
     # ── input ─────────────────────────────────────────────────────────────────
 
+    def park_pointer(self, budget_s: float = 5.0) -> None:
+        """Move the pointer clear of the component, so ``has_focus`` starts out False.
+
+        Playwright's virtual cursor sits at viewport ``(0, 0)`` until something moves
+        it, and Panel lays the component flush into that corner -- measured, not
+        assumed: the root's bounding box is ``(0, 0, 400, 300)``.  A browser that
+        dispatches a ``mouseover`` when content appears under a stationary cursor
+        therefore runs ``myOnMouseOver`` at mount, and ``has_focus`` is already true
+        before the test has touched anything.  Chromium on the Linux CI runner does
+        exactly that; the macOS build does not, which is the whole reason this was
+        only ever seen in CI.
+
+        Harmless under ``ReactiveHTML``, whose ``render`` script re-ran on every
+        subtree rebuild and reset ``data.has_focus`` to false.  An ESM ``render`` runs
+        once per mount -- see the note beside the initialisers at the foot of
+        ``p2s_interactivep.js`` -- so the stale true survives, the first hover's
+        ``model.has_focus = true`` is a no-op, param emits no event, and a trace of
+        that hover records **no write at all**.  For four of the parity corpora that
+        one write is the entire first gesture, so the gesture recorded nothing.
+
+        Call after :meth:`settle` and before the first gesture in any test whose
+        recording includes the focus transition.  Where the pointer was never over the
+        component it finds ``has_focus`` already false and returns at once, so it
+        costs nothing on the platforms that do not show the problem.
+        """
+        self.root.wait_for(state='visible', timeout=self.timeout_ms)
+        _box_ = self.root.bounding_box()
+        _vp_  = self.page.viewport_size
+        if _box_ is not None and _vp_ is not None:
+            _pad_ = 40.0
+            # Right of the root first, then below, then left, then above: one of the
+            # four is on the page for any box smaller than the viewport, and a fixed
+            # choice is not safe -- a component laid out at the corner has two sides
+            # with nothing beyond them.
+            for _x_, _y_ in ((_box_['x'] + _box_['width'] + _pad_, _box_['y']),
+                             (_box_['x'], _box_['y'] + _box_['height'] + _pad_),
+                             (_box_['x'] - _pad_, _box_['y']),
+                             (_box_['x'], _box_['y'] - _pad_)):
+                _inside_ = (_box_['x'] <= _x_ < _box_['x'] + _box_['width']
+                            and _box_['y'] <= _y_ < _box_['y'] + _box_['height'])
+                if not _inside_ and 0 <= _x_ < _vp_['width'] and 0 <= _y_ < _vp_['height']:
+                    self.page.mouse.move(_x_, _y_)
+                    break
+            else:
+                raise RuntimeError(
+                    'no point in the viewport is clear of the interaction root')
+
+        # Wait for the mouseout to cross into Python rather than sleeping on it: the
+        # point of parking is that the *next* gesture sees a real False -> True
+        # transition, and that is only guaranteed once the False has landed.
+        _app_  = getattr(self, 'app', None)
+        _view_ = _app_.view() if _app_ is not None else None
+        if _view_ is None or 'has_focus' not in _view_.param:
+            return
+        _deadline_ = time.monotonic() + budget_s
+        while time.monotonic() < _deadline_:
+            if not _view_.has_focus:
+                return
+            time.sleep(0.02)
+        raise AssertionError(
+            f'has_focus never cleared after parking the pointer ({budget_s}s)')
+
     def hover(self, x: float, y: float) -> None:
         """Move the mouse to SVG-local (x, y) **and make sure focus lands**.
 

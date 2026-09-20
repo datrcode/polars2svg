@@ -61,6 +61,9 @@ def _type_search(ip, text, budget_s=8.0):
 def test_linkpi_parity(linkpi_page):
     _ip_ = linkpi_page
     _ip_.settle()
+    # The pointer starts inside the component, where the CI browser fires a mouseover
+    # at mount; park it clear so the first gesture's has_focus write is a real one.
+    _ip_.park_pointer()
     _trace_ = ParityTrace(_ip_)
     _ex_, _ey_ = _ip_.empty_point()
 
@@ -162,6 +165,9 @@ def test_linkpi_search_parity(search_page):
 def test_generic_component_parity(request, fixture_name):
     _ip_ = request.getfixturevalue(fixture_name)
     _ip_.settle()
+    # The pointer starts inside the component, where the CI browser fires a mouseover
+    # at mount; park it clear so the first gesture's has_focus write is a real one.
+    _ip_.park_pointer()
     _trace_ = ParityTrace(_ip_)
     _w_, _h_ = _ip_.plot.wxh
     _cx_, _cy_ = _w_ // 2, _h_ // 2
@@ -249,6 +255,9 @@ def test_one_wheel_event_finishes_one_operation(linkpi_page):
     '''
     _ip_ = linkpi_page
     _ip_.settle()
+    # The pointer starts inside the component, where the CI browser fires a mouseover
+    # at mount; park it clear so the first gesture's has_focus write is a real one.
+    _ip_.park_pointer()
     _trace_ = ParityTrace(_ip_)
     _ex_, _ey_ = _ip_.empty_point()
 

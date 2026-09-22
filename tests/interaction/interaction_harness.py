@@ -854,6 +854,105 @@ class InteractivePage:
     def menu_is_open(self) -> bool:
         return bool((self.el('pickermenu').inner_html() or '').strip())
 
+    # ── the configuration panel ──────────────────────────────────────────────
+    #
+    # Structurally invisible to the parity goldens, for the same reason ``#selbox`` and
+    # ``#drag_rect`` were: the digest is taken after a gesture settles and the panel is
+    # JS-only state that never reaches Python except as a committed value.  So it gets
+    # the same treatment the picker menu got -- the drawn overlay IS the observable, and
+    # the row cursor is recovered from its highlight rect exactly as ``menu_index`` is.
+    #
+    # The two use the same row pitch and the same highlight fill on purpose (one visual
+    # language), and they are told apart by the element they live in.
+
+    def panel_is_open(self) -> bool:
+        return bool((self.el('configpanel').inner_html() or '').strip())
+
+    def panel_text(self) -> str:
+        return self.el('configpanel').text_content() or ''
+
+    def expect_panel_open(self) -> None:
+        expect(self.el('configpanel')).to_contain_text('appearance:', timeout=self.timeout_ms)
+
+    def expect_panel_closed(self) -> None:
+        expect(self.el('configpanel')).to_be_empty(timeout=self.timeout_ms)
+
+    def panel_row(self) -> int:
+        """The highlighted row, recovered from the cursor rect's y offset."""
+        _y_ = self.root.locator(
+            f'[id="configpanel{self.suffix}"] rect[fill="{self.MENU_HILITE}"]'
+        ).get_attribute('y', timeout=self.timeout_ms)
+        if _y_ is None:
+            raise AssertionError('no cursor rect -- the configuration panel is not open')
+        return round((int(_y_) - self.MENU_ROW_Y0) / self.MENU_ROW_H) - 1
+
+    def expect_panel_row(self, index: int) -> None:
+        """Wait for a given row to be under the cursor.
+
+        An attribute assertion so it auto-retries: the panel is redrawn by JS on every
+        cursor move, and reading the row eagerly would race it.
+        """
+        _y_ = self.MENU_ROW_Y0 + (index + 1) * self.MENU_ROW_H
+        expect(self.root.locator(
+            f'[id="configpanel{self.suffix}"] rect[fill="{self.MENU_HILITE}"]'
+        )).to_have_attribute('y', str(_y_), timeout=self.timeout_ms)
+
+    def panel_values(self) -> dict:
+        """``{row label: displayed value}`` for every row the panel is drawing.
+
+        Parsed out of the rendered text rather than read from a param, because the point
+        of the panel is what it SHOWS -- a row whose value went stale against the view it
+        describes is exactly the defect worth catching, and a param read would agree with
+        itself and miss it.
+        """
+        _out_ = {}
+        for _t_ in self.root.locator(f'[id="configpanel{self.suffix}"] text').all():
+            _s_ = (_t_.text_content() or '').strip()
+            if not _s_.startswith('['):
+                continue                                  # the 'appearance:' header
+            _body_ = _s_[_s_.index(']') + 1:]
+            _label_, _, _value_ = _body_.partition(' .')
+            _out_[_label_.strip()] = _value_.lstrip('. ').strip()
+        return _out_
+
+    def panel_row_is_disabled(self, label: str) -> bool:
+        """A gated-off row is drawn greyed; the cursor also skips it."""
+        for _t_ in self.root.locator(f'[id="configpanel{self.suffix}"] text').all():
+            _s_ = (_t_.text_content() or '').strip()
+            if _s_.startswith('[') and _s_[_s_.index(']') + 1:].strip().startswith(label):
+                return '#999' in (_t_.get_attribute('style') or '')
+        raise AssertionError(f'no panel row labelled {label!r} (saw {self.panel_text()!r})')
+
+    def expect_panel_row_disabled(self, label: str, disabled: bool = True) -> None:
+        """Poll until a row's gating settles.
+
+        Distinct from ``panel_row_is_disabled`` and not a convenience wrapper: the value
+        a row *shows* changes locally the instant you press space, while its gating comes
+        back from Python -- ``__configPanelRows__`` is recomputed on the refresh that the
+        debounced commit provokes.  So a test that read the gate straight after seeing
+        the new value would be reading it one round trip early, which is exactly how this
+        helper came to exist.
+        """
+        _deadline_ = time.monotonic() + self.timeout_ms / 1000.0
+        while time.monotonic() < _deadline_:
+            if self.panel_row_is_disabled(label) == disabled:
+                return
+            time.sleep(0.05)
+        raise AssertionError(
+            f'panel row {label!r} is {"enabled" if disabled else "disabled"}, '
+            f'expected the opposite')
+
+    def expect_panel_value(self, label: str, value: str) -> None:
+        """Poll until a row shows a value -- the panel commit is debounced ~300ms."""
+        _deadline_ = time.monotonic() + self.timeout_ms / 1000.0
+        _seen_ = None
+        while time.monotonic() < _deadline_:
+            _seen_ = self.panel_values().get(label)
+            if _seen_ == value:
+                return
+            time.sleep(0.05)
+        raise AssertionError(f'panel row {label!r} shows {_seen_!r}, wanted {value!r}')
+
     def menu_text(self) -> str:
         return self.el('pickermenu').text_content() or ''
 

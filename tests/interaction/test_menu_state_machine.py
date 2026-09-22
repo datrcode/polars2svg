@@ -24,20 +24,28 @@ import pytest
 from playwright.sync_api import expect
 
 
-#: (key, modifiers, menu header).  Every way into the menu system.
+#: (key, modifiers, menu header).  The pickers that still have a key of their own.
+#:
+#: Nine entries used to be here.  The configuration panel absorbed them: shift-a /
+#: ctrl-a, l, shift-l / ctrl-l, shift-o / ctrl-o and shift-p / ctrl-p are panel rows now,
+#: and the very same pickers open with Enter on the row instead (CP3 -- the panel took
+#: the entry points, not the menus).  PANEL_ENTRY_POINTS below is that second door.
 ENTRY_POINTS = [
-    ('A', {},                  'timing mark spacing'),
-    ('a', {'ctrl': True},      'timing mark spacing'),
     ('B', {},                  'background:'),
     ('G', {},                  'layout mode:'),
     ('W', {},                  'layout operation:'),
-    ('l', {},                  'link shape:'),
-    ('L', {},                  'link size:'),
-    ('l', {'ctrl': True},      'link size:'),
-    ('O', {},                  'link opacity:'),
-    ('o', {'ctrl': True},      'link opacity:'),
-    ('P', {},                  'node size:'),
-    ('p', {'ctrl': True},      'node size:'),
+]
+
+#: (row mnemonic, menu header).  Reached as 'a' (open the panel), the mnemonic, Enter.
+PANEL_ENTRY_POINTS = [
+    ('t', 'timing marks:'),
+    ('p', 'timing mark spacing'),
+    ('l', 'labels:'),
+    ('h', 'link shape:'),
+    ('z', 'link size:'),
+    ('o', 'link opacity:'),
+    ('n', 'node size:'),
+    ('r', 'link arrows:'),
 ]
 
 
@@ -67,13 +75,66 @@ def test_entry_point_opens_the_right_menu(linkpi_page, key, mods, header):
     linkpi_page.expect_menu_open(header)
 
 
+def _open_via_panel(ip, mnemonic):
+    """'a' to open the panel, the row's mnemonic to reach it, Enter for its picker."""
+    ip.settle()
+    ip.hover(200, 150)
+    ip.press('a')
+    ip.expect_panel_open()
+    ip.press(mnemonic)
+    ip.press('Enter')
+
+
+@pytest.mark.parametrize('mnemonic,header', PANEL_ENTRY_POINTS,
+                         ids=[f'panel-{m}-{h.split(":")[0]}' for m, h in PANEL_ENTRY_POINTS])
+def test_a_panel_row_opens_its_picker(timing_page, mnemonic, header):
+    """CP3: Enter on a row re-enters the *existing* picker rather than replacing it.
+
+    Driven against the timing fixture so that every row is enabled -- the marks and
+    spacing rows are gated off on a graph with no date column, and a gated row is
+    deliberately unreachable by the cursor.
+    """
+    _open_via_panel(timing_page, mnemonic)
+    timing_page.expect_menu_open(header)
+
+
+def test_a_picker_opened_from_the_panel_does_not_cover_it(timing_page):
+    """Both overlays draw at y=8; the picker is shifted clear so the row stays readable.
+
+    The panel exists to be looked at while you change things (CP2), so a picker that
+    landed on top of it would defeat the one thing it is for.
+    """
+    _open_via_panel(timing_page, 'h')
+    timing_page.expect_menu_open('link shape:')
+    assert timing_page.panel_is_open(), 'the panel closed when its picker opened'
+    _panel_ = timing_page.root.locator(
+        f'[id="configpanel{timing_page.suffix}"] rect').first.bounding_box()
+    _menu_  = timing_page.root.locator(
+        f'[id="pickermenu{timing_page.suffix}"] rect').first.bounding_box()
+    assert _menu_['x'] >= _panel_['x'] + _panel_['width'], (
+        f'the picker at x={_menu_["x"]} overlaps the panel ending at '
+        f'x={_panel_["x"] + _panel_["width"]}')
+
+
+def test_committing_in_that_picker_lands_on_the_row(timing_page):
+    """One source of truth: `space` on a row and Enter in its picker write the same param,
+    so whichever you use the row shows the result."""
+    _open_via_panel(timing_page, 'h')
+    timing_page.expect_menu_open('link shape:')
+    timing_page.press('2')                        # mnemonic for 'curve', unguarded
+    timing_page.expect_menu_closed()
+    timing_page.expect_panel_value('link shape', 'curve')
+
+
 def test_menu_opens_on_the_current_value_not_the_first_item(linkpi_page):
     """menuOpen scans for the current value rather than starting at zero.
 
     Link opacity defaults to 100%, which is the *last* of the ten rows -- so an
-    off-by-default implementation would be caught here and nowhere else.
+    off-by-default implementation would be caught here and nowhere else.  Reached
+    through the panel now that shift-o is gone, which also proves the row hands the
+    picker the right starting value.
     """
-    _open(linkpi_page, 'O')
+    _open_via_panel(linkpi_page, 'o')
     linkpi_page.expect_menu_open('link opacity:')
     linkpi_page.expect_menu_index(9)
 
@@ -204,7 +265,7 @@ def test_guarded_mnemonic_selects_but_does_not_commit(linkpi_page):
     flowmap is annotated as expensive and therefore guarded: its mnemonic may move the
     highlight, but only an explicit Enter may commit it.
     """
-    _open(linkpi_page, 'l')                       # link shape: line / curve / flowmap
+    _open_via_panel(linkpi_page, 'h')             # link shape: line / curve / flowmap
     linkpi_page.expect_menu_open('link shape:')
     linkpi_page.press('3')                        # mnemonic for the guarded 'flowmap'
 
@@ -216,14 +277,26 @@ def test_guarded_mnemonic_selects_but_does_not_commit(linkpi_page):
 
 def test_guarded_item_times_out_closed_rather_than_committed(linkpi_page):
     """Walking away from a guarded item must not start it (menuArmTimer's branch)."""
-    _open(linkpi_page, 'l')
+    _open_via_panel(linkpi_page, 'h')
     linkpi_page.press('3')
     linkpi_page.expect_menu_index(2)
 
     time.sleep(3.0)
     linkpi_page.expect_menu_closed()
-    assert 'flowmap' not in linkpi_page.info_text(), (
+    assert linkpi_page.panel_values()['link shape'] != 'flowmap', (
         'the timeout committed a guarded item')
+
+
+def test_the_panel_has_no_walk_away_commit_of_its_own(linkpi_page):
+    """CP6.  menuArmTimer commits a picker 2.5s after the last keystroke, which is
+    right for a transient modal and wrong for a persistent one: a panel that committed
+    and closed itself while you looked at the graph would be a bug."""
+    linkpi_page.settle()
+    linkpi_page.hover(200, 150)
+    linkpi_page.press('a')
+    linkpi_page.expect_panel_open()
+    time.sleep(3.0)                               # > the 2.5s picker timer
+    assert linkpi_page.panel_is_open(), 'the panel closed itself after 2.5s'
 
 
 # ── modality ─────────────────────────────────────────────────────────────────

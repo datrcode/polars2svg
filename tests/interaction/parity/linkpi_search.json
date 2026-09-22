@@ -5,11 +5,13 @@
     "allentitiespath",
     "background_op_seq",
     "background_operation",
+    "background_state_choice",
     "brush_changed",
     "brush_leave_done",
     "brush_state",
     "brushing_mode",
     "cancel_seq",
+    "config_panel_rows",
     "ctrlkey",
     "drag_op_finished",
     "drag_x0",
@@ -21,10 +23,12 @@
     "kbd_help_svg",
     "key_op_finished",
     "keyboardhelp_x",
+    "label_mode_choice",
     "last_key",
     "layout_mode",
     "layout_operation",
     "layout_shape",
+    "link_arrows_choice",
     "link_opacity_choice",
     "link_shape_choice",
     "link_size_choice",
@@ -42,6 +46,7 @@
     "shiftkey",
     "svg_h",
     "svg_w",
+    "timing_marks_choice",
     "timing_spacing_choice",
     "unselected_move_op_finished",
     "use_webgpu",
@@ -79,7 +84,7 @@
       "dom": {
         "svgparent": {
           "tag": "svg",
-          "kids": 16,
+          "kids": 17,
           "text": "in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closes/ . | search: type substring + Ent"
         },
         "mod": {
@@ -89,7 +94,7 @@
         },
         "keyboardhelp": {
           "tag": "g",
-          "kids": 48,
+          "kids": 44,
           "text": "in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closes/ . | search: type substring + Ent"
         },
         "drag": {
@@ -125,7 +130,7 @@
         "infostr": {
           "tag": "text",
           "kids": 0,
-          "text": "0 Selected | no labels | grid | spring nx | no background"
+          "text": "0 Selected | grid | spring nx"
         },
         "allentitieslayer": {
           "tag": "path",
@@ -157,6 +162,11 @@
           "kids": 0,
           "text": ""
         },
+        "configpanel": {
+          "tag": "g",
+          "kids": 0,
+          "text": ""
+        },
         "pickermenu": {
           "tag": "g",
           "kids": 0,
@@ -170,7 +180,7 @@
       "dom": {
         "svgparent": {
           "tag": "svg",
-          "kids": 16,
+          "kids": 17,
           "text": "in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closes/ . | search: type substring + Ent"
         },
         "mod": {
@@ -180,7 +190,7 @@
         },
         "keyboardhelp": {
           "tag": "g",
-          "kids": 48,
+          "kids": 44,
           "text": "in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closes/ . | search: type substring + Ent"
         },
         "drag": {
@@ -216,7 +226,7 @@
         "infostr": {
           "tag": "text",
           "kids": 0,
-          "text": "0 Selected | no labels | grid | spring nx | no background"
+          "text": "0 Selected | grid | spring nx"
         },
         "allentitieslayer": {
           "tag": "path",
@@ -244,6 +254,11 @@
           "text": ""
         },
         "brushmodelabel": {
+          "tag": "g",
+          "kids": 0,
+          "text": ""
+        },
+        "configpanel": {
           "tag": "g",
           "kids": 0,
           "text": ""
@@ -282,7 +297,7 @@
       "dom": {
         "svgparent": {
           "tag": "svg",
-          "kids": 16,
+          "kids": 17,
           "text": "in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closes/ . | search: type substring + Ent"
         },
         "mod": {
@@ -292,7 +307,7 @@
         },
         "keyboardhelp": {
           "tag": "g",
-          "kids": 48,
+          "kids": 44,
           "text": "in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closes/ . | search: type substring + Ent"
         },
         "drag": {
@@ -328,7 +343,7 @@
         "infostr": {
           "tag": "text",
           "kids": 0,
-          "text": "0 Selected | no labels | grid | spring nx | no background"
+          "text": "0 Selected | grid | spring nx"
         },
         "allentitieslayer": {
           "tag": "path",
@@ -356,6 +371,11 @@
           "text": ""
         },
         "brushmodelabel": {
+          "tag": "g",
+          "kids": 0,
+          "text": ""
+        },
+        "configpanel": {
           "tag": "g",
           "kids": 0,
           "text": ""

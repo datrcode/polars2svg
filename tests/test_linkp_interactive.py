@@ -21,6 +21,29 @@ def _rels():
     return [('fm', 'to')]
 
 
+def _cycle_label_row(ctrl, delta=1):
+    """One `space` (or shift-space) on the configuration panel's 'labels' row.
+
+    ctrl-shift-s used to walk this cycle and the panel absorbed it.  The walk is the
+    same: menu_items['label_mode'] is built from labelModeCycle(), which is the list
+    nextLabelMode() stepped through.  Reproduced here rather than delegated to
+    nextLabelMode() so the assertions below are testing the list the *browser* cycles
+    and not the helper that happens to build it.
+
+    The watcher is called explicitly after the assignment because an async watcher runs
+    inline with no event loop active and defers to a task when one is -- see
+    TestLINKPIFlowmapConfirm._commit in test_interactive_controller.py.
+    """
+    from types import SimpleNamespace
+    _items_ = [_lbl_ for _, _lbl_ in ctrl.menu_items['label_mode']]
+    _i_     = _items_.index(ctrl.label_mode_choice) if ctrl.label_mode_choice in _items_ else -1
+    # A value outside the row's list starts the walk, matching panelCycle in the JS.
+    _next_  = _items_[0] if _i_ < 0 else _items_[(_i_ + delta) % len(_items_)]
+    ctrl.label_mode_choice = _next_
+    asyncio.run(ctrl.applyConfigChoice(
+        SimpleNamespace(name='label_mode_choice', new=_next_)))
+
+
 class TestLinkPInteractive(unittest.TestCase):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -1085,23 +1108,24 @@ class TestStickyLabelsAcrossStack(unittest.TestCase):
         for _layout_ in self.ctrl.dfs_layout:
             self.assertEqual(_layout_.label_only, {'a2'})
 
-    # ── label-visibility mode (ctrl-shift-s) ─────────────────────────────────
+    # ── label-visibility mode (the panel's 'labels' row) ─────────────────────
 
-    def test_ctrl_shift_s_cycles_mode_on_every_level(self):
+    def test_the_labels_row_cycles_mode_on_every_level(self):
         '''These relationships are two-part with no color field, so the graph has no edge
         labels and the cycle skips both link states (see TestLabelModeCycle).'''
         self.ctrl.selected_entities = {'b3'}
         self.ctrl.apply_push_selected()                 # level 1
         self.ctrl.label_mode = 'node labels'
-        self._press('S', shift=True, ctrl=True)         # node -> sticky
+        self.ctrl.__syncConfigPanel__()                 # the row mirrors it
+        _cycle_label_row(self.ctrl)                     # node -> sticky
         self.assertEqual(self.ctrl.label_mode, 'sticky labels')
         for _layout_ in self.ctrl.dfs_layout:
             self.assertTrue(_layout_.draw_node_labels)
-        self._press('S', shift=True, ctrl=True)         # sticky -> no labels
+        _cycle_label_row(self.ctrl)                     # sticky -> no labels
         self.assertEqual(self.ctrl.label_mode, 'no labels')
         for _layout_ in self.ctrl.dfs_layout:
             self.assertFalse(_layout_.draw_node_labels)
-        self._press('S', shift=True, ctrl=True)         # no labels -> node
+        _cycle_label_row(self.ctrl)                     # no labels -> node
         self.assertEqual(self.ctrl.label_mode, 'node labels')
         for _layout_ in self.ctrl.dfs_layout:
             self.assertTrue(_layout_.draw_node_labels)
@@ -1109,27 +1133,49 @@ class TestStickyLabelsAcrossStack(unittest.TestCase):
 
     def test_leaving_sticky_clears_label_only_everywhere(self):
         self.ctrl.label_mode = 'sticky labels'
+        self.ctrl.__syncConfigPanel__()
         self.ctrl.selected_entities = {'a1'}
         self._press('s')
         self.ctrl.selected_entities = {'b3'}
         self.ctrl.apply_push_selected()                 # level 1, inherits sticky
-        # ctrl-shift-s: sticky -> no labels -> node labels
-        self._press('S', shift=True, ctrl=True)         # -> no labels
-        self._press('S', shift=True, ctrl=True)         # -> node labels
+        _cycle_label_row(self.ctrl)                     # -> no labels
+        _cycle_label_row(self.ctrl)                     # -> node labels
         for _layout_ in self.ctrl.dfs_layout:
             self.assertTrue(_layout_.draw_node_labels)
             self.assertEqual(_layout_.label_only, set())
 
+    def test_ctrl_shift_s_now_removes_from_the_sticky_set(self):
+        '''It used to cycle label_mode, which is the panel's 'labels' row now.
+
+        With that branch gone it falls to the shiftkey one, so ctrl-shift-s does what
+        shift-s does: remove the selection from the sticky set.  Asserted rather than
+        left to be discovered -- an absorbed binding that quietly starts doing something
+        ELSE is worse than one that stops working.
+        '''
+        self.ctrl.label_mode = 'sticky labels'
+        self.ctrl.selected_entities = {'a1', 'a2'}
+        self._press('s')                                # sticky = {a1, a2}
+        self.assertEqual(self.ctrl.sticky_labels, {'a1', 'a2'})
+        self.ctrl.selected_entities = {'a2'}
+        self._press('S', shift=True, ctrl=True)
+        self.assertEqual(self.ctrl.sticky_labels, {'a1'})
+        self.assertEqual(self.ctrl.label_mode, 'sticky labels', 'the mode must not move')
+
 
 @unittest.skipUnless(_PANEL_AVAILABLE_, 'panel not installed')
 class TestLabelModeCycle(unittest.TestCase):
-    """ctrl-shift-s walks the label-visibility cycle:
+    """The configuration panel's 'labels' row walks the label-visibility cycle:
 
         none -> node -> node+link -> link -> sticky -> none
 
     The two link states only exist when the graph has edge labels to show (a third
     element on some relationship tuple, or a color= field for the two-part fallback);
-    without one the cycle is the three-state walk it was before edge labels existed."""
+    without one the cycle is the three-state walk it was before edge labels existed.
+
+    That variation is why the row's value list is rebuilt on every refresh rather than
+    fixed at construction: linkLabelsAvailable() can gain or lose the two link states as
+    the stack is navigated, and a row offering a state the graph cannot reach is the
+    same silent no-op the dependency gating exists to prevent."""
 
     _DF_ = pl.DataFrame({
         'fm':  ['a1', 'a2', 'a3', 'b1'],
@@ -1151,8 +1197,7 @@ class TestLabelModeCycle(unittest.TestCase):
         return self.p2s.linkpi(self.p2s.linkp(self._DF_, relationships=rels, **kwargs))
 
     def _press(self, ctrl):
-        ctrl.shiftkey, ctrl.ctrlkey, ctrl.key_op_finished = True, True, 'S'
-        asyncio.run(ctrl.applyKeyOp(None))
+        _cycle_label_row(ctrl)
 
     def _walk(self, ctrl, n):
         _seen_ = []
@@ -1245,9 +1290,27 @@ class TestLabelModeCycle(unittest.TestCase):
         for _lp_ in _c_.dfs_layout:
             self.assertEqual(_lp_.label_only, {'a1', 'a2'})
 
-    def test_help_text_lists_the_cycle(self):
+    def test_help_text_points_at_the_labels_row(self):
         _c_ = self._ctrl([('fm', 'to', 'dsc')])
-        self.assertIn('node+link', _c_._keyboard_commands_)
+        self.assertIn('l labels', _c_._keyboard_commands_)
+
+    def test_the_row_offers_exactly_the_reachable_modes(self):
+        """The list the panel cycles is the list labelModeCycle() allows, both ways."""
+        _full_ = self._ctrl([('fm', 'to', 'dsc')])
+        self.assertEqual([_l_ for _, _l_ in _full_.menu_items['label_mode']],
+                         _full_.labelModeCycle())
+        _short_ = self._ctrl([('fm', 'to')])
+        self.assertEqual([_l_ for _, _l_ in _short_.menu_items['label_mode']],
+                         ['no labels', 'node labels', 'sticky labels'])
+
+    def test_shift_space_walks_the_cycle_backwards(self):
+        """CP4 -- shift reverses, which is what retired the four ctrl chords."""
+        _c_ = self._ctrl([('fm', 'to', 'dsc')])
+        self.assertEqual(_c_.label_mode, 'no labels')
+        _cycle_label_row(_c_, -1)
+        self.assertEqual(_c_.label_mode, 'sticky labels')
+        _cycle_label_row(_c_, -1)
+        self.assertEqual(_c_.label_mode, 'link labels')
 
 
 @unittest.skipUnless(_PANEL_AVAILABLE_, 'panel not installed')

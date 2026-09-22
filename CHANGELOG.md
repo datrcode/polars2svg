@@ -7,7 +7,97 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **A configuration panel for `LINKPI`, on the `a` key**
+  (`20260921_config_panel_design.md`, CP1-CP12). Nine rows -- arrows, timing marks,
+  timing-mark spacing, labels, link shape, link size, link opacity, node size,
+  background -- each showing what the view is *currently* doing, and each editable in
+  place. `a` opens it and advances the row cursor, `shift-a` retreats, a row's mnemonic
+  jumps straight to it, `space` cycles that row's value forward, `shift-space` backward,
+  `Enter` opens the row's existing full picker, `esc` closes.
+
+  **It is `info_str` made editable and given room, not a key-saving measure.** That
+  framing is load-bearing: "free up keys" leads to a menu -- a thing you open, use and
+  close -- while "a state display" leads to a thing you leave open while you work, which
+  is what makes it worth building. The success criterion is whether you can glance at it
+  and know how the view is drawn.
+
+  **Twelve bindings are absorbed, and three left-hand bare keys come back.** `a`,
+  `shift-a`, `ctrl-a`, `b`, `l`, `shift-l`, `ctrl-l`, `shift-o`, `ctrl-o`, `shift-p`,
+  `ctrl-p` and `ctrl-shift-s` are gone; the free bare-letter set goes from `{i m o p}`
+  -- all right-hand, so the standing "shortcuts stay left-hand because the right hand is
+  on the mouse" rule could no longer be satisfied by any new binding -- to six including
+  `b` and `l`. ctrl-a, ctrl-l, ctrl-o and ctrl-p are not merely unbound but
+  **unguarded**: with no handler behind them there is nothing to `preventDefault`, so
+  select-all, the address bar, Open File and Print go back to the browser.
+
+  Points worth keeping:
+
+  - **A row IS a menu kind**, so `space` cycles exactly the list `Enter` shows in full,
+    from the one place the picker already reads. Absorbing the pickers is therefore a new
+    entry point rather than a rewrite, and the interaction grades by how much you know:
+    `space` if you know what you want, `shift-space` if you overshot, `Enter` if you do
+    not know the options. Four kinds that had no picker -- arrows, timing marks, labels,
+    background display -- gained one, so they work the same way.
+  - **The commit is debounced ~300ms; it is not issued on every `space`.** This is the
+    objection that would have broken the feature. The pickers navigate without rendering
+    and commit once on `Enter`; a live panel renders every intermediate state, so cycling
+    link shape `line -> curve -> flowmap -> off` would render **flowmap on the way past**
+    -- a force layout whose cost grows faster than linearly on a netflow-scale graph.
+    Debounced rather than Enter-to-commit, because tapping space and watching the graph is
+    the interaction that makes the panel worth having.
+  - **No walk-away auto-commit (`menuArmTimer`'s 2.5s) applies.** The pickers are
+    transient-modal and the panel is persistent; one that committed and closed itself
+    while you looked at the graph would be a bug. An explicit `esc` does flush, because
+    closing inside the 300ms window is a normal thing to do.
+  - **`shift` reverses, never `ctrl`** -- U2's lesson, *"the base key was never the
+    problem, needing a ctrl chord for a variant was"*. The four `ctrl-a/l/o/p`
+    reverse-cycles disappear into `shift-space`.
+  - **Rows have prerequisites, and an unmet one greys the row *and* makes the cursor skip
+    it.** Timing marks need a time field (they *are* the LinkP's `time=`), spacing needs
+    the marks on, and the background row needs a layout-produced background. Greying
+    alone would leave `space` silently doing nothing, which reads as the panel being
+    broken rather than the setting being unavailable.
+  - **Arrows and timing marks are two rows, not the one 4-state `a` cycle they replace.**
+    That cycle flipped exactly one of the two per step, so reaching a given combination
+    cost up to three presses; two rows reach any of the four in one.
+  - **Modal for v1.** Non-modal -- only the panel's keys captured, everything else
+    falling through -- is more useful, but re-opens the keyspace conflict the panel
+    exists to close. Revisit only if modality proves annoying in use.
+  - **Layout mode and layout operation did NOT become rows.** They are persistent
+    selections, but they are inputs to an action (`g` / `w`) rather than descriptions of
+    how the render is drawn, which is the line the panel draws. `shift-g` / `shift-w` are
+    unchanged.
+
 ### Changed
+
+- **`info_str` is shorter: `N Selected | layout_mode | layout_operation`.** The label
+  mode and the background state moved into the configuration panel and came out of the
+  status line with it. Layout mode and operation stay, because they did *not* become
+  panel rows -- dropping them too would have left them with no on-screen display at all.
+
+- **`ctrl-shift-s` no longer cycles the label mode** -- that is the panel's `labels` row.
+  The chord still reaches the sticky-label handler, where it now takes the `shift`
+  branch and removes the selection from the sticky set, exactly as `shift-s` does. Called
+  out rather than left to be discovered: an absorbed binding that quietly starts doing
+  something *else* is worse than one that stops working.
+
+- **Re-recorded the four `linkpi` parity goldens** (`linkpi`, `linkpi_menu`,
+  `linkpi_search`, `linkpi_wheel_multiplicity`). The diffs are the intended change and
+  nothing else: the new `#configpanel` element (so `#svgparent` gains a child), the
+  shorter `#infostr`, the rewritten keyboard help, and the five new params. The wheel
+  golden's `write_counts` are untouched, which is the invariant that file exists for.
+
+  `linkpi_menu`'s gesture also changed, from `ctrl-l` to `shift-w`. `ctrl-l` opened the
+  link-size picker and the panel absorbed that entry point, so the old gesture now falls
+  through the binding chain and opens nothing -- it would have been tracing the absence
+  of a menu. `shift-w` reaches the same state machine through a door that still exists.
+
+  A JS-only overlay is structurally invisible to these goldens -- the digest is taken
+  after a gesture settles, which is why `#selbox` and `#drag_rect` went uncovered for as
+  long as they existed. The panel is that shape, so its tests were written rather than
+  inherited: `tests/interaction/test_config_panel.py`.
 
 - **Fixed: `has_focus` now survives a re-render.** `ReactiveHTML`'s `render` script
   re-ran on every subtree rebuild and reset `data.has_focus` to false, so a component

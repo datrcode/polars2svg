@@ -3,7 +3,7 @@ import unittest
 
 import numpy as np
 import polars as pl
-from view_js_utils import component_js
+from view_js_utils import component_js, component_script
 
 from polars2svg import (BackgroundShape, INHERIT, LayoutAlgorithm, Polars2SVG,
                         FlowFieldBackground)
@@ -478,9 +478,26 @@ class TestBackgroundOperationLifecycle(unittest.TestCase):
         # The menu contents are per view and reach the JS through the data model,
         # so the entry is asserted on the param rather than on the script text.
         self.assertEqual(self.view.menu_items['background'][0], ['f', 'flow field (2 layers)'])
-        self.assertIn('model.background_op_seq   = model.background_op_seq + 1', js)
-        # 'b' must still cycle visibility rather than opening the picker.
-        self.assertIn('else if (event.key == "b") { model.key_op_finished = \'b\';  }', js)
+        # Committing a producer bumps a SEQUENCE as well as writing the label, because
+        # re-picking the one already selected has to re-run it and an unchanged param
+        # write fires no watcher.  That is the reason menuSetValue is an explicit chain
+        # rather than a lookup in MENU_PARAM_.
+        self.assertIn('model.background_op_seq     = model.background_op_seq + 1',
+                      component_script(self.view, 'menuSetValue'))
+
+    def test_visibility_is_the_config_panel_and_not_a_key(self):
+        """'b' used to cycle the display state; it is the panel's 'background' row now.
+
+        The two are deliberately separate things: shift-b RUNS a producer (a computation,
+        and a guarded menu item for that reason) while the row only decides whether what
+        it produced is drawn.  Only the second is a description of how the view is drawn,
+        which is the line the panel draws.
+        """
+        js = component_js(self.view)
+        self.assertNotIn('else if (event.key == "b")', js)
+        self.assertIn("['b', 'background_state', 'background']",
+                      str([_r_[:3] for _r_ in self.view.config_panel_rows]))
+        self.assertIn('background_state', self.view.menu_items)
 
     def test_state_label_names_the_producer(self):
         self._run_flow_field()

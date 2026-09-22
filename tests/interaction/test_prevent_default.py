@@ -22,22 +22,33 @@ import unittest
 import pytest
 
 
-#: (event.key, modifiers, human label).  These are exactly the nine sites --
-#: `grep -n preventDefault polars2svg/interactive_controller.py` inside myOnKeyDown.
+#: (event.key, modifiers, human label).  Every `preventDefault` site inside
+#: myOnKeyDown's binding chain -- `grep -n preventDefault polars2svg/js/p2s_linkpi.js`.
+#:
+#: Four went with the configuration panel (ctrl-a, ctrl-l, ctrl-o, ctrl-p opened the
+#: spacing / size / opacity / node-size pickers).  The keys they guarded are not bound
+#: at all now, so there is nothing to suppress and select-all, the address bar, Open
+#: File and Print go back to the browser -- which is the correct outcome and is asserted
+#: below rather than left implicit.  ctrl-shift-s survives as a guard although it no
+#: longer cycles the label mode: it still reaches the sticky-label handler.
 CTRL_GUARDS = [
-    ('a', dict(ctrl=True),             'ctrl-a  timing-mark spacing picker (vs select-all)'),
     ('c', dict(ctrl=True),             'ctrl-c  copy selection (vs native copy)'),
     ('C', dict(ctrl=True, shift=True), 'ctrl-shift-c  copy labels'),
     ('e', dict(ctrl=True),             'ctrl-e  expand reversed (vs search-bar focus)'),
-    ('l', dict(ctrl=True),             'ctrl-l  link-size picker (vs address bar)'),
-    ('o', dict(ctrl=True),             'ctrl-o  link-opacity picker (vs Open File)'),
-    ('p', dict(ctrl=True),             'ctrl-p  node-size picker (vs Print)'),
     ('s', dict(ctrl=True),             'ctrl-s  sticky labels (vs Save Page As)'),
-    ('S', dict(ctrl=True, shift=True), 'ctrl-shift-s  cycle label mode'),
+    ('S', dict(ctrl=True, shift=True), 'ctrl-shift-s  subtract from sticky labels'),
 ]
 
 #: The same keys without ctrl.  None of them may suppress anything.
-BARE_KEYS = ['a', 'c', 'C', 'e', 'l', 'o', 'p', 's', 'S']
+BARE_KEYS = ['c', 'C', 'e', 's', 'S']
+
+#: The four the panel absorbed.  They must reach neither a handler nor a guard.
+RELEASED_CHORDS = [
+    ('a', 'ctrl-a  select-all'),
+    ('l', 'ctrl-l  address bar'),
+    ('o', 'ctrl-o  Open File'),
+    ('p', 'ctrl-p  Print'),
+]
 
 
 def _select_one_colour_group(ip, node):
@@ -74,17 +85,22 @@ def test_bare_key_does_not_suppress_the_browser_default(linkpi_page, key):
 
 # ── half two: the handler still ran ──────────────────────────────────────────
 
-@pytest.mark.parametrize('key,menu_header', [
-    ('a', 'timing mark spacing'),
-    ('l', 'link size:'),
-    ('o', 'link opacity:'),
-    ('p', 'node size:'),
-])
-def test_ctrl_picker_bindings_still_open_their_menu(linkpi_page, key, menu_header):
-    """Four of the nine open a picker.  The menu is drawn entirely in JS."""
+@pytest.mark.parametrize('key,label', RELEASED_CHORDS, ids=[c[1].split()[0] for c in RELEASED_CHORDS])
+def test_an_absorbed_chord_is_given_back_to_the_browser(linkpi_page, key, label):
+    """The panel freed these; nothing may still be claiming them.
+
+    Not cosmetic.  A leftover `preventDefault` with no handler behind it is the worst of
+    both worlds -- the browser's own shortcut stops working and nothing replaces it --
+    and it is invisible from inside the app, because the only symptom is a browser
+    feature that quietly does not happen.
+    """
     linkpi_page.hover(200, 150)
+    linkpi_page.clear_keydowns()
     linkpi_page.press(key, ctrl=True)
-    linkpi_page.expect_menu_open(menu_header)
+    assert linkpi_page.last_keydown()['defaultPrevented'] is False, (
+        f'{label}: still suppressed, but nothing is bound to it any more')
+    assert not linkpi_page.menu_is_open(), f'{label}: still opens a picker'
+    assert not linkpi_page.panel_is_open(), f'{label}: still opens the panel'
 
 
 def _await_clipboard(sentinel, timeout_s=10.0):
@@ -175,32 +191,38 @@ def test_ctrl_e_still_expands_along_reversed_edges(chain_page):
         chain_page.expect_selected(2)
 
 
-def test_ctrl_shift_s_still_cycles_the_label_mode(linkpi_page):
-    """The mode is the second field of #infostr.
+def test_the_labels_row_cycles_the_label_mode(linkpi_page):
+    """ctrl-shift-s used to do this; the mode is the panel's 'labels' row now.
 
     This graph has no link labels, so the cycle is the three-entry one and
     'no labels' advances to 'node labels'.
     """
     linkpi_page.hover(200, 150)
-    with linkpi_page.holding(ctrl=True, shift=True):
-        linkpi_page.press('S')
-        linkpi_page.expect_info_contains('node labels')
+    linkpi_page.press('a')
+    linkpi_page.expect_panel_open()
+    linkpi_page.press('l')                        # the 'labels' row
+    linkpi_page.press(' ')
+    linkpi_page.expect_panel_value('labels', 'node labels')
 
 
 def test_ctrl_s_still_adds_the_selection_to_sticky_labels(linkpi_page):
     """Sticky labels only *draw* in a label mode that shows them, so get there first.
 
-    Two ctrl-shift-s presses walk the no-link cycle 'no labels' -> 'node labels' ->
-    'sticky labels'; with the mode showing them and the set still empty, ctrl-s is
-    then the only thing that can put text on the canvas.
+    Two `space` presses on the panel's 'labels' row walk the no-link cycle 'no labels'
+    -> 'node labels' -> 'sticky labels'; with the mode showing them and the set still
+    empty, ctrl-s is then the only thing that can put text on the canvas.  ctrl-shift-s
+    used to be what walked this; the row absorbed it.
     """
-    with linkpi_page.holding(ctrl=True, shift=True):
-        linkpi_page.hover(200, 150)
-        linkpi_page.press('S')
-        linkpi_page.expect_info_contains('node labels')
-        linkpi_page.hover(200, 150)
-        linkpi_page.press('S')
-        linkpi_page.expect_info_contains('sticky labels')
+    linkpi_page.hover(200, 150)
+    linkpi_page.press('a')
+    linkpi_page.expect_panel_open()
+    linkpi_page.press('l')
+    linkpi_page.press(' ')
+    linkpi_page.expect_panel_value('labels', 'node labels')
+    linkpi_page.press(' ')
+    linkpi_page.expect_panel_value('labels', 'sticky labels')
+    linkpi_page.press('Escape')
+    linkpi_page.expect_panel_closed()
 
     _select_one_colour_group(linkpi_page, 1)
     linkpi_page.expect_selected(3)

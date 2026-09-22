@@ -417,6 +417,21 @@ class TestSketchLeafResolution(unittest.TestCase):
 #: or ctrl-l.  The three marked *measured* were confirmed by real XTEST keystrokes into a
 #: headed Chromium on Linux (`tools/ctrl_chord_audit.py`, 2026-09-10); the rest are the
 #: rest of the same documented family and are listed so nobody has to rediscover them.
+def _commit_config(ctrl, name, value):
+    """Drive a configuration-panel row the way the browser does.
+
+    The panel writes one of the four panel-only ``*_choice`` params and the watcher
+    applies it.  The watcher is then called explicitly, for the same reason
+    ``TestLINKPIFlowmapConfirm._commit`` does it: an async watcher runs inline when no
+    event loop is active and *defers to a task* when one is, so plain assignment passes
+    alone and fails in a full run.  The explicit call is a no-op when the assignment
+    already took effect -- applyConfigChoice is idempotent by value.
+    """
+    from types import SimpleNamespace
+    setattr(ctrl, name, value)
+    asyncio.run(ctrl.applyConfigChoice(SimpleNamespace(name=name, new=value)))
+
+
 _RESERVED_BROWSER_CHORDS_ = {
     'ctrl-t':       'opens a new tab (measured)',
     'ctrl-n':       'opens a new window (measured)',
@@ -496,15 +511,27 @@ class TestNoReservedBrowserChords(unittest.TestCase):
     def test_the_scan_actually_finds_ctrl_chords(self):
         """Guard the guard: a scanner that silently matches nothing would pass forever.
 
-        LINKPI really does bind ctrl chords -- ctrl-l, ctrl-o, ctrl-a, ctrl-p all open
-        and reverse-cycle their pickers, and the audit measured every one of them as
-        page-interceptable -- so finding none would mean the parser broke, not that the
-        bindings went away.
+        These two are named rather than the picker chords this used to use: ctrl-l,
+        ctrl-o, ctrl-a and ctrl-p were the size / opacity / spacing / node-size picker
+        entry points, and the configuration panel absorbed all four (CP4 -- shift-space
+        reverses a row, so the ctrl half of each pair had nothing left to do).  Finding
+        none at all would mean the parser broke, not that the bindings went away.
         """
         _linkpi_ = self._components()['LINKPI']
         _found_ = _ctrl_chords_required_by(component_js(_linkpi_))
-        self.assertIn('ctrl-l', _found_)
-        self.assertIn('ctrl-p', _found_)
+        self.assertIn('ctrl-e', _found_)
+        self.assertIn('ctrl-shift-x', _found_)
+
+    def test_the_absorbed_picker_chords_are_gone(self):
+        """The four the panel replaced must not come back on a chord.
+
+        Not a browser-safety check -- all four were measured page-interceptable -- but
+        the same scanner can say it, and leaving one behind would mean a row that is
+        reachable two ways and maintained one.
+        """
+        _found_ = _ctrl_chords_required_by(component_js(self._components()['LINKPI']))
+        for _chord_ in ('ctrl-a', 'ctrl-l', 'ctrl-o', 'ctrl-p'):
+            self.assertNotIn(_chord_, _found_)
 
     def test_the_scan_would_catch_a_reintroduced_chord(self):
         """The U10 binding, verbatim, must be reported -- otherwise this file is theatre."""
@@ -1595,11 +1622,15 @@ class TestLINKPIBackgroundCycling(unittest.TestCase):
         linkp = p2s.linkp(df, relationships=[('fm', 'to')], pos=pos)
         return linkpi(linkp)
 
-    def _press_b(self, ctrl):
-        async def _go():
-            ctrl.key_op_finished = 'b'
-            await ctrl.applyKeyOp(None)
-        asyncio.run(_go())
+    def _cycle_background(self, ctrl):
+        """One press of `space` on the panel's 'background' row.
+
+        'b' used to do this; it is a panel row now, so the cycle is a step through
+        _BACKGROUND_STATES_ rather than a key op.  Same three states, same order.
+        """
+        from polars2svg.interactive_controller import _BACKGROUND_STATES_
+        _next_ = _BACKGROUND_STATES_[(ctrl.background_state + 1) % len(_BACKGROUND_STATES_)]
+        _commit_config(ctrl, 'background_state_choice', _next_)
 
     # ── initial state ───────────────────────────────────────────────────────
     def test_initial_background_state_is_zero(self):
@@ -1681,20 +1712,33 @@ class TestLINKPIBackgroundCycling(unittest.TestCase):
         ctrl.__applyBackgroundState__(refresh=False)
         self.assertIsNone(ln.background)
 
-    # ── the 'b' key cycles through the three states ───────────────────────────
-    def test_b_key_cycles_three_states(self):
+    # ── the panel's 'background' row cycles through the three states ──────────
+    def test_background_row_cycles_three_states(self):
         ctrl = self._make_ctrl()
         ctrl.__layoutOperation__(ctrl.CIRCLE_PACK, ctrl.dfs_layout[0], ctrl.graphs[0], set())
         self.assertEqual(ctrl.background_state, 0)
-        self._press_b(ctrl); self.assertEqual(ctrl.background_state, 1)
-        self._press_b(ctrl); self.assertEqual(ctrl.background_state, 2)
-        self._press_b(ctrl); self.assertEqual(ctrl.background_state, 0)
+        self._cycle_background(ctrl); self.assertEqual(ctrl.background_state, 1)
+        self._cycle_background(ctrl); self.assertEqual(ctrl.background_state, 2)
+        self._cycle_background(ctrl); self.assertEqual(ctrl.background_state, 0)
 
-    def test_info_str_reports_background_state(self):
+    def test_the_panel_row_reports_the_background_state(self):
+        """It left info_str when it became a panel row; the row is where it reads now."""
         ctrl = self._make_ctrl()
         ctrl.background_state = 2
         ctrl.__refreshView__(comp=False, all_ents=False, sel_ents=False)
-        self.assertIn('background + labels', ctrl.info_str)
+        self.assertEqual(ctrl.background_state_choice, 'on + labels')
+        self.assertNotIn('background', ctrl.info_str)
+
+    def test_the_background_row_is_gated_on_having_a_background(self):
+        """Cycling the display state with nothing to display is a silent no-op, which
+        is the failure mode the gating exists to prevent."""
+        ctrl = self._make_ctrl()
+        _row_ = [_r_ for _r_ in ctrl.config_panel_rows if _r_[1] == 'background_state'][0]
+        self.assertFalse(_row_[3], 'no layout background captured yet')
+        ctrl.__layoutOperation__(ctrl.CIRCLE_PACK, ctrl.dfs_layout[0], ctrl.graphs[0], set())
+        ctrl.__refreshView__(comp=False, all_ents=False, sel_ents=False)
+        _row_ = [_r_ for _r_ in ctrl.config_panel_rows if _r_[1] == 'background_state'][0]
+        self.assertTrue(_row_[3])
 
     # ── background + visibility propagate across the whole stack ──────────────
     def _stacked_ctrl_with_background(self):
@@ -1743,11 +1787,11 @@ class TestLINKPIBackgroundCycling(unittest.TestCase):
         self.assertIsNotNone(_top_.background)
         self.assertIsNotNone(_top_.background_label_color)
 
-    def test_b_key_cycle_at_deep_level_reaches_the_base_level(self):
-        # End-to-end via the actual 'b' key handler at a pushed level.
+    def test_background_row_at_deep_level_reaches_the_base_level(self):
+        # End-to-end via the panel row's watcher at a pushed level.
         ctrl = self._stacked_ctrl_with_background()
         self.assertEqual(ctrl.df_level, 1)
-        self._press_b(ctrl)                       # state 0 -> 1
+        self._cycle_background(ctrl)              # state 0 -> 1
         self.assertEqual(ctrl.background_state, 1)
         self.assertIsNotNone(ctrl.dfs_layout[0].background)
         self.assertIsNotNone(ctrl.dfs_layout[1].background)
@@ -2015,9 +2059,14 @@ class TestLINKPICircleByColorLayout(unittest.TestCase):
 
 @unittest.skipUnless(PANEL_AVAILABLE, 'panel not installed')
 class TestLINKPISizeCycleMenus(unittest.TestCase):
-    """Verify the shift-L / shift-O / shift-P size & opacity cycle pickers and
-    the 'l' link-shape picker: default selections, the JS commit path onto the
-    LinkP, the hardcoded-number rule for size menus, and template wiring."""
+    """The size / opacity / shape pickers: default selections, the JS commit path onto
+    the LinkP, the hardcoded-number rule for size menus, and script wiring.
+
+    They no longer have keys of their own -- shift-l, ctrl-l, shift-o, ctrl-o, shift-p
+    and ctrl-p are configuration-panel rows -- but the pickers themselves are unchanged
+    and still reachable, by Enter on the row.  That is CP3: the panel absorbed the entry
+    points, not the menus.
+    """
 
     def _make_ctrl(self, **link_kwargs):
         from polars2svg.interactive_controller import linkpi
@@ -2165,18 +2214,29 @@ class TestLINKPISizeCycleMenus(unittest.TestCase):
         self.assertIn('_sel_[3]', component_script(_ctrl_, 'menuArmTimer'),
                       'the inactivity timeout does not check the guard flag')
 
-    # ── 'a' toggles link arrows on and off ────────────────────────────────────
-    def test_a_key_toggles_link_arrows(self):
+    # ── the panel's 'arrows' row turns link arrows on and off ─────────────────
+    def test_arrows_row_toggles_link_arrows(self):
+        """'a' used to cycle arrows x timing marks; both are panel rows now, and
+        splitting them is strictly better than the cycle -- that one flipped exactly
+        one of the two per step, so a given combination cost up to three presses."""
         ctrl = self._make_ctrl()
-        self._press_key(ctrl, 'a')
+        _commit_config(ctrl, 'link_arrows_choice', 'on')
         for ln in ctrl.dfs_layout:
             self.assertTrue(ln.link_arrows)
-        self._press_key(ctrl, 'a')
+        _commit_config(ctrl, 'link_arrows_choice', 'off')
         for ln in ctrl.dfs_layout:
             self.assertFalse(ln.link_arrows)
 
-    def test_keyboard_help_mentions_link_arrows(self):
-        self.assertIn('link arrows', type(self._make_ctrl())._keyboard_commands_)
+    def test_the_arrows_row_mirrors_the_linkp(self):
+        """The row displays as well as writes: a linkp built with arrows on opens the
+        panel showing 'on', without anyone having cycled it."""
+        self.assertEqual(self._make_ctrl(link_arrows=True).link_arrows_choice, 'on')
+        self.assertEqual(self._make_ctrl().link_arrows_choice, 'off')
+
+    def test_keyboard_help_mentions_the_appearance_panel(self):
+        _cmds_ = type(self._make_ctrl())._keyboard_commands_
+        self.assertIn('appearance panel', _cmds_)
+        self.assertIn('arrows', _cmds_)
 
     def test_old_l_key_op_is_noop(self):
         # 'l' now opens the picker menu in JS; the Python key op no longer
@@ -2193,23 +2253,34 @@ class TestLINKPISizeCycleMenus(unittest.TestCase):
             self.assertIn(kind, _items_)
 
     def test_commit_script_handles_new_kinds(self):
-        commit = component_script(self._make_ctrl(), 'menuCommit')
+        # menuSetValue, not menuCommit: the config panel writes through the same
+        # function without a menu being open, which is what keeps `space` on a row and
+        # Enter-then-Enter in the row's picker landing in exactly the same place.
+        commit = component_script(self._make_ctrl(), 'menuSetValue')
         for field in ('link_size_choice', 'link_opacity_choice', 'node_size_choice', 'link_shape_choice'):
             self.assertIn(field, commit)
 
-    def test_keyboard_help_mentions_size_cycles(self):
+    def test_keyboard_help_mentions_the_size_rows(self):
         cmds = type(self._make_ctrl())._keyboard_commands_
-        self.assertIn('shift-l', cmds)
-        self.assertIn('shift-o', cmds)
-        self.assertIn('shift-p', cmds)
         self.assertIn('link shape', cmds)
+        self.assertIn('z link size', cmds)
+        self.assertIn('o link opacity', cmds)
+        self.assertIn('n node size', cmds)
+
+    def test_the_help_no_longer_offers_the_absorbed_chords(self):
+        """Stale help is worse than none: these keys do nothing now."""
+        cmds = type(self._make_ctrl())._keyboard_commands_
+        for _gone_ in ('shift-l', 'ctrl-l', 'shift-o', 'ctrl-o',
+                       'shift-p', 'ctrl-p', 'ctrl-a', 'ctrl-shift-s'):
+            self.assertNotIn(_gone_, cmds)
 
 
 @unittest.skipUnless(PANEL_AVAILABLE, 'panel not installed')
 class TestLINKPITimingSpacingPicker(unittest.TestCase):
-    """The shift-a / ctrl-a timing-mark spacing picker: default selection, the pixel
-    grid, the JS commit path onto the LinkP's timing_marks_spacing (in pixels), a
-    user spacing outside the grid, and that a coarser choice re-renders fewer marks."""
+    """The timing-mark spacing picker -- the configuration panel's 'spacing' row since
+    the panel absorbed shift-a / ctrl-a: default selection, the pixel grid, the JS commit
+    path onto the LinkP's timing_marks_spacing (in pixels), a user spacing outside the
+    grid, that a coarser choice re-renders fewer marks, and the row's dependency gate."""
 
     def _make_ctrl(self, **link_kwargs):
         from polars2svg.interactive_controller import linkpi
@@ -2264,12 +2335,24 @@ class TestLINKPITimingSpacingPicker(unittest.TestCase):
         self.assertIn('timing_spacing', self._make_ctrl().menu_items)
 
     def test_commit_script_handles_timing_spacing(self):
-        self.assertIn('timing_spacing_choice', component_script(self._make_ctrl(), 'menuCommit'))
+        self.assertIn('timing_spacing_choice', component_script(self._make_ctrl(), 'menuSetValue'))
 
-    def test_keyboard_help_mentions_spacing_picker(self):
+    def test_keyboard_help_mentions_the_spacing_row(self):
         cmds = type(self._make_ctrl())._keyboard_commands_
-        self.assertIn('shift-a', cmds)
-        self.assertIn('spacing', cmds)
+        self.assertIn('p spacing', cmds)
+
+    def test_the_spacing_row_is_gated_on_the_marks_being_on(self):
+        """Spacing with no marks to space is meaningless, so the row is greyed and the
+        cursor skips it -- otherwise `space` on it silently does nothing."""
+        def _spacing_row(c):
+            return [_r_ for _r_ in c.config_panel_rows if _r_[1] == 'timing_spacing'][0]
+
+        _ctrl_ = self._make_time_ctrl()
+        self.assertTrue(_spacing_row(_ctrl_)[3], 'built with time=, so the marks are on')
+        _commit_config(_ctrl_, 'timing_marks_choice', 'off')
+        self.assertFalse(_spacing_row(_ctrl_)[3])
+        _commit_config(_ctrl_, 'timing_marks_choice', 'on')
+        self.assertTrue(_spacing_row(_ctrl_)[3])
 
 
 @unittest.skipUnless(PANEL_AVAILABLE, 'panel not installed')
@@ -2370,8 +2453,15 @@ class TestLINKPICopyToClipboard(_UnfilteredLoggerMixin, unittest.TestCase):
 
 @unittest.skipUnless(PANEL_AVAILABLE, 'panel not installed')
 class TestLINKPITimingMarksCycle(unittest.TestCase):
-    """The 'a' key cycles arrows x timing marks when a time field is available, and
-    toggles arrows only otherwise."""
+    """Timing marks: detecting the field they need, and the panel row that drives them.
+
+    'a' used to cycle the four (arrows x marks) combinations on one key.  Splitting them
+    into two panel rows is strictly better and is the reason the class still exists in
+    this shape: the cycle flipped exactly one of the two per step, so reaching a given
+    combination cost up to three presses, where two independent rows reach any of the
+    four in one.  The availability rules below are unchanged -- CP8: the marks ARE the
+    LinkP's time field, and _timing_time_ is the field to set it back to.
+    """
 
     def _ctrl(self, df, **kw):
         from polars2svg.interactive_controller import linkpi
@@ -2388,11 +2478,12 @@ class TestLINKPITimingMarksCycle(unittest.TestCase):
                              'ts':  [datetime(2024, 1, d) for d in (1, 2, 3)],
                              'ts2': [datetime(2024, 2, d) for d in (1, 2, 3)]})
 
-    def _press_a(self, ctrl):
-        async def _go():
-            ctrl.key_op_finished = 'a'
-            await ctrl.applyKeyOp(None)
-        asyncio.run(_go())
+    def _set(self, ctrl, arrows=None, marks=None):
+        """One `space` on the 'arrows' row, the 'timing marks' row, or both."""
+        if arrows is not None:
+            _commit_config(ctrl, 'link_arrows_choice',  'on' if arrows else 'off')
+        if marks is not None:
+            _commit_config(ctrl, 'timing_marks_choice', 'on' if marks else 'off')
 
     def _state(self, ctrl):
         ln = ctrl.dfs_layout[0]
@@ -2412,33 +2503,43 @@ class TestLINKPITimingMarksCycle(unittest.TestCase):
         # an explicit time= wins even when the data has several date columns
         self.assertEqual(self._ctrl(self._df_two_ts(), time='ts2')._timing_time_, 'ts2')
 
-    # ── the four-state cycle ────────────────────────────────────────────────
-    def test_full_cycle(self):
+    # ── the two rows are independent ────────────────────────────────────────
+    def test_all_four_combinations_are_one_press_apart(self):
+        """What the old 'a' cycle could not do: any of the four in a single press."""
         ctrl = self._ctrl(self._df_one_ts())
-        self.assertEqual(self._state(ctrl), (False, False))                       # initial
-        self._press_a(ctrl); self.assertEqual(self._state(ctrl), (True, False))   # arrows
-        self._press_a(ctrl); self.assertEqual(self._state(ctrl), (True, True))    # arrows + marks
-        self._press_a(ctrl); self.assertEqual(self._state(ctrl), (False, True))   # marks
-        self._press_a(ctrl); self.assertEqual(self._state(ctrl), (False, False))  # wrap
+        self.assertEqual(self._state(ctrl), (False, False))                        # initial
+        self._set(ctrl, marks=True);   self.assertEqual(self._state(ctrl), (False, True))
+        self._set(ctrl, arrows=True);  self.assertEqual(self._state(ctrl), (True, True))
+        self._set(ctrl, marks=False);  self.assertEqual(self._state(ctrl), (True, False))
+        self._set(ctrl, arrows=False); self.assertEqual(self._state(ctrl), (False, False))
 
     def test_marks_appear_in_svg_when_on(self):
         ctrl = self._ctrl(self._df_one_ts())
-        self._press_a(ctrl)                                     # arrows, no marks
+        self._set(ctrl, arrows=True)                            # arrows, no marks
         self.assertNotIn('stroke-width="1.5"', ctrl.mod_inner)
-        self._press_a(ctrl)                                     # arrows + marks
+        self._set(ctrl, marks=True)                             # arrows + marks
         self.assertIn('stroke-width="1.5"', ctrl.mod_inner)
 
     def test_marks_start_on_when_time_configured(self):
         ctrl = self._ctrl(self._df_one_ts(), time='ts')
         self.assertEqual(self._state(ctrl), (False, True))     # constructed with marks on
+        self.assertEqual(ctrl.timing_marks_choice, 'on')       # ...and the row says so
 
-    # ── arrows-only fallback ────────────────────────────────────────────────
-    def test_arrows_only_toggle_without_time(self):
+    # ── no time field: the row is unavailable, not silently inert ───────────
+    def test_the_marks_row_is_gated_off_without_a_time_field(self):
         ctrl = self._ctrl(_make_link_df())
+        _row_ = [_r_ for _r_ in ctrl.config_panel_rows if _r_[1] == 'timing_marks'][0]
+        self.assertFalse(_row_[3], 'no date column to turn the marks on from')
+        # And even a write that reached it anyway cannot invent a field.
+        _commit_config(ctrl, 'timing_marks_choice', 'on')
         self.assertEqual(self._state(ctrl), (False, False))
-        self._press_a(ctrl); self.assertEqual(self._state(ctrl), (True, False))
-        self._press_a(ctrl); self.assertEqual(self._state(ctrl), (False, False))  # never enables marks
         self.assertNotIn('stroke-width="1.5"', ctrl.mod_inner)
+
+    def test_arrows_still_work_without_a_time_field(self):
+        """The two rows are independent, so one being gated off does not touch the other."""
+        ctrl = self._ctrl(_make_link_df())
+        self._set(ctrl, arrows=True);  self.assertEqual(self._state(ctrl), (True, False))
+        self._set(ctrl, arrows=False); self.assertEqual(self._state(ctrl), (False, False))
 
 
 class TestPanelizePayloadGuard(_UnfilteredLoggerMixin, unittest.TestCase):

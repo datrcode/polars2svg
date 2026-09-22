@@ -113,7 +113,16 @@ def test_linkpi_menu_parity(linkpi_page):
     '''The picker menu is the densest JS-only state in the project -- `menu_open`,
     `menu_index`, `menu_kind` and a 2.5s auto-commit timer, none of which reach Python
     until a commit.  A port that rebuilt the DOM at the wrong moment would lose it, which
-    is precisely what U5 used to do.'''
+    is precisely what U5 used to do.
+
+    Opened with shift-w rather than the ctrl-l this used to press.  ctrl-l opened the
+    link-size picker and the configuration panel absorbed that entry point, so the old
+    gesture now falls through the binding chain and opens nothing -- it would be tracing
+    the absence of a menu.  shift-w reaches the same state machine through a door that
+    still exists, and the gesture's name is if anything more accurate for it.  The menu
+    the panel *did* absorb is covered end to end in test_config_panel.py and
+    test_menu_state_machine.py; a JS-only overlay is structurally invisible to this
+    trace anyway, which is why those tests had to be written rather than inherited.'''
     _ip_ = linkpi_page
     _ip_.settle()
     _trace_ = ParityTrace(_ip_)
@@ -123,7 +132,7 @@ def test_linkpi_menu_parity(linkpi_page):
     _trace_.quiesce()
 
     with _trace_.gesture('menu-open-layout'):
-        _ip_.press('l', ctrl=True)
+        _ip_.press('W')
 
     with _trace_.gesture('menu-next'):
         _ip_.press('j')

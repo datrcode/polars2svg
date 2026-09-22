@@ -1608,12 +1608,64 @@ _LABEL_MODE_STATE_      = {
 _LABEL_MODE_FOR_FLAGS_  = {(False, False): 'no labels',   (True, False): 'node labels',
                            (True, True): 'node + link labels', (False, True): 'link labels'}
 
+# ── the configuration panel (20260921_config_panel_design.md) ──
+#
+# The panel is info_str made editable and given room (CP2): a state display you leave
+# open while you work, not a menu you open, use and close.  It absorbed twelve bindings
+# -- a, shift-a, ctrl-a, b, l, shift-l, ctrl-l, shift-o, ctrl-o, shift-p, ctrl-p and
+# ctrl-shift-s -- which is what gives the left-hand keys 'b' and 'l' back (CP1).
+#
+# Each row IS a menu kind, so its value list, per-value mnemonics and display strings all
+# come from menu_items, the same place the picker reads.  That is what makes CP3 (Enter
+# re-opens the full picker for the row) a new entry point rather than a second
+# implementation of every value set.
+#
+# Four of the nine rows had no picker of their own, so they get one here.  'off'/'on'
+# rather than booleans because the panel cycles LABELS -- a row is a list of values and
+# the two-valued ones are not a special case.
+_ON_OFF_ITEMS_       = [['f', 'off'], ['n', 'on']]
+_BACKGROUND_STATES_  = ['off', 'on', 'on + labels']    # index == self.background_state
+_background_state_items_ = [['f', 'off'], ['n', 'on'], ['l', 'on + labels']]
+
+def _label_mode_items(modes: list[str]) -> list[list[str]]:
+    """Positional-digit mnemonics, like the link-shape picker.
+
+    Built per graph rather than once: labelModeCycle() returns three modes or five
+    depending on whether the relationships carry a label field, so a fixed mnemonic per
+    mode would leave gaps in the short list.
+    """
+    return [[str(_i_ + 1), _m_] for _i_, _m_ in enumerate(modes)]
+
+#: [mnemonic, menu kind, row label].  Order is the panel's top-to-bottom order.
+#:
+#: Mnemonics avoid 'a' (the panel key, which advances the row cursor while open) and
+#: each other; they are the row's distinguishing letter, not always its first --
+#: 'h' for sHape and 'z' for siZe, the same second-letter trick the size picker
+#: already uses ('g' for large, 'o' for none).
+#:
+#: Arrows and timing marks are two rows and not one, which is strictly better than the
+#: 4-state 'a' cycle they replace: that cycle flipped exactly one of the two per step, so
+#: reaching a given combination cost up to three presses.  Two rows reach any of the four
+#: in one.
+_CONFIG_PANEL_ROWS_ = [
+    ['r', 'link_arrows',      'arrows'],
+    ['t', 'timing_marks',     'timing marks'],
+    ['p', 'timing_spacing',   'spacing'],
+    ['l', 'label_mode',       'labels'],
+    ['h', 'link_shape',       'link shape'],
+    ['z', 'link_size',        'link size'],
+    ['o', 'link_opacity',     'link opacity'],
+    ['n', 'node_size',        'node size'],
+    ['b', 'background_state', 'background'],
+]
+
 _LINKPI_KEYBOARD_COMMANDS_ = """
 in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closes
 / . | search: type substring + Enter (prefix +add -remove &intersect); Escape to cancel
-a . | cycle link arrows / timing marks (arrows-only when no time field)
- .. | shift-a ........ | open timing-mark spacing picker (px); ctrl-a reverses
-b . | cycle background (none | background | background + labels)
+a . | open the appearance panel: arrows, timing marks, labels, link shape/size/opacity, node size, background
+ .. | in the panel ... | space cycles the row, shift-space reverses, enter opens that row's picker, esc closes
+ .. | ............... | a / shift-a move the row cursor; r arrows, t timing marks, p spacing, l labels
+ .. | ............... | h link shape, z link size, o link opacity, n node size, b background
  .. | shift-b ........ | open background picker (flow field / neighborhood / clear); committing runs it
 c . | reset view or focus view on selected
 esc | cancel the running layout (keeps its best-so-far result)
@@ -1628,11 +1680,7 @@ f . | edge unfilter: add rows on visible edges into the view (selected: scope to
 g . | hold and drag to lay out (shape comes from the layout-mode picker)
  .. | shift-g ........ | open layout-mode picker: mnemonic key selects
 h . | toggle help display
-l . | open link shape picker (line | curve | flowmap); l cycles
- .. | shift-l ........ | open link size picker (ctrl-l reverses)
 n . | select node under mouse by shape (shift, ctrl, and ctrl-shift apply)
- .. | shift-o ........ | open link opacity picker (ctrl-o reverses)
- .. | shift-p ........ | open node size picker (ctrl-p reverses)
 q . | invert selection
  .. | shift-q ........ | common neighbors
 r . | toggle brush (broadcast nearest edges/nodes to linked views)
@@ -1640,7 +1688,6 @@ r . | toggle brush (broadcast nearest edges/nodes to linked views)
 s . | set sticky labels
  .. | shift-s ........ | remove sticky labels from selected
  .. | ctrl-s ......... | add selected to sticky labels
- .. | ctrl-shift-s ... | cycle labels (none | node | node+link | link | sticky)
 t . | consolidate .... | shift-t (horizontal)
 u . | undo last layout action (limited undo's)
 v . | consolidate vertically (ctrl-t also, where the browser allows)
@@ -1779,6 +1826,20 @@ class LINKPI(JSComponent):
     link_opacity_choice           = param.String(default='')
     link_shape_choice             = param.String(default='')
     timing_spacing_choice         = param.String(default='')
+    # The configuration panel's four remaining rows.  The five above already had a
+    # picker and therefore a param; these did not, and the panel needs a value it can
+    # both display and write for every row.  Python mirrors the live state onto them
+    # (__syncConfigPanel__) and adopts what the browser writes (applyConfigChoice) --
+    # exactly the round trip the *_choice params above make through applySizeChoice.
+    link_arrows_choice            = param.String(default='off')
+    timing_marks_choice           = param.String(default='off')
+    label_mode_choice             = param.String(default='no labels')
+    background_state_choice       = param.String(default=_BACKGROUND_STATES_[0])
+    #: [mnemonic, menu kind, label, enabled] per row.  The enabled flag is recomputed
+    #: from the current layer on every refresh: a row whose prerequisite is missing is
+    #: greyed and skipped by the cursor, because the alternative -- space silently doing
+    #: nothing -- reads as the panel being broken.
+    config_panel_rows             = param.List(default=[])
     keyboardhelp_x                = param.Integer(default=-1000)
     x0_middle                     = param.Integer(default=0)
     y0_middle                     = param.Integer(default=0)
@@ -1852,6 +1913,14 @@ class LINKPI(JSComponent):
                                              lambda lbl: FLOWMAP if lbl == 'flowmap' else None,
                                              unit='edges'),
                 'timing_spacing': _timing_spacing_items_l_,
+                # The config panel's own rows.  'label_mode' is replaced per graph in
+                # __syncConfigPanel__ -- linkLabelsAvailable() decides whether the cycle
+                # is three modes or five -- and is seeded here with the full list so the
+                # kind exists before the first refresh.
+                'link_arrows':      [list(_i_) for _i_ in _ON_OFF_ITEMS_],
+                'timing_marks':     [list(_i_) for _i_ in _ON_OFF_ITEMS_],
+                'label_mode':       _label_mode_items(_LABEL_MODES_),
+                'background_state': [list(_i_) for _i_ in _background_state_items_],
             },
             mod_inner=('' if use_webgpu else _linkp_._repr_svg_()),
             **kwargs)
@@ -2021,7 +2090,10 @@ class LINKPI(JSComponent):
         else:          self.mod_inner = _linkp_._repr_svg_()
         self.allentitiespath = _linkp_.__createPathDescriptionForAllEntities__()
         self.selectionpath   = 'M -100 -100 l 10 0 l 0 10 l -10 0 l 0 -10 Z'
-        self.info_str        = f'0 Selected | {self.label_mode} | {self.layout_mode} | {self.layout_operation} | {self.__backgroundStateLabel__()}'
+        # label_mode and the background state left info_str when they became panel rows
+        # (design section 6).  layout_mode / layout_operation stay: they are NOT panel
+        # rows (CP-open, decided against), so this line is the only place they show.
+        self.info_str        = f'0 Selected | {self.layout_mode} | {self.layout_operation}'
 
         self._layout_registry     = self.__buildLayoutRegistry__()
         self._background_registry = self.__buildBackgroundRegistry__()
@@ -2041,6 +2113,8 @@ class LINKPI(JSComponent):
         self.param.watch(self.applyLayoutChoice,      ['layout_mode', 'layout_operation'])
         self.param.watch(self.applyBackgroundChoice,  'background_op_seq')
         self.param.watch(self.applySizeChoice,        ['link_size_choice', 'node_size_choice', 'link_opacity_choice', 'link_shape_choice', 'timing_spacing_choice'])
+        self.param.watch(self.applyConfigChoice,      ['link_arrows_choice', 'timing_marks_choice', 'label_mode_choice', 'background_state_choice'])
+        self.__syncConfigPanel__()
         if use_webgpu:
             self.param.watch(self.applyGpuError,      'gpu_error')
 
@@ -2477,6 +2551,15 @@ class LINKPI(JSComponent):
     # not in the cycle (link labels became unreachable after a shape/relationship change)
     # restarts the walk rather than sticking.
     #
+    # labelModeCycle() is what __syncConfigPanel__ builds the 'labels' row from, so it is
+    # still the single definition of which modes this graph can reach.  nextLabelMode()
+    # is no longer called from inside this class -- ctrl-shift-s used to walk the cycle
+    # with it and the configuration panel absorbed that binding; the panel steps through
+    # menu_items['label_mode'] in the browser, over the very same list.  It is kept
+    # because it is part of the external-caller surface below, and because "advance the
+    # label mode" is the one thing a programmatic driver would want and should not have
+    # to re-derive.
+    #
     def labelModeCycle(self):
         _lp_ = self.dfs_layout[0] if self.dfs_layout else None
         if _lp_ is not None and _lp_.linkLabelsAvailable(): return _LABEL_MODES_
@@ -2490,6 +2573,66 @@ class LINKPI(JSComponent):
     #
     # ^^^ -- These methods are for external callers
     #
+
+    #
+    # ── the configuration panel (20260921_config_panel_design.md) ──
+    #
+    # __configPanelRows__()   - the row table with each row's prerequisite evaluated
+    # __configCurrentValue__() - the live value behind one of the four panel-only params
+    # __syncConfigPanel__()   - mirror both onto the params the browser reads
+    #
+    # Dependency gating, which the picker menus never needed: a row whose prerequisite
+    # is missing is greyed and skipped by the cursor.  Get this wrong and `space`
+    # silently does nothing, which reads as the panel being broken rather than as the
+    # setting being unavailable.
+    #
+    def __configPanelRows__(self) -> list[list[Any]]:
+        _ln_       = self.dfs_layout[self.df_level]
+        _marks_on_ = getattr(_ln_, '_time_field_', None) is not None
+        _rows_     = []
+        for _m_, _kind_, _label_ in _CONFIG_PANEL_ROWS_:
+            if   _kind_ == 'timing_marks':
+                # CP8: the marks are on when the LinkP's time field is set, and
+                # self._timing_time_ is the field to set it back to.  Without one there
+                # is nothing the row could turn on.
+                _on_ = self._timing_time_ is not None
+            elif _kind_ == 'timing_spacing':
+                _on_ = _marks_on_              # spacing is meaningless with no marks
+            elif _kind_ == 'background_state':
+                # Cycling the display state with nothing to display is the same no-op the
+                # old 'b' key was; the producer picker (shift-b) is what supplies one.
+                _on_ = self.layout_background is not None
+            else:
+                _on_ = True
+            _rows_.append([_m_, _kind_, _label_, _on_])
+        return _rows_
+
+    def __configCurrentValue__(self, name: str) -> str:
+        _ln_ = self.dfs_layout[self.df_level]
+        if   name == 'link_arrows_choice':
+            return 'on' if bool(getattr(_ln_, 'link_arrows', False)) else 'off'
+        elif name == 'timing_marks_choice':
+            return 'on' if getattr(_ln_, '_time_field_', None) is not None else 'off'
+        elif name == 'label_mode_choice':
+            return self.label_mode
+        return _BACKGROUND_STATES_[self.background_state]
+
+    def __syncConfigPanel__(self) -> None:
+        for _name_ in ('link_arrows_choice', 'timing_marks_choice',
+                       'label_mode_choice', 'background_state_choice'):
+            setattr(self, _name_, self.__configCurrentValue__(_name_))
+        # The 'labels' row's value list is the one that genuinely varies at runtime:
+        # linkLabelsAvailable() gains or loses the two link-label states as the stack is
+        # navigated.  Reassigned only on a real change -- menu_items is a Dict param and
+        # every write ships the whole thing to the browser.
+        _modes_ = self.labelModeCycle()
+        if [_lbl_ for _, _lbl_ in self.menu_items.get('label_mode', [])] != list(_modes_):
+            _items_ = dict(self.menu_items)
+            _items_['label_mode'] = _label_mode_items(_modes_)
+            self.menu_items = _items_
+        _rows_ = self.__configPanelRows__()
+        if _rows_ != self.config_panel_rows:
+            self.config_panel_rows = _rows_
 
     #
     # __renderView__() - create a new LinkP for the given DataFrame using current pos/view
@@ -3110,9 +3253,17 @@ class LINKPI(JSComponent):
         if (info):
             _cap_ = (' (labels capped)'
                      if len(self.selected_entities) > self.max_selection_labels else '')
-            self.info_str = f'{len(self.selected_entities)} Selected{_cap_} | {self.label_mode} | {self.layout_mode} | {self.layout_operation} | {self.__backgroundStateLabel__()}'
+            # label_mode and the background state moved to the configuration panel and
+            # came out of here with it.  layout_mode / layout_operation did NOT become
+            # panel rows (CP-open), so this line remains their only display.
+            self.info_str = f'{len(self.selected_entities)} Selected{_cap_} | {self.layout_mode} | {self.layout_operation}'
             if self._last_cost_note_ is not None:
                 self.info_str += f' | {self._last_cost_note_}'
+        # Unconditional, and not under `info`: several callers pass info=False precisely
+        # to protect a cost note, and none of them mean "and leave the panel stale".
+        # Every write here is guarded against being a no-op, so a refresh that changed
+        # nothing ships nothing.
+        self.__syncConfigPanel__()
         if (all_ents): self.allentitiespath  = self.dfs_layout[self.df_level].__createPathDescriptionForAllEntities__()
         if (sel_ents):
             self.selectionpath    = self.dfs_layout[self.df_level].__createPathDescriptionOfSelectedEntities__(my_selection=self.selected_entities)
@@ -3270,16 +3421,16 @@ class LINKPI(JSComponent):
                 # _applyLabelStateAcrossStack_() pushes them onto every layer
                 # (incl. the template future layers clone from), so labels stay
                 # consistent as the stack is navigated or grown.
-                if   self.shiftkey and self.ctrlkey:   # ctrl-shift-s: cycle label visibility mode
-                    self.label_mode = self.nextLabelMode()
-                    self._applyLabelStateAcrossStack_()
-                    self.__refreshView__(all_ents=False, sel_ents=False)
-                else:                                  # change the sticky-label set (s / shift-s / ctrl-s)
-                    if   self.shiftkey: self.sticky_labels = self.sticky_labels - self.selected_entities  # remove selected
-                    elif self.ctrlkey:  self.sticky_labels = self.sticky_labels | self.selected_entities  # add selected
-                    else:               self.sticky_labels = set(self.selected_entities)                  # replace with selected
-                    self._applyLabelStateAcrossStack_()
-                    self.__refreshView__(info=False, all_ents=False, sel_ents=False)
+                #
+                # These three act on the SELECTION, which is why they stayed on keys
+                # while ctrl-shift-s (cycle label_mode, a description of the render)
+                # became the panel's 'labels' row.  ctrl-shift-s therefore lands on the
+                # shiftkey branch now and removes the selection from the sticky set.
+                if   self.shiftkey: self.sticky_labels = self.sticky_labels - self.selected_entities  # remove selected
+                elif self.ctrlkey:  self.sticky_labels = self.sticky_labels | self.selected_entities  # add selected
+                else:               self.sticky_labels = set(self.selected_entities)                  # replace with selected
+                self._applyLabelStateAcrossStack_()
+                self.__refreshView__(info=False, all_ents=False, sel_ents=False)
 
             #
             # "T" - Collapse (to a point, horizontal line, or vertical line)
@@ -3298,13 +3449,6 @@ class LINKPI(JSComponent):
             elif self.key_op_finished == 'u' and len(self.previous_layouts) > 0:
                 self.apply_undo()
                 self.__refreshView__(info=False)
-
-            #
-            # "B" - Cycle the background display (none -> background -> background + labels)
-            #
-            elif self.key_op_finished == 'b':
-                self.background_state = (self.background_state + 1) % 3
-                self.__applyBackgroundState__()
 
             #
             # "D" - Detect graph communities (louvain) & color the nodes by community;
@@ -3326,25 +3470,6 @@ class LINKPI(JSComponent):
                         _node_color_ = None
                     if _node_color_ is not None:
                         self.updateLinkNodeParam('node_color', _node_color_)
-
-            #
-            # "A" - Cycle link arrows x timing marks. With a time field available the four
-            #       states cycle: (no arrows / no marks) -> (arrows) -> (arrows / marks) ->
-            #       (marks) -> ... ; each step flips exactly one of the two. Without a time
-            #       field, 'a' just toggles arrows (timing marks are unavailable).
-            #
-            elif self.key_op_finished == 'a':
-                _arrows_on_ = bool(getattr(_ln_, 'link_arrows', False))
-                if self._timing_time_ is None:
-                    _new_arrows_ = not _arrows_on_
-                    self.updateLinkNodeParam('link_arrows', _new_arrows_)
-                else:
-                    _marks_on_ = getattr(_ln_, '_time_field_', None) is not None
-                    _encode_   = {(False, False): 0, (True, False): 1, (True, True): 2, (False, True): 3}
-                    _decode_   = {0: (False, False), 1: (True, False), 2: (True, True), 3: (False, True)}
-                    _na_, _nm_ = _decode_[(_encode_[(_arrows_on_, _marks_on_)] + 1) % 4]
-                    if   _na_ != _arrows_on_: self.updateLinkNodeParam('link_arrows', _na_)
-                    elif _nm_ != _marks_on_:  self.updateLinkNodeParam('time', self._timing_time_ if _nm_ else None)
 
             #
             # "Z" - Select nodes with the same color as the one that the mouse is over
@@ -4016,6 +4141,41 @@ class LINKPI(JSComponent):
             try:                            _sp_ = float(event.new)
             except (TypeError, ValueError): return
             self.updateLinkNodeParam('timing_marks_spacing', _sp_)
+
+    #
+    # applyConfigChoice() - a configuration-panel row (or its Enter-opened picker) set
+    # one of the four params that have no picker of their own; apply it.
+    #
+    # Idempotent BY VALUE rather than behind a suppression flag.  __syncConfigPanel__
+    # writes these same params to mirror state that is already applied, and an async
+    # watcher runs after any flag a synchronous writer could have set and cleared -- so
+    # the flag idiom used elsewhere in this file would not actually suppress anything
+    # here.  Comparing against the live value is what makes the mirror write inert, and
+    # it holds however the write is dispatched.
+    #
+    async def applyConfigChoice(self, event: Any) -> None:
+        if event.new == self.__configCurrentValue__(event.name):
+            return
+        if   event.name == 'link_arrows_choice':
+            self.updateLinkNodeParam('link_arrows', event.new == 'on')
+        elif event.name == 'timing_marks_choice':
+            # CP8 -- the marks ARE the time field; self._timing_time_ is the one to
+            # restore.  The row is gated off when there is none, so this is belt and
+            # braces against a stale browser write.
+            if self._timing_time_ is None:
+                return
+            self.updateLinkNodeParam('time', self._timing_time_ if event.new == 'on' else None)
+        elif event.name == 'label_mode_choice':
+            if event.new not in _LABEL_MODE_STATE_:
+                return
+            self.label_mode = event.new
+            self._applyLabelStateAcrossStack_()
+            self.__refreshView__(all_ents=False, sel_ents=False)
+        elif event.name == 'background_state_choice':
+            if event.new not in _BACKGROUND_STATES_:
+                return
+            self.background_state = _BACKGROUND_STATES_.index(event.new)
+            self.__applyBackgroundState__()
 
 
 class LINKPI_GPU(LINKPI):

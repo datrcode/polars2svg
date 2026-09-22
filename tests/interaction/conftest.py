@@ -211,6 +211,44 @@ if _PLAYWRIGHT_AVAILABLE_:
         return _ip_
 
     @pytest.fixture
+    def timing_linkp() -> Any:
+        """A LINKPI with a time field, so every configuration-panel row is enabled.
+
+        Two of the nine rows have prerequisites (20260921_config_panel_design.md
+        section 6): 'timing marks' needs a time field -- explicit ``time=`` or a lone
+        auto-detected date column -- and 'spacing' needs the marks actually on.  The
+        default fixtures have no date column at all, so both are correctly greyed there
+        and the cursor skips them, which makes them untestable from those pages.
+
+        ``time=`` is explicit rather than left to auto-detection: one date column is
+        detected and two are ambiguous, and a fixture that silently changed category by
+        gaining a column would be a puzzle rather than a failure.  Marks therefore start
+        ON here, which is also what enables the spacing row.
+        """
+        import datetime
+        _p2s_ = Polars2SVG()
+        _base_ = datetime.datetime(2024, 1, 1)
+        _df_  = pl.DataFrame({'fm': ['a', 'b', 'c', 'a'],
+                              'to': ['b', 'c', 'a', 'c'],
+                              'ts': [_base_ + datetime.timedelta(hours=6 * _i_)
+                                     for _i_ in range(4)]})
+        _lp_  = _p2s_.linkp(_df_, relationships=[('fm', 'to')], time='ts', wxh=(400, 300),
+                            view_window=(0.0, 0.0, 1.0, 1.0),
+                            pos={'a': (0.15, 0.20), 'b': (0.85, 0.20), 'c': (0.50, 0.80)})
+        _lp_._repr_svg_()
+        return _lp_
+
+    @pytest.fixture
+    def timing_page(page: Any, served: Callable[..., Any],
+                    timing_linkp: Any) -> InteractivePage:
+        """A served, loaded LINKPI whose configuration panel has no gated-off rows."""
+        _app_ = served([[timing_linkp]])
+        page.goto(_app_.url, wait_until='load')
+        _ip_ = InteractivePage(page, timing_linkp)
+        _ip_.app = _app_
+        return _ip_
+
+    @pytest.fixture
     def brush_ready_page(linkpi_page: Any) -> Any:
         """A settled, focused LINKPI ready for a brush keystroke.
 

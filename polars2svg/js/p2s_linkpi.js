@@ -33,7 +33,12 @@ export function render({ model, el }) {
 
   const state = {
     menu_items: model.menu_items,
-    menu_open: false, menu_kind: '', menu_index: 0, menu_timer: null,
+    menu_open: false, menu_kind: '', menu_index: 0, menu_timer: null, menu_x: 8,
+    // The configuration panel (20260921_config_panel_design.md).  panel_pending holds
+    // the values cycled but not yet committed -- CP7: cycling renders every intermediate
+    // state, and link shape passes THROUGH flowmap on its way to off, so the write is
+    // debounced rather than issued on every space.
+    panel_open: false, panel_row: 0, panel_pending: {}, panel_timer: null, panel_w: 0,
     x0_drag: -10, y0_drag: -10, x1_drag: -5, y1_drag: -5,
     cur_mouse_x: 0, cur_mouse_y: 0,
     drag_op: false, move_op: false, unselected_move_op: false,
@@ -111,6 +116,9 @@ export function render({ model, el }) {
 
   const brushindicator = svgEl('g', { id: 'brushindicator', 'pointer-events': 'none' }, svgparent);
   const brushmodelabel = svgEl('g', { id: 'brushmodelabel', 'pointer-events': 'none' }, svgparent);
+  // Before #pickermenu so that a picker opened FROM the panel draws over it rather
+  // than under it; menuRender also shifts that picker clear of the panel (state.menu_x).
+  const configpanel    = svgEl('g', { id: 'configpanel', 'pointer-events': 'none' }, svgparent);
   const pickermenu     = svgEl('g', { id: 'pickermenu', 'pointer-events': 'none' }, svgparent);
 
   keyboardhelp.innerHTML = model.kbd_help_svg;
@@ -158,16 +166,49 @@ export function render({ model, el }) {
       if (state.menu_open) { menuCommit(); }
   }
 
+  // Menu kind -> the param that holds its current value, and the header it draws.
+  //
+  // A table rather than the ternary chains these replace, because the config panel
+  // (CP3) both re-enters these pickers and reads the same values to render its rows,
+  // and four new kinds arrived with it -- three chains of twelve branches each is how
+  // a kind ends up handled in two places and missed in the third.  The WRITE side
+  // stays an explicit chain in menuSetValue: only it knows that committing a
+  // background also bumps background_op_seq.
+  const MENU_PARAM_ = {
+      background:       'background_operation',
+      operation:        'layout_operation',
+      mode:             'layout_mode',
+      link_size:        'link_size_choice',
+      link_opacity:     'link_opacity_choice',
+      link_shape:       'link_shape_choice',
+      timing_spacing:   'timing_spacing_choice',
+      node_size:        'node_size_choice',
+      link_arrows:      'link_arrows_choice',
+      timing_marks:     'timing_marks_choice',
+      label_mode:       'label_mode_choice',
+      background_state: 'background_state_choice',
+  };
+
+  const MENU_HEADER_ = {
+      background:       'background:',
+      operation:        'layout operation:',
+      mode:             'layout mode:',
+      link_size:        'link size:',
+      link_opacity:     'link opacity:',
+      link_shape:       'link shape:',
+      timing_spacing:   'timing mark spacing (px):',
+      node_size:        'node size:',
+      link_arrows:      'link arrows:',
+      timing_marks:     'timing marks:',
+      label_mode:       'labels:',
+      // NOT 'background:' -- that header belongs to the producer picker (shift-b), and
+      // the browser tests address a picker by the header text it draws.
+      background_state: 'background display:',
+  };
+
   function menuOpen(event) {
       var _items_   = state.menu_items[state.menu_kind];
-      var _current_ = (state.menu_kind == 'background')   ? model.background_operation
-                    : (state.menu_kind == 'operation')    ? model.layout_operation
-                    : (state.menu_kind == 'mode')         ? model.layout_mode
-                    : (state.menu_kind == 'link_size')    ? model.link_size_choice
-                    : (state.menu_kind == 'link_opacity') ? model.link_opacity_choice
-                    : (state.menu_kind == 'link_shape')   ? model.link_shape_choice
-                    : (state.menu_kind == 'timing_spacing') ? model.timing_spacing_choice
-                    :                                       model.node_size_choice;
+      var _current_ = model[MENU_PARAM_[state.menu_kind]];
       state.menu_index = 0;
       for (var _i_ = 0; _i_ < _items_.length; _i_++) {
           if (_items_[_i_][1] == _current_) { state.menu_index = _i_; break; }
@@ -180,14 +221,10 @@ export function render({ model, el }) {
   function menuRender(event) {
       if (!state.menu_open) { return; }
       var _items_  = state.menu_items[state.menu_kind];
-      var _header_ = (state.menu_kind == 'background')   ? 'background:'
-                   : (state.menu_kind == 'operation')    ? 'layout operation:'
-                   : (state.menu_kind == 'mode')         ? 'layout mode:'
-                   : (state.menu_kind == 'link_size')    ? 'link size:'
-                   : (state.menu_kind == 'link_opacity') ? 'link opacity:'
-                   : (state.menu_kind == 'link_shape')   ? 'link shape:'
-                   : (state.menu_kind == 'timing_spacing') ? 'timing mark spacing (px):'
-                   :                                       'node size:';
+      var _header_ = MENU_HEADER_[state.menu_kind];
+      // state.menu_x is 8 for every keyboard entry point and is only moved when the
+      // config panel opens a picker, so that the two overlays sit side by side.
+      var _ox_     = state.menu_x;
       var _maxlen_ = _header_.length;
       for (var _i_ = 0; _i_ < _items_.length; _i_++) {
           _maxlen_ = Math.max(_maxlen_, (_items_[_i_][2] || _items_[_i_][1]).length + 4);
@@ -195,30 +232,42 @@ export function render({ model, el }) {
       var _w_menu_ = _maxlen_ * 7 + 20,
           _h_menu_ = (_items_.length + 1) * 14 + 12,
           _style_  = 'font-family: \'Courier New\', monospace; font-size: 11px; fill: #222;';
-      var _html_ = '<rect x="8" y="8" width="' + _w_menu_ + '" height="' + _h_menu_ + '"'
+      var _html_ = '<rect x="' + _ox_ + '" y="8" width="' + _w_menu_ + '" height="' + _h_menu_ + '"'
                  + ' fill="rgba(240,240,240,0.95)" stroke="#888" stroke-width="1" rx="3"/>'
-                 + '<rect x="10" y="' + (8 + 1 + (state.menu_index + 1) * 14) + '" width="' + (_w_menu_ - 4) + '" height="13"'
+                 + '<rect x="' + (_ox_ + 2) + '" y="' + (8 + 1 + (state.menu_index + 1) * 14) + '" width="' + (_w_menu_ - 4) + '" height="13"'
                  + ' fill="rgba(100,150,255,0.3)"/>'
-                 + '<text x="18" y="' + (8 + 12) + '" style="' + _style_ + ' font-weight: bold;">' + _header_ + '</text>';
+                 + '<text x="' + (_ox_ + 10) + '" y="' + (8 + 12) + '" style="' + _style_ + ' font-weight: bold;">' + _header_ + '</text>';
       for (var _i_ = 0; _i_ < _items_.length; _i_++) {
-          _html_ += '<text x="18" y="' + (8 + 12 + (_i_ + 1) * 14) + '" style="' + _style_ + '">'
+          _html_ += '<text x="' + (_ox_ + 10) + '" y="' + (8 + 12 + (_i_ + 1) * 14) + '" style="' + _style_ + '">'
                   + '[' + _items_[_i_][0] + '] ' + (_items_[_i_][2] || _items_[_i_][1]) + '</text>';
       }
       pickermenu.innerHTML = _html_;
   }
 
   function menuCommit(event) {
-      var _lbl_ = state.menu_items[state.menu_kind][state.menu_index][1];
-      if      (state.menu_kind == 'background')   { model.background_operation = _lbl_;
-                                                    model.background_op_seq   = model.background_op_seq + 1; }
-      else if (state.menu_kind == 'operation')    { model.layout_operation   = _lbl_; }
-      else if (state.menu_kind == 'mode')         { model.layout_mode        = _lbl_; }
-      else if (state.menu_kind == 'link_size')    { model.link_size_choice    = _lbl_; }
-      else if (state.menu_kind == 'link_opacity') { model.link_opacity_choice = _lbl_; }
-      else if (state.menu_kind == 'link_shape')   { model.link_shape_choice   = _lbl_; }
-      else if (state.menu_kind == 'timing_spacing') { model.timing_spacing_choice = _lbl_; }
-      else                                        { model.node_size_choice    = _lbl_; }
+      menuSetValue(state.menu_kind, state.menu_items[state.menu_kind][state.menu_index][1]);
       menuClose();
+  }
+
+  // The single write path for every choice a picker or a panel row can make.  Kept an
+  // explicit chain rather than MENU_PARAM_[kind]: the background producer commits a
+  // SEQUENCE number as well as a label -- re-picking the same producer has to re-run it,
+  // and a param write of an unchanged value fires no watcher -- and that asymmetry is
+  // easier to see spelled out than as a special case beside a table lookup.
+  function menuSetValue(kind, label) {
+      if      (kind == 'background')       { model.background_operation  = label;
+                                             model.background_op_seq     = model.background_op_seq + 1; }
+      else if (kind == 'operation')        { model.layout_operation      = label; }
+      else if (kind == 'mode')             { model.layout_mode           = label; }
+      else if (kind == 'link_size')        { model.link_size_choice      = label; }
+      else if (kind == 'link_opacity')     { model.link_opacity_choice   = label; }
+      else if (kind == 'link_shape')       { model.link_shape_choice     = label; }
+      else if (kind == 'timing_spacing')   { model.timing_spacing_choice = label; }
+      else if (kind == 'node_size')        { model.node_size_choice      = label; }
+      else if (kind == 'link_arrows')      { model.link_arrows_choice    = label; }
+      else if (kind == 'timing_marks')     { model.timing_marks_choice   = label; }
+      else if (kind == 'label_mode')       { model.label_mode_choice     = label; }
+      else if (kind == 'background_state') { model.background_state_choice = label; }
   }
 
   function menuClose(event) {
@@ -226,7 +275,11 @@ export function render({ model, el }) {
       state.menu_timer     = null;
       state.menu_open      = false;
       state.menu_kind      = '';
+      state.menu_x         = 8;
       pickermenu.innerHTML = '';
+      // A picker opened from the panel hands control back to it, showing whatever was
+      // just committed.  panelRender is a no-op when the panel is closed.
+      panelRender();
   }
 
   function menuArmTimer(event) {
@@ -239,6 +292,146 @@ export function render({ model, el }) {
           // as before.
           if (_sel_ && _sel_[3]) { menuClose(); } else { menuCommit(); }
       }, 2500);
+  }
+
+
+  // ── the configuration panel ────────────────────────────────────────────────
+  //
+  // 20260921_config_panel_design.md.  It is info_str made editable and given room
+  // (CP2): a state display you leave open while you work, not a menu you open, use and
+  // close.  Nine rows, one per persistent visual-encoding setting, each showing its
+  // CURRENT value only (design section 5 -- shift-space retires the inline-all preview,
+  // and the real value sets would size the panel to a ~500px rectangle over the graph).
+  //
+  // A row IS a menu kind.  model.config_panel_rows carries [mnemonic, kind, label,
+  // enabled] and state.menu_items[kind] carries the values, their per-value mnemonics
+  // and their display strings -- so `space` cycles the same list `Enter` shows in full
+  // (CP3), and there is one source of truth per row rather than two that drift.
+  //
+  // Modal while open (CP5): this block returns before the binding chain, exactly as the
+  // picker's does.  preventDefault() here is also what reclaims `space` from the
+  // browser's scroll-the-page default.
+
+  function panelRows() { return model.config_panel_rows || []; }
+
+  // The value a row displays: what has been cycled but not yet committed, else what
+  // Python currently holds.  Everything undecided lives in panel_pending, so a commit
+  // that Python REFUSES -- the flowmap confirm gate resets link_shape_choice -- lands
+  // back here as an ordinary param change and the row shows the real value again.
+  function panelValue(kind) {
+      var _p_ = state.panel_pending[kind];
+      if (_p_ !== undefined) { return _p_; }
+      var _v_ = model[MENU_PARAM_[kind]];
+      return (_v_ === undefined || _v_ === null) ? '' : _v_;
+  }
+
+  function panelIndexOf(kind, value) {
+      var _items_ = state.menu_items[kind] || [];
+      for (var _i_ = 0; _i_ < _items_.length; _i_++) {
+          if (_items_[_i_][1] == value) { return _i_; }
+      }
+      return -1;
+  }
+
+  function panelRender(event) {
+      if (!state.panel_open) { configpanel.innerHTML = ''; return; }
+      var _rows_   = panelRows();
+      var _header_ = 'appearance:';
+      var _lw_     = 0;
+      for (var _i_ = 0; _i_ < _rows_.length; _i_++) { _lw_ = Math.max(_lw_, _rows_[_i_][2].length); }
+      // Fixed-width label + dot leader, so the value column aligns and the panel reads
+      // as a table rather than nine ragged lines.
+      var _texts_ = [], _maxlen_ = _header_.length;
+      for (var _i_ = 0; _i_ < _rows_.length; _i_++) {
+          var _lead_ = _rows_[_i_][2] + ' ';
+          while (_lead_.length < _lw_ + 5) { _lead_ += '.'; }
+          var _txt_ = '[' + _rows_[_i_][0] + '] ' + _lead_ + ' ' + panelValue(_rows_[_i_][1]);
+          _texts_.push(_txt_);
+          _maxlen_ = Math.max(_maxlen_, _txt_.length + 4);
+      }
+      var _w_ = _maxlen_ * 7 + 20,
+          _h_ = (_rows_.length + 1) * 14 + 12,
+          _style_ = 'font-family: \'Courier New\', monospace; font-size: 11px; fill: #222;';
+      var _html_ = '<rect x="8" y="8" width="' + _w_ + '" height="' + _h_ + '"'
+                 + ' fill="rgba(240,240,240,0.95)" stroke="#888" stroke-width="1" rx="3"/>'
+                 + '<rect x="10" y="' + (8 + 1 + (state.panel_row + 1) * 14) + '" width="' + (_w_ - 4) + '" height="13"'
+                 + ' fill="rgba(100,150,255,0.3)"/>'
+                 + '<text x="18" y="' + (8 + 12) + '" style="' + _style_ + ' font-weight: bold;">' + _header_ + '</text>';
+      for (var _i_ = 0; _i_ < _texts_.length; _i_++) {
+          // A disabled row is drawn greyed AND skipped by the cursor.  Either alone is
+          // the failure the design names: space silently does nothing and the panel
+          // looks broken.
+          var _grey_ = _rows_[_i_][3] ? '' : ' fill: #999;';
+          _html_ += '<text x="18" y="' + (8 + 12 + (_i_ + 1) * 14) + '" style="' + _style_ + _grey_ + '">'
+                  + _texts_[_i_] + '</text>';
+      }
+      configpanel.innerHTML = _html_;
+      state.panel_w = _w_;
+  }
+
+  function panelStep(delta) {
+      var _rows_ = panelRows();
+      if (_rows_.length === 0) { return; }
+      var _i_ = state.panel_row;
+      for (var _n_ = 0; _n_ < _rows_.length; _n_++) {
+          _i_ = (_i_ + delta + _rows_.length) % _rows_.length;
+          if (_rows_[_i_][3]) { state.panel_row = _i_; break; }
+      }
+      panelRender();
+  }
+
+  function panelCycle(delta) {
+      var _rows_ = panelRows(), _row_ = _rows_[state.panel_row];
+      if (!_row_ || !_row_[3]) { return; }
+      var _items_ = state.menu_items[_row_[1]] || [];
+      if (_items_.length === 0) { return; }
+      var _i_ = panelIndexOf(_row_[1], panelValue(_row_[1]));
+      // A value outside the row's list (a linkp built with something the menu does not
+      // carry) starts the walk rather than being stepped from a position it does not have.
+      _i_ = (_i_ < 0) ? 0 : (_i_ + delta + _items_.length) % _items_.length;
+      state.panel_pending[_row_[1]] = _items_[_i_][1];
+      panelRender();
+      panelArmCommit();
+  }
+
+  // CP7.  The pickers navigate without rendering and commit once on Enter; the panel
+  // renders live, so cycling link shape line -> curve -> flowmap -> off would render
+  // flowmap ON THE WAY PAST -- a force layout whose cost grows faster than linearly
+  // (linkp.py's own warning).  Debounced rather than Enter-to-commit because tapping
+  // space and watching the graph is the interaction that makes the panel worth having.
+  //
+  // Deliberately NOT menuArmTimer's 2.5s walk-away auto-commit (CP6): that one COMMITS
+  // AND CLOSES a transient picker, and a panel that closed itself while you looked at
+  // the graph would be a bug.  This one only flushes; the panel stays up.
+  function panelArmCommit() {
+      if (state.panel_timer != null) { clearTimeout(state.panel_timer); }
+      state.panel_timer = setTimeout(panelCommitPending, 300);
+  }
+
+  function panelCommitPending(event) {
+      if (state.panel_timer != null) { clearTimeout(state.panel_timer); }
+      state.panel_timer = null;
+      var _pending_ = state.panel_pending;
+      state.panel_pending = {};
+      for (var _k_ in _pending_) { menuSetValue(_k_, _pending_[_k_]); }
+      panelRender();
+  }
+
+  function panelOpen(from_end) {
+      var _rows_ = panelRows();
+      state.panel_open = true;
+      state.panel_row  = (from_end && _rows_.length > 0) ? _rows_.length - 1 : 0;
+      if (_rows_.length > 0 && !_rows_[state.panel_row][3]) { panelStep(from_end ? -1 : 1); }
+      else                                                  { panelRender(); }
+  }
+
+  // esc flushes rather than discards: the debounce is 300ms and closing inside it is a
+  // normal thing to do, so dropping the choice would read as the panel ignoring a
+  // keystroke.  This is not the walk-away commit CP6 rejects -- it takes an explicit esc.
+  function panelClose(event) {
+      panelCommitPending();
+      state.panel_open = false;
+      panelRender();
   }
 
   function myOnKeyDown(event) {
@@ -273,14 +466,14 @@ export function render({ model, el }) {
           // !ctrlKey on W and G below is deliberate even though nothing tests ctrlKey
           // for them any more: it keeps the chords deleted in U10 *inert* rather than
           // silently cycling forward, which is the opposite of what they used to do.
+          // Only shift-W and shift-G still have an entry point of their own.  The
+          // 'press the opening key again to step down' clauses for link size / opacity
+          // / shape / node size / timing spacing went with the bindings that opened
+          // those pickers (the config panel absorbed them); ArrowDown / j reach every
+          // menu, and those keys now fall through to the mnemonic scan and do nothing.
           else if (event.key === 'ArrowDown' || event.key === 'j' ||
                    (event.key === 'W' && state.menu_kind === 'operation'    && !event.ctrlKey) ||
-                   (event.key === 'G' && state.menu_kind === 'mode'         && !event.ctrlKey) ||
-                   (event.key === 'L' && state.menu_kind === 'link_size')    ||
-                   (event.key === 'O' && state.menu_kind === 'link_opacity') ||
-                   (event.key === 'l' && state.menu_kind === 'link_shape'   && !event.ctrlKey) ||
-                   (event.key === 'A' && state.menu_kind === 'timing_spacing') ||
-                   (event.key === 'P' && state.menu_kind === 'node_size')) {
+                   (event.key === 'G' && state.menu_kind === 'mode'         && !event.ctrlKey)) {
               state.menu_index = (state.menu_index + 1) % _items_.length;
               menuRender(); menuArmTimer();
           }
@@ -294,11 +487,11 @@ export function render({ model, el }) {
           // remain below pair with a *ctrl entry point* (ctrl-l opens the link-size
           // picker and steps back through it), and the audit measured all four as
           // page-interceptable.
-          else if (event.key === 'ArrowUp' || event.key === 'k' ||
-                   (event.key === 'l' && state.menu_kind === 'link_size'    && event.ctrlKey) ||
-                   (event.key === 'o' && state.menu_kind === 'link_opacity' && event.ctrlKey) ||
-                   (event.key === 'a' && state.menu_kind === 'timing_spacing' && event.ctrlKey) ||
-                   (event.key === 'p' && state.menu_kind === 'node_size'    && event.ctrlKey)) {
+          // The four ctrl reverse-cycles that used to live here (ctrl-l / ctrl-o /
+          // ctrl-a / ctrl-p) each paired with a ctrl ENTRY point, and both halves are
+          // gone: in the panel, shift-space reverses (CP4), which is the shift-for-a-
+          // variant idiom the rest of LINKPI uses.  ArrowUp / k still reverse any menu.
+          else if (event.key === 'ArrowUp' || event.key === 'k') {
               state.menu_index = (state.menu_index - 1 + _items_.length) % _items_.length;
               menuRender(); menuArmTimer();
           }
@@ -317,14 +510,50 @@ export function render({ model, el }) {
           }
           return;
       }
+      // CP5 -- modal for v1, the same shape as the picker block above.  Non-modal (only
+      // the panel's own keys captured, everything else falling through) is more useful,
+      // but it re-opens the keyspace conflict the panel exists to close.
+      if (state.panel_open) {
+          event.preventDefault();          // 'space' would otherwise scroll the page
+          var _prows_ = panelRows(), _prow_ = _prows_[state.panel_row];
+          if      (event.key === 'Escape') { panelClose(); }
+          else if (event.key === ' ')      { panelCycle(event.shiftKey ? -1 : 1); }
+          else if (event.key === 'Enter')  {
+              // Flush first: the picker opens on the CURRENT value, and a value cycled
+              // within the last 300ms is not committed yet.
+              panelCommitPending();
+              if (_prow_ && _prow_[3]) {
+                  state.menu_kind = _prow_[1];
+                  state.menu_x    = state.panel_w + 16;
+                  menuOpen();
+              }
+          }
+          else if (event.key === 'a' || event.key === 'ArrowDown' || event.key === 'j') { panelStep(1);  }
+          else if (event.key === 'A' || event.key === 'ArrowUp'   || event.key === 'k') { panelStep(-1); }
+          else if (event.key.length === 1) {
+              for (var _i_ = 0; _i_ < _prows_.length; _i_++) {
+                  if (_prows_[_i_][0] === event.key && _prows_[_i_][3]) {
+                      state.panel_row = _i_;
+                      panelRender();
+                      break;
+                  }
+              }
+          }
+          return;
+      }
       model.ctrlkey  = event.ctrlKey;
       model.shiftkey = event.shiftKey;
       model.x_mouse  = state.cur_mouse_x;
       model.y_mouse  = state.cur_mouse_y;
 
-      if      (event.key == "a" && !event.ctrlKey) { model.key_op_finished = 'a'; } // Toggle link arrows (on | off)
-      else if (event.key == "A" || (event.key == "a" && event.ctrlKey)) { if (event.ctrlKey) event.preventDefault(); state.menu_kind = 'timing_spacing'; menuOpen(); } // Open timing-mark spacing picker (shift-a forward, ctrl-a reverses)
-      else if (event.key == "b") { model.key_op_finished = 'b';  }  // Cycle background (none | background | background + labels)
+      // 'a' is the panel key, and it is one the panel itself frees -- the old 'a'
+      // (arrows x timing marks) and shift-a (spacing picker) are two of its rows now,
+      // so taking it costs nothing.  ctrl-a is deliberately NOT bound: with the ctrl
+      // entry points gone there is nothing to guard, so select-all goes back to the
+      // browser.  'b' and 'l' are now unbound and free for whatever needs a left-hand
+      // key next (the whole point of CP1).
+      if      (event.key == "a" && !event.ctrlKey) { panelOpen(false); } // Open the appearance panel; 'a' again advances the row cursor
+      else if (event.key == "A" && !event.ctrlKey) { panelOpen(true);  } // ...opening on the last row instead of the first
       else if (event.key == "B") { state.menu_kind = 'background'; menuOpen(); } // Open the background producer picker (committing runs it)
       else if (event.key == "c") { if (event.ctrlKey) event.preventDefault(); model.key_op_finished = 'c';  } // (if selected) zoom to selected, else zoom to entire view; ctrl-c copies (suppress native copy so it can't clobber our clipboard write)
       else if (event.key == "C") { if (event.ctrlKey) event.preventDefault(); model.key_op_finished = 'C';  } // Zoom to selected + neighbors; ctrl-shift-c copies labels
@@ -342,10 +571,9 @@ export function render({ model, el }) {
           if (model.keyboardhelp_x == -1000) { model.keyboardhelp_x =     5; }
           else                              { model.keyboardhelp_x = -1000; }
       }
-      else if (event.key == "l" && !event.ctrlKey) { state.menu_kind = 'link_shape'; menuOpen(); } // Open the link-shape picker menu; 'l' cycles
-      else if (event.key == "L" || (event.key == "l" && event.ctrlKey)) { if (event.ctrlKey) event.preventDefault(); state.menu_kind = 'link_size';    menuOpen(); } // Cycle link size
-      else if (event.key == "O" || (event.key == "o" && event.ctrlKey)) { if (event.ctrlKey) event.preventDefault(); state.menu_kind = 'link_opacity'; menuOpen(); } // Cycle link opacity
-      else if (event.key == "P" || (event.key == "p" && event.ctrlKey)) { if (event.ctrlKey) event.preventDefault(); state.menu_kind = 'node_size';    menuOpen(); } // Cycle node size
+      // l / shift-l / ctrl-l (link shape, link size), shift-o / ctrl-o (link opacity)
+      // and shift-p / ctrl-p (node size) are panel rows now -- 'a', then the row's
+      // mnemonic, then space; Enter still opens the very same picker.
       else if (event.key == "n" ||                                // Select nodes with the same shape as the one under the mouse
                event.key == "N") { model.key_op_finished = 'n';  }
       else if (event.key == "q") { model.key_op_finished = 'q';  } // Invert selection
@@ -369,7 +597,7 @@ export function render({ model, el }) {
           updateBrushCursor();
       }
       else if (event.key == "s") { if (event.ctrlKey) event.preventDefault(); model.key_op_finished = 's';  } // Set sticky labels; ctrl-s cycles label mode (ctrl-s is browser Save Page As)
-      else if (event.key == "S") { if (event.ctrlKey) event.preventDefault(); model.key_op_finished = 'S';  } // Subtract selected from sticky labels; ctrl-shift-s cycles label mode
+      else if (event.key == "S") { if (event.ctrlKey) event.preventDefault(); model.key_op_finished = 'S';  } // Subtract selected from sticky labels (label mode is the panel's 'labels' row now)
       else if (event.key == "t") { model.key_op_finished = 't';  } // Collapse selected to a single point
       else if (event.key == "T") { model.key_op_finished = 'T';  } // Horizontally collapse selected
       else if (event.key == "u") { model.key_op_finished = 'u';  } // Undo last layout
@@ -409,7 +637,7 @@ export function render({ model, el }) {
 
   function myOnKeyUp(event) {
       event.stopPropagation();
-      if (state.menu_open) { return; }
+      if (state.menu_open || state.panel_open) { return; }
       // Hold the modifiers while a key operation is still in flight.  applyKeyOp
       // runs asynchronously behind a lock and reads ctrlkey / shiftkey when it gets
       // there, so clearing them the instant the user let go made a *tapped*
@@ -697,6 +925,29 @@ export function render({ model, el }) {
 
   model.on('info_str', function() {
       infostr.innerHTML = model.info_str;
+  });
+
+  // The configuration panel is a live display, so every value it shows re-renders it --
+  // including one Python changed by itself (a stack pop, a refused flowmap commit).
+  // config_panel_rows carries the row order AND the per-row enabled flag, which Python
+  // recomputes from the current layer.
+  const _PANEL_PARAMS_ = [
+      'config_panel_rows',
+      'link_arrows_choice', 'timing_marks_choice', 'label_mode_choice',
+      'background_state_choice', 'timing_spacing_choice', 'link_shape_choice',
+      'link_size_choice', 'link_opacity_choice', 'node_size_choice',
+  ];
+  for (const _pp_ of _PANEL_PARAMS_) {
+      model.on(_pp_, function() { panelRender(); });
+  }
+
+  // menu_items was fixed at construction until the panel arrived; the 'labels' row's
+  // value list is the one that genuinely varies at runtime (linkLabelsAvailable() gains
+  // or loses the two link-label states as the stack is navigated), so the snapshot in
+  // state has to be refreshed rather than taken once.
+  model.on('menu_items', function() {
+      state.menu_items = model.menu_items;
+      panelRender();
   });
   // ── wiring, matching the template's on* attributes ─────────────────────────
   //

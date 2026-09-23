@@ -301,6 +301,35 @@ if _PLAYWRIGHT_AVAILABLE_:
         _ip_.app = _app_
         return _ip_
 
+    @pytest.fixture
+    def dark_linkp() -> Any:
+        """quad_linkp's graph, rendered from a dark-palette Polars2SVG.
+
+        Every other fixture here builds a default (light) instance, so nothing else
+        exercises the palette channel into the browser -- model.palette is populated in
+        Python and read by p2sInk() in JS, and only a real render proves the two ends
+        agree.
+        """
+        _p2s_ = Polars2SVG(palette='dark')
+        _df_  = pl.DataFrame({'fm':  [1, 2, 3, 4, 5],
+                              'to':  [2, 3, 1, 5, 4],
+                              'grp': ['x', 'x', 'x', 'y', 'y']})
+        _lp_  = _p2s_.linkp(_df_, relationships=[('fm', 'to')], node_color='grp', wxh=(400, 300),
+                            view_window=(0.0, 0.0, 1.0, 1.0),
+                            pos={1: (0.17, 0.74), 2: (0.17, 0.26), 3: (0.35, 0.50),
+                                 4: (0.81, 0.74), 5: (0.81, 0.26)})
+        _lp_._repr_svg_()
+        return _lp_
+
+    @pytest.fixture
+    def dark_page(page: Any, served: Callable[..., Any],
+                  dark_linkp: Any) -> InteractivePage:
+        _app_ = served([[dark_linkp]])
+        page.goto(_app_.url, wait_until='load')
+        _ip_ = InteractivePage(page, dark_linkp)
+        _ip_.app = _app_
+        return _ip_
+
     # ── the generic _interactivep components ──────────────────────────────────
     #
     # xyp / timep / histop / chordp / piep all go through _interactivep(), which gives
@@ -324,6 +353,31 @@ if _PLAYWRIGHT_AVAILABLE_:
         _xyp_ = _p2s_.xyp(_grid_df(), 'x', 'y', color='cat', wxh=(400, 300))
         _xyp_._repr_svg_()
         _app_ = served([[_xyp_]])
+        page.goto(_app_.url, wait_until='load')
+        _ip_ = InteractivePage(page, _xyp_, root_id='svgparentxypi')
+        _ip_.app = _app_
+        return _ip_
+
+    @pytest.fixture
+    def tooltip_page(page: Any, served: Callable[..., Any]) -> InteractivePage:
+        """XYPI built with an ``icon=``, so the tooltip row offers all three states.
+
+        The VIEW is constructed here and handed to ``served`` as the layout leaf, rather
+        than the plot: ``panelize()`` passes an already-built ReactiveESM through
+        untouched, and ``icon=`` is a view argument with nowhere to travel through the
+        plot-to-wrapper path.
+
+        The icon is a 48x48 histop of the same frame.  Small enough to sit in a tooltip
+        and coarse enough that one mark's subset draws visibly differently from the whole
+        frame -- which is the assertion that a mutant rendering the wrong records fails.
+        """
+        _p2s_ = Polars2SVG()
+        _df_  = _grid_df()
+        _xyp_ = _p2s_.xyp(_df_, 'x', 'y', color='cat', wxh=(400, 300))
+        _xyp_._repr_svg_()
+        _icon_ = _p2s_.histop(_df_, 'cat', wxh=(48, 48))
+        _view_ = _p2s_.xypi(_xyp_, icon=_icon_)
+        _app_ = served([[_view_]])
         page.goto(_app_.url, wait_until='load')
         _ip_ = InteractivePage(page, _xyp_, root_id='svgparentxypi')
         _ip_.app = _app_

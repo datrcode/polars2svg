@@ -190,6 +190,20 @@ p2s.panelize([[xi], [hi]])    # two rows, stacked
 `panelize()` also accepts bare static components and wraps them for you. Pass
 `use_webgpu=True` to an interactive variant to render it through WebGPU.
 
+Press `h` in any interactive view for its key bindings, and `a` for the appearance
+panel — a live display of how the view is drawn, editable in place. One of its rows is
+the **hover tooltip**: rest the pointer on a mark and it says what is under it, as text
+or as a whole component re-rendered against just those records.
+
+```python
+icon = p2s.xyp(df, "x", "y", wxh=(32, 32))     # any component works
+xi   = p2s.xypi(p2s.xyp(df, "x", "y", color="group", wxh=(400, 300)), icon=icon)
+```
+
+Tooltips are off until you turn them on: open the panel with `a` and cycle the
+`tooltip` row with `space` (`off -> text -> icon`; `icon` is offered only when you
+passed one). Hovering never changes the selection, the stack or any linked view.
+
 Finished renderings compose into a single static SVG with `p2s.tile(...)` — the one
 method that takes renderings rather than a DataFrame:
 
@@ -239,6 +253,46 @@ count** (`pl.len()`), regardless of what `count=` is set to — so a bar sized b
 `count='bytes'` can still be colored by how many rows landed in it. Because the
 two encodings are orthogonal, a tall bar can be cold-colored (many bytes, few
 rows) or vice-versa — that is by design.
+
+## Appearance: palettes and color overrides
+
+`color=` above says how *data* is encoded. The framework's own furniture — canvas,
+axes, labels, borders, indicators — comes from a **palette**, chosen per instance:
+
+```python
+p2s = Polars2SVG(palette='dark')        # 'light' (the default) or 'dark'
+p2s.setPalette('light')                 # or switch an existing instance
+```
+
+A palette can be adjusted without replacing it. Keys are `(type, subtype)` slots:
+
+```python
+p2s.setPalette('dark', {('background', 'default'): '#000000'})
+```
+
+To pin a color to a specific *data value* — as opposed to the furniture — use
+`setColorOverrides()`, which takes cell values rather than slots:
+
+```python
+p2s.setColorOverrides({'prod': '#cc0000', 'staging': '#888888'})
+p2s.removeColorOverrides(['staging'])
+```
+
+An override outranks the palette and survives a `setPalette()` call: it is an
+explicit instruction about one value, not a default for chart furniture.
+
+Both settings are **instance-wide**, like `set_defaults()` — build a second
+`Polars2SVG()` when you want a second style. Nothing is global to the process, so
+two instances never interfere.
+
+Dark tunes the framework's furniture and the grayscale distribution ramp. Data
+colors — the ColorBrewer Spectral spectrum and the hash-derived categoricals — are
+the same in both palettes, so the same value keeps the same color and two figures
+stay comparable across palettes.
+
+The palette reaches the **interactive** components too: the selection rectangle, the
+layout guides and the status line follow it, so a drag stays visible on a dark canvas.
+The tooltip and configuration panel still draw on their own light surface.
 
 ## Security & deployment
 

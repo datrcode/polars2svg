@@ -36,3 +36,26 @@ function htmlEl(tag, attrs, parent) {
   if (parent) { parent.appendChild(el); }
   return el;
 }
+
+//
+// p2sInk() - a color from the Python-side palette, by name
+//
+// model.palette is Polars2SVG.interactivePalette() -- {ink, bg, hint, selection,
+// setop:{replace,add,subtract,intersect}}.  Overlays used to hardcode '#000000',
+// which is 1.12:1 against the dark palette's #121212: the drag band and the status
+// line were not merely off-theme, they were invisible.
+//
+// The fallback is the LIGHT value for each key, so a view that somehow renders before
+// the param arrives looks exactly as it did before palettes existed -- and a key added
+// to the Python dict but not here degrades to a visible color rather than 'undefined'.
+//
+const P2S_INK_FALLBACK = {
+  ink: '#000000', bg: '#ffffff', hint: '#0000cc', selection: '#ff0000',
+  replace: '#000000', add: '#00ff00', subtract: '#ff0000', intersect: '#0000ff',
+};
+
+function p2sInk(model, key) {
+  const pal = (model && model.palette) || {};
+  const val = (pal.setop && pal.setop[key] !== undefined) ? pal.setop[key] : pal[key];
+  return val || P2S_INK_FALLBACK[key] || '#000000';
+}

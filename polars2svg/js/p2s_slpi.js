@@ -39,8 +39,12 @@ export function render({ model, el }) {
   }, root);
 
   const drag_rect = svgEl('rect', {
+    // NOTE: stroke is set both here (in `style`) and by setAttribute below.  A style
+    // declaration outranks a presentation attribute, so the initial value is what
+    // actually paints; both are palette-driven so the band cannot end up black on a
+    // dark canvas either way.
     id: 'drag_rect', x: 0, y: 0, width: 0, height: 0,
-    style: 'fill:rgba(128,128,128,0.08);stroke:#000000;stroke-width:1;'
+    style: 'fill:rgba(128,128,128,0.08);stroke:' + p2sInk(model, 'replace') + ';stroke-width:1;'
          + 'pointer-events:none;stroke-dasharray:4,2;',
   }, root);
 
@@ -54,10 +58,11 @@ export function render({ model, el }) {
       var h = Math.abs(state.y1_drag - state.y0_drag);
       drag_rect.setAttribute('x', x); drag_rect.setAttribute('y', y);
       drag_rect.setAttribute('width', w); drag_rect.setAttribute('height', h);
-      if      (state.shiftkey && state.ctrlkey) drag_rect.setAttribute('stroke', '#0000ff');
-      else if (state.shiftkey)                  drag_rect.setAttribute('stroke', '#ff0000');
-      else if (state.ctrlkey)                   drag_rect.setAttribute('stroke', '#00ff00');
-      else                                      drag_rect.setAttribute('stroke', '#000000');
+      // Keys match _resolve_set_op() in Python.
+      if      (state.shiftkey && state.ctrlkey) drag_rect.setAttribute('stroke', p2sInk(model, 'intersect'));
+      else if (state.shiftkey)                  drag_rect.setAttribute('stroke', p2sInk(model, 'subtract'));
+      else if (state.ctrlkey)                   drag_rect.setAttribute('stroke', p2sInk(model, 'add'));
+      else                                      drag_rect.setAttribute('stroke', p2sInk(model, 'replace'));
     } else {
       drag_rect.setAttribute('width', 0); drag_rect.setAttribute('height', 0);
     }

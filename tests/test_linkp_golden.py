@@ -91,7 +91,7 @@ class TestLinkPCollapsedNodeGolden(unittest.TestCase):
 
     def test_collapsed_nodes(self):
         lp = self.p2s.linkp(**_params(pos=_POS_COLLAPSED_))
-        self.assertIn('<use href="#cloud"', lp.svg)   # the golden is only meaningful if a cloud is drawn
+        self.assertRegex(lp.svg, r'<use href="#cloud_\d+"')   # the golden is only meaningful if a cloud is drawn
         assert_svg_matches_golden(lp.svg, 'linkp_collapsed_nodes')
         assert_image_matches_golden(lp.svg, 'linkp_collapsed_nodes')
 

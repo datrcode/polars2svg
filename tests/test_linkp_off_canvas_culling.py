@@ -179,12 +179,12 @@ class TestLinkPOffCanvasCulling(unittest.TestCase):
         _df_  = pl.DataFrame({'fm': ['a', 'b'], 'to': ['b', 'c']})
         _pos_ = {'a': (0.9, 0.9), 'b': (0.9, 0.9), 'c': (0.1, 0.1)}   # a,b collapse
         lp = self.p2s.linkp(df=_df_, relationships=[('fm', 'to')], pos=_pos_, wxh=(200, 200))
-        self.assertIn('<use href="#cloud"', lp.svg)
-        self.assertIn('id="cloud"', lp.svg)
+        self.assertRegex(lp.svg, r'<use href="#cloud_\d+"')
+        self.assertRegex(lp.svg, r'id="cloud_\d+"')
         lp.setViewWindow((0.0, 0.0, 0.2, 0.2))                        # a,b now far off-canvas
         _svg_ = lp.renderSVG()
-        self.assertNotIn('<use href="#cloud"', _svg_)
-        self.assertNotIn('id="cloud"', _svg_)
+        self.assertNotRegex(_svg_, r'<use href="#cloud_\d+"')
+        self.assertNotRegex(_svg_, r'id="cloud_\d+"')
 
     # ── timing marks ──────────────────────────────────────────────────────────
     def test_timing_marks_on_culled_edges_are_culled(self):

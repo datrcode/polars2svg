@@ -9,6 +9,209 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A dark palette, and a selectable palette generally** (PLANNING.md §7 **F5**, the
+  dark-mode half). The framework's semantic color table was a dict literal with
+  `#ffffff` baked into it, so every render was light. It now lives in
+  `polars2svg/p2s_palettes.py` as two validated palettes, selected per instance:
+
+  ```python
+  p2s = Polars2SVG(palette='dark')      # at construction
+  p2s.setPalette('light')               # or later
+  p2s.setPalette('dark', {('background', 'default'): '#000000'})   # with overrides
+  ```
+
+  Like `set_defaults()` and `setColorOverrides()`, the palette is **instance-wide**:
+  build a second `Polars2SVG()` for a second scheme. A `setColorOverrides()` entry
+  outranks the palette and survives a switch -- it is an explicit instruction about one
+  data value, not a default for chart furniture.
+
+  **`'light'` is the default and renders byte-identically to before.** The 72 existing
+  SVG goldens and 72 PNG goldens are unchanged, with one exception noted below.
+
+  The dark values are solved rather than chosen: each reproduces the light palette's own
+  WCAG contrast ratio against `#121212`, so the visual hierarchy carries over instead of
+  being re-picked by eye. Two departures are deliberate -- `label/defaultfg` is `#e6e6e6`
+  rather than white (21:1 is unreachable on `#121212`, which tops out at 18.7, and text
+  at that end haloes), and the error/selection colors land brighter than their light
+  counterparts because matching the ratio would have made attention colors quieter than
+  the labels beside them.
+
+  The **grayscale distribution ramp is now palette-aware**. It hardwired 0.0 -> `#cccccc`
+  and 1.0 -> black; on a dark canvas that direction makes an empty bin the brightest mark
+  in the plot, so dark inverts it (`#333333` up to white) rather than merely lightening.
+  `light_gray=` still overrides the low end on either palette.
+
+  The **Spectral spectrum and the hash-derived categoricals are unchanged.** Measured
+  over 300 values, the hash colors carry a median contrast of 5.87 against `#121212`
+  versus 3.19 against white, with sub-1.5:1 cases dropping from 8 to 2 -- they are
+  already more legible on dark, and re-tuning them would have broken cross-palette
+  comparison of the same data. Re-tuning the spectrum (whose pale middle steps do read
+  inverted on dark) stays in F5 with the named-colormaps work.
+
+  Also closed the literals that bypassed `colorTyped()` and would have stayed
+  light-on-dark: node outlines in `linkp`, the context and direction colors in
+  `spreadlinesp`, the circle-packing hull stroke, the background-label color in the
+  interactive controller, and `DisplayList`'s `bg` at the two call sites that relied on
+  its default. Four `direction/*` slots were added so `spreadlinesp`'s new/ending
+  markers are palette-driven rather than hardcoded red/blue.
+
+  **One behavior change:** `linkp`'s cloud icon is themed, which makes its `<defs>` body
+  render-dependent, so `#cloud` is now scoped per render as `cloud_<rand_id>` -- the last
+  unscoped id in the package, and what `TestLinkPCloudDefs` had instructed for exactly
+  this case. Two figures on one page previously collided on the id harmlessly because the
+  definition was a constant; themed, the first figure's outline color would have silently
+  won for every later one. `tests/golden/linkp_collapsed_nodes.svg` is regenerated for
+  the id alone -- no color in it moved.
+
+- **The interactive overlays follow the palette too** (PLANNING.md §7 **F5**, DP7).
+  The browser-side views built their overlays from literals, and `#000000` is **1.12:1**
+  against the dark palette's `#121212` — so on a dark figure the rubber-band selection
+  rectangle and the `#infostr` status line were not off-theme, they were *invisible*, and
+  a drag gave no feedback about which set operation it was about to perform.
+
+  Python now hands each view its colors through a `palette` param, read in JS by
+  `p2sInk()` (`polars2svg/js/fragments/p2s_dom.js`). `Polars2SVG.interactivePalette()` is
+  the channel — a small renamed subset (`ink`, `bg`, `hint`, `selection`, and a `setop`
+  map) rather than the whole slot table, so the JS never has to know the framework's
+  taxonomy.
+
+  Five slots were added for it: `overlay/hint` and `setop/{replace,add,subtract,
+  intersect}`, whose keys match `_resolve_set_op()` exactly so the two cannot drift.
+  **Their light values are precisely what the JS hardcoded**, so every interactive view
+  renders identically to before on the default palette.
+
+  The drag-band assertions in the Playwright suite now resolve the expected color through
+  the palette instead of pinning a literal, and a new `tests/interaction/test_dark_palette.py`
+  renders a dark `linkpi` in a real browser and asserts the overlays are the dark values
+  *and* are not the light fallbacks — the only thing that proves the Python and JS ends
+  actually agree.
+
+  Two deliberate exclusions, both commented at the site: `#allentitieslayer`'s fill is a
+  hit-testing surface at 1% opacity, invisible on any palette; and the tooltip and
+  config-panel boxes paint their own light surface, so they stay legible on a dark figure
+  and are a separate, cosmetic pass still under F5.
+
+  Also adds `TestFragmentHelpersAreInEveryBundleThatCallsThem` to `test_js_assets.py`.
+  Nothing previously checked that a fragment-supplied helper is concatenated into the
+  bundles that call it — the existing check catches an implicit global *write*, while a
+  call to a never-bundled function is a *read* that passes every static check and fails
+  only in the browser. It also pins the `typeof`-guard contract that makes `p2sGpuWrap`
+  legitimately optional in the non-GPU bundles.
+
+- **Per-element hover tooltips, on every interactive component** (PLANNING.md §7 **F1**).
+  Resting the pointer over a mark says what is under it -- without a click, without arming
+  a mode, and without changing selection, stack or any linked view. It is a **pure read**:
+  nothing in the path reaches the `InteractionController`, so no peer view ever learns
+  that a hover happened.
+
+  Two renderings of the same hit:
+
+  - **text** -- `N records` plus the fields the component is *already encoding* (`x`,
+    `y`, `color`, `count`, `bin_by`, the relationship endpoints). The component knows
+    those, so the default needs no configuration and is never wrong about relevance.
+    Dumping the whole row is what it avoids; real analysis frames are wide. A field with
+    more than three distinct values in the hit is summarised as `N distinct` rather than
+    listed, and the box is capped at eight field lines.
+  - **icon** -- a user-supplied component, re-rendered against the records under the
+    cursor and embedded as SVG, so hovering a node in a `linkp` shows a 32x32 `xyp` of
+    that node's traffic:
+
+    ```python
+    icon = p2s.xyp(df, 'ts', ('sip', 'dip'), wxh=(32, 32))
+    view = p2s.linkpi(lp, icon=icon)
+    ```
+
+  **`icon=` is the third user of an existing contract, not a new one.** `stack_controli`
+  has re-rendered any component per stack frame through `component.render_with(df)` since
+  it was written, and `_prototyping`'s `neighborhood_icons.py` names that contract as the
+  one it follows. Three consequences fall out of it: **sizing needs no new parameter**
+  (the box is the icon's own `wxh`, read off the component you passed, and a non-positive
+  one raises, exactly as `stack_controli` does); an icon is a **rendered component, not a
+  live view**, so `p2s.xypi(...)` as an `icon=` raises with a message saying so; and
+  `stack_controli`'s `id(df)` cache key does **not** transfer -- every hover produces a
+  fresh dataframe, so `id()` reuse is the normal case here rather than the hazard its own
+  comment warns about. The cache is keyed on the **hit identity** (the sorted row hashes),
+  which is stable while the pointer rests on one mark and changes exactly when the content
+  should.
+
+  New view parameters, all on the *view* rather than the component: `tooltip=` (initial
+  state, default `'off'`), `icon=`, `tooltip_fields=` (override the encoded-field default)
+  and `tooltip_delay_ms=` (dwell before the request fires, default 200).
+
+  Points worth keeping:
+
+  - **The U7 sequence ticket is in from the start rather than rediscovered.** This is the
+    brush's round trip with the result rendered in place, so it is the brush's race too: a
+    hover that resolves slowly and lands after the pointer has moved on is the identical
+    defect. `tooltip_seq` doubles as the ticket on both sides -- Python drops a stale
+    `recordsAt()` result, and the browser drops a payload that was fresh when it was sent
+    but is not any more.
+  - **The dwell timer is load-bearing, not an optimisation.** In icon mode every request
+    is a full component render, so firing one per `mousemove` would queue renders faster
+    than they complete.
+  - **Default off**, which is the cheaper default three measurable ways: no behaviour
+    change in any existing notebook on upgrade, no hover round trips for anyone who has
+    not asked for them, and no collision with the mouseover every browser test fires at
+    mount (Playwright's cursor sits at viewport (0,0) and Panel lays the component flush
+    into that corner). Default-on would have fired a tooltip request in every browser test
+    in the suite.
+  - **A gesture in progress suppresses it.** Nothing is being read while the pointer is
+    dragging a band, a node or a layout shape, and a box following the cursor would cover
+    the band.
+  - **Scales are not shared across tooltips, and that is a decision.** Shared absolute
+    axes would need the global extent over every *possible* hit, which means pre-rendering
+    every possible tooltip; `smallp`'s `sm_shared` works only because smallp knows all of
+    its panels up front and a tooltip never does. Two tooltips also cannot be on screen at
+    once, so the comparison it would enable does not happen. Pin the axes on the icon
+    instead -- `x_range=` / `y_range=` / `count_range=` -- and every `render_with()` clone
+    inherits them, because a template clone is an exact snapshot of the template's
+    resolved state.
+
+- **The configuration panel is now on all six interactive components, not just `LINKPI`.**
+  `a` opens it on `XYPI`, `HISTOPI`, `TIMEPI`, `CHORDPI` and `PIEPI` as well, with the
+  same keys throughout (`a`/`shift-a` move the row cursor, a mnemonic jumps, `space` /
+  `shift-space` cycle, `Enter` opens the row's picker, `esc` closes). The five generic
+  views get two rows: **selection shape** and **tooltip**.
+
+  On `LINKPI` the row is **appended**, between `node size` and `background`, rather than
+  inserted: every existing row keeps its index, so `a` `space` still toggles arrows in two
+  keystrokes. The rows above it are persistent visual-encoding settings and this one is an
+  interaction mode, which is the same line `20260921_config_panel_design.md` §4 draws.
+
+  `shift-F` is **not** absorbed the way LINKPI's twelve bindings were. That absorption
+  paid for a keyspace that had run out; these five have most of the alphabet free, so both
+  doors reach the one picker (CP3) and no binding is removed.
+
+  The panel and the picker menu moved out of `p2s_linkpi.js` into
+  `js/fragments/p2s_config_panel.js`, and the generic components' smaller picker -- one
+  kind, no display strings, no guarded items, no `menu_x` -- moved onto the shared one,
+  which is a strict superset of it. `p2s_interactivep.js` records the opposite call for
+  `updateBrushCursor` and `myUpdateDragRect`, which stay duplicated: those had measurably
+  diverged (44% and 88% similar), and this had not diverged at all because the generic
+  half did not exist yet.
+
+### Changed
+
+- **The seven interaction parity goldens were re-recorded**, for two DOM additions and a
+  help-text change and nothing else. Every view gains a `#tooltip` group; the five generic
+  views also gain `#configpanel`; and the `h` overlay gains the panel's lines. **The param
+  side is byte-identical** -- zero write differences, zero write-count differences and zero
+  gesture differences across all ten goldens -- which is the parity oracle saying that
+  nothing crossing into Python changed. That is also the empirical form of the default-off
+  argument: with the tooltip off, a hover issues no round trip at all.
+
+### Fixed
+
+- **`tests/view_js_utils.py`'s source scanner mis-read any JS file containing a URL.**
+  `test_js_assets.py` stripped comments and string literals with a *sequence* of regexes,
+  so in `'http://www.w3.org/2000/svg'` the `//` pass ran first and ate to the end of the
+  line -- taking the closing quote and the statement's `;` with it, and leaving everything
+  after it parsed in the wrong state. The visible effect was that the first declarator of
+  the following line went unrecorded, so `TestNoImplicitGlobals` would report a correctly
+  declared name as an implicit global. Both copies of the stripper are now one
+  `view_js_utils.strip_noise()`, single-pass, which cannot make that mistake because a
+  `//` inside a string is already inside a string when it is reached.
+
 - **A configuration panel for `LINKPI`, on the `a` key**
   (`20260921_config_panel_design.md`, CP1-CP12). Nine rows -- arrows, timing marks,
   timing-mark spacing, labels, link shape, link size, link opacity, node size,

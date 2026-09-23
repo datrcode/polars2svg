@@ -335,13 +335,18 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
             _dl_.text(self.p2s, _ltxt_, _lx_, _ly_, txt_h=self.txt_h, anchor='middle',
                       color=_lco_, rotation=_ldeg_, svg='')
         # Nodes
+        # Node outlines are drawn in the palette's ink -- black on light, near-white on
+        # dark.  'label/defaultfg' rather than a border slot because there isn't one
+        # (borders elsewhere borrow 'axis/inner', which is gray and would change the
+        # light render); ink is what an outline against the canvas actually wants.
         _nsz_lu_ = {'small': 3, 'medium': 5, 'large': 7, 'nil': 0.5}
+        _node_stroke_ = self.p2s.colorTyped('label', 'defaultfg')
         if self.df_node is not None and self.node_size is not None and len(self.df_node) > 0:
             _dfn_ = self.df_node.with_columns(self.p2s.rgbFromHexPolarsOperations('__nc_hex__', '__r_f__', '__g_f__', '__b_f__'))
             if self.node_size == 'vary':
                 _dl_.circles_table(_dfn_, '__sx__', '__sy__', '__sz__',
                                    ('__r_f__', '__g_f__', '__b_f__'), opacity=self.node_opacity,
-                                   stroke=hexToRGBA('#000000', self.node_opacity), stroke_w=1.0, svg_col=None)
+                                   stroke=hexToRGBA(_node_stroke_, self.node_opacity), stroke_w=1.0, svg_col=None)
             else:
                 # 'vary' is handled above; every other accepted name is in the
                 # lookup, so this is a number at runtime.  An unrecognised name
@@ -351,7 +356,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
                 _singles_ = _dfn_.filter(pl.col('__nodes__') == 1)
                 _dl_.circles_table(_singles_, '__sx__', '__sy__', _sz_,
                                    ('__r_f__', '__g_f__', '__b_f__'), opacity=self.node_opacity,
-                                   stroke=hexToRGBA('#000000', self.node_opacity), stroke_w=_sw_, svg_col=None)
+                                   stroke=hexToRGBA(_node_stroke_, self.node_opacity), stroke_w=_sw_, svg_col=None)
                 # Collapsed nodes (<use href="#cloud"> in SVG) -- the same rounded-rect
                 # approximation svgToDisplayList() applies to that element, so a collapsed
                 # node reads identically here and in spreadlinesp's parsed GPU path
@@ -2107,6 +2112,8 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
         # Group by screen coords: count, unique names, color aggregation
         _nc_agg_ = self.__colorAggExprs__(self._node_color_mode_, 'nc')
         _bg_co_  = self.p2s.colorTyped('background', 'default')
+        # See the note in gpuDisplayList(): node outlines ride the palette's ink.
+        _node_stroke_ = self.p2s.colorTyped('label', 'defaultfg')
         self.df_node = (
             self.df_node.group_by(['__sx__', '__sy__'])
                         .agg(
@@ -2156,7 +2163,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
                 self.__onCanvasExpr__(['__sx__'], ['__sy__'], pad=pl.col('__sz__') + 0.5)
             )
             _raw_svgs_ = sorted(_vis_.drop_nulls(subset=['__node_svg__'])['__node_svg__'].unique())
-            _svg_strs_ = ([f'<g stroke="#000000" stroke-width="1" opacity="{self.node_opacity}">']
+            _svg_strs_ = ([f'<g stroke="{_node_stroke_}" stroke-width="1" opacity="{self.node_opacity}">']
                           + _raw_svgs_ + ['</g>'] if _raw_svgs_ else [])
         else:
             # 'vary' is handled above; every other accepted name is in the
@@ -2177,11 +2184,11 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
                 pl.concat_str(_str_op_).alias('__node_svg__')
             )
             _singles_svgs_ = sorted(_df_singles_.drop_nulls(subset=['__node_svg__'])['__node_svg__'].unique())
-            _svg_strs_ = ([f'<g stroke="#000000" stroke-width="{_sw_}" opacity="{self.node_opacity}">']
+            _svg_strs_ = ([f'<g stroke="{_node_stroke_}" stroke-width="{_sw_}" opacity="{self.node_opacity}">']
                           + _singles_svgs_ + ['</g>'] if _singles_svgs_ else [])
             # Collapsed nodes (multiple nodes at same pixel): render as cloud symbol
             _str_op_multi_ = [
-                pl.lit('<use href="#cloud" x="'), pl.col('__sx__'),
+                pl.lit(f'<use href="#cloud_{self._rand_id_}" x="'), pl.col('__sx__'),
                 pl.lit('" y="'), pl.col('__sy__'),
                 pl.lit('" fill="'), pl.col('__nc_hex__'),
                 pl.lit('" />'),
@@ -2303,7 +2310,8 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
     # __renderConvexHull__() - render convex hull annotations
     #
     def __renderConvexHull__(self) -> str:
-        self._dl_hull_ = _dl_ = DisplayList(self.wxh[0], self.wxh[1])
+        self._dl_hull_ = _dl_ = DisplayList(self.wxh[0], self.wxh[1],
+                                            bg=self.p2s.colorTyped('background', 'default'))
         if not self.convex_hull_lu: return ''
         _svg_ = []
         _pt_lu_ = {}
@@ -2449,7 +2457,11 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
         # the zoom), which is why the flag is read here rather than resolved once in
         # __init__.  The definition itself lives beside CLOUD_ICON_* in p2s_displaylist,
         # shared with spreadlinesp's two copies.
-        _cloud_defs_ = cloudIconDef() if getattr(self, '_has_cloud_', True) else ''
+        # Scoped per render (cloud_<rand_id>) because the stroke is now the palette's
+        # ink, which makes this definition render-dependent -- see cloudIconDef().
+        _cloud_defs_ = (cloudIconDef(f'cloud_{rand_id}',
+                                     stroke=self.p2s.colorTyped('label', 'defaultfg'))
+                        if getattr(self, '_has_cloud_', True) else '')
         # invisible per-edge paths for the 'curve' shape's <textPath> link labels -- an
         # independent payload: <defs> stays for these alone, and is dropped only when both
         # are empty (svgToDisplayList()'s <defs> strip is a no-op when there is none).

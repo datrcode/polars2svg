@@ -164,6 +164,8 @@ class SLPI(JSComponent):
     """
 
     # ── per-instance view state ──────────────────────────────────────────────
+    # See the note on LINKPI.palette -- read in JS as model.palette.
+    palette:    Any = param.Dict(default={})
     svg_w:      Any = param.Integer(default=0)
     svg_h:      Any = param.Integer(default=0)
     use_webgpu: Any = param.Boolean(default=False)
@@ -207,6 +209,7 @@ class SLPI(JSComponent):
         super().__init__(
             svg_w=_w_, svg_h=_h_, use_webgpu=use_webgpu,
             mod_inner=('' if use_webgpu else _spread_._repr_svg_()),
+            palette=_spread_.p2s.interactivePalette(),
             **({'gpu_payload': _spread_.webgpu()} if use_webgpu else {}),
             **kwargs)
         self.lock = asyncio.Lock()

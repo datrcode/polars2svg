@@ -48,6 +48,12 @@
     "svg_w",
     "timing_marks_choice",
     "timing_spacing_choice",
+    "tooltip",
+    "tooltip_delay_ms",
+    "tooltip_payload",
+    "tooltip_seq",
+    "tooltip_x",
+    "tooltip_y",
     "unselected_move_op_finished",
     "use_webgpu",
     "wheel_op_finished",
@@ -84,7 +90,7 @@
       "dom": {
         "svgparent": {
           "tag": "svg",
-          "kids": 17,
+          "kids": 18,
           "text": "in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closes/ . | search: type substring + Ent"
         },
         "mod": {
@@ -94,7 +100,7 @@
         },
         "keyboardhelp": {
           "tag": "g",
-          "kids": 44,
+          "kids": 45,
           "text": "in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closes/ . | search: type substring + Ent"
         },
         "drag": {
@@ -158,6 +164,11 @@
           "text": ""
         },
         "brushmodelabel": {
+          "tag": "g",
+          "kids": 0,
+          "text": ""
+        },
+        "tooltip": {
           "tag": "g",
           "kids": 0,
           "text": ""
@@ -180,7 +191,7 @@
       "dom": {
         "svgparent": {
           "tag": "svg",
-          "kids": 17,
+          "kids": 18,
           "text": "in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closes/ . | search: type substring + Ent"
         },
         "mod": {
@@ -190,7 +201,7 @@
         },
         "keyboardhelp": {
           "tag": "g",
-          "kids": 44,
+          "kids": 45,
           "text": "in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closes/ . | search: type substring + Ent"
         },
         "drag": {
@@ -254,6 +265,11 @@
           "text": ""
         },
         "brushmodelabel": {
+          "tag": "g",
+          "kids": 0,
+          "text": ""
+        },
+        "tooltip": {
           "tag": "g",
           "kids": 0,
           "text": ""
@@ -276,7 +292,7 @@
       "dom": {
         "svgparent": {
           "tag": "svg",
-          "kids": 17,
+          "kids": 18,
           "text": "in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closes/ . | search: type substring + Ent"
         },
         "mod": {
@@ -286,7 +302,7 @@
         },
         "keyboardhelp": {
           "tag": "g",
-          "kids": 44,
+          "kids": 45,
           "text": "in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closes/ . | search: type substring + Ent"
         },
         "drag": {
@@ -350,6 +366,11 @@
           "text": ""
         },
         "brushmodelabel": {
+          "tag": "g",
+          "kids": 0,
+          "text": ""
+        },
+        "tooltip": {
           "tag": "g",
           "kids": 0,
           "text": ""
@@ -372,7 +393,7 @@
       "dom": {
         "svgparent": {
           "tag": "svg",
-          "kids": 17,
+          "kids": 18,
           "text": "in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closes/ . | search: type substring + Ent"
         },
         "mod": {
@@ -382,7 +403,7 @@
         },
         "keyboardhelp": {
           "tag": "g",
-          "kids": 44,
+          "kids": 45,
           "text": "in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closes/ . | search: type substring + Ent"
         },
         "drag": {
@@ -446,6 +467,11 @@
           "text": ""
         },
         "brushmodelabel": {
+          "tag": "g",
+          "kids": 0,
+          "text": ""
+        },
+        "tooltip": {
           "tag": "g",
           "kids": 0,
           "text": ""

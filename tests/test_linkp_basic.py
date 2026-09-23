@@ -1,3 +1,4 @@
+import re
 import unittest
 import polars as pl
 from polars2svg import Polars2SVG
@@ -163,8 +164,8 @@ class TestLinkPBasic(unittest.TestCase):
         df = pl.DataFrame({'fm': ['a', 'a'], 'to': ['b', 'c']})
         pos = {'a': [0.0, 0.0], 'b': [1.0, 0.0], 'c': [1.0, 0.0]}
         lp = self.p2s.linkp(df, relationships=[('fm', 'to')], pos=pos)
-        self.assertIn('href="#cloud"', lp.svg)
-        self.assertIn('id="cloud"',   lp.svg)
+        self.assertRegex(lp.svg, r'href="#cloud_\d+"')
+        self.assertRegex(lp.svg, r'id="cloud_\d+"')
 
     def test_link_shape_line_none(self):
         lp = self.p2s.linkp(_make_df(), relationships=_rels(), pos=_make_pos(),
@@ -631,31 +632,37 @@ class TestLinkPCloudDefs(unittest.TestCase):
         df = pl.DataFrame({'fm': ['a', 'a'], 'to': ['b', 'c']})
         return self.p2s.linkp(df, relationships=[('fm', 'to')], pos=self._COLLAPSED_POS_, **kw)
 
+    # Both ids carry the render's rand_id -- the definition became render-dependent
+    # when its stroke started following the palette, so a bare '#cloud' shared between
+    # two figures would hand figure one's outline color to every later one.
+    _USE_RE_ = re.compile(r'<use href="#cloud_\d+"')
+    _DEF_RE_ = re.compile(r'id="cloud_\d+"')
+
     def assertCloudConsistent(self, svg, msg=None):
-        '''<use href="#cloud"> and the <g id="cloud"> definition must co-occur.'''
-        self.assertEqual('<use href="#cloud"' in svg, 'id="cloud"' in svg,
+        '''<use href="#cloud_N"> and the <g id="cloud_N"> definition must co-occur.'''
+        self.assertEqual(bool(self._USE_RE_.search(svg)), bool(self._DEF_RE_.search(svg)),
                          msg or 'cloud definition and reference disagree')
 
     def test_no_cloud_defs_without_a_collapsed_node(self):
         lp = self.p2s.linkp(_make_df(), relationships=_rels(), pos=_make_pos())
-        self.assertNotIn('id="cloud"', lp.svg)
+        self.assertNotRegex(lp.svg, self._DEF_RE_)
         self.assertNotIn('<defs>', lp.svg)   # nothing else needs <defs> in this render
         self.assertCloudConsistent(lp.svg)
 
     def test_cloud_defs_present_with_a_collapsed_node(self):
         lp = self._collapsing()
-        self.assertIn('id="cloud"', lp.svg)
+        self.assertRegex(lp.svg, self._DEF_RE_)
         self.assertCloudConsistent(lp.svg)
 
     def test_no_cloud_defs_when_node_size_is_vary(self):
         '''node_size='vary' draws every node as a circle, so it never emits a cloud.'''
         lp = self._collapsing(node_size='vary')
-        self.assertNotIn('<use href="#cloud"', lp.svg)
-        self.assertNotIn('id="cloud"', lp.svg)
+        self.assertNotRegex(lp.svg, self._USE_RE_)
+        self.assertNotRegex(lp.svg, self._DEF_RE_)
 
     def test_no_cloud_defs_when_node_size_is_none(self):
         lp = self._collapsing(node_size=None)
-        self.assertNotIn('id="cloud"', lp.svg)
+        self.assertNotRegex(lp.svg, self._DEF_RE_)
         self.assertCloudConsistent(lp.svg)
 
     def test_link_label_defs_survive_without_the_cloud(self):
@@ -666,7 +673,7 @@ class TestLinkPCloudDefs(unittest.TestCase):
         lp = self.p2s.linkp(df, relationships=[('fm', 'to', 'dsc')],
                             pos={'a': (0.0, 0.0), 'b': (1.0, 0.0)}, wxh=(400, 200),
                             draw_link_labels=True, link_shape='curve')
-        self.assertNotIn('id="cloud"', lp.svg)          # no collapsed node here
+        self.assertNotRegex(lp.svg, self._DEF_RE_)      # no collapsed node here
         self.assertIn('<defs>', lp.svg)                 # ...but <defs> still exists
         _hrefs_ = re.findall(r'<textPath href="#([^"]+)"', lp.svg)
         self.assertTrue(_hrefs_)
@@ -674,72 +681,49 @@ class TestLinkPCloudDefs(unittest.TestCase):
         for _h_ in _hrefs_:
             self.assertIn(f'id="{_h_}"', _defs_)
 
-    def test_the_cloud_def_is_invariant(self):
-        '''#cloud goes out unscoped, unlike every other id the package emits -- those
-        carry a per-render random integer (spreadlinesp's `cloud_<rand_id>`; the rule
-        itself is TestComponentOutputHygiene.test_ids_are_scoped_to_one_render).
+    def test_the_cloud_def_is_scoped_and_follows_the_palette(self):
+        '''#cloud used to go out unscoped, which was safe for exactly one reason: the
+        <defs> body was a constant, so two linkps on one page collided on the id but
+        resolved to identical definitions -- invalid markup that rendered correctly.
 
-        That is safe for exactly one reason, and this test is that reason: the <defs>
-        body is a constant.  Two linkps on one page *do* collide on #cloud, but both
-        resolve to an identical definition, so it is invalid markup that renders
-        correctly.  What varies per node is the color, and that rides on the <use>
-        (`fill=`), which inherits into the def because the path declares no fill of
-        its own -- the definition itself never moves.
+        Theming the outline ended that.  The stroke is now colorTyped('label','defaultfg'),
+        so the definition is render-dependent, and `href="#cloud"` resolving to the FIRST
+        match in document order would hand figure one's outline color to every later
+        figure -- the same failure that made spreadlinesp's `ccl_<bin>` drop selection
+        rings.  The id is therefore scoped per render, as the old version of this test
+        instructed, and this version pins both halves of that:
 
-        If the definition ever becomes render-dependent the collision stops being
-        cosmetic: `url(#cloud)`/`href="#cloud"` resolve to the FIRST match in document
-        order, so the first figure's definition would silently win for every later one
-        -- the same failure that made spreadlinesp's `ccl_<bin>` drop selection rings.
-        Theming the hardcoded stroke="#000000" is the likely trigger, since the cloud
-        outline currently stays black even against a dark palette.
-
-        So: if this fails, scope the id (give `cloudIconDef()` a `cloud_<rand_id>` and
-        move the `<use>` with it) as part of whatever change broke it.
+          1. every cloud id carries the render's rand_id, and the <use> points at the
+             definition THIS render emitted (not merely at some cloud_N);
+          2. the outline actually tracks the palette, so the def is worth scoping.
         '''
-        from polars2svg.p2s_displaylist import cloudIconDef
-
-        def _dark_(p2s):
-            for _k_ in list(p2s.color_type_lu):
-                p2s.color_type_lu[_k_] = '#eeeeee'
-
-        def _render_(mutate=None, **kw):
-            _p2s_ = Polars2SVG()
-            if mutate is not None: mutate(_p2s_)
-            _df_ = pl.DataFrame({'fm': ['a', 'a'], 'to': ['b', 'c']})
+        def _render_(palette='light', **kw):
+            _p2s_ = Polars2SVG(palette=palette)
+            _df_  = pl.DataFrame({'fm': ['a', 'a'], 'to': ['b', 'c']})
             return _p2s_.linkp(_df_, relationships=[('fm', 'to')],
                                pos=self._COLLAPSED_POS_, **kw).svg
 
-        _variants_ = {
-            'defaults':     _render_(),
-            'dark palette': _render_(_dark_),
-            'node_color':   _render_(node_color='#ff0000'),
-            'node_opacity': _render_(node_opacity=0.5),
-        }
-        _defs_ = {_n_: _s_[_s_.index('<defs>'):_s_.index('</defs>') + len('</defs>')]
-                  for _n_, _s_ in _variants_.items()}
+        # 1. the reference and the definition agree WITHIN one render, and the id is
+        #    scoped -- two renders must not share it.
+        _ids_ = []
+        for _svg_ in (_render_(), _render_()):
+            _def_ids_ = re.findall(r'id="(cloud_\d+)"', _svg_)
+            _use_ids_ = re.findall(r'href="#(cloud_\d+)"', _svg_)
+            self.assertEqual(len(_def_ids_), 1, f'expected one cloud def, got {_def_ids_}')
+            self.assertEqual(set(_use_ids_), set(_def_ids_),
+                             'the <use> points at an id this render did not define')
+            _ids_.append(_def_ids_[0])
+        self.assertNotEqual(_ids_[0], _ids_[1],
+                            'the cloud id is not scoped per render -- two figures on one '
+                            'page would collide, and the def is no longer a constant')
 
-        # The fixture has to actually vary the output, or the rest proves nothing --
-        # the same trap test_cloud_defs_track_the_view_window_across_re_renders guards.
-        self.assertEqual(len(set(_variants_.values())), len(_variants_),
-                         'these renders no longer differ; the invariance below is vacuous')
-
-        if len(set(_defs_.values())) != 1:
-            # Show where the definitions diverge -- they are ~650 bytes of identical
-            # path data, so the byte offset of the first difference is the only part
-            # worth printing.
-            _groups_ = {}
-            for _n_, _d_ in _defs_.items(): _groups_.setdefault(_d_, []).append(_n_)
-            _a_, _b_ = list(_groups_)[0], list(_groups_)[1]
-            _i_ = next((i for i, (x, y) in enumerate(zip(_a_, _b_)) if x != y), min(len(_a_), len(_b_)))
-            self.fail(
-                'the cloud <defs> is no longer constant across renders, so #cloud must '
-                'now be scoped per render (see this test docstring).\n'
-                f'  groups   : {list(_groups_.values())}\n'
-                f'  diverge@ : {_i_}\n'
-                f'  {_groups_[_a_]}: ...{_a_[max(0, _i_ - 30):_i_ + 30]}...\n'
-                f'  {_groups_[_b_]}: ...{_b_[max(0, _i_ - 30):_i_ + 30]}...')
-        # Stated the other way: linkp emits the shared module constant, unparameterised.
-        self.assertEqual(_defs_['defaults'], f'<defs>{cloudIconDef()}</defs>')
+        # 2. the outline follows the palette, which is why (1) is now required.
+        _light_ = _render_('light')
+        _dark_  = _render_('dark')
+        self.assertIn(f'stroke="{Polars2SVG().colorTyped("label", "defaultfg")}"',
+                      _light_[:_light_.index('</defs>')])
+        self.assertIn(f'stroke="{Polars2SVG(palette="dark").colorTyped("label", "defaultfg")}"',
+                      _dark_[:_dark_.index('</defs>')])
 
     def test_cloud_defs_track_the_view_window_across_re_renders(self):
         '''Collapsing is a group_by on *screen* coordinates, so whether a cloud exists is a
@@ -755,7 +739,7 @@ class TestLinkPCloudDefs(unittest.TestCase):
             lp.setViewWindow(_vw_)
             _svg_ = lp.renderSVG()
             self.assertCloudConsistent(_svg_, f'view_window={_vw_}')
-            _seen_.add('id="cloud"' in _svg_)
+            _seen_.add(bool(self._DEF_RE_.search(_svg_)))
         # the fixture is chosen so both states actually occur -- otherwise this proves nothing
         self.assertEqual(_seen_, {True, False},
                          'fixture no longer exercises both collapsed and uncollapsed renders')

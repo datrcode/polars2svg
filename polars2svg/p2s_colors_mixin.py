@@ -1,6 +1,8 @@
 from typing import Any, TypeGuard
 import polars as pl
 
+from .p2s_palettes import resolvePalette, paletteNames
+
 _HEX_DIGITS_ = frozenset('0123456789abcdefABCDEF')
 
 #
@@ -53,38 +55,21 @@ class P2SColorsMixin:
     #
     # __p2s_colors_mixin_init__() - initialization via the mixin methodology
     #
-    def __p2s_colors_mixin_init__(self) -> None:
+    def __p2s_colors_mixin_init__(self, palette: str = 'light') -> None:
         # Both are per-instance: to_color_lu memoizes base hash-derived colors (never
         # override results), color_overrides_lu holds what setColorOverrides() was given.
         # Two Polars2SVG instances share neither, so an override set on one is invisible
         # to the other -- see the Configuration section of the class docstring.
         self.to_color_lu: dict = {}
         self.color_overrides_lu: dict = {}
-        self.color_type_lu = {
-            ('background',    'default'):   '#ffffff',
-            ('data',          'default'):   "#3939ff",
-            ('axis',          'default'):   "#a0a0a0",
-            ('axis',          'label'):     "#404040",
-            ('axis',          'min'):       "#0015D2",
-            ('axis',          'max'):       "#A10000",
-            ('axis',          'inner'):     "#a0a0a0",
-            ('axis',          'origin'):    "#404040",
-            ('error',         'default'):   "#ff0000",
-            ('label',         'defaultfg'): '#000000',
-            ('label',         'inner'):     '#a0a0a0',
-            ('distributions', 'default'):   '#000000',
-            ('distributions', 'fill'):      '#f0f0f0',
-            ('indicator',     'more_rows'): '#cc3333',
-            ('indicator',     'available'):   '#5f9e5f', # faded green
-            ('indicator',     'unavailable'): '#cccccc', # gray, barely perceptible on the default white background
-            ('selection',     'default'):   '#ff0000',
-            ('multiset',      'str'):       '#7f8367', # derived from polarsOperation behavior / not used
-            ('multiset',      'int'):       '#19d084', # derived from polarsOperation behavior / not used
-            ('multiset',      'float'):     '#e3e294', # derived from polarsOperation behavior / not used
-        }
 
         #
-        # Multi-set Color Derivations
+        # The palette supplies three pieces of state; the tables themselves live in
+        # p2s_palettes.py.  resolvePalette() hands back copies, so mutating
+        # color_type_lu on one instance (which tests do) cannot reach another.
+        #
+        # Multi-set Color Derivations -- the ('multiset', *) slots record what the
+        # hash colorizer emits for three dtypes, reproduced here:
         #
         # _df_ = pl.DataFrame({
         #     'val':  ['a','a','b','b','c','c'],
@@ -97,20 +82,76 @@ class P2SColorsMixin:
         # p2s.xyp(**_params_, color=('cat',   p2s.CSETp)) # "#7f8367"
         # p2s.xyp(**_params_, color=('cat_n', p2s.CSETp)) # "#19d084"
         # p2s.xyp(**_params_, color=('cat_f', p2s.CSETp)) # "#e3e294"
+        #
+        self.__applyPalette__(resolvePalette(palette))
 
-        #
-        # Color Spectrum: the 10-class "Spectral" diverging scheme from ColorBrewer
-        # (colorbrewer2.org). Color specifications and designs © 2002 Cynthia Brewer,
-        # Mark Harrower, and The Pennsylvania State University; used under the
-        # Apache-style ColorBrewer license (attribution reproduced in NOTICE).
-        #
-        # M. Harrower and C. A. Brewer, "ColorBrewer.org: An Online Tool for
-        # Selecting Colour Schemes for Maps," The Cartographic Journal, vol. 40,
-        # no. 1, pp. 27-37, 2003, doi: 10.1179/000870403235002042.
-        #
-        # - for the colorSpectrumPolarsOperations() to work, there needs to be at least three colors
-        self.spectrum_palette = ['#9e0142','#d53e4f','#f46d43','#fdae61','#fee08b',
-                                 '#e6f598','#abdda4','#66c2a5','#3288bd','#5e4fa2']
+    #
+    # __applyPalette__() - install resolved palette state onto the instance
+    # - the single place the three palette-derived attributes are assigned, so
+    #   __p2s_colors_mixin_init__() and setPalette() cannot drift apart
+    #
+    def __applyPalette__(self, resolved: dict) -> None:
+        self.palette_name:    str               = resolved['name']
+        self.color_type_lu:   dict              = resolved['color_type_lu']
+        self.spectrum_palette: list             = resolved['spectrum_palette']
+        self.grayscale_ramp:  tuple[float, float] = resolved['grayscale_ramp']
+
+    #
+    # setPalette() - switch this instance to a named palette
+    # - palette   : a name from p2s.paletteNames() ('light' or 'dark')
+    # - overrides : optional {(type, subtype): hex} layered onto that palette
+    #
+    # Deliberately does NOT touch two things:
+    #
+    # - color_overrides_lu.  A setColorOverrides() entry is an explicit instruction
+    #   about one data value; the palette is a default for chart furniture.  The
+    #   explicit instruction outranks it, and survives a palette switch.
+    # - to_color_lu.  Hash-derived colors do not depend on the palette (the HSV band
+    #   in colorizeColumnPolarsOperations is fixed), so the memo stays valid; clearing
+    #   it would cost a recompute to arrive at identical values.
+    #
+    def setPalette(self, palette: str = 'light',
+                   overrides: dict | None = None) -> None:
+        if overrides:
+            for _k_, _v_ in overrides.items():
+                if not isinstance(_v_, self.HexColorString):
+                    raise ValueError(f'setPalette(): value for {_k_!r} is not a valid hex color: {_v_!r}')
+        self.__applyPalette__(resolvePalette(palette, overrides))
+
+    #
+    # getPalette() - the name of the palette currently installed
+    #
+    def getPalette(self) -> str: return self.palette_name
+
+    #
+    # interactivePalette() - the colors the browser-side views need, as a plain dict
+    #
+    # The JS has no colorTyped(): its overlays are literals inside string-concatenated
+    # markup.  This is the channel -- one param.Dict per view, read as model.palette.
+    # It is deliberately a SMALL, renamed subset rather than the whole table: the JS
+    # should not have to know the framework's slot taxonomy, and every key here is a
+    # color some overlay actually paints.
+    #
+    # Why these and not others: black-on-dark overlays are invisible (1.12:1 against
+    # #121212), which is a broken interaction rather than an ugly one -- the drag band
+    # and the status line simply vanish.  The panel chrome (tooltip box, config panel)
+    # paints its own light surface and stays legible, so it is not here yet.
+    #
+    def interactivePalette(self) -> dict:
+        return {
+            'ink':       self.colorTyped('label',      'defaultfg'),   # overlay strokes, status line
+            'bg':        self.colorTyped('background', 'default'),
+            'hint':      self.colorTyped('overlay',    'hint'),        # keyboard-help text
+            'selection': self.colorTyped('selection',  'default'),
+            # The drag band names the set operation the mouseup is about to perform;
+            # _resolve_set_op() in interactive_controller decides which.  Keys match its
+            # return values exactly so the two cannot drift.
+            'setop': {_op_: self.colorTyped('setop', _op_)
+                      for _op_ in ('replace', 'add', 'subtract', 'intersect')},
+        }
+
+    # The selectable palette names, exposed for programmatic use / tests.
+    paletteNames = staticmethod(paletteNames)
 
     #
     # color() - for any object, return a unique color
@@ -191,11 +232,23 @@ class P2SColorsMixin:
     # grayscaleSpectrumPolarsOperations() - abridged grayscale ramp for distribution strips
     # - normalized_input : column of float64 values in [0.0, 1.0]
     # - {red|green|blue}_output : destination column names (all set to the same gray value)
-    # - light_gray : RGB value for the minimum (0.0); defaults to 0.8 (#cccccc)
-    # Mapping: 0.0 → light_gray (barely perceptible on white), 1.0 → 0.0 (black)
+    # - light_gray : RGB value for the minimum (0.0); defaults to the palette's ramp low end
     #
-    def grayscaleSpectrumPolarsOperations(self, normalized_input: str, red_output: str, green_output: str, blue_output: str, light_gray: float = 0.8) -> list:
-        _gray_ = (pl.lit(float(light_gray)) * (1.0 - pl.col(normalized_input))).clip(0.0, 1.0)
+    # The ramp runs lo at 0.0 to hi at 1.0, both taken from the palette:
+    #   light -> (0.8, 0.0): #cccccc, barely perceptible on white, down to black
+    #   dark  -> (0.2, 1.0): #333333, barely perceptible on #121212, up to white
+    #
+    # Dark has to INVERT the ramp rather than merely lighten it.  Keeping the light
+    # direction on a dark canvas would make a near-zero bin the brightest mark in the
+    # plot, which reads as the opposite of what the data says.
+    #
+    # light_gray= overrides lo only, keeping its original meaning for existing callers.
+    #
+    def grayscaleSpectrumPolarsOperations(self, normalized_input: str, red_output: str, green_output: str, blue_output: str, light_gray: float | None = None) -> list:
+        _lo_, _hi_ = self.grayscale_ramp
+        if light_gray is not None: _lo_ = float(light_gray)
+        _n_    = pl.col(normalized_input)
+        _gray_ = (pl.lit(float(_lo_)) + (pl.lit(float(_hi_)) - pl.lit(float(_lo_))) * _n_).clip(0.0, 1.0)
         return [
             _gray_.alias(red_output),
             _gray_.alias(green_output),

@@ -531,6 +531,264 @@ class InteractionController:
 
 _BRUSH_MODE_NAMES_ = ['', 'circ r=5', 'circ r=15', 'vert r=1', 'vert r=3', 'horiz r=1', 'horiz r=3']
 
+# ─────────────────────────────────────────────────────────────────────────────
+# F1 -- per-element hover tooltips (PLANNING.md section 7)
+#
+# Resting the pointer over a mark says what is under it, without a click, without arming
+# a mode, and without changing selection, stack or any linked view.  It is a pure read:
+# nothing here calls into the InteractionController, so no peer view ever learns that a
+# hover happened.
+#
+# Two renderings of the same hit.  `text` is the fallback and needs no configuration;
+# `icon` is the point of the feature -- a user-supplied component re-rendered against the
+# records under the cursor, so hovering a node in a linkp shows a 32x32 xyp of that node's
+# traffic.  Both are chosen from the configuration panel's `tooltip` row, and the `icon`
+# state is offered only by a view that was given one.
+#
+# Almost none of this is new machinery.  recordsAt() already filters the pixel-space frame
+# and joins back to the original df, so it hands back the user's own rows with every
+# original column; render_with() is the same contract stack_controli has used to re-render
+# a component per stack frame since it was written.  F1 is the wiring between them.
+# ─────────────────────────────────────────────────────────────────────────────
+
+#: The tooltip row's states in cycle order, each with its picker mnemonic.  `icon` is
+#: dropped from the list a view offers when it has no icon= -- the row is never *gated*,
+#: because every hit-testable component can always show text; it is the third value that
+#: comes and goes.  That is the same live-value-list mechanism the `labels` row needed.
+_TOOLTIP_STATES_ = (('f', 'off'), ('t', 'text'), ('i', 'icon'))
+
+#: Hit radius for a tooltip, in pixels.  BRUSH_STATES[1]'s 5px: a tooltip answers "what is
+#: under the pointer", which is the same question the smallest brush asks.
+_TOOLTIP_THRESHOLD_ = 5.0
+
+#: How many distinct values of a field to name before summarising the count instead.
+_TOOLTIP_MAX_VALUES_ = 3
+
+#: Lines of field detail, past the leading "N records".  A tooltip that grows with the
+#: frame stops being readable and starts covering the plot.
+_TOOLTIP_MAX_LINES_ = 8
+
+#: Monospace 11px, the same 7px/char the panel and the pickers size themselves with.
+_TOOLTIP_CHAR_W_ = 7
+_TOOLTIP_LINE_H_ = 11
+_TOOLTIP_PAD_    = 4
+
+
+def _tooltipItems_(has_icon: bool) -> list[list[str]]:
+    """The `tooltip` row's value list: [mnemonic, label] per state."""
+    return [list(_s_) for _s_ in _TOOLTIP_STATES_
+            if has_icon or _s_[1] != 'icon']
+
+
+def _tooltipFieldNames_(spec: Any, columns: Any) -> list[str]:
+    """Flatten one encoding parameter into the column names it actually names.
+
+    A component's `x=` / `color=` / `count=` can be a column name, a tuple or list of
+    them, an enum (ROW_COUNTp), a literal number, or None.  Only the strings that are
+    really columns of the frame survive -- which is also what makes this safe to point at
+    any component without asking it what kind of parameter it holds.
+    """
+    if spec is None:
+        return []
+    if isinstance(spec, str):
+        return [spec] if spec in columns else []
+    if isinstance(spec, (list, tuple, set)):
+        _out_ = []
+        for _s_ in spec:
+            _out_.extend(_tooltipFieldNames_(_s_, columns))
+        return _out_
+    return []
+
+
+def _tooltipValueSummary_(recs: pl.DataFrame, field: str) -> str:
+    """One field's value, or a count when there is more than one worth naming."""
+    _vals_ = recs[field].unique(maintain_order=True)
+    _n_    = len(_vals_)
+    if _n_ == 0:
+        return ''
+    if _n_ <= _TOOLTIP_MAX_VALUES_:
+        return ', '.join('null' if _v_ is None else str(_v_) for _v_ in _vals_)
+    return f'{_n_} distinct'
+
+
+def _tooltipTextLines_(recs: pl.DataFrame, fields: Sequence[str]) -> list[str]:
+    """`N records`, then one line per field the component is already encoding.
+
+    Dumping the whole row is wrong on any real analysis frame -- the netflow frames are
+    wide -- so the default is the fields the plot is *made of*.  The component knows
+    those, which is why the default needs no configuration and is never wrong about
+    relevance.
+    """
+    _n_     = len(recs)
+    _lines_ = [f'{_n_} record' + ('' if _n_ == 1 else 's')]
+    _seen_: set = set()
+    _width_ = max((len(_f_) for _f_ in fields), default=0)
+    for _f_ in fields:
+        if _f_ in _seen_ or _f_ not in recs.columns:
+            continue
+        _seen_.add(_f_)
+        if len(_lines_) > _TOOLTIP_MAX_LINES_:
+            _lines_.append('...')
+            break
+        _lines_.append(f'{_f_.ljust(_width_)}  {_tooltipValueSummary_(recs, _f_)}')
+    return _lines_
+
+
+def _tooltipHitKey_(recs: pl.DataFrame) -> tuple:
+    """A cache key that is stable across hovers of the same mark.
+
+    stack_controli's id(df) key does not transfer: it guards a cache of *stack frames*,
+    which are long-lived objects, and its own comment warns that a freed id can be reused.
+    Every hover produces a fresh dataframe, so id() reuse here is not a hazard to guard
+    against but the normal case.
+
+    PLANNING.md proposed the sorted __p2s_index__ tuple, which recordsAt() does not return
+    -- it drops the column on the way out.  Row hashes are the same idea one step further
+    on: order-independent like the sorted index, and they also change when the underlying
+    *values* change, which a stale index would not.
+    """
+    return (len(recs), tuple(sorted(recs.hash_rows().to_list())))
+
+
+class _TooltipMixin_(param.Parameterized):
+    """The half of F1 that is the same for every view.
+
+    A ``param.Parameterized`` and not a plain mixin: param binds a Parameter's *name*
+    when its owning class is built by ParameterizedMetaclass, and a param.String sitting
+    on an ordinary class is an unnamed descriptor that raises on first read.  Both hosts
+    already derive from Parameterized through JSComponent, so this only says out loud
+    where these six params come from.
+
+    A host supplies three things: ``_tooltipRecordsAt_()`` (the hit test -- each host's
+    ``recordsAt()`` takes a different shape argument, and linkp reads its current stack
+    layer rather than a single plot), ``_tooltipFields_()`` (which of its own encodings
+    to name in text mode) and a ``lock``.
+
+    Both hosts return *records*.  linkp also hit-tests *entities*, through
+    ``entitiesAtPoint``, and a node and an edge wanting different content is the separate
+    work PLANNING.md section 7 F1 leaves open -- it is not what this hook does today.
+    """
+
+    #: The panel row's current state, and the row's own param.  One param, not a
+    #: ``tooltip_choice`` mirror of something else: for every other row the panel shows a
+    #: value the plot holds and ``applyConfigChoice`` pushes the change into it, and here
+    #: the param IS the state.  There is nothing to mirror and nothing to apply.
+    tooltip           = param.String(default='off')
+    #: Browser -> Python.  tooltip_seq is the trigger *and* the U7 ticket: a hover that
+    #: resolves after the pointer has moved on must not draw.
+    tooltip_x         = param.Integer(default=0)
+    tooltip_y         = param.Integer(default=0)
+    tooltip_seq       = param.Integer(default=0)
+    #: Dwell before the request fires.  Load-bearing rather than an optimisation: in icon
+    #: mode every request is a full component render, so firing one per mousemove would
+    #: queue renders faster than they complete.
+    tooltip_delay_ms  = param.Integer(default=200)
+    #: Python -> browser.  {seq, x, y, w, h, lines, svg, icon_h, empty}.
+    tooltip_payload   = param.Dict(default={})
+
+    def __initTooltip__(self, icon: Any, tooltip_fields: Any) -> None:
+        """Adopt the constructor's icon= / tooltip_fields=, and validate the icon."""
+        if icon is not None:
+            # An icon is a RENDERED COMPONENT, not a live view: the tooltip embeds the
+            # SVG it produces, so p2s.xypi(...) is the obvious thing to try and is not
+            # supported.  render_with() is what says which of the two this is.
+            if not hasattr(icon, 'render_with') or not hasattr(icon, 'wxh'):
+                raise ValueError(
+                    'icon= takes a polars2svg component (the thing xypi() wraps, not the '
+                    'view it returns): it is re-rendered per hover through render_with() '
+                    'and embedded as SVG.')
+            _wxh_ = getattr(icon, 'wxh', None)
+            if not _wxh_ or len(_wxh_) != 2 or _wxh_[0] <= 0 or _wxh_[1] <= 0:
+                raise ValueError(f'icon= needs a positive wxh=; got {_wxh_!r}')
+        self._icon_           = icon
+        self._tooltip_fields_ = list(tooltip_fields) if tooltip_fields is not None else None
+        #: Keyed on the hit identity, so it is warm while the pointer rests on one mark
+        #: and cold the moment it reaches another.
+        self._tooltip_cache_: dict = {}
+
+    def _tooltipItemsForRow_(self) -> list[list[str]]:
+        return _tooltipItems_(getattr(self, '_icon_', None) is not None)
+
+    # Per-host, overridden below.
+    def _tooltipRecordsAt_(self, xy: tuple) -> Any:
+        raise NotImplementedError
+
+    def _tooltipFields_(self, recs: Any) -> list[str]:
+        raise NotImplementedError
+
+    #
+    # applyTooltipOp() - the browser's dwell timer fired; answer it.
+    #
+    # The U7 sequence ticket is here from the start rather than rediscovered: this is the
+    # brush's round trip with the result rendered in place, so it is the brush's race too.
+    # tooltip_seq doubles as the ticket -- it is already monotonic from the browser, so a
+    # second counter would only be a copy of it that could disagree.
+    #
+    async def applyTooltipOp(self, event: Any) -> None:
+        # event.new, NOT a re-read of self.tooltip_seq: this coroutine's ticket is the
+        # value that triggered it.  Re-reading gives every op queued behind the lock the
+        # same latest seq, so a stale one cannot tell that it is stale and re-runs the
+        # hit test to produce a payload a newer op is about to produce anyway.
+        _seq_ = getattr(event, 'new', None)
+        if not isinstance(_seq_, int):
+            _seq_ = self.tooltip_seq
+        async with self.lock:
+            _mode_ = self.tooltip
+            _xy_   = (self.tooltip_x, self.tooltip_y)
+        if _mode_ not in ('text', 'icon') or _seq_ <= 0:
+            return
+        if _seq_ != self.tooltip_seq:
+            return                          # superseded while waiting for the lock
+        try:
+            _recs_ = self._tooltipRecordsAt_(_xy_)
+        except Exception:
+            # A tooltip is a pure read and the least important thing on screen.  A hit
+            # test that cannot run on this component, at this stack level, must not take
+            # the view down with it -- every other gesture still has to work.
+            return
+        if _seq_ != self.tooltip_seq:
+            return                          # superseded while recordsAt() was running
+        if _recs_ is None or len(_recs_) == 0:
+            self.tooltip_payload = {'seq': _seq_, 'empty': True}
+            return
+        _key_  = (_mode_,) + _tooltipHitKey_(_recs_)
+        _body_ = self._tooltip_cache_.get(_key_)
+        if _body_ is None:
+            _body_ = self.__tooltipBody__(_recs_, _mode_)
+            # One entry is the whole point: the cache exists to stop a pointer resting on
+            # one mark from re-rendering it every dwell, not to remember the plot.
+            self._tooltip_cache_ = {_key_: _body_}
+        if _seq_ != self.tooltip_seq:
+            return                          # superseded while the icon was rendering
+        self.tooltip_payload = dict(_body_, seq=_seq_, x=_xy_[0], y=_xy_[1])
+
+    def __tooltipBody__(self, recs: Any, mode: str) -> dict:
+        """Everything about a payload that depends only on the records, so it caches."""
+        _lines_  = _tooltipTextLines_(recs, self._tooltipFields_(recs))
+        _svg_    = ''
+        _icon_h_ = 0
+        _icon_w_ = 0
+        if mode == 'icon' and getattr(self, '_icon_', None) is not None:
+            try:
+                _svg_ = self._icon_.render_with(recs)._repr_svg_()
+                _icon_w_, _icon_h_ = int(self._icon_.wxh[0]), int(self._icon_.wxh[1])
+            except Exception:
+                # The icon could not be rendered against this hit -- a column it encodes
+                # is missing, or the subset degenerates.  Fall back to text rather than
+                # showing nothing: the records are the same either way.
+                _svg_, _icon_w_, _icon_h_ = '', 0, 0
+            # An icon says what the mark is; the count says how much of it there is.
+            # Everything else is the text mode the user did not ask for.
+            if _svg_:
+                _lines_ = _lines_[:1]
+        _text_w_ = max((len(_ln_) for _ln_ in _lines_), default=0) * _TOOLTIP_CHAR_W_
+        _w_ = max(_icon_w_, _text_w_) + 2 * _TOOLTIP_PAD_ + 4
+        _h_ = (_icon_h_ + _TOOLTIP_PAD_ if _svg_ else 0) \
+              + len(_lines_) * _TOOLTIP_LINE_H_ + 2 * _TOOLTIP_PAD_
+        return {'w': int(_w_), 'h': int(_h_), 'lines': _lines_,
+                'svg': _svg_, 'icon_h': _icon_h_, 'empty': False}
+
+
 def _resolve_set_op(shiftkey, ctrlkey):
     if shiftkey and ctrlkey: return 'intersect'
     if shiftkey:             return 'subtract'
@@ -553,9 +811,14 @@ def _interactivePKeyboardCommands_(kbd_r_desc: str, has_z_key: bool,
                       '\nshift+e . | (time x-axis) expand timeframe backward (earlier events)'
                       '\nctrl+e . | (time x-axis) expand timeframe forward (later events)') if has_time_keys else ''
     return f"""
+in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closes
+a . | open the appearance panel: selection shape, tooltip
+ .. | in the panel ... | space cycles the row, shift-space reverses, enter opens that row's picker, esc closes
+ .. | ............... | a / shift-a move the row cursor; s selection shape, i tooltip
+ .. | tooltip ....... | hover to read what is under the pointer (off | text | icon, when the view has icon=)
 h . | toggle help display
 q . | subtract the current from the top
-F . | pick selection shape (rectangle | oval)
+F . | pick selection shape (rectangle | oval) -- the panel's row is the same picker
 r . | {kbd_r_desc}
 R . | cycle brush shape{_z_key_cmd_}{_search_cmd_}{_time_key_cmd_}
         """
@@ -595,9 +858,13 @@ def _interactivePKeyboardHelpSvg_(keyboard_commands: str) -> str:
 # `model.svg_parent_id` / `model.kbd_help_svg` at render time instead, so there is one
 # module rather than five near-identical strings.
 _INTERACTIVEP_ESM_ = esm('fragments/p2s_dom.js',
+                         'fragments/p2s_config_panel.js',
+                         'fragments/p2s_tooltip.js',
                          'p2s_interactivep.js')
 
 _INTERACTIVEP_GPU_ESM_ = esm('fragments/p2s_dom.js',
+                             'fragments/p2s_config_panel.js',
+                             'fragments/p2s_tooltip.js',
                              'fragments/p2s_gpu_runtime.js',
                              'fragments/p2s_gpu_mount.js',
                              'p2s_interactivep.js')
@@ -607,7 +874,7 @@ _INTERACTIVEP_GPU_ESM_ = esm('fragments/p2s_dom.js',
 
 
 
-class _InteractivePBase(JSComponent):
+class _InteractivePBase(_TooltipMixin_, JSComponent):
     """Shared behaviour for the five generic interactive components.
 
     One compiled class per *kind* (XYPI, HISTOPI, ...), not per view: size and
@@ -632,8 +899,17 @@ class _InteractivePBase(JSComponent):
     _render_fn_      = ''      # Polars2SVG method that re-renders this kind
     _fallback_shape_ = ''      # recordsAt() shape used when the preferred one is rejected
     _keyboard_commands_ = ''   # help text (also read by the test suite)
+    #: The component parameters this kind encodes into the plot, in reading order.  A
+    #: tooltip in text mode names these and nothing else -- they are what the marks are
+    #: MADE of, so the default needs no configuration and is never wrong about relevance.
+    #: Dumping the whole row is what it is avoiding; the netflow frames are wide.
+    _tooltip_encodings_: tuple = ()
 
     # ── per-instance ─────────────────────────────────────────────────────────
+    # The Python-side palette, read in JS as model.palette (see p2sInk() in
+    # fragments/p2s_dom.js).  The overlays paint literals otherwise, and black on
+    # the dark palette's #121212 is 1.12:1 -- invisible, not merely off-theme.
+    palette           = param.Dict(default={})
     svg_w      = param.Integer(default=0)
     svg_h      = param.Integer(default=0)
     use_webgpu = param.Boolean(default=False)
@@ -672,11 +948,23 @@ class _InteractivePBase(JSComponent):
     brush_leave_done  = param.Boolean(default=False)
     search_str        = param.String(default='')
     search_op_finished= param.Boolean(default=False)
+    # The configuration panel, shared with LINKPI (20260921_config_panel_design.md).
+    # Two rows here rather than LINKPI's nine: these five have most of the alphabet free,
+    # so the panel is not buying back a keyspace, it is carrying the tooltip row F1 put
+    # on every component -- and giving `select_shape` a home beside it.
+    menu_items        = param.Dict(default={})
+    config_panel_rows = param.List(default=[])
     # gpu_payload / gpu_error are declared on the *_GPU subclasses only -- an SVG
     # view has no use for them and they would only widen its data model.
 
     def __init__(self, _plot_, use_webgpu=False, **kwargs):
         mvc = kwargs.pop('mvc', None)          # don't pass to the super
+        # icon= and tooltip_fields= are plain attributes, not params: one is a Python
+        # component object and the other a column list, and neither has any business in
+        # the data model shipped to the browser.  param would reject them as unknown
+        # kwargs, so they come off here exactly as mvc does.
+        _icon_kw_   = kwargs.pop('icon', None)
+        _fields_kw_ = kwargs.pop('tooltip_fields', None)
         if use_webgpu and getattr(_plot_, 'webgpu', None) is None:
             raise ValueError(f'_interactivep(): use_webgpu=True is not (yet) supported for '
                              f'"{type(self).__name__.lower()}"')
@@ -688,6 +976,7 @@ class _InteractivePBase(JSComponent):
         # panel's HTML sanitizer.  The ESM path has neither.
         super().__init__(svg_w=_w_, svg_h=_h_, use_webgpu=use_webgpu,
                          mod_inner=(_plot_._repr_svg_() if not use_webgpu else ''),
+                         palette=_plot_.p2s.interactivePalette(),
                          **_gpu_, **kwargs)
         # Locking variable
         self.lock = asyncio.Lock()
@@ -702,15 +991,57 @@ class _InteractivePBase(JSComponent):
         self._plot_  = _plot_
         self._cache_ = {id(_plot_.df_orig): (_plot_.df_orig, _plot_)}
         self.template = _plot_
+        # F1 -- the tooltip, and the configuration panel that carries its row.
+        self.__initTooltip__(_icon_kw_, _fields_kw_)
+        self.menu_items = {
+            'select_shape': [['r', 'rectangle'], ['o', 'oval']],
+            'tooltip':      self._tooltipItemsForRow_(),
+        }
+        self.config_panel_rows = self.__configPanelRows__()
         # Watch for callbacks
         self.param.watch(self.applyDragOp,     'drag_op_finished')
         self.param.watch(self.applyKeyOp,      'key_op_finished')
         self.param.watch(self.applyBrushOp,    'brush_changed')
         self.param.watch(self.applyBrushLeave, 'brush_leave_done')
+        self.param.watch(self.applyTooltipOp,  'tooltip_seq')
         if use_webgpu:
             self.param.watch(self.applyGpuError, 'gpu_error')
         if self.has_search:
             self.param.watch(self.applySearchOp, 'search_op_finished')
+
+    #
+    # The configuration panel's rows.  Two, both always enabled: `select_shape` is a
+    # choice the component can always make, and the tooltip row is never gated because
+    # every hit-testable component can always show text -- it is the row's third VALUE
+    # that comes and goes with icon=, which is a menu_items question, not a gating one.
+    #
+    def __configPanelRows__(self) -> list[list[Any]]:
+        return [['s', 'select_shape', 'selection shape', True],
+                ['i', 'tooltip',      'tooltip',         True]]
+
+    #
+    # The tooltip's two host hooks.
+    #
+    # The hit test is the brush's, at the small brush's 5px: "what is under the pointer"
+    # is the same question.  The fallback mirrors _doBrushAt -- a circle is meaningless
+    # on a component whose marks are bands, and each kind names the shape that is not.
+    #
+    def _tooltipRecordsAt_(self, xy: tuple) -> Any:
+        try:
+            return self._plot_.recordsAt(xy, shape=self._plot_.p2s.SELECT_CIRCLEp,
+                                         threshold=_TOOLTIP_THRESHOLD_)
+        except ValueError:
+            return self._plot_.recordsAt(xy,
+                                         shape=getattr(self._plot_.p2s, self._fallback_shape_),
+                                         threshold=_TOOLTIP_THRESHOLD_)
+
+    def _tooltipFields_(self, recs: Any) -> list[str]:
+        if self._tooltip_fields_ is not None:
+            return [_f_ for _f_ in self._tooltip_fields_ if _f_ in recs.columns]
+        _out_: list[str] = []
+        for _name_ in self._tooltip_encodings_:
+            _out_.extend(_tooltipFieldNames_(getattr(self._plot_, _name_, None), recs.columns))
+        return _out_
 
     # Refresh the view
     def __refreshView__(self):
@@ -873,6 +1204,7 @@ class TIMEPI(_InteractivePBase):
     _svg_parent_id_  = 'svgparenttimepi'
     _render_fn_      = 'timep'
     _fallback_shape_ = 'SELECT_VERTICALp'
+    _tooltip_encodings_ = ('time', 'color', 'count')
     _kbd_r_desc_     = 'toggle brush on/off'
     _keyboard_commands_ = _interactivePKeyboardCommands_(
         _kbd_r_desc_, has_z_key=False, has_search=False, has_time_keys=True)
@@ -888,6 +1220,7 @@ class HISTOPI(_InteractivePBase):
     _svg_parent_id_  = 'svgparenthistopi'
     _render_fn_      = 'histop'
     _fallback_shape_ = 'SELECT_HORIZONTALp'
+    _tooltip_encodings_ = ('bin_by', 'color', 'count')
     _kbd_r_desc_     = 'toggle brush on/off'
     _keyboard_commands_ = _interactivePKeyboardCommands_(
         _kbd_r_desc_, has_z_key=False, has_search=True, has_time_keys=False)
@@ -904,6 +1237,7 @@ class XYPI(_InteractivePBase):
     _svg_parent_id_  = 'svgparentxypi'
     _render_fn_      = 'xyp'
     _fallback_shape_ = 'SELECT_HORIZONTALp'
+    _tooltip_encodings_ = ('x', 'y', 'color', 'dot_size', 'line')
     _kbd_r_desc_     = 'toggle brush on/off'
     _keyboard_commands_ = _interactivePKeyboardCommands_(
         _kbd_r_desc_, has_z_key=True, has_search=False, has_time_keys=True)
@@ -918,6 +1252,7 @@ class CHORDPI(_InteractivePBase):
     _svg_parent_id_  = 'svgparentchordpi'
     _render_fn_      = 'chordp'
     _fallback_shape_ = 'SELECT_CIRCLEp'
+    _tooltip_encodings_ = ('relationships', 'color', 'node_color', 'count')
     _kbd_r_desc_     = 'toggle brush on/off'
     _keyboard_commands_ = _interactivePKeyboardCommands_(
         _kbd_r_desc_, has_z_key=False, has_search=False, has_time_keys=False)
@@ -933,6 +1268,7 @@ class PIEPI(_InteractivePBase):
     _svg_parent_id_  = 'svgparentpiepi'
     _render_fn_      = 'piep'
     _fallback_shape_ = 'SELECT_CIRCLEp'
+    _tooltip_encodings_ = ('bin_by', 'color', 'count')
     _kbd_r_desc_     = 'toggle brush on/off'
     _keyboard_commands_ = _interactivePKeyboardCommands_(
         _kbd_r_desc_, has_z_key=False, has_search=True, has_time_keys=False)
@@ -1082,6 +1418,10 @@ _SMALLPI_GPU_ESM_ = esm('fragments/p2s_dom.js',
 class SMALLPI(JSComponent):
     """Panel view for Smallp -- one static class for every size / render mode."""
 
+    # The Python-side palette, read in JS as model.palette (see p2sInk() in
+    # fragments/p2s_dom.js).  The overlays paint literals otherwise, and black on
+    # the dark palette's #121212 is 1.12:1 -- invisible, not merely off-theme.
+    palette           = param.Dict(default={})
     svg_w             = param.Integer(default=0)
     svg_h             = param.Integer(default=0)
     use_webgpu        = param.Boolean(default=False)
@@ -1113,6 +1453,7 @@ class SMALLPI(JSComponent):
         # an SVG to nothing).  The ESM path has neither, so the value simply arrives.
         super().__init__(svg_w=_w_, svg_h=_h_, use_webgpu=use_webgpu,
                          mod_inner=('' if use_webgpu else _smallp_._repr_svg_()),
+                         palette=_smallp_.p2s.interactivePalette(),
                          **_gpu_, **kwargs)
         self.lock = asyncio.Lock()
         if _mvc_ is None:
@@ -1656,16 +1997,31 @@ _CONFIG_PANEL_ROWS_ = [
     ['z', 'link_size',        'link size'],
     ['o', 'link_opacity',     'link opacity'],
     ['n', 'node_size',        'node size'],
+    # F1's row.  APPENDED rather than inserted: every row above is a persistent
+    # visual-encoding setting and this one is an interaction mode, so it belongs at the
+    # end of them -- and putting it anywhere earlier would renumber rows that `a` plus
+    # `space` has reached in two keystrokes since the panel shipped.  'i' for info /
+    # inspect, the mnemonic PLANNING.md section 7 wanted for the bare key F1 no longer
+    # needs now that the row carries it on every component.
+    #
+    # The only row with no *_choice mirror and no applyConfigChoice branch: for every
+    # other row the panel shows a value the LinkP holds and the watcher pushes a change
+    # into it, and here the param IS the state -- there is nothing to mirror and nothing
+    # to apply.  applyTooltipOp reads it on the next hover.
+    ['i', 'tooltip',          'tooltip'],
+    # Last, because it is the one that is usually gated off: a backwards wrap of the row
+    # cursor then has a gated row to skip, which is the case the cursor gets wrong.
     ['b', 'background_state', 'background'],
 ]
 
 _LINKPI_KEYBOARD_COMMANDS_ = """
 in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closes
 / . | search: type substring + Enter (prefix +add -remove &intersect); Escape to cancel
-a . | open the appearance panel: arrows, timing marks, labels, link shape/size/opacity, node size, background
+a . | open the appearance panel: arrows, timing marks, labels, link shape/size/opacity, node size, tooltip, background
  .. | in the panel ... | space cycles the row, shift-space reverses, enter opens that row's picker, esc closes
  .. | ............... | a / shift-a move the row cursor; r arrows, t timing marks, p spacing, l labels
- .. | ............... | h link shape, z link size, o link opacity, n node size, b background
+ .. | ............... | h link shape, z link size, o link opacity, n node size, i tooltip, b background
+ .. | tooltip ....... | hover to read what is under the pointer (off | text | icon, when the view has icon=)
  .. | shift-b ........ | open background picker (flow field / neighborhood / clear); committing runs it
 c . | reset view or focus view on selected
 esc | cancel the running layout (keeps its best-so-far result)
@@ -1751,16 +2107,20 @@ _operation_items_  = _annotate_(_LAYOUT_OP_MENU_, treatment_for)
 # The browser half lives in polars2svg/js/p2s_linkpi.js (PLANNING.md W1).  Only the
 # *_GPU composition carries the ~14 KB WebGPU runtime.
 _LINKPI_ESM_ = esm('fragments/p2s_dom.js',
+                   'fragments/p2s_config_panel.js',
+                   'fragments/p2s_tooltip.js',
                    'p2s_linkpi.js')
 
 _LINKPI_GPU_ESM_ = esm('fragments/p2s_dom.js',
+                       'fragments/p2s_config_panel.js',
+                       'fragments/p2s_tooltip.js',
                        'fragments/p2s_gpu_runtime.js',
                        'fragments/p2s_gpu_mount.js',
                        'p2s_linkpi.js')
 
 
 
-class LINKPI(JSComponent):
+class LINKPI(_TooltipMixin_, JSComponent):
     """Panel view for LinkP.
 
     One static class for every graph, size and render mode.  This used to be
@@ -1780,6 +2140,10 @@ class LINKPI(JSComponent):
     _broadcasts_selection_ = True
     _broadcasts_positions_ = True
 
+    # The Python-side palette, read in JS as model.palette (see p2sInk() in
+    # fragments/p2s_dom.js).  The overlays paint literals otherwise, and black on
+    # the dark palette's #121212 is 1.12:1 -- invisible, not merely off-theme.
+    palette           = param.Dict(default={})
     svg_w                         = param.Integer(default=0)
     svg_h                         = param.Integer(default=0)
     use_webgpu                    = param.Boolean(default=False)
@@ -1881,6 +2245,11 @@ class LINKPI(JSComponent):
 
     def __init__(self, _linkp_, mvc=None, use_webgpu=False, **kwargs):
         _mvc_    = kwargs.pop('mvc', mvc)   # allow override via kwargs
+        # F1.  Plain attributes, not params -- one is a Python component object and the
+        # other a column list, and neither belongs in the data model shipped to the
+        # browser.  Popped here for the same reason mvc is.
+        _icon_kw_   = kwargs.pop('icon', None)
+        _fields_kw_ = kwargs.pop('tooltip_fields', None)
         _w_, _h_ = _linkp_.wxh
         # Picker menus depend on how this LinkP was built, so they are per view;
         # the JS reads them from data.menu_items rather than from baked-in JSON.
@@ -1898,6 +2267,7 @@ class LINKPI(JSComponent):
             _timing_spacing_items_l_.append(['#', _timing_spacing_cur_])
         super().__init__(
             svg_w=_w_, svg_h=_h_, use_webgpu=use_webgpu,
+            palette=_linkp_.p2s.interactivePalette(),
             **({'gpu_payload': _linkp_.webgpu()} if use_webgpu else {}),
             link_size_choice=_link_size_cur_, node_size_choice=_node_size_cur_,
             link_opacity_choice=_link_opacity_cur_, link_shape_choice=_link_shape_cur_,
@@ -1921,6 +2291,9 @@ class LINKPI(JSComponent):
                 'timing_marks':     [list(_i_) for _i_ in _ON_OFF_ITEMS_],
                 'label_mode':       _label_mode_items(_LABEL_MODES_),
                 'background_state': [list(_i_) for _i_ in _background_state_items_],
+                # F1.  Seeded without the 'icon' state and replaced below once
+                # __initTooltip__ has seen whether this view was given one.
+                'tooltip':          _tooltipItems_(False),
             },
             mod_inner=('' if use_webgpu else _linkp_._repr_svg_()),
             **kwargs)
@@ -2050,7 +2423,7 @@ class LINKPI(JSComponent):
         # does not provide one, in which case cycling has nothing to draw.
         self.background_state  = 0
         self.layout_background = None
-        self._bg_label_color_  = '#000000'
+        self._bg_label_color_  = self.rt_self.colorTyped('label', 'defaultfg')
         # Provenance decides the lifetime (PLANNING.md B4).  'layout' means the
         # background IS the layout's own output (donut cells, circle-pack hulls)
         # and dies with it -- a later layout that produces none clears it.
@@ -2114,6 +2487,8 @@ class LINKPI(JSComponent):
         self.param.watch(self.applyBackgroundChoice,  'background_op_seq')
         self.param.watch(self.applySizeChoice,        ['link_size_choice', 'node_size_choice', 'link_opacity_choice', 'link_shape_choice', 'timing_spacing_choice'])
         self.param.watch(self.applyConfigChoice,      ['link_arrows_choice', 'timing_marks_choice', 'label_mode_choice', 'background_state_choice'])
+        self.param.watch(self.applyTooltipOp,         'tooltip_seq')
+        self.__initTooltip__(_icon_kw_, _fields_kw_)
         self.__syncConfigPanel__()
         if use_webgpu:
             self.param.watch(self.applyGpuError,      'gpu_error')
@@ -2598,6 +2973,11 @@ class LINKPI(JSComponent):
                 _on_ = self._timing_time_ is not None
             elif _kind_ == 'timing_spacing':
                 _on_ = _marks_on_              # spacing is meaningless with no marks
+            elif _kind_ == 'tooltip':
+                # Never gated: every hit-testable component can always show text.  It is
+                # the row's third VALUE that comes and goes with icon=, and that is a
+                # menu_items question -- see __syncConfigPanel__.
+                _on_ = True
             elif _kind_ == 'background_state':
                 # Cycling the display state with nothing to display is the same no-op the
                 # old 'b' key was; the producer picker (shift-b) is what supplies one.
@@ -2626,13 +3006,46 @@ class LINKPI(JSComponent):
         # navigated.  Reassigned only on a real change -- menu_items is a Dict param and
         # every write ships the whole thing to the browser.
         _modes_ = self.labelModeCycle()
-        if [_lbl_ for _, _lbl_ in self.menu_items.get('label_mode', [])] != list(_modes_):
+        _tip_   = self._tooltipItemsForRow_()
+        if ([_lbl_ for _, _lbl_ in self.menu_items.get('label_mode', [])] != list(_modes_)
+                or self.menu_items.get('tooltip') != _tip_):
             _items_ = dict(self.menu_items)
             _items_['label_mode'] = _label_mode_items(_modes_)
+            # The tooltip row's list is fixed for the life of a view -- icon= is a
+            # constructor argument -- but it is seeded before __initTooltip__ has run, so
+            # this is where the 'icon' state actually arrives.
+            _items_['tooltip']    = _tip_
             self.menu_items = _items_
         _rows_ = self.__configPanelRows__()
         if _rows_ != self.config_panel_rows:
             self.config_panel_rows = _rows_
+
+    #
+    # The tooltip's two host hooks (F1).
+    #
+    # LinkP.recordsAt() takes only SELECT_CIRCLEp and hit-tests edges by point-to-segment
+    # distance and nodes by radius, so there is no fallback shape to try -- the generic
+    # components need one because a circle is meaningless over a band.
+    #
+    # It returns RECORDS, which is a correct and useful tooltip and is not the whole
+    # story: linkp also hit-tests *entities* through entitiesAtPoint, and a node and an
+    # edge want different content.  PLANNING.md section 7 calls that out as separate work
+    # and it stays separate -- this is the same read the brush already broadcasts.
+    #
+    def _tooltipRecordsAt_(self, xy: tuple) -> Any:
+        return self.dfs_layout[self.df_level].recordsAt(xy, threshold=_TOOLTIP_THRESHOLD_)
+
+    def _tooltipFields_(self, recs: Any) -> list[str]:
+        if self._tooltip_fields_ is not None:
+            return [_f_ for _f_ in self._tooltip_fields_ if _f_ in recs.columns]
+        _ln_   = self.dfs_layout[self.df_level]
+        _out_: list[str] = []
+        # relationships_orig, NOT relationships: LinkP rewrites a tuple endpoint into a
+        # synthetic '__fm0__' column that is not in the user's frame (see the note in
+        # __init__), and a tooltip must name columns the user would recognise.
+        for _name_ in ('relationships_orig', 'color', 'node_color', 'count', 'link_size'):
+            _out_.extend(_tooltipFieldNames_(getattr(_ln_, _name_, None), recs.columns))
+        return _out_
 
     #
     # __renderView__() - create a new LinkP for the given DataFrame using current pos/view

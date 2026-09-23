@@ -2206,8 +2206,12 @@ class TestLINKPISizeCycleMenus(unittest.TestCase):
         # The two ways this menu used to commit without an Enter: the single-character
         # mnemonic, and the 2.5s inactivity timeout.  Asserted against the emitted JS
         # because that is where the behaviour lives.
-        _ctrl_    = self._make_ctrl()
-        _keydown_ = component_script(_ctrl_, 'myOnKeyDown')
+        _ctrl_ = self._make_ctrl()
+        # menuKeyDown, not myOnKeyDown: the picker's modal block moved into the shared
+        # fragment when the config panel became infrastructure for every component
+        # (F1).  It is the same block -- the assertion follows it rather than relaxing
+        # to a whole-module grep, which is exactly what component_script() is for.
+        _keydown_ = component_script(_ctrl_, 'menuKeyDown')
         _at_ = _keydown_.index('_items_[_i_][0] === event.key')
         self.assertIn('_items_[_i_][3]', _keydown_[_at_:_at_ + 800],
                       'mnemonic commit does not check the guard flag')

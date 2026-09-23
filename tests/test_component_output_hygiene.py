@@ -84,9 +84,11 @@ class TestComponentOutputHygiene(unittest.TestCase):
         spreadlinesp on the page had its partial-selection rings clipped by the first
         figure's window, and where the two did not overlap the ring vanished.
 
-        linkp's `#cloud` is still bare, but its <defs> body is a fixed string, so two
-        linkps resolve to an identical definition and render correctly; no renderer
-        here emits it (a cloud needs collapsed nodes -- see TestLinkPCloudDefs).
+        linkp's `#cloud` was the last bare one.  It was safe only while the <defs> body
+        was a fixed string; theming the outline to the palette made the definition
+        render-dependent, so it now carries rand_id like everything else (see
+        TestLinkPCloudDefs.test_the_cloud_def_is_scoped_and_follows_the_palette).  No
+        renderer here emits one anyway -- a cloud needs collapsed nodes.
         '''
         for _name_, _fn_ in self._renderers().items():
             with self.subTest(component=_name_):

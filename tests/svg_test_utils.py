@@ -71,7 +71,7 @@ def normalize_svg(svg):
     which is why p2sll appears in the substitution above.
     '''
     # 1. Replace random IDs
-    svg = re.sub(r'(plotClip-|lines_|smallp_|xyp_|histop_|timep_|chordp_|p2sll|ccl_'
+    svg = re.sub(r'(plotClip-|lines_|smallp_|xyp_|histop_|timep_|chordp_|piep_|p2sll|ccl_'
                  r'|cloud_outline_|cloud_|(?:rect|circle)-group-)(\d+)', r'\1TESTID', svg)
 
     # 2. Sort dot elements within the plot group

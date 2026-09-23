@@ -411,6 +411,32 @@ class InteractivePage:
         _m_ = min(_marks_, key=lambda _d_: _d_['area'])
         return float(_m_['cx']), float(_m_['cy'])
 
+    def blank_canvas_xy(self, clearance: int = 20) -> tuple[float, float]:
+        """A point with no drawn mark within `clearance` px, for ANY component.
+
+        ``empty_point()`` reads ``plot.df_node`` and is therefore linkp-only. This one
+        reads what is actually drawn in ``#mod``, which every component has, and is what
+        a tooltip test needs: "the pointer is over nothing" has to be a fact about the
+        rendering, not about a model only one component keeps.
+        """
+        _marks_ = self.root.locator(
+            f'[id="mod{self.suffix}"] circle, [id="mod{self.suffix}"] rect'
+        ).evaluate_all("""els => els.map(e => {
+            const b = e.getBBox();
+            return {cx: b.x + b.width / 2, cy: b.y + b.height / 2,
+                    area: Math.max(b.width, 1) * Math.max(b.height, 1)};
+        })""")
+        # Chrome (background, border, clip) is always a big rect; only the marks matter.
+        _pts_ = [(_m_['cx'], _m_['cy']) for _m_ in _marks_ if _m_['area'] < 400]
+        _w_, _h_ = self.plot.wxh
+        _c2_ = clearance * clearance
+        for _y_ in range(clearance, int(_h_) - clearance, 5):
+            for _x_ in range(clearance, int(_w_) - clearance, 5):
+                if all((_x_ - _a_) ** 2 + (_y_ - _b_) ** 2 > _c2_ for _a_, _b_ in _pts_):
+                    return float(_x_), float(_y_)
+        raise AssertionError(
+            f'no point on this plot is {clearance}px clear of every mark')
+
     def _page_xy(self, x: float, y: float) -> tuple[float, float]:
         """SVG-local (x, y) -> page coordinates, waiting out a rebuild if one is in flight.
 
@@ -829,6 +855,16 @@ class InteractivePage:
     #: and never crosses into Python -- the whole reason the menu had no coverage.
     MENU_ROW_H  = 14
     MENU_ROW_Y0 = 9
+    # The drag band names the pending set operation, and its colours come from the
+    # palette now rather than from literals in the JS -- so the expected value is
+    # looked up rather than spelled out.  The fixtures build a default (light)
+    # Polars2SVG, whose setop values are exactly what the JS used to hardcode, so
+    # these assertions did not change meaning when the palette landed.
+    @staticmethod
+    def setopColor(op, palette='light'):
+        from polars2svg.p2s_palettes import PALETTES
+        return PALETTES[palette]['color_type_lu'][('setop', op)]
+
     MENU_HILITE = 'rgba(100,150,255,0.3)'
 
     def menu_index(self) -> int:
@@ -952,6 +988,65 @@ class InteractivePage:
                 return
             time.sleep(0.05)
         raise AssertionError(f'panel row {label!r} shows {_seen_!r}, wanted {value!r}')
+
+    # ── the tooltip overlay (F1) ─────────────────────────────────────────────
+    #
+    # Read off the DRAWING, like everything else here.  A tooltip exists only while the
+    # pointer rests, so there is nothing in a settled DOM digest for the parity goldens
+    # to have caught -- which is why these helpers exist at all.
+
+    def tooltip_text(self) -> str:
+        return self.el('tooltip').text_content() or ''
+
+    def tooltip_lines(self) -> list:
+        return [(_t_.text_content() or '').strip()
+                for _t_ in self.root.locator(f'[id="tooltip{self.suffix}"] tspan').all()]
+
+    def tooltip_is_showing(self) -> bool:
+        return self.el('tooltip').locator('g').count() > 0
+
+    def tooltip_box(self) -> dict:
+        """The backdrop rect's placed geometry, in root-SVG coordinates.
+
+        The rect is drawn at (0,0) inside a translated <g>, so its own x/y say nothing
+        about where the box landed; the bounding box is what the edge-flip tests need.
+        """
+        _bb_ = self.el('tooltip').locator('rect').first.evaluate(
+            "(e) => { const b = e.getBoundingClientRect(); "
+            "const r = e.ownerSVGElement.getBoundingClientRect(); "
+            "return {x: b.x - r.x, y: b.y - r.y, w: b.width, h: b.height}; }")
+        return _bb_
+
+    def tooltip_icon_svg_count(self) -> int:
+        """How many nested <svg> elements the tooltip is carrying -- icon mode draws a
+        whole component into it, text mode draws none."""
+        return self.el('tooltip').locator('svg').count()
+
+    def hover_and_dwell(self, x: float, y: float, budget_s: float = 8.0) -> bool:
+        """Hover, then wait for a tooltip to appear.  True if one did.
+
+        The dwell timer plus a Python round trip, so a plain hover-then-assert is a race
+        even on an idle machine.
+        """
+        self.hover(x, y)
+        _deadline_ = time.monotonic() + budget_s
+        while time.monotonic() < _deadline_:
+            if self.tooltip_is_showing():
+                return True
+            time.sleep(0.05)
+        return False
+
+    def expect_no_tooltip(self, settle_s: float = 1.5) -> None:
+        """Assert none appears, and give the dwell time to have fired if it were going to.
+
+        A plain "is it absent right now" passes trivially against a tooltip that simply
+        had not arrived yet, which would make every off-state test vacuous.
+        """
+        _deadline_ = time.monotonic() + settle_s
+        while time.monotonic() < _deadline_:
+            if self.tooltip_is_showing():
+                raise AssertionError(f'a tooltip appeared: {self.tooltip_text()!r}')
+            time.sleep(0.05)
 
     def menu_text(self) -> str:
         return self.el('pickermenu').text_content() or ''

@@ -74,10 +74,12 @@ def test_the_band_is_parked_off_canvas_after_release(quad_page):
     assert (_rect_['width'], _rect_['height']) == ('5', '5')
 
 
-def test_the_band_is_black_with_no_modifier(quad_page):
+def test_the_band_is_the_replace_colour_with_no_modifier(quad_page):
+    """Black on the default palette; looked up rather than spelled out because the
+    band's colours come from the palette now (setop/replace), not from a JS literal."""
     quad_page.mouse_down(*CORNER)
     quad_page.mouse_move_to(120, 100)
-    assert quad_page.drag_rect()['stroke'] == '#000000'
+    assert quad_page.drag_rect()['stroke'] == quad_page.setopColor('replace')
     quad_page.mouse_up()
 
 
@@ -86,7 +88,7 @@ def test_the_band_turns_green_for_a_ctrl_drag(quad_page):
 
     Focus *before* holding the modifier: the band's colour comes from ``data.ctrlkey``,
     which only ``myOnKeyDown`` sets -- and that handler is on the SVG, so a Control
-    pressed while focus is elsewhere never reaches it and the band stays black.  (The
+    pressed while focus is elsewhere never reaches it and the band stays the replace colour (black on the default palette).  (The
     selection itself is unaffected: ``myOnMouseUp`` reads ``event.ctrlKey`` straight
     off the event, which is why the set-operation tests above pass either way.)
     """
@@ -94,7 +96,7 @@ def test_the_band_turns_green_for_a_ctrl_drag(quad_page):
     with quad_page.holding(ctrl=True):
         quad_page.mouse_down(*CORNER)
         quad_page.mouse_move_to(120, 100)
-        assert quad_page.drag_rect()['stroke'] == '#00ff00'
+        assert quad_page.drag_rect()['stroke'] == quad_page.setopColor('add')
         quad_page.mouse_up()
 
 
@@ -111,7 +113,7 @@ def test_the_band_turns_red_for_a_shift_drag(quad_page):
     with quad_page.holding(shift=True):
         quad_page.mouse_down(*CORNER)
         quad_page.mouse_move_to(120, 100)
-        assert quad_page.drag_rect()['stroke'] == '#ff0000'
+        assert quad_page.drag_rect()['stroke'] == quad_page.setopColor('subtract')
         quad_page.mouse_up()
 
 
@@ -122,7 +124,7 @@ def test_the_band_turns_blue_for_a_shift_ctrl_drag(quad_page):
     with quad_page.holding(shift=True, ctrl=True):
         quad_page.mouse_down(*CORNER)
         quad_page.mouse_move_to(120, 100)
-        assert quad_page.drag_rect()['stroke'] == '#0000ff'
+        assert quad_page.drag_rect()['stroke'] == quad_page.setopColor('intersect')
         quad_page.mouse_up()
 
 

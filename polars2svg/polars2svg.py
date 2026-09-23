@@ -114,12 +114,13 @@ class Polars2SVG(P2SColorsMixin,
 
     Construction
     ------------
-    ``Polars2SVG()`` takes no arguments and returns a **new, independent instance**.
+    ``Polars2SVG()`` takes one optional argument, ``palette=`` (``'light'``, the default,
+    or ``'dark'``), and returns a **new, independent instance**.
     Configuration lives on the instance, not in the process: ``set_defaults()``,
-    ``reset_defaults()`` and ``setColorOverrides()`` apply to every figure built from
-    *that* instance and to no other. Configure one instance once and everything you
-    render from it shares a style; build a second instance when you want a second style
-    (or a second user's session) that cannot be reached by the first.
+    ``reset_defaults()``, ``setColorOverrides()`` and ``setPalette()`` apply to every
+    figure built from *that* instance and to no other. Configure one instance once and
+    everything you render from it shares a style; build a second instance when you want
+    a second style (or a second user's session) that cannot be reached by the first.
 
     Each factory method hands the component the instance it was called on (``p2s=``), so
     a component always resolves its defaults and color overrides against its own caller.
@@ -439,11 +440,16 @@ class Polars2SVG(P2SColorsMixin,
     SM_PARTOFWHOLEp:                     _enums_.SmallMultipleP
     REMAINDERp:                          _enums_.OrderBucketP
 
-    def __init__(self) -> None:
+    def __init__(self, palette: str = 'light') -> None:
         # Every Polars2SVG() builds its own instance, so everything below is per-instance
         # state that runs exactly once for it.  The one thing that is NOT per-instance is
         # the 'polars2svg_logger' further down -- that logger is module-global and shared
         # by every instance, which is why its filter needs the care it gets there.
+        #
+        # palette= selects the color scheme for chart furniture -- 'light' (the default,
+        # and what every render looked like before palettes existed) or 'dark'.  It is
+        # instance-wide, like set_defaults() and setColorOverrides(); build a second
+        # instance, or call setPalette(), for a second scheme.
         self._global_defaults: dict    = {}
         self._component_defaults: dict = {}
 
@@ -517,7 +523,7 @@ class Polars2SVG(P2SColorsMixin,
         self.logger.addFilter(OnceFilter(seen=_seen_))
 
         # Initialize the mixins
-        self.__p2s_colors_mixin_init__()
+        self.__p2s_colors_mixin_init__(palette)
         self.__p2s_geometry_mixin_init__()
         self.__p2s_graph_mixin_init__()
         self.__p2s_polars_mixin_init__()

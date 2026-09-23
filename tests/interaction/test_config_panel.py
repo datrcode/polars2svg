@@ -45,6 +45,7 @@ ROWS = [
     ('link size',    'z'),
     ('link opacity', 'o'),
     ('node size',    'n'),
+    ('tooltip',      'i'),
     ('background',   'b'),
 ]
 
@@ -338,7 +339,7 @@ def test_the_panel_survives_a_render(timing_page):
     timing_page.press('r')
     timing_page.press(' ')                        # a real re-render: arrows redraw
     timing_page.expect_panel_value('arrows', 'on')
-    timing_page.expect_panel_row(0)
+    timing_page.expect_panel_row(ROWS.index(('arrows', 'r')))
     assert timing_page.panel_is_open()
 
 

@@ -182,42 +182,100 @@ def component_script(view, name: str) -> str:
 # ---------------------------------------------------------------------------
 # ESM source scanning
 #
-# The component JS has no template literals, no block comments and no regex literals
-# (checked: 0 backticks, 0 `/*`, 0 regex literals across all 57,770 characters of it), so
-# skipping `'`/`"` strings and `//` comments is enough to match braces reliably.
-# TestBraceMatcher in test_js_assets.py is what holds that.
+# The component JS has no regex literals, so blanking comments and string literals is
+# enough to match braces reliably.  TestBraceMatcher in test_js_assets.py is what holds
+# that.
 # ---------------------------------------------------------------------------
 
-def _strip_noise(text: str) -> str:
-    '''Replace string-literal and line-comment content with spaces, preserving length and
-    newlines, so that offsets into the result are offsets into the original.'''
+def strip_noise(text: str) -> str:
+    """Blank out comment and string-literal *content*, preserving length and newlines.
+
+    Offsets into the result are offsets into the original, which is what lets the brace
+    matcher below slice the real source, and what lets a scanner report a real line
+    number.
+
+    ONE left-to-right pass, and that is the whole point rather than an implementation
+    detail.  A sequence of independent regexes -- strip `//` comments, then strip
+    `'...'` -- gets `'http://www.w3.org/2000/svg'` wrong: the comment pass eats from the
+    `//` to the end of the line, taking the closing quote and the statement's `;` with
+    it, and everything after that is parsed in the wrong state.  test_js_assets.py had
+    exactly that bug and it silently mis-read the declarations of any file with a URL in
+    it.  A single pass cannot make that mistake, because a `//` inside a string is
+    already inside a string when it is reached.
+    """
     _out_ = list(text)
     _i_, _n_ = 0, len(text)
+
+    def _blank_(_j_: int) -> None:
+        if text[_j_] != '\n':
+            _out_[_j_] = ' '
+
     while _i_ < _n_:
         _c_ = text[_i_]
         if _c_ == '/' and _i_ + 1 < _n_ and text[_i_ + 1] == '/':
             while _i_ < _n_ and text[_i_] != '\n':
                 _out_[_i_] = ' '
                 _i_ += 1
-        elif _c_ in ('"', "'"):
+        elif _c_ == '/' and _i_ + 1 < _n_ and text[_i_ + 1] == '*':
+            _out_[_i_] = _out_[_i_ + 1] = ' '
+            _i_ += 2
+            while _i_ < _n_:
+                if text[_i_] == '*' and _i_ + 1 < _n_ and text[_i_ + 1] == '/':
+                    _out_[_i_] = _out_[_i_ + 1] = ' '
+                    _i_ += 2
+                    break
+                _blank_(_i_)
+                _i_ += 1
+        elif _c_ in ('"', "'", '`'):
             _quote_ = _c_
             _i_ += 1
             while _i_ < _n_:
                 if text[_i_] == '\\':
-                    _out_[_i_] = ' '
+                    _blank_(_i_)
                     if _i_ + 1 < _n_:
-                        _out_[_i_ + 1] = ' '
+                        _blank_(_i_ + 1)
                     _i_ += 2
                     continue
                 if text[_i_] == _quote_:
                     break
-                if text[_i_] != '\n':
-                    _out_[_i_] = ' '
+                # A ', " or newline inside a template literal is ordinary content; only
+                # the matching backtick ends it.
+                _blank_(_i_)
                 _i_ += 1
             _i_ += 1
         else:
             _i_ += 1
     return ''.join(_out_)
+
+
+#: The old private name, kept because the brace matcher below and its tests use it.
+_strip_noise = strip_noise
+
+
+def declaration_column(text: str, name: str) -> int:
+    """The indentation of the line `function NAME(` is declared on, or -1.
+
+    Nesting depth, cheaply and without a parser: a function declared at a deeper column
+    than another is inside it.  That is what tells a *nested* function apart from one the
+    brace matcher ran past the end into, which look identical from the extracted text
+    alone.
+
+    The LINE's indentation, not the offset of the `function` keyword: an entry module
+    writes `export function render(...)`, which would otherwise measure as column 7 and
+    read as more deeply nested than the handlers inside it.
+    """
+    _clean_ = strip_noise(text)
+    _i_ = 0
+    while True:
+        _i_ = _clean_.find('function ', _i_)
+        if _i_ < 0:
+            return -1
+        _rest_ = _clean_[_i_ + len('function '):]
+        _open_ = _rest_.find('(')
+        if _open_ > 0 and _rest_[:_open_].strip() == name:
+            _bol_ = _clean_.rfind('\n', 0, _i_) + 1
+            return len(_clean_[_bol_:_i_]) - len(_clean_[_bol_:_i_].lstrip())
+        _i_ += len('function ')
 
 
 def _iter_function_names(text: str):

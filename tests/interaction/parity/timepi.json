@@ -5,6 +5,7 @@
     "brush_seq",
     "brush_state",
     "brushing_mode",
+    "config_panel_rows",
     "ctrlkey",
     "drag_op_finished",
     "drag_x0",
@@ -16,9 +17,11 @@
     "has_time_keys",
     "has_z_key",
     "info_str",
+    "kbd_help_svg",
     "key_op_finished",
     "keyboardhelp_x",
     "last_key",
+    "menu_items",
     "middle_op_finished",
     "mod_inner",
     "name",
@@ -27,7 +30,14 @@
     "select_shape",
     "shiftkey",
     "svg_h",
+    "svg_parent_id",
     "svg_w",
+    "tooltip",
+    "tooltip_delay_ms",
+    "tooltip_payload",
+    "tooltip_seq",
+    "tooltip_x",
+    "tooltip_y",
     "use_webgpu",
     "wheel_op_finished",
     "wheel_rots",
@@ -53,8 +63,8 @@
       "dom": {
         "svgparenttimepi": {
           "tag": "svg",
-          "kids": 9,
-          "text": "Feb102024-01-01daily2024-02-27h . | toggle help displayq . | subtract the current from the topF . | pick selection shape"
+          "kids": 11,
+          "text": "Feb102024-01-01daily2024-02-27in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closesa . "
         },
         "mod": {
           "tag": "svg",
@@ -78,8 +88,8 @@
         },
         "keyboardhelp": {
           "tag": "g",
-          "kids": 10,
-          "text": "h . | toggle help displayq . | subtract the current from the topF . | pick selection shape (rectangle | oval)r . | toggl"
+          "kids": 15,
+          "text": "in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closesa . | open the appearance panel: s"
         },
         "drag": {
           "tag": "rect",
@@ -98,6 +108,16 @@
         },
         "infostr": {
           "tag": "text",
+          "kids": 0,
+          "text": ""
+        },
+        "tooltip": {
+          "tag": "g",
+          "kids": 0,
+          "text": ""
+        },
+        "configpanel": {
+          "tag": "g",
           "kids": 0,
           "text": ""
         },
@@ -145,8 +165,8 @@
       "dom": {
         "svgparenttimepi": {
           "tag": "svg",
-          "kids": 9,
-          "text": "Feb102024-01-25daily2024-02-03h . | toggle help displayq . | subtract the current from the topF . | pick selection shape"
+          "kids": 11,
+          "text": "Feb102024-01-25daily2024-02-03in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closesa . "
         },
         "mod": {
           "tag": "svg",
@@ -170,8 +190,8 @@
         },
         "keyboardhelp": {
           "tag": "g",
-          "kids": 10,
-          "text": "h . | toggle help displayq . | subtract the current from the topF . | pick selection shape (rectangle | oval)r . | toggl"
+          "kids": 15,
+          "text": "in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closesa . | open the appearance panel: s"
         },
         "drag": {
           "tag": "rect",
@@ -190,6 +210,16 @@
         },
         "infostr": {
           "tag": "text",
+          "kids": 0,
+          "text": ""
+        },
+        "tooltip": {
+          "tag": "g",
+          "kids": 0,
+          "text": ""
+        },
+        "configpanel": {
+          "tag": "g",
           "kids": 0,
           "text": ""
         },
@@ -232,8 +262,8 @@
       "dom": {
         "svgparenttimepi": {
           "tag": "svg",
-          "kids": 9,
-          "text": "102024-01-28daily2024-01-28h . | toggle help displayq . | subtract the current from the topF . | pick selection shape (r"
+          "kids": 11,
+          "text": "102024-01-28daily2024-01-28in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closesa . | o"
         },
         "mod": {
           "tag": "svg",
@@ -257,8 +287,8 @@
         },
         "keyboardhelp": {
           "tag": "g",
-          "kids": 10,
-          "text": "h . | toggle help displayq . | subtract the current from the topF . | pick selection shape (rectangle | oval)r . | toggl"
+          "kids": 15,
+          "text": "in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closesa . | open the appearance panel: s"
         },
         "drag": {
           "tag": "rect",
@@ -277,6 +307,16 @@
         },
         "infostr": {
           "tag": "text",
+          "kids": 0,
+          "text": ""
+        },
+        "tooltip": {
+          "tag": "g",
+          "kids": 0,
+          "text": ""
+        },
+        "configpanel": {
+          "tag": "g",
           "kids": 0,
           "text": ""
         },
@@ -314,8 +354,8 @@
       "dom": {
         "svgparenttimepi": {
           "tag": "svg",
-          "kids": 9,
-          "text": "102024-01-28daily2024-01-28h . | toggle help displayq . | subtract the current from the topF . | pick selection shape (r"
+          "kids": 11,
+          "text": "102024-01-28daily2024-01-28in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closesa . | o"
         },
         "mod": {
           "tag": "svg",
@@ -339,8 +379,8 @@
         },
         "keyboardhelp": {
           "tag": "g",
-          "kids": 10,
-          "text": "h . | toggle help displayq . | subtract the current from the topF . | pick selection shape (rectangle | oval)r . | toggl"
+          "kids": 15,
+          "text": "in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closesa . | open the appearance panel: s"
         },
         "drag": {
           "tag": "rect",
@@ -359,6 +399,16 @@
         },
         "infostr": {
           "tag": "text",
+          "kids": 0,
+          "text": ""
+        },
+        "tooltip": {
+          "tag": "g",
+          "kids": 0,
+          "text": ""
+        },
+        "configpanel": {
+          "tag": "g",
           "kids": 0,
           "text": ""
         },
@@ -401,8 +451,8 @@
       "dom": {
         "svgparenttimepi": {
           "tag": "svg",
-          "kids": 9,
-          "text": "102024-01-28daily2024-01-28circ r=5h . | toggle help displayq . | subtract the current from the topF . | pick selection "
+          "kids": 11,
+          "text": "102024-01-28daily2024-01-28circ r=5in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc close"
         },
         "mod": {
           "tag": "svg",
@@ -426,8 +476,8 @@
         },
         "keyboardhelp": {
           "tag": "g",
-          "kids": 10,
-          "text": "h . | toggle help displayq . | subtract the current from the topF . | pick selection shape (rectangle | oval)r . | toggl"
+          "kids": 15,
+          "text": "in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closesa . | open the appearance panel: s"
         },
         "drag": {
           "tag": "rect",
@@ -446,6 +496,16 @@
         },
         "infostr": {
           "tag": "text",
+          "kids": 0,
+          "text": ""
+        },
+        "tooltip": {
+          "tag": "g",
+          "kids": 0,
+          "text": ""
+        },
+        "configpanel": {
+          "tag": "g",
           "kids": 0,
           "text": ""
         },
@@ -478,8 +538,8 @@
       "dom": {
         "svgparenttimepi": {
           "tag": "svg",
-          "kids": 9,
-          "text": "102024-01-28daily2024-01-28h . | toggle help displayq . | subtract the current from the topF . | pick selection shape (r"
+          "kids": 11,
+          "text": "102024-01-28daily2024-01-28in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closesa . | o"
         },
         "mod": {
           "tag": "svg",
@@ -503,8 +563,8 @@
         },
         "keyboardhelp": {
           "tag": "g",
-          "kids": 10,
-          "text": "h . | toggle help displayq . | subtract the current from the topF . | pick selection shape (rectangle | oval)r . | toggl"
+          "kids": 15,
+          "text": "in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closesa . | open the appearance panel: s"
         },
         "drag": {
           "tag": "rect",
@@ -523,6 +583,16 @@
         },
         "infostr": {
           "tag": "text",
+          "kids": 0,
+          "text": ""
+        },
+        "tooltip": {
+          "tag": "g",
+          "kids": 0,
+          "text": ""
+        },
+        "configpanel": {
+          "tag": "g",
           "kids": 0,
           "text": ""
         },
@@ -539,8 +609,8 @@
       "dom": {
         "svgparenttimepi": {
           "tag": "svg",
-          "kids": 9,
-          "text": "102024-01-28daily2024-01-28h . | toggle help displayq . | subtract the current from the topF . | pick selection shape (r"
+          "kids": 11,
+          "text": "102024-01-28daily2024-01-28in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closesa . | o"
         },
         "mod": {
           "tag": "svg",
@@ -564,8 +634,8 @@
         },
         "keyboardhelp": {
           "tag": "g",
-          "kids": 10,
-          "text": "h . | toggle help displayq . | subtract the current from the topF . | pick selection shape (rectangle | oval)r . | toggl"
+          "kids": 15,
+          "text": "in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closesa . | open the appearance panel: s"
         },
         "drag": {
           "tag": "rect",
@@ -584,6 +654,16 @@
         },
         "infostr": {
           "tag": "text",
+          "kids": 0,
+          "text": ""
+        },
+        "tooltip": {
+          "tag": "g",
+          "kids": 0,
+          "text": ""
+        },
+        "configpanel": {
+          "tag": "g",
           "kids": 0,
           "text": ""
         },

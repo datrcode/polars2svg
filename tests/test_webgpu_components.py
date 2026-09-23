@@ -281,7 +281,7 @@ class TestLinkPWebGPU(unittest.TestCase):
         # rounded-rect cloud approximation rather than a circle
         _pos_ = {n: (0.5, 0.5) for n in _NODES_}
         lp = _P2S_.linkp(df=_DF_, relationships=[('fm', 'to')], pos=_pos_)
-        self.assertIn('<use href="#cloud"', lp.svg)
+        self.assertRegex(lp.svg, r'<use href="#cloud_\d+"')
         payload = lp.webgpu()
         self.assertEqual(manifest_count(payload, 'circle'), 0)
         rects = decode_buffer(payload, 'rect')

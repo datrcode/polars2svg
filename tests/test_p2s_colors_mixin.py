@@ -177,6 +177,29 @@ class TestGrayscaleSpectrumPolarsOperations(unittest.TestCase):
             self.assertAlmostEqual(row['r'], row['g'], places=9)
             self.assertAlmostEqual(row['g'], row['b'], places=9)
 
+    def test_the_dark_palette_inverts_the_ramp(self):
+        '''Dark does not merely lighten the ramp, it reverses its direction.
+
+        The ramp's job is "0.0 recedes into the canvas, 1.0 stands out from it".  On
+        white that means starting pale and ending black.  Keeping that direction on a
+        dark canvas would make an empty bin the brightest mark in the plot -- the
+        opposite of what the data says -- so dark runs #333333 up to white instead.
+        '''
+        _dark_ = Polars2SVG(palette='dark')
+        _df_   = pl.DataFrame({'n': [0.0, 1.0]})
+        _out_  = _df_.with_columns(_dark_.grayscaleSpectrumPolarsOperations('n', 'r', 'g', 'b'))
+        self.assertAlmostEqual(_out_.row(0, named=True)['r'], 0.2, places=5)
+        self.assertAlmostEqual(_out_.row(1, named=True)['r'], 1.0, places=5)
+
+    def test_light_gray_still_overrides_the_low_end(self):
+        # The parameter keeps its original meaning on both palettes: it sets where the
+        # ramp starts, not which direction it runs.
+        _dark_ = Polars2SVG(palette='dark')
+        _df_   = pl.DataFrame({'n': [0.0]})
+        _out_  = _df_.with_columns(
+            _dark_.grayscaleSpectrumPolarsOperations('n', 'r', 'g', 'b', light_gray=0.4))
+        self.assertAlmostEqual(_out_.row(0, named=True)['r'], 0.4, places=5)
+
 
 class TestHexColorFromRGBTriplesPolarsOperations(unittest.TestCase):
     def __init__(self, *args, **kwargs):

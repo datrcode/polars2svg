@@ -63,6 +63,36 @@ def _referenced_names():
     return _names_
 
 
+def _esm_bundles():
+    """Every esm(...) call in the package source, as an ordered list of asset names.
+
+    _referenced_names() flattens these into a set, which answers "is this asset used"
+    but not "is this asset used *together with* the one that defines what it calls".
+    A fragment-supplied helper needs the second question: p2sInk() lives in
+    fragments/p2s_dom.js and is called from three entry modules, so a bundle that
+    omits the fragment is a ReferenceError at render time, not an import error.
+    """
+    _bundles_ = []
+    for _py_ in _PKG_DIR_.rglob('*.py'):
+        try:
+            _tree_ = ast.parse(_py_.read_text(encoding='utf-8'), filename=str(_py_))
+        except SyntaxError:                                     # pragma: no cover
+            continue
+        for _node_ in ast.walk(_tree_):
+            if not isinstance(_node_, ast.Call):
+                continue
+            _fn_ = _node_.func
+            _fn_name_ = (_fn_.attr if isinstance(_fn_, ast.Attribute) else
+                         _fn_.id   if isinstance(_fn_, ast.Name) else None)
+            if _fn_name_ != 'esm':
+                continue
+            _names_ = [_a_.value for _a_ in _node_.args
+                       if isinstance(_a_, ast.Constant) and isinstance(_a_.value, str)]
+            if _names_:
+                _bundles_.append((f'{_py_.name}:{_node_.lineno}', _names_))
+    return _bundles_
+
+
 class TestAssetsAndReferencesAgree(unittest.TestCase):
     '''Every asset is used, and every use resolves.'''
 
@@ -140,12 +170,16 @@ class TestNoImplicitGlobals(unittest.TestCase):
 
     @staticmethod
     def _strip(src):
-        '''Blank out comments and string literals so their contents cannot match.'''
-        src = re.sub(r'/\*.*?\*/', '', src, flags=re.S)
-        src = re.sub(r'//[^\n]*', '', src)
-        src = re.sub(r"'(?:[^'\\\n]|\\.)*'", "''", src)
-        src = re.sub(r'"(?:[^"\\\n]|\\.)*"', '""', src)
-        return re.sub(r'`(?:[^`\\]|\\.)*`', '``', src, flags=re.S)
+        '''Blank out comments and string literals so their contents cannot match.
+
+        view_js_utils.strip_noise, not a local sequence of regexes.  The local version
+        ran the `//` pass before the string pass, so `'http://www.w3.org/2000/svg'` lost
+        its closing quote and its statement's `;` to the comment stripper and everything
+        after it was read in the wrong state -- which silently dropped the first
+        declarator of the following line.  A single left-to-right pass cannot make that
+        mistake, and this test is now the only caller that needed convincing.
+        '''
+        return view_js_utils.strip_noise(src)
 
     @classmethod
     def _declared(cls, clean):
@@ -191,6 +225,75 @@ class TestEntryModules(unittest.TestCase):
                 _n_ = _p_.read_text(encoding='utf-8').count('export function render(')
                 self.assertEqual(_n_, 1,
                                  f'{_p_.name} has {_n_} `export function render(` -- panel needs exactly one')
+
+
+class TestFragmentHelpersAreInEveryBundleThatCallsThem(unittest.TestCase):
+    """A helper defined in one fragment and called from another asset only works if the
+    two are concatenated into the same module.
+
+    Nothing else checks this. test_every_assignment_targets_a_declared_name catches an
+    implicit global *write*; a call to a function that was never concatenated in is a
+    read, so it passes every static check here and fails in the browser -- where only
+    the opt-in Playwright suite would see it.
+    """
+
+    # Helpers that MUST be concatenated in: called bare, so an absent definition is a
+    # ReferenceError the moment the line runs.
+    REQUIRED = {
+        'p2sInk': 'fragments/p2s_dom.js',
+        'svgEl':  'fragments/p2s_dom.js',
+        'htmlEl': 'fragments/p2s_dom.js',
+    }
+
+    # Helpers that are OPTIONAL by design: present only in the GPU bundles, and every
+    # call site tests `typeof ... === 'function'` first.  `typeof` on an undeclared
+    # identifier is the one reference that does not throw, which is what makes the
+    # pattern legal -- so the guard is the whole contract, and the second test below
+    # checks it rather than taking this comment's word for it.
+    OPTIONAL = {
+        'p2sGpuWrap': 'fragments/p2s_gpu_mount.js',
+    }
+
+    def test_required_helper_is_bundled_with_every_caller(self):
+        for _where_, _names_ in _esm_bundles():
+            _text_ = '\n'.join(p2s_esm.js_text(_n_) for _n_ in _names_)
+            for _helper_, _home_ in self.REQUIRED.items():
+                if not re.search(rf'\b{_helper_}\s*\(', _text_):
+                    continue                       # this bundle never calls it
+                with self.subTest(bundle=_where_, helper=_helper_):
+                    self.assertRegex(
+                        _text_, rf'function\s+{_helper_}\s*\(',
+                        f'{_where_} calls {_helper_}() but does not include {_home_}, '
+                        f'so the name is undefined at render time. Add the fragment to '
+                        f'that esm(...) call.')
+
+    def test_optional_helper_is_only_ever_called_behind_a_typeof_guard(self):
+        for _name_ in sorted(_asset_files()):
+            _text_ = p2s_esm.js_text(_name_)
+            for _helper_ in self.OPTIONAL:
+                if f'function {_helper_}' in _text_:
+                    continue                       # this is the file that defines it
+                for _m_ in re.finditer(rf'\b{_helper_}\s*\(', _text_):
+                    _line_ = _text_[:_m_.start()].count('\n') + 1
+                    _stmt_ = _text_[max(0, _m_.start() - 200):_m_.start()]
+                    with self.subTest(asset=_name_, line=_line_):
+                        self.assertRegex(
+                            _stmt_, rf"typeof\s+{_helper_}\s*===\s*'function'",
+                            f'{_name_}:{_line_} calls {_helper_}() without a '
+                            f"`typeof {_helper_} === 'function'` guard. It is absent from "
+                            f'the non-GPU bundles, so an unguarded call is a ReferenceError '
+                            f'there. Either guard it or add its fragment to those bundles.')
+
+    def test_each_helper_is_defined_exactly_once_per_bundle(self):
+        # Two copies would be a silent redeclaration; `function` hoisting makes the last
+        # one win rather than throwing, so the wrong definition could quietly take over.
+        for _where_, _names_ in _esm_bundles():
+            _text_ = '\n'.join(p2s_esm.js_text(_n_) for _n_ in _names_)
+            for _helper_ in {**self.REQUIRED, **self.OPTIONAL}:
+                _n_ = len(re.findall(rf'function\s+{_helper_}\s*\(', _text_))
+                if _n_:
+                    with self.subTest(bundle=_where_, helper=_helper_):
+                        self.assertEqual(_n_, 1, f'{_where_} defines {_helper_}() {_n_} times')
 
 
 class TestAssetsAreShippable(unittest.TestCase):
@@ -424,16 +527,85 @@ class TestBraceMatcher(unittest.TestCase):
                     self.assertEqual(_body_.count('{'), _body_.count('}'),
                                      f'{_name_}:{_fn_} extract has unbalanced braces -- the '
                                      f'matcher ran past the end or stopped early')
-                    _others_ = [f'function {_o_}(' for _o_ in _names_
-                                if _o_ != _fn_ and f'function {_o_}(' not in
-                                _body_[:len(f'function {_fn_}(')]]
-                    _leaked_ = [_o_ for _o_ in _others_
-                                if _o_ in _body_ and not _body_.startswith(_o_)]
-                    # A nested function legitimately appears inside its parent; only flag a
-                    # leak when the extract reaches a function defined at the same level.
-                    if _fn_ != 'render':
-                        self.assertEqual(_leaked_, [],
-                                         f'{_name_}:{_fn_} extract leaked into {_leaked_}')
+                    # A nested function legitimately appears inside its parent; a leak is
+                    # the extract reaching one defined at the SAME level or shallower.
+                    # Indentation is what tells those apart, and it has to: from the
+                    # extracted text alone they are identical.  This used to exempt the
+                    # name `render`, which was the only container that existed; the
+                    # shared fragments' factories (p2sConfigPanel, p2sTooltip) are
+                    # containers of exactly the same shape, and a hard-coded list of them
+                    # would have to be edited every time one is added.
+                    _own_col_ = view_js_utils.declaration_column(_src_, _fn_)
+                    _leaked_  = [
+                        _o_ for _o_ in sorted(_names_)
+                        if _o_ != _fn_
+                        and f'function {_o_}(' in _body_
+                        and not _body_.startswith(f'function {_o_}(')
+                        and view_js_utils.declaration_column(_src_, _o_) <= _own_col_
+                    ]
+                    self.assertEqual(_leaked_, [],
+                                     f'{_name_}:{_fn_} extract leaked into {_leaked_}')
+
+
+class TestMenuTablesAgree(unittest.TestCase):
+    """A menu kind has to appear in all three tables, and nothing checked that.
+
+    The config panel's design note says why the tables exist at all: "three chains of
+    twelve branches each is how a kind ends up handled in two places and missed in the
+    third". Turning two of the chains into tables made the omission *quieter*, not
+    impossible -- adding F1's `tooltip` kind, it was written into `menuSetValue` and left
+    out of `MENU_PARAM_`, and the symptom was a panel row that drew a blank value. A
+    browser test caught it; this one catches it in a second, which is the difference
+    between noticing and hunting.
+
+    Read out of the shipped JS rather than from Python, because the tables are JS.
+    """
+
+    #: `const NAME_ = { key: ..., }` -- the keys only.
+    @staticmethod
+    def _table_keys(src, name):
+        _clean_ = view_js_utils.strip_noise(src)
+        _at_ = _clean_.find(f'const {name} = {{')
+        if _at_ < 0:
+            return None
+        _depth_, _end_ = 0, -1
+        for _i_ in range(_clean_.index('{', _at_), len(_clean_)):
+            if _clean_[_i_] == '{':
+                _depth_ += 1
+            elif _clean_[_i_] == '}':
+                _depth_ -= 1
+                if _depth_ == 0:
+                    _end_ = _i_
+                    break
+        return set(re.findall(r'^\s*([A-Za-z_]\w*)\s*:', _clean_[_at_:_end_], re.M))
+
+    @staticmethod
+    def _set_value_kinds(src):
+        _body_ = view_js_utils._extract_function(src, 'menuSetValue')
+        return set(re.findall(r"kind\s*==\s*'([A-Za-z_]\w*)'", _body_ or ''))
+
+    def test_every_module_with_menus_covers_each_kind_three_times(self):
+        from polars2svg import p2s_esm
+        _seen_ = 0
+        for _name_ in sorted(_asset_files()):
+            _src_ = p2s_esm.js_text(_name_)
+            _params_ = self._table_keys(_src_, 'MENU_PARAM_')
+            if _params_ is None:
+                continue
+            _seen_ += 1
+            with self.subTest(asset=_name_):
+                _headers_ = self._table_keys(_src_, 'MENU_HEADER_') or set()
+                _writes_  = self._set_value_kinds(_src_)
+                self.assertEqual(_params_, _headers_,
+                                 f'{_name_}: MENU_PARAM_ and MENU_HEADER_ disagree -- '
+                                 f'a kind with no header draws an undefined picker title')
+                self.assertEqual(_params_, _writes_,
+                                 f'{_name_}: MENU_PARAM_ and menuSetValue disagree -- '
+                                 f'a kind missing from menuSetValue cannot be committed, '
+                                 f'and one missing from MENU_PARAM_ draws a blank value')
+        self.assertEqual(_seen_, 2,
+                         'expected exactly two modules to carry menu tables '
+                         '(p2s_linkpi.js and p2s_interactivep.js)')
 
 
 if __name__ == '__main__':

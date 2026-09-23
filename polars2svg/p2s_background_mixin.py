@@ -432,7 +432,8 @@ class P2SBackgroundMixin:
     #
     def __renderBackground__(self) -> None:
         self.svg_background  = ''
-        self._dl_background_ = DisplayList(self.wxh[0], self.wxh[1])
+        self._dl_background_ = DisplayList(self.wxh[0], self.wxh[1],
+                                           bg=self.p2s.colorTyped('background', 'default'))
         if self.background is None:
             return
         _shapes_, _labels_, _label_dls_ = [], [], []

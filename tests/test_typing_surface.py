@@ -263,6 +263,7 @@ class TestAnnotationCoverageRatchet(unittest.TestCase):
         '_seriation':                             0,
         'export':                                 0,
         'p2s_component_color_mixin':              0,
+        'p2s_palettes':                           0,
         'p2s_glyph_atlas':                        0,
         'mds_at_scale':                           0,
         'p2s_bin_component_mixin':                0,

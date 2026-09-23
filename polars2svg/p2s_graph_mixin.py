@@ -59,6 +59,7 @@ class P2SGraphMixin:
     ROW_COUNTp:                    RowCountP
     SETp:                          FieldTypeP
     closestPointOnSegment:         Any
+    colorTyped:                    Any
     createConcatColumn:            Any
     flattenTuple:                  Any
     logDtypeKeyedCount:            Any
@@ -356,7 +357,7 @@ class P2SGraphMixin:
             _g_ = g_components[i]
             _dx_, _dy_ = circles[i][0] - _packed_[i][0], circles[i][1] - _packed_[i][1]
             for _node_ in _g_.nodes: _new_pos_[_node_] = pos[_node_][0] - _dx_, pos[_node_][1] - _dy_
-            _shapes_[i] = f'<circle cx="{_packed_[i][0]}" cy="{_packed_[i][1]}" r="{_packed_[i][2]}" fill="None" stroke="#000000" stroke-width="1" />'
+            _shapes_[i] = f'<circle cx="{_packed_[i][0]}" cy="{_packed_[i][1]}" r="{_packed_[i][2]}" fill="None" stroke="{self.colorTyped("label", "defaultfg")}" stroke-width="1" />'
 
         return _new_pos_, _shapes_
 
@@ -437,6 +438,12 @@ class P2SGraphMixin:
                                bounds        : tuple = (0, 0, 1, 1)) -> dict:
         _requireGraphLayoutDeps_()
         if pos is None: pos = {}
+        # A GROUPING KEY, not a rendered color: nodes with no entry in node_color_lu
+        # share this bucket so the layout can treemap them together.  This function
+        # returns positions; the value never reaches the SVG, so it is deliberately
+        # NOT a palette slot -- routing it through colorTyped() would make it look
+        # theme-aware while only changing which bucket un-colored nodes land in.
+        # (The literal is inherited from racetrack's data/default.)
         _default_color_ = '#4988b6'
 
         _color_to_nodes_: dict = {}
@@ -1129,6 +1136,12 @@ class P2SGraphMixin:
         _requireGraphLayoutDeps_()
         if not isinstance(nodes, list): nodes = list(nodes)
         if len(nodes) == 0: return {}
+        # A GROUPING KEY, not a rendered color: nodes with no entry in node_color_lu
+        # share this bucket so the layout can treemap them together.  This function
+        # returns positions; the value never reaches the SVG, so it is deliberately
+        # NOT a palette slot -- routing it through colorTyped() would make it look
+        # theme-aware while only changing which bucket un-colored nodes land in.
+        # (The literal is inherited from racetrack's data/default.)
         _default_color_ = '#4988b6'
 
         _color_to_nodes_: dict = {}

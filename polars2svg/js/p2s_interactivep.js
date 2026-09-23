@@ -19,13 +19,17 @@
 //     guarded by the same flag -- as it had to be under ReactiveHTML, where Panel
 //     likewise did not declare the variable for a node the template had omitted.
 //
-// The helpers below (updateBrushCursor, the picker menu, myUpdateDragRect) are
-// deliberately local rather than shared fragments.  LINKPI has same-named versions and
-// the plan expected to share them, but measured against each other they are 44% (drag
-// rect), 33% (menuCommit), 47% (menuArmTimer) and 57% (menuOpen) similar -- only
-// menuClose is identical, and updateBrushCursor is close at 88%.  Parameterising around
-// that much divergence costs more than the duplication saves; Phase 5 revisits it with
-// both ESM versions written.
+// updateBrushCursor and myUpdateDragRect below are deliberately local rather than shared
+// fragments.  LINKPI has same-named versions and the plan expected to share them, but
+// measured against each other they are 44% (drag rect) and 88% (brush cursor) similar.
+// Parameterising around that much divergence costs more than the duplication saves.
+//
+// The PICKER MENU is no longer among them.  It was measured at 33-57% and left duplicated
+// on the same reasoning, and F1 overturned that: the tooltip is a configuration-panel row
+// on every component, the panel opens the row's picker (CP3), and this module's picker was
+// a strict subset of LINKPI's -- one kind, no display strings, no guarded items, no
+// menu_x.  Both now come from js/fragments/p2s_config_panel.js and this module gains the
+// superset.  The divergence that justified duplicating the others was never here.
 //
 // This is an ENTRY module: it exports render().
 //
@@ -42,11 +46,18 @@ export function render({ model, el }) {
     brush_defs: [null, ['circle', 5], ['circle', 15], ['vertical', 1], ['vertical', 3],
                  ['horizontal', 1], ['horizontal', 3]],
     brush_names: ['', 'circ r=5', 'circ r=15', 'vert r=1', 'vert r=3', 'horiz r=1', 'horiz r=3'],
-    select_shape: 'rectangle',
-    menu_items: { 'select_shape': [['r', 'rectangle'], ['o', 'oval']] },
-    menu_open: false, menu_kind: '', menu_index: 0, menu_timer: null,
+    // Python's, not a literal: the tooltip row's value list varies per view (the icon
+    // state exists only when the view was built with icon=), so the menus are data now.
+    // state.select_shape went with it -- model.select_shape is the single source, which
+    // is what the shared picker and the panel both read.
+    menu_items: model.menu_items,
+    menu_open: false, menu_kind: '', menu_index: 0, menu_timer: null, menu_x: 8,
+    panel_open: false, panel_row: 0, panel_pending: {}, panel_timer: null, panel_w: 0,
     search_mode: false, search_buffer: '',
     pending_mods: null,
+    // F1.  seq_sent is what the browser has asked for, seq_drawn what it has answered or
+    // abandoned; a payload is drawn only while the two say it is still wanted.
+    tooltip_timer: null, tooltip_seq_sent: 0, tooltip_seq_drawn: 0,
   };
 
   // ── DOM, in the order the template listed it ───────────────────────────────
@@ -64,12 +75,12 @@ export function render({ model, el }) {
 
   const drag = svgEl('rect', {
     id: 'drag', x: -10, y: -10, width: 5, height: 5,
-    stroke: '#000000', 'stroke-width': 2, fill: 'none',
+    stroke: p2sInk(model, 'replace'), 'stroke-width': 2, fill: 'none',
   }, root);
 
   const dragoval = svgEl('ellipse', {
     id: 'dragoval', cx: -10, cy: -10, rx: 0, ry: 0,
-    stroke: '#000000', 'stroke-width': 2, fill: 'none', display: 'none',
+    stroke: p2sInk(model, 'replace'), 'stroke-width': 2, fill: 'none', display: 'none',
   }, root);
 
   const screen = svgEl('rect', {
@@ -77,7 +88,7 @@ export function render({ model, el }) {
   }, root);
 
   const infostr = svgEl('text', {
-    id: 'infostr', x: 5, y: H - 3, fill: '#000000',
+    id: 'infostr', x: 5, y: H - 3, fill: p2sInk(model, 'ink'),
     'font-size': '10px', 'pointer-events': 'none',
   }, root);
 
@@ -88,12 +99,18 @@ export function render({ model, el }) {
   if (model.has_search) {
     searchtext = svgEl('text', {
       id: 'searchtext', x: Math.floor(W / 2), y: H - 2, 'text-anchor': 'middle',
-      fill: '#0000cc', 'font-size': '11px', 'font-family': 'monospace',
+      fill: p2sInk(model, 'hint'), 'font-size': '11px', 'font-family': 'monospace',
       'pointer-events': 'none',
     }, root);
   }
 
-  const pickermenu = svgEl('g', { id: 'pickermenu', 'pointer-events': 'none' }, root);
+  // Under the panel and the picker, over everything else: a tooltip follows the pointer
+  // and would otherwise sit on top of the overlay the user is reading.
+  const tooltip     = svgEl('g', { id: 'tooltip', 'pointer-events': 'none' }, root);
+  // Before #pickermenu so that a picker opened FROM the panel draws over it rather than
+  // under it; menuRender also shifts that picker clear of the panel (state.menu_x).
+  const configpanel = svgEl('g', { id: 'configpanel', 'pointer-events': 'none' }, root);
+  const pickermenu  = svgEl('g', { id: 'pickermenu', 'pointer-events': 'none' }, root);
 
   keyboardhelp.innerHTML = model.kbd_help_svg;
 
@@ -119,11 +136,13 @@ export function render({ model, el }) {
   }
 
   function myUpdateDragRect() {
-    var _stroke_ = (model.shiftkey && model.ctrlkey) ? '#0000ff'
-                 : (model.shiftkey)                  ? '#ff0000'
-                 : (model.ctrlkey)                   ? '#00ff00'
-                 :                                     '#000000';
-    if (state.drag_op && state.select_shape == 'oval') {
+    // Names the pending set operation; palette-driven so the band stays visible on a
+    // dark canvas.  Keys match _resolve_set_op() in Python.
+    var _stroke_ = (model.shiftkey && model.ctrlkey) ? p2sInk(model, 'intersect')
+                 : (model.shiftkey)                  ? p2sInk(model, 'subtract')
+                 : (model.ctrlkey)                   ? p2sInk(model, 'add')
+                 :                                     p2sInk(model, 'replace');
+    if (state.drag_op && model.select_shape == 'oval') {
       var cx = state.x0_drag, cy = state.y0_drag;
       var rx = Math.abs(state.x1_drag - state.x0_drag);
       var ry = Math.abs(state.y1_drag - state.y0_drag);
@@ -149,62 +168,43 @@ export function render({ model, el }) {
     }
   }
 
-  // ── selection-shape picker menu (Shift+F) ──
-  // Modal JS state machine mirrored from the linkp layout picker; nothing reaches
-  // Python until menuCommit writes model.select_shape (which applyDragOp reads).
+  // ── menus, the configuration panel and the tooltip ──
+  //
+  // All three come from js/fragments/p2s_config_panel.js and p2s_tooltip.js, which is
+  // where LINKPI's versions live too.  The five kinds had their own two-value picker for
+  // `select_shape`; the shared one is a superset of it, and the panel (F1, and
+  // 20260921_config_panel_design.md for the design it follows) needs both.
 
-  function menuOpen() {
-    var _items_ = state.menu_items[state.menu_kind];
-    state.menu_index = 0;
-    for (var _i_ = 0; _i_ < _items_.length; _i_++) {
-      if (_items_[_i_][1] == state.select_shape) { state.menu_index = _i_; break; }
-    }
-    state.menu_open = true;
-    menuRender();
-    menuArmTimer();
+  const MENU_PARAM_ = {
+      select_shape: 'select_shape',
+      tooltip:      'tooltip',
+  };
+
+  const MENU_HEADER_ = {
+      // Unchanged from the local picker this replaces -- the browser tests address a
+      // picker by the header text it draws.
+      select_shape: 'selection shape:',
+      tooltip:      'tooltip:',
+  };
+
+  // The single write path for every choice a picker or a panel row can make.  An
+  // explicit chain, matching LINKPI's, rather than MENU_PARAM_[kind]: the write side is
+  // where a kind gets to be special, and spelling it out is what makes that visible.
+  function menuSetValue(kind, label) {
+      if      (kind == 'select_shape') { model.select_shape = label; }
+      else if (kind == 'tooltip')      { model.tooltip      = label; }
   }
 
-  function menuRender() {
-    if (!state.menu_open) { return; }
-    var _items_  = state.menu_items[state.menu_kind];
-    var _header_ = 'selection shape:';
-    var _maxlen_ = _header_.length;
-    for (var _i_ = 0; _i_ < _items_.length; _i_++) {
-      _maxlen_ = Math.max(_maxlen_, _items_[_i_][1].length + 4);
-    }
-    var _w_menu_ = _maxlen_ * 7 + 20,
-        _h_menu_ = (_items_.length + 1) * 14 + 12,
-        _style_  = 'font-family: \'Courier New\', monospace; font-size: 11px; fill: #222;';
-    var _html_ = '<rect x="8" y="8" width="' + _w_menu_ + '" height="' + _h_menu_ + '"'
-               + ' fill="rgba(240,240,240,0.95)" stroke="#888" stroke-width="1" rx="3"/>'
-               + '<rect x="10" y="' + (8 + 1 + (state.menu_index + 1) * 14) + '" width="' + (_w_menu_ - 4) + '" height="13"'
-               + ' fill="rgba(100,150,255,0.3)"/>'
-               + '<text x="18" y="' + (8 + 12) + '" style="' + _style_ + ' font-weight: bold;">' + _header_ + '</text>';
-    for (var _i_ = 0; _i_ < _items_.length; _i_++) {
-      _html_ += '<text x="18" y="' + (8 + 12 + (_i_ + 1) * 14) + '" style="' + _style_ + '">'
-              + '[' + _items_[_i_][0] + '] ' + _items_[_i_][1] + '</text>';
-    }
-    pickermenu.innerHTML = _html_;
-  }
+  const _cp_ = p2sConfigPanel({
+      model: model, state: state, menuNode: pickermenu, panelNode: configpanel,
+      headers: MENU_HEADER_, params: MENU_PARAM_, setValue: menuSetValue,
+  });
+  // Only the entry points this module still calls.  The rest of the fragment's surface
+  // is reached through menuKeyDown / panelKeyDown, which own the two modal key blocks.
+  const menuOpen  = _cp_.menuOpen,
+        panelOpen = _cp_.panelOpen, panelRender = _cp_.panelRender;
 
-  function menuCommit() {
-    state.select_shape = state.menu_items[state.menu_kind][state.menu_index][1];
-    model.select_shape = state.select_shape;
-    menuClose();
-  }
-
-  function menuClose() {
-    if (state.menu_timer != null) { clearTimeout(state.menu_timer); }
-    state.menu_timer     = null;
-    state.menu_open      = false;
-    state.menu_kind      = '';
-    pickermenu.innerHTML = '';
-  }
-
-  function menuArmTimer() {
-    if (state.menu_timer != null) { clearTimeout(state.menu_timer); }
-    state.menu_timer = setTimeout(function() { if (state.menu_open) { menuCommit(); } }, 2500);
-  }
+  const _tt_ = p2sTooltip({ model: model, state: state, node: tooltip, w: W, h: H });
 
   // ── DOM handlers ───────────────────────────────────────────────────────────
 
@@ -216,6 +216,7 @@ export function render({ model, el }) {
   function myOnMouseOut() {
     model.has_focus          = false;
     brushindicator.innerHTML = '';
+    _tt_.clear();
     if (model.brush_state > 0) { model.brush_leave_done = true; }
   }
 
@@ -244,26 +245,12 @@ export function render({ model, el }) {
       }
       return;
     }
-    if (state.menu_open) {
-      event.preventDefault();
-      var _items_ = state.menu_items[state.menu_kind];
-      if      (event.key === 'Escape') { menuClose();  }
-      else if (event.key === 'Enter')  { menuCommit(); }
-      else if (event.key === 'ArrowDown' || event.key === 'j' || event.key === 'F') {
-        state.menu_index = (state.menu_index + 1) % _items_.length;
-        menuRender(); menuArmTimer();
-      }
-      else if (event.key === 'ArrowUp' || event.key === 'k') {
-        state.menu_index = Math.max(0, state.menu_index - 1);
-        menuRender(); menuArmTimer();
-      }
-      else if (event.key.length === 1) {
-        for (var _i_ = 0; _i_ < _items_.length; _i_++) {
-          if (_items_[_i_][0] === event.key) { state.menu_index = _i_; menuCommit(); break; }
-        }
-      }
-      return;
-    }
+    // Both modal blocks live in the shared fragment now and each reports whether it
+    // consumed the event -- the same `return` the inlined versions ended on.  The picker
+    // is tested first, because a picker opened FROM a panel row is on top of it and has
+    // to see the keys.
+    if (_cp_.menuKeyDown(event))  { return; }
+    if (_cp_.panelKeyDown(event)) { return; }
     model.shiftkey = event.shiftKey;
     model.ctrlkey  = event.ctrlKey;
     model.x_mouse  = state.cur_mouse_x;
@@ -296,6 +283,12 @@ export function render({ model, el }) {
       updateBrushCursor();
     }
     else if (event.key == 'q') { model.key_op_finished = "q"; }
+    // The appearance panel, same key and same shape as LINKPI's.  'F' is NOT absorbed
+    // into it the way LINKPI's twelve bindings were: that absorption paid for a keyspace
+    // that had run out, and these five have most of the alphabet free.  Both doors reach
+    // the one picker (CP3).
+    else if (event.key == 'a' && !event.ctrlKey) { panelOpen(false); }
+    else if (event.key == 'A' && !event.ctrlKey) { panelOpen(true);  }
     else if (event.key == 'F') { state.menu_kind = 'select_shape'; menuOpen(); }
     else if (event.key == 'h') {
       if (model.keyboardhelp_x == -1000) { model.keyboardhelp_x =     5; }
@@ -333,6 +326,12 @@ export function render({ model, el }) {
     state.x1_drag     = event.offsetX;
     state.y1_drag     = event.offsetY;
     if (state.drag_op) { myUpdateDragRect(); }
+    // F1.  Not throttled by distance the way the brush below is: the dwell timer is the
+    // throttle, and re-arming it on every move is what makes it a dwell.  A drag in
+    // progress suppresses it -- a tooltip is a pure read, and nothing is being read
+    // while the pointer is pulling a rubber band.
+    if (state.drag_op) { _tt_.clear(); }
+    else               { _tt_.onMouseMove(event.offsetX, event.offsetY); }
     if (model.brush_state > 0) {
       updateBrushCursor();
       var _dx_ = event.offsetX - state.last_brush_x;
@@ -415,6 +414,8 @@ export function render({ model, el }) {
   model.on('mod_inner', function() {
     mod.innerHTML     = model.mod_inner;
     infostr.innerHTML = model.info_str;
+    // A tooltip drawn over the old plot describes marks that are no longer there.
+    _tt_.clear();
   });
   model.on('info_str', function() {
     infostr.innerHTML = model.info_str;
@@ -431,6 +432,24 @@ export function render({ model, el }) {
   model.on('keyboardhelp_x', function() {
     keyboardhelp.setAttribute('transform', 'translate(' + model.keyboardhelp_x + ' 0)');
   });
+
+  // The configuration panel is a live display, so every value it shows re-renders it --
+  // including one Python changed by itself.  config_panel_rows carries the row order AND
+  // the per-row enabled flag.
+  for (const _pp_ of ['config_panel_rows', 'select_shape']) {
+    model.on(_pp_, function() { panelRender(); });
+  }
+  // The tooltip row's value list varies per view -- the icon state exists only when the
+  // view was built with icon= -- so the snapshot in state has to be refreshed rather
+  // than taken once.
+  model.on('menu_items', function() {
+    state.menu_items = model.menu_items;
+    panelRender();
+  });
+  model.on('tooltip_payload', function() { _tt_.draw(); });
+  // One listener, two jobs: the row's displayed value changes and the drawing that the
+  // old mode left behind has to go with it.
+  model.on('tooltip', function() { _tt_.clear(); panelRender(); });
 
   // `render` also reset these on every ReactiveHTML subtree rebuild.  It runs once per
   // mount now, so they are plain initialisation.

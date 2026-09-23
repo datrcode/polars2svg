@@ -5,6 +5,7 @@
     "brush_seq",
     "brush_state",
     "brushing_mode",
+    "config_panel_rows",
     "ctrlkey",
     "drag_op_finished",
     "drag_x0",
@@ -16,9 +17,11 @@
     "has_time_keys",
     "has_z_key",
     "info_str",
+    "kbd_help_svg",
     "key_op_finished",
     "keyboardhelp_x",
     "last_key",
+    "menu_items",
     "middle_op_finished",
     "mod_inner",
     "name",
@@ -27,7 +30,14 @@
     "select_shape",
     "shiftkey",
     "svg_h",
+    "svg_parent_id",
     "svg_w",
+    "tooltip",
+    "tooltip_delay_ms",
+    "tooltip_payload",
+    "tooltip_seq",
+    "tooltip_x",
+    "tooltip_y",
     "use_webgpu",
     "wheel_op_finished",
     "wheel_rots",
@@ -53,8 +63,8 @@
       "dom": {
         "svgparentxypi": {
           "tag": "svg",
-          "kids": 9,
-          "text": ".rect-group-N rect { width: 1px; height: 1px; } 10.0x90.010.0y90.02040608020406080 h . | toggle help displayq . | subtra"
+          "kids": 11,
+          "text": ".rect-group-N rect { width: 1px; height: 1px; } 10.0x90.010.0y90.02040608020406080 in any picker menu: arrows or j/k cyc"
         },
         "mod": {
           "tag": "svg",
@@ -83,8 +93,8 @@
         },
         "keyboardhelp": {
           "tag": "g",
-          "kids": 11,
-          "text": "h . | toggle help displayq . | subtract the current from the topF . | pick selection shape (rectangle | oval)r . | toggl"
+          "kids": 16,
+          "text": "in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closesa . | open the appearance panel: s"
         },
         "drag": {
           "tag": "rect",
@@ -103,6 +113,16 @@
         },
         "infostr": {
           "tag": "text",
+          "kids": 0,
+          "text": ""
+        },
+        "tooltip": {
+          "tag": "g",
+          "kids": 0,
+          "text": ""
+        },
+        "configpanel": {
+          "tag": "g",
           "kids": 0,
           "text": ""
         },
@@ -145,8 +165,8 @@
       "dom": {
         "svgparentxypi": {
           "tag": "svg",
-          "kids": 9,
-          "text": ".rect-group-N rect { width: 1px; height: 1px; } 10.0x90.010.0y90.02040608020406080 h . | toggle help displayq . | subtra"
+          "kids": 11,
+          "text": ".rect-group-N rect { width: 1px; height: 1px; } 10.0x90.010.0y90.02040608020406080 in any picker menu: arrows or j/k cyc"
         },
         "mod": {
           "tag": "svg",
@@ -175,8 +195,8 @@
         },
         "keyboardhelp": {
           "tag": "g",
-          "kids": 11,
-          "text": "h . | toggle help displayq . | subtract the current from the topF . | pick selection shape (rectangle | oval)r . | toggl"
+          "kids": 16,
+          "text": "in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closesa . | open the appearance panel: s"
         },
         "drag": {
           "tag": "rect",
@@ -195,6 +215,16 @@
         },
         "infostr": {
           "tag": "text",
+          "kids": 0,
+          "text": ""
+        },
+        "tooltip": {
+          "tag": "g",
+          "kids": 0,
+          "text": ""
+        },
+        "configpanel": {
+          "tag": "g",
           "kids": 0,
           "text": ""
         },
@@ -232,8 +262,8 @@
       "dom": {
         "svgparentxypi": {
           "tag": "svg",
-          "kids": 9,
-          "text": ".rect-group-N rect { width: 1px; height: 1px; } 10.0x90.010.0y90.02040608020406080 h . | toggle help displayq . | subtra"
+          "kids": 11,
+          "text": ".rect-group-N rect { width: 1px; height: 1px; } 10.0x90.010.0y90.02040608020406080 in any picker menu: arrows or j/k cyc"
         },
         "mod": {
           "tag": "svg",
@@ -262,8 +292,8 @@
         },
         "keyboardhelp": {
           "tag": "g",
-          "kids": 11,
-          "text": "h . | toggle help displayq . | subtract the current from the topF . | pick selection shape (rectangle | oval)r . | toggl"
+          "kids": 16,
+          "text": "in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closesa . | open the appearance panel: s"
         },
         "drag": {
           "tag": "rect",
@@ -282,6 +312,16 @@
         },
         "infostr": {
           "tag": "text",
+          "kids": 0,
+          "text": ""
+        },
+        "tooltip": {
+          "tag": "g",
+          "kids": 0,
+          "text": ""
+        },
+        "configpanel": {
+          "tag": "g",
           "kids": 0,
           "text": ""
         },
@@ -319,8 +359,8 @@
       "dom": {
         "svgparentxypi": {
           "tag": "svg",
-          "kids": 9,
-          "text": ".rect-group-N rect { width: 1px; height: 1px; } 10.0x90.010.0y90.02040608020406080 h . | toggle help displayq . | subtra"
+          "kids": 11,
+          "text": ".rect-group-N rect { width: 1px; height: 1px; } 10.0x90.010.0y90.02040608020406080 in any picker menu: arrows or j/k cyc"
         },
         "mod": {
           "tag": "svg",
@@ -349,8 +389,8 @@
         },
         "keyboardhelp": {
           "tag": "g",
-          "kids": 11,
-          "text": "h . | toggle help displayq . | subtract the current from the topF . | pick selection shape (rectangle | oval)r . | toggl"
+          "kids": 16,
+          "text": "in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closesa . | open the appearance panel: s"
         },
         "drag": {
           "tag": "rect",
@@ -369,6 +409,16 @@
         },
         "infostr": {
           "tag": "text",
+          "kids": 0,
+          "text": ""
+        },
+        "tooltip": {
+          "tag": "g",
+          "kids": 0,
+          "text": ""
+        },
+        "configpanel": {
+          "tag": "g",
           "kids": 0,
           "text": ""
         },
@@ -411,8 +461,8 @@
       "dom": {
         "svgparentxypi": {
           "tag": "svg",
-          "kids": 9,
-          "text": ".rect-group-N rect { width: 1px; height: 1px; } 10.0x90.010.0y90.02040608020406080 circ r=5h . | toggle help displayq . "
+          "kids": 11,
+          "text": ".rect-group-N rect { width: 1px; height: 1px; } 10.0x90.010.0y90.02040608020406080 circ r=5in any picker menu: arrows or"
         },
         "mod": {
           "tag": "svg",
@@ -441,8 +491,8 @@
         },
         "keyboardhelp": {
           "tag": "g",
-          "kids": 11,
-          "text": "h . | toggle help displayq . | subtract the current from the topF . | pick selection shape (rectangle | oval)r . | toggl"
+          "kids": 16,
+          "text": "in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closesa . | open the appearance panel: s"
         },
         "drag": {
           "tag": "rect",
@@ -461,6 +511,16 @@
         },
         "infostr": {
           "tag": "text",
+          "kids": 0,
+          "text": ""
+        },
+        "tooltip": {
+          "tag": "g",
+          "kids": 0,
+          "text": ""
+        },
+        "configpanel": {
+          "tag": "g",
           "kids": 0,
           "text": ""
         },
@@ -493,8 +553,8 @@
       "dom": {
         "svgparentxypi": {
           "tag": "svg",
-          "kids": 9,
-          "text": ".rect-group-N rect { width: 1px; height: 1px; } 10.0x90.010.0y90.02040608020406080 h . | toggle help displayq . | subtra"
+          "kids": 11,
+          "text": ".rect-group-N rect { width: 1px; height: 1px; } 10.0x90.010.0y90.02040608020406080 in any picker menu: arrows or j/k cyc"
         },
         "mod": {
           "tag": "svg",
@@ -523,8 +583,8 @@
         },
         "keyboardhelp": {
           "tag": "g",
-          "kids": 11,
-          "text": "h . | toggle help displayq . | subtract the current from the topF . | pick selection shape (rectangle | oval)r . | toggl"
+          "kids": 16,
+          "text": "in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closesa . | open the appearance panel: s"
         },
         "drag": {
           "tag": "rect",
@@ -543,6 +603,16 @@
         },
         "infostr": {
           "tag": "text",
+          "kids": 0,
+          "text": ""
+        },
+        "tooltip": {
+          "tag": "g",
+          "kids": 0,
+          "text": ""
+        },
+        "configpanel": {
+          "tag": "g",
           "kids": 0,
           "text": ""
         },
@@ -559,8 +629,8 @@
       "dom": {
         "svgparentxypi": {
           "tag": "svg",
-          "kids": 9,
-          "text": ".rect-group-N rect { width: 1px; height: 1px; } 10.0x90.010.0y90.02040608020406080 h . | toggle help displayq . | subtra"
+          "kids": 11,
+          "text": ".rect-group-N rect { width: 1px; height: 1px; } 10.0x90.010.0y90.02040608020406080 in any picker menu: arrows or j/k cyc"
         },
         "mod": {
           "tag": "svg",
@@ -589,8 +659,8 @@
         },
         "keyboardhelp": {
           "tag": "g",
-          "kids": 11,
-          "text": "h . | toggle help displayq . | subtract the current from the topF . | pick selection shape (rectangle | oval)r . | toggl"
+          "kids": 16,
+          "text": "in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closesa . | open the appearance panel: s"
         },
         "drag": {
           "tag": "rect",
@@ -609,6 +679,16 @@
         },
         "infostr": {
           "tag": "text",
+          "kids": 0,
+          "text": ""
+        },
+        "tooltip": {
+          "tag": "g",
+          "kids": 0,
+          "text": ""
+        },
+        "configpanel": {
+          "tag": "g",
           "kids": 0,
           "text": ""
         },

@@ -65,6 +65,14 @@ _CLOUD_ICON_D_ = (
 # - id     : the symbol name a matching '<use href="#...">' will reference
 # - stroke : outline color, or None for the unstroked variant (spreadlinesp's outline cloud)
 #
+# The stroke is the palette's ink, so this definition is RENDER-DEPENDENT: two figures
+# with different palettes on one page produce different bodies for the same id.  Every
+# caller must therefore scope `id` per render (cloud_<rand_id>) -- href resolves to the
+# first match in document order, so an unscoped id would silently give figure one's
+# outline color to every later figure.  The '#000000' default is for a caller that has
+# no palette to hand; component render paths pass colorTyped('label','defaultfg').
+# TestLinkPCloudDefs.test_the_cloud_def_is_invariant guards the scoping rule.
+#
 def cloudIconDef(id: str = 'cloud', stroke: str | None = '#000000') -> str:
     _stroke_ = f'stroke="{stroke}" ' if stroke is not None else ''
     return (f'<g id="{id}" transform="translate(-50,-25)">'
@@ -439,6 +447,11 @@ class DisplayList:
     #                                          -- resolved to glyph instances at payload time
     # - 'tri':                                 payload = (verts np.float32 [n,6], indices np.uint32)
     #
+    # bg feeds webgpu_payload()['bg'] -- the GPU clear color -- and nothing else, so it
+    # is inert on a display list that is composed into a parent rather than presented.
+    # The '#ffffff' default is for standalone/test construction only: DisplayList has no
+    # Polars2SVG to ask, so a component that presents its list MUST pass bg= from
+    # colorTyped('background','default') or it will clear to white under a dark palette.
     def __init__(self, w: int, h: int, bg: str = '#ffffff') -> None:
         self.w, self.h = w, h
         self.bg        = bg

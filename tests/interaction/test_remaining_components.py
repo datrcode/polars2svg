@@ -200,11 +200,11 @@ def test_slpi_drag_rect_normalises_a_backwards_drag(slpi_page):
         _ip_.mouse_up()
 
 
-@pytest.mark.parametrize('shift,ctrl,stroke', [(False, False, '#000000'),
-                                               (True,  False, '#ff0000'),
-                                               (False, True,  '#00ff00'),
-                                               (True,  True,  '#0000ff')])
-def test_slpi_drag_rect_stroke_encodes_the_set_operation(slpi_page, shift, ctrl, stroke):
+@pytest.mark.parametrize('shift,ctrl,op', [(False, False, 'replace'),
+                                           (True,  False, 'subtract'),
+                                           (False, True,  'add'),
+                                           (True,  True,  'intersect')])
+def test_slpi_drag_rect_stroke_encodes_the_set_operation(slpi_page, shift, ctrl, op):
     """The colour is the only feedback for which set-operation the drag will perform.
 
     **No focus dance here, unlike LINKPI.** LINKPI's band colours come from
@@ -221,7 +221,7 @@ def test_slpi_drag_rect_stroke_encodes_the_set_operation(slpi_page, shift, ctrl,
         _ip_.mouse_down(150, 90)
         _ip_.mouse_move_to(330, 210)
         try:
-            assert _slpi_band(_ip_)['stroke'] == stroke
+            assert _slpi_band(_ip_)['stroke'] == _ip_.setopColor(op)
         finally:
             _ip_.mouse_up()
 

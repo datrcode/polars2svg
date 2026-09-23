@@ -1034,7 +1034,7 @@ class SpreadLinesP(ExportMixin):
             for _pt_ in [p0, p1, p2]:
                 xmin, ymin = min(xmin, _pt_[0]), min(ymin, _pt_[1])
                 xmax, ymax = max(xmax, _pt_[0]), max(ymax, _pt_[1])
-            _co_  = '#ff0000' if d == 1 else '#0000ff'  # red=new(left), blue=ending(right)
+            _co_  = self.p2s.colorTyped('direction', 'new' if d == 1 else 'ending')  # red=new(left), blue=ending(right)
             _path_= f'M {p0[0]:.1f} {p0[1]:.1f} L {p1[0]:.1f} {p1[1]:.1f} L {p2[0]:.1f} {p2[1]:.1f} Z'
             if dl is not None: dl.polygon([p0, p1, p2], _co_, svg='')
             return f'<path d="{_path_}" stroke="none" fill="{_co_}" />'
@@ -1047,7 +1047,7 @@ class SpreadLinesP(ExportMixin):
             for _pt_ in [p0, p1, p2]:
                 xmin, ymin = min(xmin, _pt_[0]), min(ymin, _pt_[1])
                 xmax, ymax = max(xmax, _pt_[0]), max(ymax, _pt_[1])
-            _co_  = '#d3494e' if d == 1 else '#658cbb'
+            _co_  = self.p2s.colorTyped('direction', 'new_muted' if d == 1 else 'ending_muted')
             _path_= f'M {p0[0]:.1f} {p0[1]:.1f} L {p1[0]:.1f} {p1[1]:.1f} L {p2[0]:.1f} {p2[1]:.1f} Z'
             if dl is not None: dl.polygon([p0, p1, p2], _co_, svg='')
             return f'<path d="{_path_}" stroke="none" fill="{_co_}" />'
@@ -1225,7 +1225,11 @@ class SpreadLinesP(ExportMixin):
 
     def svgCrossConnect(self, x0: float, y0: float, x1: float, y1: float,
                         launch: Any = None, shift0: Any = None, shift1: Any = None,
-                        color: str = '#000000', width: float = 1.0, dl: Any = None) -> str:
+                        color: str | None = None, width: float = 1.0, dl: Any = None) -> str:
+        # color=None resolves to the palette's ink.  Every in-tree caller passes an
+        # explicit color, so this default only guards a direct external call -- but a
+        # hardcoded '#000000' here would paint black on a dark canvas.
+        if color is None: color = self.p2s.colorTyped('label', 'defaultfg')
         if launch is None: launch = (x1 - x0) * 0.1
         if shift0 is None: shift0 = 0
         if shift1 is None: shift1 = 0
@@ -1242,7 +1246,9 @@ class SpreadLinesP(ExportMixin):
     # -------------------------------------------------------------------------
 
     def bubbleNumberOnLine(self, x0: float, x1: float, y: float, txt: str,
-                           color: str = '#c0c0c0', width: float = 2.0, dl: Any = None) -> str:
+                           color: str | None = None, width: float = 2.0, dl: Any = None) -> str:
+        # See svgCrossConnect(): None resolves to the palette rather than a literal.
+        if color is None: color = self.p2s.colorTyped('axis', 'default')
         _txt_h_  = self.txt_h
         _txt_w_  = len(str(txt)) * _txt_h_ * 0.62
         xm       = (x0 + x1) / 2.0
@@ -1812,7 +1818,7 @@ class SpreadLinesP(ExportMixin):
         # Each connect goes to its own DisplayList so the compose step can replay them
         # in the order svg.insert(0) leaves them in (newest underneath).
         def _connect_(x0: float, y0: float, x1: float, y1: float,
-                      color: str = '#000000', width: float = 1.0) -> str:
+                      color: str | None = None, width: float = 1.0) -> str:
             _d_ = _mkdl_()
             _dl_connects_.append(_d_)
             return self.svgCrossConnect(x0, y0, x1, y1, color=color, width=width, dl=_d_)
@@ -1873,7 +1879,7 @@ class SpreadLinesP(ExportMixin):
         # valid bin's left edge (exact midpoint).
         _hrun_ = self.r_pref * 1.25
         _vrun_ = self.r_pref * 2.0
-        _ctx_co_ = '#a0a0a0'
+        _ctx_co_ = self.p2s.colorTyped('axis', 'default')
         _sorted_bounds_bins_ = sorted(self.bin_to_bounds.keys())
         _next_bin_lu_ = {_sorted_bounds_bins_[i]: _sorted_bounds_bins_[i + 1]
                          for i in range(len(_sorted_bounds_bins_) - 1)}
@@ -1995,7 +2001,8 @@ class SpreadLinesP(ExportMixin):
             # Both ids carry rand_id, as every other id this component emits does.
             # An SVG is usually embedded in a page beside others, where a bare
             # '#cloud' would be a duplicate id the moment a second figure appears.
-            svg.insert(2, '<defs>' + cloudIconDef(f'cloud_{rand_id}') +
+            svg.insert(2, '<defs>' + cloudIconDef(f'cloud_{rand_id}',
+                                                  stroke=self.p2s.colorTyped('label', 'defaultfg')) +
                           cloudIconDef(f'cloud_outline_{rand_id}', stroke=None) + '</defs>')
         if self.draw_border:
             _bc_ = _border_co_

@@ -1,3 +1,4 @@
+import asyncio
 import random
 import unittest
 
@@ -355,9 +356,15 @@ class TestBackgroundOperationLifecycle(unittest.TestCase):
     def _run_flow_field(self):
         return self.view.applyBackgroundOperation('flow field (2 layers)')
 
+    def _press(self, key, ctrl=False):
+        self.view.ctrlkey         = ctrl
+        self.view.key_op_finished = key
+        asyncio.run(self.view.applyKeyOp(None))
+
     def test_registry_offers_the_flow_field(self):
         self.assertIn('flow field (2 layers)', self.view._background_registry)
-        self.assertIn('clear background', self.view._background_registry)
+        # Clearing is ctrl-b now, not a producer that produces nothing.
+        self.assertNotIn('clear background', self.view._background_registry)
 
     def test_running_it_adopts_a_contextual_background(self):
         self.assertTrue(self._run_flow_field())
@@ -419,7 +426,21 @@ class TestBackgroundOperationLifecycle(unittest.TestCase):
 
     def test_clear_background_clears(self):
         self._run_flow_field()
-        self.view.applyBackgroundOperation('clear background')
+        self.view.clearBackground()
+        self.assertIsNone(self.view.layout_background)
+        self.assertIsNone(self.view.background_provenance)
+
+    def test_ctrl_b_clears_a_producer_background(self):
+        self._run_flow_field()
+        self._press('b', ctrl=True)
+        self.assertIsNone(self.view.layout_background)
+        self.assertIsNone(self.view.background_provenance)
+        self.assertIsNone(self.view.dfs_layout[self.view.df_level].background)
+
+    def test_ctrl_b_clears_a_layout_background_too(self):
+        self.view.apply_layout_operation('hyper tree donut')
+        self.assertEqual(self.view.background_provenance, 'layout')
+        self._press('b', ctrl=True)
         self.assertIsNone(self.view.layout_background)
         self.assertIsNone(self.view.background_provenance)
 
@@ -443,17 +464,36 @@ class TestBackgroundOperationLifecycle(unittest.TestCase):
     def test_an_unknown_operation_is_refused(self):
         self.assertFalse(self.view.applyBackgroundOperation('not a producer'))
 
-    def test_menu_commit_path_runs_it(self):
-        # What the JS actually does on commit: set the label, bump the counter.
-        # The counter is what is watched -- re-running the SAME producer is the
-        # documented refresh, and an unchanged label would not fire a watcher.
+    def test_the_default_producer_is_neighborhood(self):
+        self.assertEqual(self.view.background_operation, 'neighborhood (spatial)')
+
+    def test_menu_commit_only_selects(self):
+        # What the JS does on commit is write the label, and that is all: picking a
+        # producer selects it the way shift-w selects a layout, and 'b' runs it.
         self.view.background_operation = 'flow field (3 layers)'
-        self.view.background_op_seq    = self.view.background_op_seq + 1
+        self.assertIsNone(self.view.layout_background)
+        self.assertIsNone(self.view.background_provenance)
+
+    def test_b_runs_the_selected_producer(self):
+        self.view.background_operation = 'flow field (3 layers)'
+        self._press('b')
         self.assertEqual(set(self.view.layout_background), {'flow 1', 'flow 2', 'flow 3'})
         self.assertEqual(self.view.background_provenance, 'context')
 
-    def test_commit_reaches_the_linkp(self):
-        self.view.background_op_seq = self.view.background_op_seq + 1
+    def test_b_again_replaces_the_background(self):
+        # Re-running is the documented refresh; with the counter gone it is simply 'b'
+        # pressed again, whether or not the selection changed in between.
+        self.view.background_operation = 'flow field (2 layers)'
+        self._press('b')
+        first = self.view.layout_background
+        self.view.background_operation = 'flow field (3 layers)'
+        self._press('b')
+        self.assertIsNot(self.view.layout_background, first)
+        self.assertEqual(set(self.view.layout_background), {'flow 1', 'flow 2', 'flow 3'})
+
+    def test_b_reaches_the_linkp(self):
+        self.view.background_operation = 'flow field (2 layers)'
+        self._press('b')
         _ln_ = self.view.dfs_layout[self.view.df_level]
         self.assertIsNotNone(_ln_.background)
         self.assertIn('<path', _ln_.renderSVG())
@@ -477,24 +517,24 @@ class TestBackgroundOperationLifecycle(unittest.TestCase):
         self.assertIn("state.menu_kind = 'background'; menuOpen();", js)
         # The menu contents are per view and reach the JS through the data model,
         # so the entry is asserted on the param rather than on the script text.
-        self.assertEqual(self.view.menu_items['background'][0], ['f', 'flow field (2 layers)'])
-        # Committing a producer bumps a SEQUENCE as well as writing the label, because
-        # re-picking the one already selected has to re-run it and an unchanged param
-        # write fires no watcher.  That is the reason menuSetValue is an explicit chain
-        # rather than a lookup in MENU_PARAM_.
-        self.assertIn('model.background_op_seq     = model.background_op_seq + 1',
-                      component_script(self.view, 'menuSetValue'))
+        self.assertEqual(self.view.menu_items['background'][0], ['n', 'neighborhood (spatial)'])
+        # Committing a producer writes its label and nothing else -- no sequence bump,
+        # because picking no longer runs it.
+        _set_ = component_script(self.view, 'menuSetValue')
+        self.assertIn("if      (kind == 'background')       { model.background_operation  = label; }", _set_)
+        self.assertNotIn('background_op_seq', component_js(self.view))
 
     def test_visibility_is_the_config_panel_and_not_a_key(self):
         """'b' used to cycle the display state; it is the panel's 'background' row now.
 
-        The two are deliberately separate things: shift-b RUNS a producer (a computation,
-        and a guarded menu item for that reason) while the row only decides whether what
-        it produced is drawn.  Only the second is a description of how the view is drawn,
-        which is the line the panel draws.
+        The two are deliberately separate things: 'b' RUNS the selected producer (a
+        computation) while the row only decides whether what it produced is drawn.  Only
+        the second is a description of how the view is drawn, which is the line the
+        panel draws.
         """
         js = component_js(self.view)
-        self.assertNotIn('else if (event.key == "b")', js)
+        self.assertIn('else if (event.key == "b") { if (event.ctrlKey) event.preventDefault(); '
+                      "model.key_op_finished = 'b';", js)
         self.assertIn("['b', 'background_state', 'background']",
                       str([_r_[:3] for _r_ in self.view.config_panel_rows]))
         self.assertIn('background_state', self.view.menu_items)

@@ -181,8 +181,7 @@ export function render({ model, el }) {
   // (CP3) both re-enters these pickers and reads the same values to render its rows,
   // and four new kinds arrived with it -- three chains of twelve branches each is how
   // a kind ends up handled in two places and missed in the third.  The WRITE side
-  // stays an explicit chain in menuSetValue: only it knows that committing a
-  // background also bumps background_op_seq.
+  // stays an explicit chain in menuSetValue.
   const MENU_PARAM_ = {
       background:       'background_operation',
       operation:        'layout_operation',
@@ -203,7 +202,7 @@ export function render({ model, el }) {
   };
 
   const MENU_HEADER_ = {
-      background:       'background:',
+      background:       'background producer:',
       operation:        'layout operation:',
       mode:             'layout mode:',
       link_size:        'link size:',
@@ -214,20 +213,18 @@ export function render({ model, el }) {
       link_arrows:      'link arrows:',
       timing_marks:     'timing marks:',
       label_mode:       'labels:',
-      // NOT 'background:' -- that header belongs to the producer picker (shift-b), and
-      // the browser tests address a picker by the header text it draws.
+      // Distinct from 'background producer:' (shift-b's picker), because the browser
+      // tests address a picker by the header text it draws.
       background_state: 'background display:',
       tooltip:          'tooltip:',
   };
 
-  // The single write path for every choice a picker or a panel row can make.  Kept an
-  // explicit chain rather than MENU_PARAM_[kind]: the background producer commits a
-  // SEQUENCE number as well as a label -- re-picking the same producer has to re-run it,
-  // and a param write of an unchanged value fires no watcher -- and that asymmetry is
-  // easier to see spelled out than as a special case beside a table lookup.
+  // The single write path for every choice a picker or a panel row can make.  Every
+  // branch is a plain label write now: picking a background producer only selects it,
+  // as the layout pickers do, and 'b' is what runs it -- so the sequence counter that
+  // made re-picking the same producer re-run it is gone.
   function menuSetValue(kind, label) {
-      if      (kind == 'background')       { model.background_operation  = label;
-                                             model.background_op_seq     = model.background_op_seq + 1; }
+      if      (kind == 'background')       { model.background_operation  = label; }
       else if (kind == 'operation')        { model.layout_operation      = label; }
       else if (kind == 'mode')             { model.layout_mode           = label; }
       else if (kind == 'link_size')        { model.link_size_choice      = label; }
@@ -299,15 +296,16 @@ export function render({ model, el }) {
       // (arrows x timing marks) and shift-a (spacing picker) are two of its rows now,
       // so taking it costs nothing.  ctrl-a is deliberately NOT bound: with the ctrl
       // entry points gone there is nothing to guard, so select-all goes back to the
-      // browser.  'b' and 'l' are now unbound and free for whatever needs a left-hand
-      // key next (the whole point of CP1).
-      if      (event.key == "a" && !event.ctrlKey) { panelOpen(false); } // Open the appearance panel; 'a' again advances the row cursor
+      // browser.  CP1 freed 'b' and 'l'; 'b' now runs the background producer and 'l'
+      // is still free for whatever needs a left-hand key next.
+      if      (event.key == "a" && !event.ctrlKey) { panelOpen(false); } // Open the settings panel; 'a' again advances the row cursor
       else if (event.key == "A" && !event.ctrlKey) { panelOpen(true);  } // ...opening on the last row instead of the first
-      else if (event.key == "B") { state.menu_kind = 'background'; menuOpen(); } // Open the background producer picker (committing runs it)
+      else if (event.key == "b") { if (event.ctrlKey) event.preventDefault(); model.key_op_finished = 'b';  } // Run the selected background producer; ctrl-b clears the background (preventDefault: ctrl-b is Firefox's bookmarks sidebar)
+      else if (event.key == "B" && !event.ctrlKey) { state.menu_kind = 'background'; menuOpen(); } // Select the background producer ('b' runs it)
       else if (event.key == "c") { if (event.ctrlKey) event.preventDefault(); model.key_op_finished = 'c';  } // (if selected) zoom to selected, else zoom to entire view; ctrl-c copies (suppress native copy so it can't clobber our clipboard write)
       else if (event.key == "C") { if (event.ctrlKey) event.preventDefault(); model.key_op_finished = 'C';  } // Zoom to selected + neighbors; ctrl-shift-c copies labels
-      else if (event.key == "d") { model.key_op_finished = 'd';  } // Detect communities (louvain) & color nodes by community
-      else if (event.key == "D") { model.key_op_finished = 'D';  } // Clear the community colors
+      else if (event.key == "d") { if (event.ctrlKey) event.preventDefault(); model.key_op_finished = 'd';  } // Detect communities (louvain) & color nodes by community; ctrl-d clears the colors (preventDefault: ctrl-d is bookmark-this-page off macOS)
+      // shift-d is deliberately unbound: held for a community-algorithm picker.
       else if (event.key == "e") { if (event.ctrlKey) event.preventDefault(); model.key_op_finished = 'e';  } // Expand (undirected); ctrl-e expands along reversed directed edges (preventDefault: ctrl-e is browser search-bar focus)
       else if (event.key == "E") { model.key_op_finished = 'E';  } // Expand (w/ digraph, forward)
       else if (event.key == "f") { model.key_op_finished = 'f';  } // Edge unfilter: re-add base rows on the currently-visible edges
@@ -694,6 +692,7 @@ export function render({ model, el }) {
   // recomputes from the current layer.
   const _PANEL_PARAMS_ = [
       'config_panel_rows',
+      'layout_mode', 'layout_operation', 'background_operation',
       'link_arrows_choice', 'timing_marks_choice', 'label_mode_choice',
       'background_state_choice', 'timing_spacing_choice', 'link_shape_choice',
       'link_size_choice', 'link_opacity_choice', 'node_size_choice',

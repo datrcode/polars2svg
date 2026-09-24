@@ -870,7 +870,8 @@ class TestCommunityDetection(unittest.TestCase):
         self.lp   = self.p2s.linkp(self.df, relationships=[('fm', 'to')])
         self.ctrl = self.p2s.linkpi(self.lp)
 
-    def _press(self, key):
+    def _press(self, key, ctrl=False):
+        self.ctrl.ctrlkey         = ctrl
         self.ctrl.key_op_finished = key
         asyncio.run(self.ctrl.applyKeyOp(None))
 
@@ -911,7 +912,7 @@ class TestCommunityDetection(unittest.TestCase):
         _nc_ = self.ctrl.apply_community_detection()
         self.assertEqual(self.ctrl.community_colors, _nc_)
 
-    # ── the 'd' / shift-d key ops ────────────────────────────────────────────
+    # ── the 'd' / ctrl-d key ops ─────────────────────────────────────────────
 
     def test_d_pushes_node_color_to_every_stack_level(self):
         self.ctrl.selected_entities = {'b3'}
@@ -920,12 +921,21 @@ class TestCommunityDetection(unittest.TestCase):
         for _layout_ in self.ctrl.dfs_layout:
             self.assertEqual(_layout_.node_color, self.ctrl.community_colors)
 
-    def test_shift_d_restores_original_node_color(self):
+    def test_ctrl_d_restores_original_node_color(self):
         self._press('d')
         self.assertIsInstance(self.ctrl.dfs_layout[0].node_color, dict)
-        self._press('D')
+        self._press('d', ctrl=True)
         self.assertEqual(self.ctrl.dfs_layout[0].node_color, self.ctrl._orig_node_color_)
         self.assertIsNone(self.ctrl.community_colors)
+
+    def test_shift_d_is_unbound(self):
+        # Held for a community-algorithm picker; until then it must do nothing rather
+        # than keep clearing the colours it used to.
+        self._press('d')
+        _colors_ = self.ctrl.community_colors
+        self._press('D')
+        self.assertEqual(self.ctrl.community_colors, _colors_)
+        self.assertEqual(self.ctrl.dfs_layout[0].node_color, _colors_)
 
     def test_popped_stack_nodes_are_absent_from_the_color_dict(self):
         # Detect at a deeper level, then pop: the nodes only present at the shallower
@@ -1290,9 +1300,11 @@ class TestLabelModeCycle(unittest.TestCase):
         for _lp_ in _c_.dfs_layout:
             self.assertEqual(_lp_.label_only, {'a1', 'a2'})
 
-    def test_help_text_points_at_the_labels_row(self):
+    def test_the_labels_row_carries_its_letter(self):
+        # The help no longer lists the panel's row letters -- the panel draws them
+        # itself -- so the letter is asserted where the user now reads it.
         _c_ = self._ctrl([('fm', 'to', 'dsc')])
-        self.assertIn('l labels', _c_._keyboard_commands_)
+        self.assertIn(['l', 'label_mode', 'labels'], [_r_[:3] for _r_ in _c_.config_panel_rows])
 
     def test_the_row_offers_exactly_the_reachable_modes(self):
         """The list the panel cycles is the list labelModeCycle() allows, both ways."""

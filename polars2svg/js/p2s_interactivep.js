@@ -283,7 +283,7 @@ export function render({ model, el }) {
       updateBrushCursor();
     }
     else if (event.key == 'q') { model.key_op_finished = "q"; }
-    // The appearance panel, same key and same shape as LINKPI's.  'F' is NOT absorbed
+    // The settings panel, same key and same shape as LINKPI's.  'F' is NOT absorbed
     // into it the way LINKPI's twelve bindings were: that absorption paid for a keyspace
     // that had run out, and these five have most of the alphabet free.  Both doors reach
     // the one picker (CP3).

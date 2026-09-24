@@ -190,8 +190,9 @@ p2s.panelize([[xi], [hi]])    # two rows, stacked
 `panelize()` also accepts bare static components and wraps them for you. Pass
 `use_webgpu=True` to an interactive variant to render it through WebGPU.
 
-Press `h` in any interactive view for its key bindings, and `a` for the appearance
-panel — a live display of how the view is drawn, editable in place. One of its rows is
+Press `h` in any interactive view for its key bindings, and `a` for the settings
+panel — a live display of how the view is drawn (and, on `linkp`, of what its layout and
+background keys will do), editable in place. One of its rows is
 the **hover tooltip**: rest the pointer on a mark and it says what is under it, as text
 or as a whole component re-rendered against just those records.
 

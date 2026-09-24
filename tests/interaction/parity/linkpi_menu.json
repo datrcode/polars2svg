@@ -3,7 +3,6 @@
     "allentities_x0",
     "allentities_y0",
     "allentitiespath",
-    "background_op_seq",
     "background_operation",
     "background_state_choice",
     "brush_changed",
@@ -91,7 +90,7 @@
         "svgparent": {
           "tag": "svg",
           "kids": 18,
-          "text": "in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closes/ . | search: type substring + Ent"
+          "text": ".. | [[p(cs)^2]] plain replaces | ctrl adds | shift removes | ctrl-shift intersects .. | [[selected matters]] acts on th"
         },
         "mod": {
           "tag": "svg",
@@ -100,8 +99,8 @@
         },
         "keyboardhelp": {
           "tag": "g",
-          "kids": 45,
-          "text": "in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closes/ . | search: type substring + Ent"
+          "kids": 31,
+          "text": ".. | [[p(cs)^2]] plain replaces | ctrl adds | shift removes | ctrl-shift intersects .. | [[selected matters]] acts on th"
         },
         "drag": {
           "tag": "rect",
@@ -192,7 +191,7 @@
         "svgparent": {
           "tag": "svg",
           "kids": 18,
-          "text": "in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closes/ . | search: type substring + Ent"
+          "text": ".. | [[p(cs)^2]] plain replaces | ctrl adds | shift removes | ctrl-shift intersects .. | [[selected matters]] acts on th"
         },
         "mod": {
           "tag": "svg",
@@ -201,8 +200,8 @@
         },
         "keyboardhelp": {
           "tag": "g",
-          "kids": 45,
-          "text": "in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closes/ . | search: type substring + Ent"
+          "kids": 31,
+          "text": ".. | [[p(cs)^2]] plain replaces | ctrl adds | shift removes | ctrl-shift intersects .. | [[selected matters]] acts on th"
         },
         "drag": {
           "tag": "rect",
@@ -293,7 +292,7 @@
         "svgparent": {
           "tag": "svg",
           "kids": 18,
-          "text": "in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closes/ . | search: type substring + Ent"
+          "text": ".. | [[p(cs)^2]] plain replaces | ctrl adds | shift removes | ctrl-shift intersects .. | [[selected matters]] acts on th"
         },
         "mod": {
           "tag": "svg",
@@ -302,8 +301,8 @@
         },
         "keyboardhelp": {
           "tag": "g",
-          "kids": 45,
-          "text": "in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closes/ . | search: type substring + Ent"
+          "kids": 31,
+          "text": ".. | [[p(cs)^2]] plain replaces | ctrl adds | shift removes | ctrl-shift intersects .. | [[selected matters]] acts on th"
         },
         "drag": {
           "tag": "rect",
@@ -394,7 +393,7 @@
         "svgparent": {
           "tag": "svg",
           "kids": 18,
-          "text": "in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closes/ . | search: type substring + Ent"
+          "text": ".. | [[p(cs)^2]] plain replaces | ctrl adds | shift removes | ctrl-shift intersects .. | [[selected matters]] acts on th"
         },
         "mod": {
           "tag": "svg",
@@ -403,8 +402,8 @@
         },
         "keyboardhelp": {
           "tag": "g",
-          "kids": 45,
-          "text": "in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closes/ . | search: type substring + Ent"
+          "kids": 31,
+          "text": ".. | [[p(cs)^2]] plain replaces | ctrl adds | shift removes | ctrl-shift intersects .. | [[selected matters]] acts on th"
         },
         "drag": {
           "tag": "rect",

@@ -89,7 +89,7 @@
         "keyboardhelp": {
           "tag": "g",
           "kids": 15,
-          "text": "in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closesa . | open the appearance panel: s"
+          "text": "in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closesa . | open the settings panel: sel"
         },
         "drag": {
           "tag": "rect",
@@ -191,7 +191,7 @@
         "keyboardhelp": {
           "tag": "g",
           "kids": 15,
-          "text": "in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closesa . | open the appearance panel: s"
+          "text": "in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closesa . | open the settings panel: sel"
         },
         "drag": {
           "tag": "rect",
@@ -288,7 +288,7 @@
         "keyboardhelp": {
           "tag": "g",
           "kids": 15,
-          "text": "in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closesa . | open the appearance panel: s"
+          "text": "in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closesa . | open the settings panel: sel"
         },
         "drag": {
           "tag": "rect",
@@ -380,7 +380,7 @@
         "keyboardhelp": {
           "tag": "g",
           "kids": 15,
-          "text": "in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closesa . | open the appearance panel: s"
+          "text": "in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closesa . | open the settings panel: sel"
         },
         "drag": {
           "tag": "rect",
@@ -477,7 +477,7 @@
         "keyboardhelp": {
           "tag": "g",
           "kids": 15,
-          "text": "in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closesa . | open the appearance panel: s"
+          "text": "in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closesa . | open the settings panel: sel"
         },
         "drag": {
           "tag": "rect",
@@ -564,7 +564,7 @@
         "keyboardhelp": {
           "tag": "g",
           "kids": 15,
-          "text": "in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closesa . | open the appearance panel: s"
+          "text": "in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closesa . | open the settings panel: sel"
         },
         "drag": {
           "tag": "rect",
@@ -635,7 +635,7 @@
         "keyboardhelp": {
           "tag": "g",
           "kids": 15,
-          "text": "in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closesa . | open the appearance panel: s"
+          "text": "in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closesa . | open the settings panel: sel"
         },
         "drag": {
           "tag": "rect",

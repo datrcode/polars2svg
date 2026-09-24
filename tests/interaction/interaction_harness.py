@@ -908,7 +908,7 @@ class InteractivePage:
         return self.el('configpanel').text_content() or ''
 
     def expect_panel_open(self) -> None:
-        expect(self.el('configpanel')).to_contain_text('appearance:', timeout=self.timeout_ms)
+        expect(self.el('configpanel')).to_contain_text('settings:', timeout=self.timeout_ms)
 
     def expect_panel_closed(self) -> None:
         expect(self.el('configpanel')).to_be_empty(timeout=self.timeout_ms)
@@ -945,7 +945,7 @@ class InteractivePage:
         for _t_ in self.root.locator(f'[id="configpanel{self.suffix}"] text').all():
             _s_ = (_t_.text_content() or '').strip()
             if not _s_.startswith('['):
-                continue                                  # the 'appearance:' header
+                continue                                  # the 'settings:' header
             _body_ = _s_[_s_.index(']') + 1:]
             _label_, _, _value_ = _body_.partition(' .')
             _out_[_label_.strip()] = _value_.lstrip('. ').strip()
@@ -955,7 +955,10 @@ class InteractivePage:
         """A gated-off row is drawn greyed; the cursor also skips it."""
         for _t_ in self.root.locator(f'[id="configpanel{self.suffix}"] text').all():
             _s_ = (_t_.text_content() or '').strip()
-            if _s_.startswith('[') and _s_[_s_.index(']') + 1:].strip().startswith(label):
+            # label + ' .' rather than a bare prefix: the panel always draws the label,
+            # one space, then a dot leader, and 'background' is a prefix of
+            # 'background producer'.
+            if _s_.startswith('[') and _s_[_s_.index(']') + 1:].strip().startswith(label + ' .'):
                 return '#999' in (_t_.get_attribute('style') or '')
         raise AssertionError(f'no panel row labelled {label!r} (saw {self.panel_text()!r})')
 

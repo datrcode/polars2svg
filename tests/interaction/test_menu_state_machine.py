@@ -31,7 +31,7 @@ from playwright.sync_api import expect
 #: and the very same pickers open with Enter on the row instead (CP3 -- the panel took
 #: the entry points, not the menus).  PANEL_ENTRY_POINTS below is that second door.
 ENTRY_POINTS = [
-    ('B', {},                  'background:'),
+    ('B', {},                  'background producer:'),
     ('G', {},                  'layout mode:'),
     ('W', {},                  'layout operation:'),
 ]
@@ -46,6 +46,10 @@ PANEL_ENTRY_POINTS = [
     ('o', 'link opacity:'),
     ('n', 'node size:'),
     ('r', 'link arrows:'),
+    # The three action settings reach the same pickers shift-g / shift-w / shift-b open.
+    ('g', 'layout mode:'),
+    ('w', 'layout operation:'),
+    ('f', 'background producer:'),
 ]
 
 

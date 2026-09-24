@@ -205,7 +205,7 @@ function p2sConfigPanel(ctx) {
       if (panelNode === null) { return; }
       if (!state.panel_open) { panelNode.innerHTML = ''; return; }
       var _rows_   = panelRows();
-      var _header_ = 'appearance:';
+      var _header_ = 'settings:';
       var _lw_     = 0;
       for (var _i_ = 0; _i_ < _rows_.length; _i_++) { _lw_ = Math.max(_lw_, _rows_[_i_][2].length); }
       // Fixed-width label + dot leader, so the value column aligns and the panel reads

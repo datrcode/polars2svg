@@ -149,16 +149,18 @@ def test_shift_x_pops_the_stack_and_brings_them_back(linkpi_page):
 
 # ── community colouring ──────────────────────────────────────────────────────
 
-def test_shift_d_clears_the_community_colours_d_applied(linkpi_page):
+def test_ctrl_d_clears_the_community_colours_d_applied(linkpi_page):
     linkpi_page.hover(200, 150)
     _plain_ = linkpi_page.mod_html()
     linkpi_page.press('d')
     _coloured_ = linkpi_page.wait_for_mod_change(_plain_)
 
     linkpi_page.hover(200, 150)
-    linkpi_page.press('D')
-    _restored_ = linkpi_page.wait_for_mod_change(_coloured_)
-    assert _restored_ != _coloured_, 'shift-D left the community colours in place'
+    # holding(), not press(ctrl=True): the clear branch reads ctrlkey in Python.
+    with linkpi_page.holding(ctrl=True):
+        linkpi_page.press('d')
+        _restored_ = linkpi_page.wait_for_mod_change(_coloured_)
+    assert _restored_ != _coloured_, 'ctrl-d left the community colours in place'
 
 
 # ── expansion along edges ────────────────────────────────────────────────────

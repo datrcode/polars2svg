@@ -1958,9 +1958,65 @@ class TestLINKPIPickerMenu(unittest.TestCase):
         for script in ('menuOpen', 'menuRender', 'menuCommit', 'menuClose', 'menuArmTimer'):
             self.assertTrue(has_script(cls, script))
 
-    def test_keyboard_help_mentions_picker(self):
-        cls = type(self._make_ctrl())
-        self.assertIn('picker', cls._keyboard_commands_)
+    def test_keyboard_help_mentions_the_three_pickers(self):
+        _cmds_ = type(self._make_ctrl())._keyboard_commands_
+        for _line_ in ('shift-g selects the shape', 'shift-w selects algorithm',
+                       'select the background producer'):
+            self.assertIn(_line_, _cmds_)
+
+    # ── the action settings are settings-panel rows too ───────────────────────
+    def test_action_settings_sit_between_tooltip_and_background(self):
+        """shift-g / shift-w / shift-b stay, and the same choices are panel rows.
+
+        'background' stays LAST: a backwards wrap of the cursor then has a gated row
+        to skip, which is the case tests/interaction/test_config_panel.py pins.
+        """
+        ctrl  = self._make_ctrl()
+        _rows_ = [_r_[:3] for _r_ in ctrl.config_panel_rows]
+        _tail_ = _rows_[-5:]
+        self.assertEqual(_tail_, [['i', 'tooltip',          'tooltip'],
+                                  ['g', 'mode',             'layout shape'],
+                                  ['w', 'operation',        'layout operation'],
+                                  ['f', 'background',       'background producer'],
+                                  ['b', 'background_state', 'background']])
+        _enabled_ = {_r_[1]: _r_[3] for _r_ in ctrl.config_panel_rows}
+        for _kind_ in ('mode', 'operation', 'background'):
+            self.assertTrue(_enabled_[_kind_], f'{_kind_} row should never be gated')
+
+    def test_panel_mnemonics_avoid_the_cursor_keys(self):
+        # The panel tests a/A/j/k before it scans for a row mnemonic, so a row lettered
+        # with one of them could never be jumped to.
+        from polars2svg.interactive_controller import _CONFIG_PANEL_ROWS_
+        _ms_ = [_m_ for _m_, _, _ in _CONFIG_PANEL_ROWS_]
+        self.assertEqual(len(_ms_), len(set(_ms_)))
+        self.assertFalse(set(_ms_) & set('aAjk'))
+
+    def test_a_panel_row_kind_has_items_and_a_param(self):
+        # A row IS a menu kind: the JS reads its values from menu_items[kind].
+        from polars2svg.interactive_controller import _CONFIG_PANEL_ROWS_
+        ctrl = self._make_ctrl()
+        for _, _kind_, _ in _CONFIG_PANEL_ROWS_:
+            self.assertIn(_kind_, ctrl.menu_items)
+        _js_ = component_js(ctrl)
+        for _p_ in ('layout_mode', 'layout_operation', 'background_operation'):
+            self.assertIn(f"'{_p_}'", _js_.split('const _PANEL_PARAMS_')[1].split('];')[0],
+                          f'{_p_} changes must re-render the panel')
+
+    # ── degree keys ───────────────────────────────────────────────────────────
+    def test_zero_selects_every_degree_from_100_up(self):
+        """'0' is 100+, not 100 up to 10_000: a hub past the old cap is selected too."""
+        from unittest import mock
+
+        import networkx as nx
+        ctrl = self._make_ctrl()
+        # Only the degree scan is under test, so the graph is swapped for a star whose
+        # hub (node 0) is past the old cap and whose leaves are all degree 1.
+        ctrl.graphs[ctrl.df_level] = nx.star_graph(10_050)
+        _seen_ = []
+        with mock.patch.object(ctrl, 'setSelectedEntitiesAndNotifyOthers', _seen_.append), \
+             mock.patch.object(ctrl, '__refreshView__', lambda *a, **k: None):
+            self._press_key(ctrl, '0')
+        self.assertEqual(_seen_, [{0}])
 
 
 @unittest.skipUnless(PANEL_AVAILABLE, 'panel not installed')
@@ -2237,9 +2293,9 @@ class TestLINKPISizeCycleMenus(unittest.TestCase):
         self.assertEqual(self._make_ctrl(link_arrows=True).link_arrows_choice, 'on')
         self.assertEqual(self._make_ctrl().link_arrows_choice, 'off')
 
-    def test_keyboard_help_mentions_the_appearance_panel(self):
+    def test_keyboard_help_mentions_the_settings_panel(self):
         _cmds_ = type(self._make_ctrl())._keyboard_commands_
-        self.assertIn('appearance panel', _cmds_)
+        self.assertIn('settings panel', _cmds_)
         self.assertIn('arrows', _cmds_)
 
     def test_old_l_key_op_is_noop(self):
@@ -2264,12 +2320,15 @@ class TestLINKPISizeCycleMenus(unittest.TestCase):
         for field in ('link_size_choice', 'link_opacity_choice', 'node_size_choice', 'link_shape_choice'):
             self.assertIn(field, commit)
 
-    def test_keyboard_help_mentions_the_size_rows(self):
-        cmds = type(self._make_ctrl())._keyboard_commands_
-        self.assertIn('link shape', cmds)
-        self.assertIn('z link size', cmds)
-        self.assertIn('o link opacity', cmds)
-        self.assertIn('n node size', cmds)
+    def test_the_size_rows_carry_their_letters(self):
+        # The help no longer lists the panel's row letters -- the panel draws them
+        # itself -- so they are asserted where the user now reads them.
+        _rows_ = [_r_[:3] for _r_ in self._make_ctrl().config_panel_rows]
+        for _row_ in (['h', 'link_shape',   'link shape'],
+                      ['z', 'link_size',    'link size'],
+                      ['o', 'link_opacity', 'link opacity'],
+                      ['n', 'node_size',    'node size']):
+            self.assertIn(_row_, _rows_)
 
     def test_the_help_no_longer_offers_the_absorbed_chords(self):
         """Stale help is worse than none: these keys do nothing now."""
@@ -2341,9 +2400,10 @@ class TestLINKPITimingSpacingPicker(unittest.TestCase):
     def test_commit_script_handles_timing_spacing(self):
         self.assertIn('timing_spacing_choice', component_script(self._make_ctrl(), 'menuSetValue'))
 
-    def test_keyboard_help_mentions_the_spacing_row(self):
-        cmds = type(self._make_ctrl())._keyboard_commands_
-        self.assertIn('p spacing', cmds)
+    def test_the_spacing_row_carries_its_letter(self):
+        # See test_the_size_rows_carry_their_letters.
+        _rows_ = [_r_[:3] for _r_ in self._make_ctrl().config_panel_rows]
+        self.assertIn(['p', 'timing_spacing', 'spacing'], _rows_)
 
     def test_the_spacing_row_is_gated_on_the_marks_being_on(self):
         """Spacing with no marks to space is meaningless, so the row is greyed and the

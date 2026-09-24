@@ -46,13 +46,16 @@ ROWS = [
     ('link opacity', 'o'),
     ('node size',    'n'),
     ('tooltip',      'i'),
+    ('layout shape',        'g'),
+    ('layout operation',    'w'),
+    ('background producer', 'f'),
     ('background',   'b'),
 ]
 
 #: The rows ``timing_page`` has live.  'background' is gated off on **every** fixture
 #: here, and not for want of a better one: the row decides whether a layout-produced
-#: background is *drawn*, and only running a layout (or the shift-b producer picker)
-#: creates one.  A fixture that pre-seeded it would be testing a state the user cannot
+#: background is *drawn*, and only running a layout (or a producer, with 'b') creates
+#: one.  A fixture that pre-seeded it would be testing a state the user cannot
 #: reach by opening the panel, so the row's own coverage is the gating tests below plus
 #: test_harness_smoke.py's state walk.
 ENABLED_ROWS = [_r_ for _r_ in ROWS if _r_[0] != 'background']
@@ -113,7 +116,8 @@ def test_the_panel_key_advances_the_cursor(timing_page):
 def test_shift_panel_key_retreats_the_cursor(timing_page):
     """CP4 -- shift reverses, never ctrl.  Same idiom as shift-space on a value.
 
-    It wraps to the last *enabled* row, which is 'node size' and not 'background':
+    It wraps to the last *enabled* row, which is 'background producer' and not
+    'background':
     skipping a gated row is the cursor's job in both directions, and a backwards wrap is
     the one place a one-directional implementation would show.
     """
@@ -134,10 +138,11 @@ def test_a_mnemonic_jumps_straight_to_its_row(timing_page, label, mnemonic):
 
 
 def test_the_mnemonics_are_distinct_and_do_not_include_the_panel_key(timing_page):
-    """Guard the table above: 'a' advances the cursor, so it cannot also be a row."""
+    """Guard the table above: a/A and j/k move the cursor, so none can also be a row --
+    the panel tests them before it scans for a row mnemonic."""
     _ms_ = [_m_ for _, _m_ in ROWS]
     assert len(set(_ms_)) == len(_ms_), f'duplicate row mnemonic in {_ms_}'
-    assert 'a' not in _ms_
+    assert not set(_ms_) & set('aAjk')
 
 
 # ── dependency gating ────────────────────────────────────────────────────────

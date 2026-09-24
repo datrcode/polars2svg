@@ -112,17 +112,18 @@ if _TFDP_AVAILABLE:
 if _NCP_AVAILABLE:
     _LAYOUT_OP_MENU_.append(('P', 'ncp pack'))
 
-# (mnemonic, label) for the shift-b background picker.  A background OPERATION
-# is not a layout operation: it moves no nodes, so it does not go through
-# apply_layout_operation() and therefore costs no undo slot and does not reset
-# the view window.  Committing an entry runs it immediately -- these are
-# one-shot actions, not a mode the way layout_operation is.
+# (mnemonic, label) for the shift-b background-producer picker (and the settings
+# panel's 'background producer' row).  A background OPERATION is not a layout
+# operation: it moves no nodes, so it does not go through apply_layout_operation()
+# and therefore costs no undo slot and does not reset the view window.  Picking an
+# entry only SELECTS it, the way the layout pickers select what 'g' and 'w' do; 'b'
+# runs the selected producer and ctrl-b clears the background.  The first entry is
+# the default.
 _BACKGROUND_OP_MENU_ = [
+    ('n', 'neighborhood (spatial)'),
+    ('s', 'flow field (streamlines)'),
     ('f', 'flow field (2 layers)'),
     ('F', 'flow field (3 layers)'),
-    ('s', 'flow field (streamlines)'),
-    ('n', 'neighborhood (spatial)'),
-    ('x', 'clear background'),
 ]
 
 # ---------------------------------------------------------------------------
@@ -812,7 +813,7 @@ def _interactivePKeyboardCommands_(kbd_r_desc: str, has_z_key: bool,
                       '\nctrl+e . | (time x-axis) expand timeframe forward (later events)') if has_time_keys else ''
     return f"""
 in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closes
-a . | open the appearance panel: selection shape, tooltip
+a . | open the settings panel: selection shape, tooltip
  .. | in the panel ... | space cycles the row, shift-space reverses, enter opens that row's picker, esc closes
  .. | ............... | a / shift-a move the row cursor; s selection shape, i tooltip
  .. | tooltip ....... | hover to read what is under the pointer (off | text | icon, when the view has icon=)
@@ -1979,10 +1980,10 @@ def _label_mode_items(modes: list[str]) -> list[list[str]]:
 
 #: [mnemonic, menu kind, row label].  Order is the panel's top-to-bottom order.
 #:
-#: Mnemonics avoid 'a' (the panel key, which advances the row cursor while open) and
-#: each other; they are the row's distinguishing letter, not always its first --
-#: 'h' for sHape and 'z' for siZe, the same second-letter trick the size picker
-#: already uses ('g' for large, 'o' for none).
+#: Mnemonics avoid the panel's cursor keys ('a', 'A', 'j', 'k' -- a row lettered with
+#: one could never be jumped to) and each other; they are the row's distinguishing
+#: letter, not always its first -- 'h' for sHape and 'z' for siZe, the same second-letter
+#: trick the size picker already uses ('g' for large, 'o' for none).
 #:
 #: Arrows and timing marks are two rows and not one, which is strictly better than the
 #: 4-state 'a' cycle they replace: that cycle flipped exactly one of the two per step, so
@@ -2009,56 +2010,51 @@ _CONFIG_PANEL_ROWS_ = [
     # into it, and here the param IS the state -- there is nothing to mirror and nothing
     # to apply.  applyTooltipOp reads it on the next hover.
     ['i', 'tooltip',          'tooltip'],
+    # The settings for linkp's three action keys: what shape 'g' drags out, which layout
+    # 'w' applies, which producer 'b' runs.  Unlike every row above they describe an
+    # action rather than the render, so they sit together after the display rows.  Each
+    # reuses its picker's menu kind -- the panel's Enter opens the same list shift-g /
+    # shift-w / shift-b do, and both write the same param.  The mnemonics are the action
+    # keys themselves, except the producer's: 'b' is the display row below.
+    ['g', 'mode',             'layout shape'],
+    ['w', 'operation',        'layout operation'],
+    ['f', 'background',       'background producer'],
     # Last, because it is the one that is usually gated off: a backwards wrap of the row
     # cursor then has a gated row to skip, which is the case the cursor gets wrong.
     ['b', 'background_state', 'background'],
 ]
 
 _LINKPI_KEYBOARD_COMMANDS_ = """
-in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closes
-/ . | search: type substring + Enter (prefix +add -remove &intersect); Escape to cancel
-a . | open the appearance panel: arrows, timing marks, labels, link shape/size/opacity, node size, tooltip, background
- .. | in the panel ... | space cycles the row, shift-space reverses, enter opens that row's picker, esc closes
- .. | ............... | a / shift-a move the row cursor; r arrows, t timing marks, p spacing, l labels
- .. | ............... | h link shape, z link size, o link opacity, n node size, i tooltip, b background
- .. | tooltip ....... | hover to read what is under the pointer (off | text | icon, when the view has icon=)
- .. | shift-b ........ | open background picker (flow field / neighborhood / clear); committing runs it
-c . | reset view or focus view on selected
-esc | cancel the running layout (keeps its best-so-far result)
- .. | shift-c ........ | focus view on selected + neighbors
- .. | ctrl-c ......... | copy selected nodes to clipboard (ctrl-shift-c uses node labels)
-d . | detect communities (louvain) & color nodes by community
- .. | shift-d ........ | clear community colors
-e . | expand selection | shift-e follows directed edges
- .. | ctrl-e ......... | expand along reversed directed edges
-f . | edge unfilter: add rows on visible edges into the view (selected: scope to edges among selected)
- .. | shift-f ........ | node expansion: add rows incident to visible nodes into the view (selected: scope to selected)
-g . | hold and drag to lay out (shape comes from the layout-mode picker)
- .. | shift-g ........ | open layout-mode picker: mnemonic key selects
+ .. | [[p(cs)^2]] plain replaces | ctrl adds | shift removes | ctrl-shift intersects
+ .. | [[selected matters]] acts on the selection if there is one, otherwise on everything
+ .. |
+/ . | search: type substring + Enter (prefix +add -remove &intersect); esc to cancel
+a . | open the settings panel: a/shift-a/arrows selects, space/shift-space/enter modifies, esc closes
+b . | run the background producer | ctrl-b clears the background
+ .. | shift-b ........ | select the background producer (also in the settings panel)
+c . | reset view, or focus on selected | shift-c uses selected + neighbors
+ .. | ctrl-c ......... | copy selected nodes to clipboard | ctrl-shift-c uses node labels
+d . | detect communities (louvain) & color nodes by community | ctrl-d clear community colors
+e . | expand selection | shift-e follows directed edges | ctrl-e reverse follows directed edges
+f . | edge unfilter: re-add rows on visible edges [[selected matters]]
+ .. | shift-f ........ | node expansion: re-add rows incident to visible nodes [[selected matters]]
+g . | hold and drag to lay out [[selected matters]] | shift-g selects the shape (also in settings panel)
 h . | toggle help display
-n . | select node under mouse by shape (shift, ctrl, and ctrl-shift apply)
-q . | invert selection
- .. | shift-q ........ | common neighbors
+n . | select node under mouse by shape [[p(cs)^2]]
+q . | invert selection | shift-q select common neighbors
 r . | toggle brush (broadcast nearest edges/nodes to linked views)
- .. | shift-r ........ | cycle brush radius (r=5 | r=15)
-s . | set sticky labels
- .. | shift-s ........ | remove sticky labels from selected
- .. | ctrl-s ......... | add selected to sticky labels
-t . | consolidate .... | shift-t (horizontal)
-u . | undo last layout action (limited undo's)
-v . | consolidate vertically (ctrl-t also, where the browser allows)
-w . | apply layout operation to [selected] nodes
- .. | shift-w ........ | open layout-operation picker
-x   | remove selected nodes (push stack)
- .. | shift-x ........ | pop stack
- .. | ctrl-shift-x ... | collapse edges to one row (selected-adjacent, or all)
+ .. | shift-r ........ | cycle brush radius (r = 5 | r = 15)
+s . | set sticky labels (plain sets | ctrl adds | shift removes)
+t . | consolidate .... | shift-t (horizontal) | v (or ctrl-t on macos) (vertical)
+u . | undo layout change
+v . | see t (consolidate)
+w . | apply layout operation [[selected matters]] | shift-w selects algorithm (also in settings panel)
+ .. | esc ............ | cancel the running layout (keeps best-so-far result)
+x . | remove selected nodes (push stack) | shift-x pop stack
+ .. | ctrl-shift-x ... | collapse edges to one row [[selected matters]]
 y . | hold and drag for a line layout | shift-y (horizontal) | ctrl-y (vertical)
-z . | select node under mouse by color (shift, ctrl, and ctrl-shift apply)
-1-6 | select numbered degree
-7 . | select degree 7 -> 20
-8 . | select degree 20 -> 50
-9 . | select degree 50 -> 100
-0 . | select degree 100 -> 10_000
+z . | select node under mouse by color [[p(cs)^2]]
+1-6 | select node degree | 7: 7-19 | 8: 20-49 | 9: 50-99 | 0: 100+ [[p(cs)^2]]
 """
 
 # Build static SVG for keyboard help overlay
@@ -2184,7 +2180,6 @@ class LINKPI(_TooltipMixin_, JSComponent):
     layout_mode                   = param.String(default="grid")
     layout_operation              = param.String(default="spring nx")
     background_operation          = param.String(default=_BACKGROUND_OP_MENU_[0][1])
-    background_op_seq             = param.Integer(default=0)
     link_size_choice              = param.String(default='')
     node_size_choice              = param.String(default='')
     link_opacity_choice           = param.String(default='')
@@ -2484,7 +2479,6 @@ class LINKPI(_TooltipMixin_, JSComponent):
         self.param.watch(self.unselectedMoveOp,       'unselected_move_op_finished')
         self.param.watch(self.applySearchOp,          'search_op_finished')
         self.param.watch(self.applyLayoutChoice,      ['layout_mode', 'layout_operation'])
-        self.param.watch(self.applyBackgroundChoice,  'background_op_seq')
         self.param.watch(self.applySizeChoice,        ['link_size_choice', 'node_size_choice', 'link_opacity_choice', 'link_shape_choice', 'timing_spacing_choice'])
         self.param.watch(self.applyConfigChoice,      ['link_arrows_choice', 'timing_marks_choice', 'label_mode_choice', 'background_state_choice'])
         self.param.watch(self.applyTooltipOp,         'tooltip_seq')
@@ -2979,8 +2973,8 @@ class LINKPI(_TooltipMixin_, JSComponent):
                 # menu_items question -- see __syncConfigPanel__.
                 _on_ = True
             elif _kind_ == 'background_state':
-                # Cycling the display state with nothing to display is the same no-op the
-                # old 'b' key was; the producer picker (shift-b) is what supplies one.
+                # Cycling the display state with nothing to display is a no-op; 'b'
+                # (running the producer row's choice) is what supplies one.
                 _on_ = self.layout_background is not None
             else:
                 _on_ = True
@@ -3216,7 +3210,7 @@ class LINKPI(_TooltipMixin_, JSComponent):
         return registry
 
     #
-    # __buildBackgroundRegistry__() - {label: handler} for the shift-b picker.
+    # __buildBackgroundRegistry__() - {label: handler} for the producers 'b' runs.
     #
     # A handler is (ln, g, sel) -> {name: BackgroundShape} | None, and that is the
     # WHOLE contract: no positions, so nothing downstream has to guess whether the
@@ -3256,7 +3250,6 @@ class LINKPI(_TooltipMixin_, JSComponent):
             'flow field (3 layers)':      RegistryEntry(_flow_(3), _FLOW_TREATMENT_),
             'flow field (streamlines)':   RegistryEntry(_flow_(2, glyph='streamline'), _FLOW_TREATMENT_),
             'neighborhood (spatial)':     RegistryEntry(_neighborhood_spatial_, CHEAP),
-            'clear background':           RegistryEntry(lambda ln, g, sel: None, CHEAP),
         }
 
     #
@@ -3271,7 +3264,7 @@ class LINKPI(_TooltipMixin_, JSComponent):
     # _ContractedLayoutView_ would hand the producer a .pos that disagrees with
     # .df).
     #
-    def applyBackgroundOperation(self, label=None):
+    def applyBackgroundOperation(self, label=None, refresh=True):
         _label_ = self.background_operation if label is None else label
         _entry_ = self._background_registry.get(_label_)
         if _entry_ is None:
@@ -3292,21 +3285,20 @@ class LINKPI(_TooltipMixin_, JSComponent):
         # would otherwise swallow the result silently.
         if _cells_ and self.background_state == 0:
             self.background_state = 1
-        self.__applyBackgroundState__()
+        self.__applyBackgroundState__(refresh=refresh)
         return True
 
     #
-    # applyBackgroundChoice() - the shift-b picker committed. Unlike the layout
-    # picker (which selects a mode that a later key applies), a background
-    # operation is a one-shot action, so committing runs it.  The watched param
-    # is the sequence counter, not the label: re-running the SAME producer is the
-    # documented way to refresh a background after moving nodes, and a label that
-    # did not change would not fire a watcher.
+    # clearBackground() - ctrl-b.  Drops whatever background is in place, a producer's
+    # or a layout's own, which is what the 'clear background' picker entry used to do.
+    # background_state is left alone: it is the settings panel's display choice, and
+    # the row greys out on its own once there is nothing to display.
     #
-    async def applyBackgroundChoice(self, *events):
-        # Off-loop for the same reason as the layout ops: a flow field over a netflow-scale
-        # frame is not a fast operation, and it is one picker commit away.
-        await self._run_offloop_(self.applyBackgroundOperation)
+    def clearBackground(self) -> None:
+        self.layout_background     = None
+        self.background_provenance = None
+        self._bg_op_label_         = None
+        self.__applyBackgroundState__()
 
     #
     # __backgroundStateLabel__() - human-readable label for the current background state
@@ -3667,8 +3659,9 @@ class LINKPI(_TooltipMixin_, JSComponent):
             _cap_ = (' (labels capped)'
                      if len(self.selected_entities) > self.max_selection_labels else '')
             # label_mode and the background state moved to the configuration panel and
-            # came out of here with it.  layout_mode / layout_operation did NOT become
-            # panel rows (CP-open), so this line remains their only display.
+            # came out of here with it.  layout_mode / layout_operation are panel rows
+            # too now, but stay here: they describe what the next 'g' / 'w' will do, and
+            # the panel is closed most of the time.
             self.info_str = f'{len(self.selected_entities)} Selected{_cap_} | {self.layout_mode} | {self.layout_operation}'
             if self._last_cost_note_ is not None:
                 self.info_str += f' | {self._last_cost_note_}'
@@ -3864,11 +3857,27 @@ class LINKPI(_TooltipMixin_, JSComponent):
                 self.__refreshView__(info=False)
 
             #
-            # "D" - Detect graph communities (louvain) & color the nodes by community;
-            #       shift-d restores the node coloring that the LinkP was created with.
+            # "b" - Run the selected background producer (shift-b / the settings panel pick
+            #       it; picking no longer runs it).  Re-running replaces the background, which
+            #       is how one is refreshed after nodes move.  ctrl-b clears the background.
             #
-            elif self.key_op_finished == 'd' or self.key_op_finished == 'D':
-                if self.key_op_finished == 'D':
+            elif self.key_op_finished == 'b':
+                if self.ctrlkey:
+                    self.clearBackground()
+                # Off-loop for the same reason as the layout ops: a flow field over a
+                # netflow-scale frame is not a fast operation.  The refresh stays on the
+                # loop (D3), which the old picker-commit path did not honour.
+                elif await self._run_offloop_(self.applyBackgroundOperation, None, False):
+                    await self._refreshViewOffloop_()
+
+            #
+            # "D" - Detect graph communities (louvain) & color the nodes by community;
+            #       ctrl-d restores the node coloring that the LinkP was created with
+            #       (ctrl, to match ctrl-b clearing the background).  shift-d is unbound,
+            #       held for a community-algorithm picker.
+            #
+            elif self.key_op_finished == 'd':
+                if self.ctrlkey:
                     self.community_colors = None
                     self.updateLinkNodeParam('node_color', self._orig_node_color_)
                 else:
@@ -3979,7 +3988,7 @@ class LINKPI(_TooltipMixin_, JSComponent):
                 _match_ = set()
                 c       = self.key_op_finished
                 min_degree = 7  if c == '7' else 20 if c == '8' else 50  if c == '9' else 100    if c == '0' else None
-                max_degree = 20 if c == '7' else 50 if c == '8' else 100 if c == '9' else 10_000 if c == '0' else None
+                max_degree = 20 if c == '7' else 50 if c == '8' else 100 if c == '9' else float('inf') if c == '0' else None
 
                 if min_degree is not None:
                     for _node_ in self.graphs[self.df_level]:

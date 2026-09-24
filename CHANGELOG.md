@@ -192,6 +192,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`linkpi`: picking a background producer no longer runs it — `b` does.** The
+  producer picker used to run whatever you committed, which made it the only picker that
+  acted instead of selecting. It now works like shift-w / `w` and shift-g / `g`: **shift-b
+  selects**, **`b` runs** the selected producer (pressing it again recomputes the
+  background, e.g. after moving nodes), and **ctrl-b clears** the background, whether it
+  came from a producer or from a layout. The picker's `clear background` entry is gone,
+  and so is `background_op_seq`, the counter that made re-picking the same producer run
+  it again. The producers are reordered, and the first one is now the default:
+  `neighborhood (spatial)`, `flow field (streamlines)`, `flow field (2 layers)`,
+  `flow field (3 layers)`. The run happens off the event loop and the refresh on it,
+  which the old commit path did not do. Esc still cancels only layouts, not a
+  running producer.
+- **`linkpi`: ctrl-d clears community colors; shift-d is unbound.** This matches ctrl-b,
+  so ctrl clears in both places. Shift-d is being kept free for a future picker of
+  community-detection algorithms.
+- **`linkpi`: the settings panel gains three rows for the action keys**: `[g] layout
+  shape`, `[w] layout operation` and `[f] background producer`. They go between
+  `tooltip` and `background`, so `background` stays last (the backward-wrap test relies
+  on that). Each row reuses its picker's menu, so shift-g / shift-w / shift-b and the
+  panel write the same param. The producer row uses `f` because `b` is taken by the
+  display row, and `k` would have been unreachable: the panel treats `j`/`k` as
+  cursor keys before it looks at row letters.
+- **"Appearance panel" is now the "settings panel"** in every view: the header
+  (`settings:`), the help text, and the README. The name no longer fit once the panel
+  also held action settings.
+- **`linkpi` degree key `0` now means 100 and up.** It used to select degrees from 100
+  up to (but not including) 10,000, so a hub with 10,000 or more neighbors could not be
+  selected at all.
+- **`linkpi`'s `h` help was rewritten** from 45 lines to 31. Shift/ctrl variants now sit
+  on their key's line. Two tags defined once at the top replace the explanation that
+  used to be repeated: `[[p(cs)^2]]` for the selection modifiers (plain replaces, ctrl
+  adds, shift removes, ctrl-shift intersects) and `[[selected matters]]` for commands
+  that act on the selection if there is one and on everything otherwise. Row letters and
+  picker navigation are no longer listed, because the panel and pickers show their own.
+  **The seven parity goldens were re-recorded for this help text and the panel rename,
+  and nothing else changed.** Every diff was in `#keyboardhelp` and the `#svgparent`
+  text that starts with it. The only param-side change is that `background_op_seq` is
+  gone from the four `linkpi` watch lists.
 - **The seven interaction parity goldens were re-recorded**, for two DOM additions and a
   help-text change and nothing else. Every view gains a `#tooltip` group; the five generic
   views also gain `#configpanel`; and the `h` overlay gains the panel's lines. **The param

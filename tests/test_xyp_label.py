@@ -31,10 +31,28 @@ class Testxyp_label(unittest.TestCase):
 
     def test_unittizeInt(self):
         assert '1.231K'   == self.p2s.unitizeInt(1_231)
-        assert '100.0M'   == self.p2s.unitizeInt(100_213_112)
+        assert '100.2M'   == self.p2s.unitizeInt(100_213_112)    # was '100.0M' -- round(x, 0) is a float
         assert '5.121B'   == self.p2s.unitizeInt(5_121_213_112)
-        assert '-124.0K'  == self.p2s.unitizeInt(-123_999)
+        assert '-124K'    == self.p2s.unitizeInt(-123_999)
         assert '-121.67M' == self.p2s.unitizeInt(-121_669_123, num_of_digits=6)
+
+    def test_unitizeInt_regressions(self):
+        # The old loop stopped extending when one more decimal place did not change the
+        # string, so a zero first decimal truncated everything after it.
+        assert '2.024K'   == self.p2s.unitizeInt(2_024)            # was '2.0K'
+        assert '2.02K'    == self.p2s.unitizeInt(2_024, num_of_digits=4)
+        # round(x, 0) returns a float, so whole numbers grew a '.0'.
+        assert '443'      == self.p2s.unitizeInt(443)              # was '443.0'
+        assert '2K'       == self.p2s.unitizeInt(2_000)            # was '2.0K'
+        # No num_of_digits reached this one: 5 gave '45.61M' and 4 gave '46.0M'.
+        assert '45.6M'    == self.p2s.unitizeInt(45_612_314, num_of_digits=4)
+        # Small values keep their significant digits rather than collapsing to zero.
+        assert '0.000123' == self.p2s.unitizeInt(0.000123, num_of_digits=4)  # was '0.0'
+        assert '12.5'     == self.p2s.unitizeInt(12.5, num_of_digits=4)      # was '12.0'
+        # Rounding up to 1000 moves to the next unit.
+        assert '1M'       == self.p2s.unitizeInt(999_999)
+        assert '0'        == self.p2s.unitizeInt(0)
+        assert 'nan'      == self.p2s.unitizeInt(float('nan'))
 
     def __innerGridForTimeHelper__(self, df):
         _tiles_ = []

@@ -228,7 +228,7 @@ class TestAnnotationCoverageRatchet(unittest.TestCase):
     PERMANENTLY_RELAXED = frozenset({'interactive_controller'})
 
     MAX_UNANNOTATED = {
-        'interactive_controller':                 141,
+        'interactive_controller':                 140,
         'xyp':                                    0,
         'linkp':                                  0,
         'chordp':                                 0,
@@ -268,6 +268,7 @@ class TestAnnotationCoverageRatchet(unittest.TestCase):
         'mds_at_scale':                           0,
         'p2s_bin_component_mixin':                0,
         'tfdp_layout':                            0,
+        'interactive_render_rows':                0,
         'interactive_treatments':                 0,
         'p2s_font_metrics':                       0,
         'p2s_webgpu_runtime':                     0,

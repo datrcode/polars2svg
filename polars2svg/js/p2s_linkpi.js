@@ -184,6 +184,7 @@ export function render({ model, el }) {
   // stays an explicit chain in menuSetValue.
   const MENU_PARAM_ = {
       background:       'background_operation',
+      community:        'community_algorithm',
       operation:        'layout_operation',
       mode:             'layout_mode',
       link_size:        'link_size_choice',
@@ -203,6 +204,7 @@ export function render({ model, el }) {
 
   const MENU_HEADER_ = {
       background:       'background producer:',
+      community:        'community detection:',
       operation:        'layout operation:',
       mode:             'layout mode:',
       link_size:        'link size:',
@@ -225,6 +227,7 @@ export function render({ model, el }) {
   // made re-picking the same producer re-run it is gone.
   function menuSetValue(kind, label) {
       if      (kind == 'background')       { model.background_operation  = label; }
+      else if (kind == 'community')        { model.community_algorithm   = label; }
       else if (kind == 'operation')        { model.layout_operation      = label; }
       else if (kind == 'mode')             { model.layout_mode           = label; }
       else if (kind == 'link_size')        { model.link_size_choice      = label; }
@@ -304,8 +307,8 @@ export function render({ model, el }) {
       else if (event.key == "B" && !event.ctrlKey) { state.menu_kind = 'background'; menuOpen(); } // Select the background producer ('b' runs it)
       else if (event.key == "c") { if (event.ctrlKey) event.preventDefault(); model.key_op_finished = 'c';  } // (if selected) zoom to selected, else zoom to entire view; ctrl-c copies (suppress native copy so it can't clobber our clipboard write)
       else if (event.key == "C") { if (event.ctrlKey) event.preventDefault(); model.key_op_finished = 'C';  } // Zoom to selected + neighbors; ctrl-shift-c copies labels
-      else if (event.key == "d") { if (event.ctrlKey) event.preventDefault(); model.key_op_finished = 'd';  } // Detect communities (louvain) & color nodes by community; ctrl-d clears the colors (preventDefault: ctrl-d is bookmark-this-page off macOS)
-      // shift-d is deliberately unbound: held for a community-algorithm picker.
+      else if (event.key == "d") { if (event.ctrlKey) event.preventDefault(); model.key_op_finished = 'd';  } // Detect communities (selected algorithm) & color nodes by community; ctrl-d clears the colors (preventDefault: ctrl-d is bookmark-this-page off macOS)
+      else if (event.key == "D" && !event.ctrlKey) { state.menu_kind = 'community'; menuOpen(); } // Select the community algorithm ('d' runs it)
       else if (event.key == "e") { if (event.ctrlKey) event.preventDefault(); model.key_op_finished = 'e';  } // Expand (undirected); ctrl-e expands along reversed directed edges (preventDefault: ctrl-e is browser search-bar focus)
       else if (event.key == "E") { model.key_op_finished = 'E';  } // Expand (w/ digraph, forward)
       else if (event.key == "f") { model.key_op_finished = 'f';  } // Edge unfilter: re-add base rows on the currently-visible edges
@@ -344,7 +347,7 @@ export function render({ model, el }) {
           updateBrushCursor();
       }
       else if (event.key == "s") { if (event.ctrlKey) event.preventDefault(); model.key_op_finished = 's';  } // Set sticky labels; ctrl-s cycles label mode (ctrl-s is browser Save Page As)
-      else if (event.key == "S") { if (event.ctrlKey) event.preventDefault(); model.key_op_finished = 'S';  } // Subtract selected from sticky labels (label mode is the panel's 'labels' row now)
+      else if (event.key == "S") { if (event.ctrlKey) event.preventDefault(); model.key_op_finished = 'S';  } // Subtract selected from sticky labels; ctrl-shift-s selects the sticky nodes (label mode is the panel's 'labels' row now)
       else if (event.key == "t") { model.key_op_finished = 't';  } // Collapse selected to a single point
       else if (event.key == "T") { model.key_op_finished = 'T';  } // Horizontally collapse selected
       else if (event.key == "u") { model.key_op_finished = 'u';  } // Undo last layout
@@ -692,7 +695,7 @@ export function render({ model, el }) {
   // recomputes from the current layer.
   const _PANEL_PARAMS_ = [
       'config_panel_rows',
-      'layout_mode', 'layout_operation', 'background_operation',
+      'layout_mode', 'layout_operation', 'background_operation', 'community_algorithm',
       'link_arrows_choice', 'timing_marks_choice', 'label_mode_choice',
       'background_state_choice', 'timing_spacing_choice', 'link_shape_choice',
       'link_size_choice', 'link_opacity_choice', 'node_size_choice',

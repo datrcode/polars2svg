@@ -1,5 +1,6 @@
 from typing import Any, TYPE_CHECKING
 import html
+import math
 
 if TYPE_CHECKING:
     from polars2svg.p2s_glyph_atlas import GlyphAtlas
@@ -43,6 +44,42 @@ def svgEscape(txt: int | str | None) -> str:
 
 def svgUnescape(txt: str | None) -> str:
     return html.unescape('' if txt is None else str(txt))
+
+
+#
+# unitize() - a number with a K/M/B/T/Q suffix, in about num_of_digits characters.
+#
+# num_of_digits counts the characters of the number itself, decimal point included, so
+# 1_231 -> '1.231K' at the default 5 and 45_612_314 -> '45.6M' at 4.  Trailing zeros go
+# ('2K', '443', '1.5K', never '2.0K' / '443.0'), and a value that rounds up to 1000 moves
+# to the next unit ('1M', not '1000K').  Below one there is no unit to take, so the
+# budget is spent on significant digits instead of decimal places -- 0.000123 must not
+# come out as '0'.
+#
+# It replaces a round()-and-compare loop that stopped extending as soon as one more
+# decimal place did not change the string: 2_024 came out '2.0K', because 2.024 rounds to
+# '2.0' at both 0 and 1 places.
+#
+_UNITS_ = ('', 'K', 'M', 'B', 'T', 'Q')
+
+def unitize(value: float, num_of_digits: int = 5) -> str:
+    if not math.isfinite(value): return str(value)
+    _sign_ = '-' if value < 0 else ''
+    _abs_  = abs(value)
+    _i_    = 0
+    while _i_ < len(_UNITS_) - 1 and _abs_ >= 1000 ** (_i_ + 1): _i_ += 1
+    if _i_ == 0 and 0 < _abs_ < 1:
+        return _sign_ + f'{_abs_:.{max(1, num_of_digits - 1)}g}'
+    _s_ = ''
+    while True:
+        _x_     = _abs_ / 1000 ** _i_
+        _whole_ = len(str(int(_x_)))
+        _s_     = f'{_x_:.{max(0, num_of_digits - 1 - _whole_)}f}'
+        if float(_s_) < 1000 or _i_ == len(_UNITS_) - 1: break
+        _i_ += 1
+    if '.' in _s_: _s_ = _s_.rstrip('0').rstrip('.')
+    if _s_ == '0': _sign_ = ''
+    return _sign_ + _s_ + _UNITS_[_i_]
 
 
 class P2STextMixin:
@@ -229,15 +266,10 @@ class P2STextMixin:
         return _xsign_ + str(round(_x_/_xdiv_, _round_)) + _xunit_, _ysign_ + str(round(_y_/_ydiv_, _round_)) + _yunit_
 
     #
-    # unitizeInt() - format a number with K/M/B/T/Q suffix to a target digit count
+    # unitizeInt() - format a number with K/M/B/T/Q suffix to a target digit count (see unitize())
     #
     def unitizeInt(self, a: float, num_of_digits: int = 5) -> str:
-        _xsign_, _x_, _xdiv_, _xunit_ = self.__SignXDivUnit__(a)
-        _round_ = 0
-        while len(str(round(_x_/_xdiv_, _round_))) < num_of_digits:
-            if _round_ > 0 and str(round(_x_/_xdiv_, _round_ - 1)) == str(round(_x_/_xdiv_, _round_)): break
-            _round_ += 1
-        return _xsign_ + str(round(_x_/_xdiv_, _round_)) + _xunit_
+        return unitize(a, num_of_digits)
 
     #
     # textLength() - calculate the expected pixel width of txt rendered at txt_h points

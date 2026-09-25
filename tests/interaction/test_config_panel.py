@@ -49,6 +49,7 @@ ROWS = [
     ('layout shape',        'g'),
     ('layout operation',    'w'),
     ('background producer', 'f'),
+    ('community detection', 'd'),
     ('background',   'b'),
 ]
 
@@ -81,7 +82,7 @@ def test_a_opens_the_panel_and_escape_closes_it(linkpi_page):
 def test_every_row_is_drawn_with_a_value(timing_page):
     """The success criterion from the design: glance at it and know how the view is drawn.
 
-    Driven against the timing fixture so all nine rows are live; a blank value column
+    Driven against the timing fixture so every row but 'background' is live; a blank value column
     would mean the row is showing a param the panel cannot read.
     """
     _open(timing_page)
@@ -116,7 +117,7 @@ def test_the_panel_key_advances_the_cursor(timing_page):
 def test_shift_panel_key_retreats_the_cursor(timing_page):
     """CP4 -- shift reverses, never ctrl.  Same idiom as shift-space on a value.
 
-    It wraps to the last *enabled* row, which is 'background producer' and not
+    It wraps to the last *enabled* row, which is 'community detection' and not
     'background':
     skipping a gated row is the cursor's job in both directions, and a backwards wrap is
     the one place a one-directional implementation would show.

@@ -1966,21 +1966,22 @@ class TestLINKPIPickerMenu(unittest.TestCase):
 
     # ── the action settings are settings-panel rows too ───────────────────────
     def test_action_settings_sit_between_tooltip_and_background(self):
-        """shift-g / shift-w / shift-b stay, and the same choices are panel rows.
+        """shift-g / shift-w / shift-b / shift-d stay, and the same choices are panel rows.
 
         'background' stays LAST: a backwards wrap of the cursor then has a gated row
         to skip, which is the case tests/interaction/test_config_panel.py pins.
         """
         ctrl  = self._make_ctrl()
         _rows_ = [_r_[:3] for _r_ in ctrl.config_panel_rows]
-        _tail_ = _rows_[-5:]
+        _tail_ = _rows_[-6:]
         self.assertEqual(_tail_, [['i', 'tooltip',          'tooltip'],
                                   ['g', 'mode',             'layout shape'],
                                   ['w', 'operation',        'layout operation'],
                                   ['f', 'background',       'background producer'],
+                                  ['d', 'community',        'community detection'],
                                   ['b', 'background_state', 'background']])
         _enabled_ = {_r_[1]: _r_[3] for _r_ in ctrl.config_panel_rows}
-        for _kind_ in ('mode', 'operation', 'background'):
+        for _kind_ in ('mode', 'operation', 'background', 'community'):
             self.assertTrue(_enabled_[_kind_], f'{_kind_} row should never be gated')
 
     def test_panel_mnemonics_avoid_the_cursor_keys(self):
@@ -1998,7 +1999,7 @@ class TestLINKPIPickerMenu(unittest.TestCase):
         for _, _kind_, _ in _CONFIG_PANEL_ROWS_:
             self.assertIn(_kind_, ctrl.menu_items)
         _js_ = component_js(ctrl)
-        for _p_ in ('layout_mode', 'layout_operation', 'background_operation'):
+        for _p_ in ('layout_mode', 'layout_operation', 'background_operation', 'community_algorithm'):
             self.assertIn(f"'{_p_}'", _js_.split('const _PANEL_PARAMS_')[1].split('];')[0],
                           f'{_p_} changes must re-render the panel')
 
@@ -2333,9 +2334,13 @@ class TestLINKPISizeCycleMenus(unittest.TestCase):
     def test_the_help_no_longer_offers_the_absorbed_chords(self):
         """Stale help is worse than none: these keys do nothing now."""
         cmds = type(self._make_ctrl())._keyboard_commands_
+        # ctrl-shift-s is absent from this list on purpose: the panel absorbed its old
+        # meaning (cycle the label mode) and the chord was rebound to select the
+        # sticky-labelled nodes, so the help names it again.
         for _gone_ in ('shift-l', 'ctrl-l', 'shift-o', 'ctrl-o',
-                       'shift-p', 'ctrl-p', 'ctrl-a', 'ctrl-shift-s'):
+                       'shift-p', 'ctrl-p', 'ctrl-a'):
             self.assertNotIn(_gone_, cmds)
+        self.assertIn('ctrl-shift-s ... | select the sticky-labelled nodes', cmds)
 
 
 @unittest.skipUnless(PANEL_AVAILABLE, 'panel not installed')

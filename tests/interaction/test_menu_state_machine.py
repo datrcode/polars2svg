@@ -32,6 +32,7 @@ from playwright.sync_api import expect
 #: the entry points, not the menus).  PANEL_ENTRY_POINTS below is that second door.
 ENTRY_POINTS = [
     ('B', {},                  'background producer:'),
+    ('D', {},                  'community detection:'),
     ('G', {},                  'layout mode:'),
     ('W', {},                  'layout operation:'),
 ]
@@ -46,10 +47,11 @@ PANEL_ENTRY_POINTS = [
     ('o', 'link opacity:'),
     ('n', 'node size:'),
     ('r', 'link arrows:'),
-    # The three action settings reach the same pickers shift-g / shift-w / shift-b open.
+    # The action settings reach the same pickers shift-g / shift-w / shift-b / shift-d open.
     ('g', 'layout mode:'),
     ('w', 'layout operation:'),
     ('f', 'background producer:'),
+    ('d', 'community detection:'),
 ]
 
 
@@ -128,6 +130,18 @@ def test_committing_in_that_picker_lands_on_the_row(timing_page):
     timing_page.press('2')                        # mnemonic for 'curve', unguarded
     timing_page.expect_menu_closed()
     timing_page.expect_panel_value('link shape', 'curve')
+
+
+def test_the_community_picker_selects_and_the_row_shows_it(linkpi_page):
+    """shift-d only SELECTS the algorithm ('d' runs it), and the panel row reads the
+    same param -- the background producer's contract, on the community key."""
+    _open(linkpi_page, 'D')
+    linkpi_page.expect_menu_open('community detection:')
+    linkpi_page.press('c')                        # mnemonic for 'connected components'
+    linkpi_page.expect_menu_closed()
+    linkpi_page.press('a')
+    linkpi_page.expect_panel_open()
+    linkpi_page.expect_panel_value('community detection', 'connected components')
 
 
 def test_menu_opens_on_the_current_value_not_the_first_item(linkpi_page):

@@ -430,5 +430,43 @@ def test_the_peer_stays_brushed_while_the_pointer_rests_on_a_node(linked_pair):
         'the peer reverted to the unbrushed view while the pointer sat on a node')
 
 
+
+# ── render rows (interactive_render_rows.py) ─────────────────────────────────
+
+def test_xypi_panel_shows_its_render_rows_with_their_built_values(xypi_page):
+    """The fixture is numeric x/y coloured by 'cat', with no distributions or legend."""
+    xypi_page.settle()
+    xypi_page.hover(200, 150)
+    xypi_page.press('a')
+    xypi_page.expect_panel_open()
+    _values_ = xypi_page.panel_values()
+    for _label_, _value_ in (('distributions (rows)', 'off'), ('aspect', 'none'),
+                             ('dot opacity', '100'), ('legend', 'off')):
+        assert _values_.get(_label_) == _value_, _values_
+
+
+def test_a_render_row_re_renders_the_view(xypi_page):
+    """space on the aspect row: the panel shows 'equal' and the plot is redrawn."""
+    xypi_page.settle()
+    xypi_page.hover(200, 150)
+    _before_ = xypi_page.mod_html()
+    xypi_page.press('a')
+    xypi_page.expect_panel_open()
+    xypi_page.press('e')                          # the aspect row
+    xypi_page.press(' ')
+    xypi_page.expect_panel_value('aspect', 'equal')
+    assert xypi_page.wait_for_mod_change(_before_) != _before_
+
+
+def test_a_render_rows_picker_is_headed_by_the_rows_label(xypi_page):
+    """Render kinds have no header of their own in the JS; it is read off the row."""
+    xypi_page.settle()
+    xypi_page.hover(200, 150)
+    xypi_page.press('a')
+    xypi_page.expect_panel_open()
+    xypi_page.press('l')                          # the legend row
+    xypi_page.press('Enter')
+    xypi_page.expect_menu_open('legend:')
+
 if __name__ == '__main__':
     unittest.main()

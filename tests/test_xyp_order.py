@@ -56,6 +56,79 @@ class Testxyp_order(unittest.TestCase):
             self.p2s.xyp(**_params_, x_order={('goldfish','orange'):5, ('cat','gray'):10})                                                                 # incomplete
             self.p2s.xyp(**_params_, x_order={('goldfish','orange'):5, ('cat','gray'):10, ('snake', 'albino'):20})                                         # incomplete + extra
 
+def _axis_order_(inst, axis='x'):
+    """The axis values in resolved-index order (a struct value comes back as a tuple)."""
+    _v_, _i_ = f'__{axis}__', f'__{axis}i__'
+    _pairs_ = inst.df_flat.select([_v_, _i_]).unique().sort(_i_)[_v_].to_list()
+    return [tuple(_p_.values()) if isinstance(_p_, dict) else _p_ for _p_ in _pairs_]
+
+
+class Testxyp_computed_order(unittest.TestCase):
+    """x_order= / y_order= 'reverse' and 'count' -- the orders the xypi settings panel
+    offers besides the default sort and 'spectral'."""
+
+    def setUp(self):
+        self.p2s = Polars2SVG()
+        # dog x3, cat x2, ferret x2, ant x1: count order differs from both sorts
+        self.df  = pl.DataFrame({'pet': ['dog', 'cat', 'dog', 'ferret', 'ant', 'cat', 'dog', 'ferret'],
+                                 'qty': [1, 2, 3, 4, 5, 6, 7, 8]})
+
+    def _xyp_(self, **kw):
+        return self.p2s.xyp(df=self.df, x='pet', y='qty', dot_size=5, **kw)
+
+    def test_the_default_is_the_ascending_sort(self):
+        self.assertEqual(_axis_order_(self._xyp_()), ['ant', 'cat', 'dog', 'ferret'])
+
+    def test_reverse_is_the_default_sort_descending(self):
+        self.assertEqual(_axis_order_(self._xyp_(x_order='reverse')), ['ferret', 'dog', 'cat', 'ant'])
+
+    def test_count_puts_the_most_rows_first_and_breaks_ties_by_the_sort(self):
+        self.assertEqual(_axis_order_(self._xyp_(x_order='count')), ['dog', 'cat', 'ferret', 'ant'])
+
+    def test_lazy_and_eager_agree(self):
+        for _order_ in ('reverse', 'count'):
+            with self.subTest(order=_order_):
+                self.assertEqual(_axis_order_(self._xyp_(x_order=_order_, use_lazy_execution=True)),
+                                 _axis_order_(self._xyp_(x_order=_order_, use_lazy_execution=False)))
+
+    def test_the_y_axis_takes_them_too(self):
+        _xyp_ = self.p2s.xyp(df=self.df, x='qty', y='pet', dot_size=5, y_order='count')
+        self.assertEqual(_axis_order_(_xyp_, 'y'), ['dog', 'cat', 'ferret', 'ant'])
+
+    def test_a_struct_axis_takes_them_too(self):
+        _df_ = pl.DataFrame({'type':  ['cat', 'cat', 'dog', 'cat'],
+                             'color': ['gray', 'orange', 'spotted', 'gray'],
+                             'qty':   [1, 2, 3, 4]})
+        _xyp_ = self.p2s.xyp(df=_df_, x=('type', 'color'), y='qty', dot_size=5, x_order='count')
+        self.assertEqual(_axis_order_(_xyp_)[0], ('cat', 'gray'))
+        _xyp_ = self.p2s.xyp(df=_df_, x=('type', 'color'), y='qty', dot_size=5, x_order='reverse')
+        self.assertEqual(_axis_order_(_xyp_), [('dog', 'spotted'), ('cat', 'orange'), ('cat', 'gray')])
+
+    def test_a_numeric_axis_is_rejected(self):
+        for _order_ in ('reverse', 'count'):
+            with self.subTest(order=_order_), self.assertRaises(ValueError):
+                self.p2s.xyp(df=self.df, x='qty', y='pet', dot_size=5, x_order=_order_)
+
+    def test_an_unknown_string_names_the_accepted_ones(self):
+        with self.assertRaisesRegex(ValueError, "'reverse', 'count', 'spectral'"):
+            self._xyp_(x_order='alphabetical')
+
+    def test_a_shared_axis_uses_the_global_count_order_in_every_tile(self):
+        """Per tile, the counts differ -- ordering each tile by its own would break the
+        shared axis.  renderSmallMultiples lifts the global order into every tile."""
+        _df_ = self.df.with_columns(pl.Series('grp', ['g1', 'g2', 'g1', 'g2', 'g2', 'g2', 'g2', 'g1']))
+        _t_  = self.p2s.xyp(df=_df_, x='pet', y='qty', dot_size=5, x_order='count', sm_shared={self.p2s.SM_X})
+        _tiles_ = _t_.renderSmallMultiples(_df_, {_g_: _df_.filter(pl.col('grp') == _g_) for _g_ in ('g1', 'g2')}, None)
+        _global_ = _axis_order_(self._xyp_(x_order='count'))
+        for _g_, _tile_ in _tiles_.items():
+            with self.subTest(tile=_g_):
+                self.assertEqual([_v_ for _v_ in _global_ if _v_ in _axis_order_(_tile_)], _axis_order_(_tile_))
+
+    def test_the_render_changes_with_the_order(self):
+        """Not only the index: the axis labels are drawn in the new order."""
+        self.assertNotEqual(normalize_svg(self._xyp_().svg), normalize_svg(self._xyp_(x_order='count').svg))
+
+
 class Testxyp_partial_order(unittest.TestCase):
     '''Both the list and the dict form used to send every unlisted value to one shared
     fallback slot, so unlisted categories silently overplotted each other.  Default is

@@ -7,7 +7,7 @@ import signal
 import threading
 import time
 from math import sqrt
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from typing import Any
 
 # re's pattern parser is private -- it was the public `sre_parse` until 3.11 -- and is
@@ -35,13 +35,15 @@ from panel.custom import JSComponent, ReactiveESM
 from panel.reactive import ReactiveHTML
 
 from .p2s_esm import esm
+from .p2s_text_mixin import unitize
+from .interactive_render_rows import RenderRowSet, XYpRenderRows
 from shapely.geometry import Polygon
 
 from .mds_at_scale                  import LandmarkMDSLayout, PivotMDSLayout
 from .layout_budget                 import Budget
 from .interactive_treatments        import (Treatment, RegistryEntry, CHEAP, ASSUMED_CHEAP,
-                                            COMMUNITY_DETECTION, FLOWMAP,
-                                            treatment_for, menu_annotation)
+                                            FLOWMAP, treatment_for,
+                                            community_treatment_for, menu_annotation)
 
 #
 # Known limitation: in a browser, ctrl-click / shift-ctrl-click can open the
@@ -125,6 +127,42 @@ _BACKGROUND_OP_MENU_ = [
     ('f', 'flow field (2 layers)'),
     ('F', 'flow field (3 layers)'),
 ]
+
+# (mnemonic, label) for the shift-d community-algorithm picker (and the settings panel's
+# 'community detection' row).  Same contract as the background producer: picking only
+# SELECTS, 'd' runs the selected algorithm and ctrl-d clears the colours.  The first
+# entry is the default, and is what 'd' ran before there was a choice.
+#
+# Chosen for an interactive keystroke, not for coverage of networkx:
+#   - louvain at three resolutions -- moving the resolution is how community GRANULARITY
+#     is explored, which is usually the question, more than switching algorithms;
+#   - label propagation -- a genuinely different answer, and the fastest;
+#   - greedy modularity -- the classic CNM; the one that needs a confirmation gate;
+#   - connected components -- not community detection, but on a netflow graph it is
+#     often the first partition wanted, and it is free.
+# Left out on purpose: leiden (networkx 3.6 only dispatches it to other backends -- it
+# raises NotImplementedError without igraph/leidenalg), k-clique (overlapping
+# communities, which one colour per node cannot show), girvan-newman / edge betweenness
+# (O(m^2 n) -- not interactive at any useful size).
+_COMMUNITY_MENU_ = [
+    ('l', 'louvain'),
+    ('o', 'louvain (coarse)'),
+    ('f', 'louvain (fine)'),
+    ('p', 'label propagation'),
+    ('g', 'greedy modularity'),
+    ('c', 'connected components'),
+]
+
+# label -> partition of an UNDIRECTED graph into node sets.  Seeded wherever the algorithm
+# is randomised, so 'd' pressed twice gives the same colours.
+_COMMUNITY_ALGORITHMS_: dict[str, Any] = {
+    'louvain':              lambda g: nx.community.louvain_communities(g, weight='weight', resolution=1.0, seed=42),
+    'louvain (coarse)':     lambda g: nx.community.louvain_communities(g, weight='weight', resolution=0.5, seed=42),
+    'louvain (fine)':       lambda g: nx.community.louvain_communities(g, weight='weight', resolution=2.0, seed=42),
+    'label propagation':    lambda g: list(nx.community.fast_label_propagation_communities(g, weight='weight', seed=42)),
+    'greedy modularity':    lambda g: list(nx.community.greedy_modularity_communities(g, weight='weight')),
+    'connected components': lambda g: list(nx.connected_components(g)),
+}
 
 # ---------------------------------------------------------------------------
 # Bounds on work a keystroke can start
@@ -569,6 +607,12 @@ _TOOLTIP_MAX_VALUES_ = 3
 #: frame stops being readable and starts covering the plot.
 _TOOLTIP_MAX_LINES_ = 8
 
+#: unitize()'s character budget for a magnitude: 45_612_314 -> '45.6M', 2_024 -> '2.02K'.
+#: Only magnitudes get it -- the record count, a distinct count, and fields that come from
+#: a measure encoding (see _tooltip_measure_encodings_).  Everything else prints as-is,
+#: because a netflow frame's numbers are mostly identifiers: port 8080 is not '8.08K'.
+_TOOLTIP_DIGITS_ = 4
+
 #: Monospace 11px, the same 7px/char the panel and the pickers size themselves with.
 _TOOLTIP_CHAR_W_ = 7
 _TOOLTIP_LINE_H_ = 11
@@ -601,18 +645,24 @@ def _tooltipFieldNames_(spec: Any, columns: Any) -> list[str]:
     return []
 
 
-def _tooltipValueSummary_(recs: pl.DataFrame, field: str) -> str:
-    """One field's value, or a count when there is more than one worth naming."""
+def _tooltipValueSummary_(recs: pl.DataFrame, field: str, measure: bool = False) -> str:
+    """One field's value, or a count when there is more than one worth naming.
+
+    `measure` abbreviates the values themselves (a numeric column only); the distinct
+    count is a magnitude whatever the field is, so it always is.
+    """
     _vals_ = recs[field].unique(maintain_order=True)
     _n_    = len(_vals_)
     if _n_ == 0:
         return ''
     if _n_ <= _TOOLTIP_MAX_VALUES_:
-        return ', '.join('null' if _v_ is None else str(_v_) for _v_ in _vals_)
-    return f'{_n_} distinct'
+        _fmt_ = (lambda v: unitize(v, _TOOLTIP_DIGITS_)) if measure and _vals_.dtype.is_numeric() else str
+        return ', '.join('null' if _v_ is None else _fmt_(_v_) for _v_ in _vals_)
+    return f'{unitize(_n_, _TOOLTIP_DIGITS_)} distinct'
 
 
-def _tooltipTextLines_(recs: pl.DataFrame, fields: Sequence[str]) -> list[str]:
+def _tooltipTextLines_(recs: pl.DataFrame, fields: Sequence[str],
+                       measures: Collection[str] = ()) -> list[str]:
     """`N records`, then one line per field the component is already encoding.
 
     Dumping the whole row is wrong on any real analysis frame -- the netflow frames are
@@ -621,7 +671,7 @@ def _tooltipTextLines_(recs: pl.DataFrame, fields: Sequence[str]) -> list[str]:
     relevance.
     """
     _n_     = len(recs)
-    _lines_ = [f'{_n_} record' + ('' if _n_ == 1 else 's')]
+    _lines_ = [f'{unitize(_n_, _TOOLTIP_DIGITS_)} record' + ('' if _n_ == 1 else 's')]
     _seen_: set = set()
     _width_ = max((len(_f_) for _f_ in fields), default=0)
     for _f_ in fields:
@@ -631,7 +681,7 @@ def _tooltipTextLines_(recs: pl.DataFrame, fields: Sequence[str]) -> list[str]:
         if len(_lines_) > _TOOLTIP_MAX_LINES_:
             _lines_.append('...')
             break
-        _lines_.append(f'{_f_.ljust(_width_)}  {_tooltipValueSummary_(recs, _f_)}')
+        _lines_.append(f'{_f_.ljust(_width_)}  {_tooltipValueSummary_(recs, _f_, _f_ in measures)}')
     return _lines_
 
 
@@ -717,6 +767,9 @@ class _TooltipMixin_(param.Parameterized):
     def _tooltipFields_(self, recs: Any) -> list[str]:
         raise NotImplementedError
 
+    def _tooltipMeasures_(self, recs: Any) -> set[str]:
+        raise NotImplementedError
+
     #
     # applyTooltipOp() - the browser's dwell timer fired; answer it.
     #
@@ -765,7 +818,7 @@ class _TooltipMixin_(param.Parameterized):
 
     def __tooltipBody__(self, recs: Any, mode: str) -> dict:
         """Everything about a payload that depends only on the records, so it caches."""
-        _lines_  = _tooltipTextLines_(recs, self._tooltipFields_(recs))
+        _lines_  = _tooltipTextLines_(recs, self._tooltipFields_(recs), self._tooltipMeasures_(recs))
         _svg_    = ''
         _icon_h_ = 0
         _icon_w_ = 0
@@ -905,6 +958,14 @@ class _InteractivePBase(_TooltipMixin_, JSComponent):
     #: MADE of, so the default needs no configuration and is never wrong about relevance.
     #: Dumping the whole row is what it is avoiding; the netflow frames are wide.
     _tooltip_encodings_: tuple = ()
+    #: The subset of those that encode a MAGNITUDE (count=, a size), whose values the
+    #: tooltip abbreviates.  Deliberately not x / y / color / bin_by: those are as often
+    #: identifiers (ports, years, protocol numbers) as quantities, and '8.08K' for port
+    #: 8080 is wrong, not merely terse.
+    _tooltip_measure_encodings_: tuple = ()
+    #: The settings-panel rows that change the RENDER (interactive_render_rows.py), as a
+    #: RenderRowSet built from the template, or None for a kind that has none yet.
+    _render_rows_cls_: Any = None
 
     # ── per-instance ─────────────────────────────────────────────────────────
     # The Python-side palette, read in JS as model.palette (see p2sInk() in
@@ -955,6 +1016,9 @@ class _InteractivePBase(_TooltipMixin_, JSComponent):
     # on every component -- and giving `select_shape` a home beside it.
     menu_items        = param.Dict(default={})
     config_panel_rows = param.List(default=[])
+    #: The render rows' current values, {kind: label}.  One dict rather than a param per
+    #: row: the rows are per component, and the browser writes whichever it is shown.
+    render_settings   = param.Dict(default={})
     # gpu_payload / gpu_error are declared on the *_GPU subclasses only -- an SVG
     # view has no use for them and they would only widen its data model.
 
@@ -998,6 +1062,17 @@ class _InteractivePBase(_TooltipMixin_, JSComponent):
             'select_shape': [['r', 'rectangle'], ['o', 'oval']],
             'tooltip':      self._tooltipItemsForRow_(),
         }
+        # Render rows.  The overrides start empty and stay empty until a row moves off
+        # the value it was read from the template with -- an untouched panel renders
+        # exactly what was built (see interactive_render_rows.py).
+        self._df_: Any = _plot_.df_orig
+        self._overrides_: dict = {}
+        self._render_rows_: RenderRowSet | None = \
+            self._render_rows_cls_(_plot_) if self._render_rows_cls_ is not None else None
+        if self._render_rows_ is not None:
+            self.menu_items = {**self.menu_items,
+                               **{_r_.kind: _r_.items for _r_ in self._render_rows_.rows}}
+            self.render_settings = self._render_rows_.initial_settings()
         self.config_panel_rows = self.__configPanelRows__()
         # Watch for callbacks
         self.param.watch(self.applyDragOp,     'drag_op_finished')
@@ -1005,6 +1080,8 @@ class _InteractivePBase(_TooltipMixin_, JSComponent):
         self.param.watch(self.applyBrushOp,    'brush_changed')
         self.param.watch(self.applyBrushLeave, 'brush_leave_done')
         self.param.watch(self.applyTooltipOp,  'tooltip_seq')
+        if self._render_rows_ is not None:
+            self.param.watch(self.applyRenderSettings, 'render_settings')
         if use_webgpu:
             self.param.watch(self.applyGpuError, 'gpu_error')
         if self.has_search:
@@ -1017,8 +1094,50 @@ class _InteractivePBase(_TooltipMixin_, JSComponent):
     # that comes and goes with icon=, which is a menu_items question, not a gating one.
     #
     def __configPanelRows__(self) -> list[list[Any]]:
-        return [['s', 'select_shape', 'selection shape', True],
-                ['i', 'tooltip',      'tooltip',         True]]
+        _rows_: list[list[Any]] = [['s', 'select_shape', 'selection shape', True],
+                                   ['i', 'tooltip',      'tooltip',         True]]
+        if self._render_rows_ is not None:
+            _s_ = dict(self.render_settings)
+            _rows_ += [[_r_.mnemonic, _r_.kind, _r_.label, bool(_r_.enabled(_s_))]
+                       for _r_ in self._render_rows_.rows]
+        return _rows_
+
+    #
+    # applyRenderSettings() - a render row changed: rebuild the overrides and re-render.
+    #
+    # Only the frame on screen is re-rendered; the cache is emptied so every other stack
+    # level picks the new overrides up when it is next displayed.  A setting the
+    # component refuses (its constructor raised) is put back and the view is left as it
+    # was -- the row visibly snapping back is the message, and the log has the reason.
+    #
+    # Unchanged overrides are a no-op.  That is also what makes the snap-back safe: the
+    # watcher is async, so the write that reverts the dict arrives here AFTER this call
+    # has returned -- a flag set around the write would already be clear -- and it finds
+    # the overrides it would produce are the ones already in force.
+    #
+    async def applyRenderSettings(self, event: Any) -> None:
+        if self._render_rows_ is None:
+            return
+        async with self.lock:
+            try:
+                _ov_ = self._render_rows_.overrides(dict(self.render_settings))
+                if _ov_ == self._overrides_:
+                    self.config_panel_rows = self.__configPanelRows__()
+                    return
+                _plot_ = getattr(self.template.p2s, self._render_fn_)(df=self._df_, template=self.template, **_ov_)
+            except (MemoryError, KeyboardInterrupt):
+                raise
+            except Exception:
+                self.template.p2s.logger.exception(
+                    f'{type(self).__name__.lower()}: render setting refused, reverting {dict(self.render_settings)}')
+                self.render_settings = dict(event.old)
+                return
+            self._overrides_     = _ov_
+            self._cache_         = {id(self._df_): (self._df_, _plot_)}
+            self._plot_          = _plot_
+            self._tooltip_cache_ = {}
+            self.__refreshView__()
+            self.config_panel_rows = self.__configPanelRows__()
 
     #
     # The tooltip's two host hooks.
@@ -1044,6 +1163,15 @@ class _InteractivePBase(_TooltipMixin_, JSComponent):
             _out_.extend(_tooltipFieldNames_(getattr(self._plot_, _name_, None), recs.columns))
         return _out_
 
+    # Measures come from the encodings whatever tooltip_fields= says: naming a column
+    # decides whether it is SHOWN, while what the plot does with it decides whether it
+    # is a magnitude.
+    def _tooltipMeasures_(self, recs: Any) -> set[str]:
+        _out_: set[str] = set()
+        for _name_ in self._tooltip_measure_encodings_:
+            _out_.update(_tooltipFieldNames_(getattr(self._plot_, _name_, None), recs.columns))
+        return _out_
+
     # Refresh the view
     def __refreshView__(self):
         if self.use_webgpu:
@@ -1060,7 +1188,7 @@ class _InteractivePBase(_TooltipMixin_, JSComponent):
 
     # Render the view
     def __renderView__(self, df):
-        return getattr(self.template.p2s, self._render_fn_)(df=df, template=self.template)
+        return getattr(self.template.p2s, self._render_fn_)(df=df, template=self.template, **self._overrides_)
 
     # Core brush logic: call recordsAt and broadcast to peers
     async def _doBrushAt(self, xy, state_idx, seq=None):
@@ -1183,6 +1311,7 @@ class _InteractivePBase(_TooltipMixin_, JSComponent):
                 self._cache_[id(df)] = _entry_
             # set the current & refresh
             self._plot_ = _entry_[1]
+            self._df_   = df          # what a render-row change re-renders
             self.__refreshView__()
             # clean up the cache
             _ids_ = set([id(df) for df in dfs])
@@ -1206,6 +1335,7 @@ class TIMEPI(_InteractivePBase):
     _render_fn_      = 'timep'
     _fallback_shape_ = 'SELECT_VERTICALp'
     _tooltip_encodings_ = ('time', 'color', 'count')
+    _tooltip_measure_encodings_ = ('count',)
     _kbd_r_desc_     = 'toggle brush on/off'
     _keyboard_commands_ = _interactivePKeyboardCommands_(
         _kbd_r_desc_, has_z_key=False, has_search=False, has_time_keys=True)
@@ -1222,6 +1352,7 @@ class HISTOPI(_InteractivePBase):
     _render_fn_      = 'histop'
     _fallback_shape_ = 'SELECT_HORIZONTALp'
     _tooltip_encodings_ = ('bin_by', 'color', 'count')
+    _tooltip_measure_encodings_ = ('count',)
     _kbd_r_desc_     = 'toggle brush on/off'
     _keyboard_commands_ = _interactivePKeyboardCommands_(
         _kbd_r_desc_, has_z_key=False, has_search=True, has_time_keys=False)
@@ -1239,6 +1370,8 @@ class XYPI(_InteractivePBase):
     _render_fn_      = 'xyp'
     _fallback_shape_ = 'SELECT_HORIZONTALp'
     _tooltip_encodings_ = ('x', 'y', 'color', 'dot_size', 'line')
+    _tooltip_measure_encodings_ = ('dot_size',)
+    _render_rows_cls_ = XYpRenderRows
     _kbd_r_desc_     = 'toggle brush on/off'
     _keyboard_commands_ = _interactivePKeyboardCommands_(
         _kbd_r_desc_, has_z_key=True, has_search=False, has_time_keys=True)
@@ -1254,6 +1387,7 @@ class CHORDPI(_InteractivePBase):
     _render_fn_      = 'chordp'
     _fallback_shape_ = 'SELECT_CIRCLEp'
     _tooltip_encodings_ = ('relationships', 'color', 'node_color', 'count')
+    _tooltip_measure_encodings_ = ('count',)
     _kbd_r_desc_     = 'toggle brush on/off'
     _keyboard_commands_ = _interactivePKeyboardCommands_(
         _kbd_r_desc_, has_z_key=False, has_search=False, has_time_keys=False)
@@ -1270,6 +1404,7 @@ class PIEPI(_InteractivePBase):
     _render_fn_      = 'piep'
     _fallback_shape_ = 'SELECT_CIRCLEp'
     _tooltip_encodings_ = ('bin_by', 'color', 'count')
+    _tooltip_measure_encodings_ = ('count',)
     _kbd_r_desc_     = 'toggle brush on/off'
     _keyboard_commands_ = _interactivePKeyboardCommands_(
         _kbd_r_desc_, has_z_key=False, has_search=True, has_time_keys=False)
@@ -1929,7 +2064,7 @@ _link_shape_items_ = [[str(_i_ + 1), _nm_] for _i_, _nm_ in enumerate(_LINK_SHAP
 _TIMING_SPACINGS_      = [1, 2, 4, 8, 16, 32]   # pixels, fine -> very coarse
 _timing_spacing_items_ = [[str(_i_ + 1), _num_size_label(_v_)] for _i_, _v_ in enumerate(_TIMING_SPACINGS_)]
 
-# ── label-visibility cycle (ctrl-shift-s) ──
+# ── label-visibility cycle (the settings panel's 'labels' row) ──
 # The full cycle walks node labels, then both channels, then link labels alone, and
 # ends on the sticky set before going dark again.  A graph whose relationships carry
 # no label field has nothing to put in the two link states, so it cycles the short
@@ -2019,6 +2154,7 @@ _CONFIG_PANEL_ROWS_ = [
     ['g', 'mode',             'layout shape'],
     ['w', 'operation',        'layout operation'],
     ['f', 'background',       'background producer'],
+    ['d', 'community',        'community detection'],
     # Last, because it is the one that is usually gated off: a backwards wrap of the row
     # cursor then has a gated row to skip, which is the case the cursor gets wrong.
     ['b', 'background_state', 'background'],
@@ -2034,7 +2170,8 @@ b . | run the background producer | ctrl-b clears the background
  .. | shift-b ........ | select the background producer (also in the settings panel)
 c . | reset view, or focus on selected | shift-c uses selected + neighbors
  .. | ctrl-c ......... | copy selected nodes to clipboard | ctrl-shift-c uses node labels
-d . | detect communities (louvain) & color nodes by community | ctrl-d clear community colors
+d . | detect communities & color nodes by community | ctrl-d clears the colors
+ .. | shift-d ........ | select the algorithm (also in the settings panel)
 e . | expand selection | shift-e follows directed edges | ctrl-e reverse follows directed edges
 f . | edge unfilter: re-add rows on visible edges [[selected matters]]
  .. | shift-f ........ | node expansion: re-add rows incident to visible nodes [[selected matters]]
@@ -2045,6 +2182,7 @@ q . | invert selection | shift-q select common neighbors
 r . | toggle brush (broadcast nearest edges/nodes to linked views)
  .. | shift-r ........ | cycle brush radius (r = 5 | r = 15)
 s . | set sticky labels (plain sets | ctrl adds | shift removes)
+ .. | ctrl-shift-s ... | select the sticky-labelled nodes
 t . | consolidate .... | shift-t (horizontal) | v (or ctrl-t on macos) (vertical)
 u . | undo layout change
 v . | see t (consolidate)
@@ -2180,6 +2318,7 @@ class LINKPI(_TooltipMixin_, JSComponent):
     layout_mode                   = param.String(default="grid")
     layout_operation              = param.String(default="spring nx")
     background_operation          = param.String(default=_BACKGROUND_OP_MENU_[0][1])
+    community_algorithm           = param.String(default=_COMMUNITY_MENU_[0][1])
     link_size_choice              = param.String(default='')
     node_size_choice              = param.String(default='')
     link_opacity_choice           = param.String(default='')
@@ -2271,6 +2410,7 @@ class LINKPI(_TooltipMixin_, JSComponent):
                 'operation':      _operation_items_,
                 'mode':           [[m, _lbl_] for m, _lbl_ in _LAYOUT_MODE_MENU_],
                 'background':     [[m, _lbl_] for m, _lbl_ in _BACKGROUND_OP_MENU_],
+                'community':      _annotate_(_COMMUNITY_MENU_, community_treatment_for),
                 'link_size':      _link_size_items_,
                 'link_opacity':   _link_opacity_items_,
                 'node_size':      _node_size_items_,
@@ -3039,6 +3179,13 @@ class LINKPI(_TooltipMixin_, JSComponent):
         # __init__), and a tooltip must name columns the user would recognise.
         for _name_ in ('relationships_orig', 'color', 'node_color', 'count', 'link_size'):
             _out_.extend(_tooltipFieldNames_(getattr(_ln_, _name_, None), recs.columns))
+        return _out_
+
+    def _tooltipMeasures_(self, recs: Any) -> set[str]:
+        _ln_   = self.dfs_layout[self.df_level]
+        _out_: set[str] = set()
+        for _name_ in ('count', 'link_size'):
+            _out_.update(_tooltipFieldNames_(getattr(_ln_, _name_, None), recs.columns))
         return _out_
 
     #
@@ -3820,7 +3967,7 @@ class LINKPI(_TooltipMixin_, JSComponent):
                 self.__refreshView__(comp=False, all_ents=False)
 
             #
-            # "S" - Set Sticky Labels & Remove Sticky Labels
+            # "S" - Set / Add / Remove Sticky Labels, and select the sticky nodes (ctrl-shift-s)
             #
             elif self.key_op_finished == 's' or self.key_op_finished == 'S':
                 # label_mode + sticky_labels are the single source of truth;
@@ -3829,14 +3976,23 @@ class LINKPI(_TooltipMixin_, JSComponent):
                 # consistent as the stack is navigated or grown.
                 #
                 # These three act on the SELECTION, which is why they stayed on keys
-                # while ctrl-shift-s (cycle label_mode, a description of the render)
-                # became the panel's 'labels' row.  ctrl-shift-s therefore lands on the
-                # shiftkey branch now and removes the selection from the sticky set.
-                if   self.shiftkey: self.sticky_labels = self.sticky_labels - self.selected_entities  # remove selected
-                elif self.ctrlkey:  self.sticky_labels = self.sticky_labels | self.selected_entities  # add selected
-                else:               self.sticky_labels = set(self.selected_entities)                  # replace with selected
-                self._applyLabelStateAcrossStack_()
-                self.__refreshView__(info=False, all_ents=False, sel_ents=False)
+                # while the old ctrl-shift-s (cycle label_mode, a description of the
+                # render) became the panel's 'labels' row.
+                #
+                # ctrl-shift-s runs the other direction: sticky set -> selection, so a
+                # saved set of labelled nodes can be picked back up.  Replace only --
+                # every modifier on 's' is spent, so it has no p(cs)^2 set operations.
+                # Sticky nodes pushed off this stack level (x) are not selectable here.
+                if self.shiftkey and self.ctrlkey:
+                    _visible_ = self.graphs[self.df_level]
+                    self.setSelectedEntitiesAndNotifyOthers({_n_ for _n_ in self.sticky_labels if _n_ in _visible_})
+                    self.__refreshView__(comp=False, all_ents=False)
+                else:
+                    if   self.shiftkey: self.sticky_labels = self.sticky_labels - self.selected_entities  # remove selected
+                    elif self.ctrlkey:  self.sticky_labels = self.sticky_labels | self.selected_entities  # add selected
+                    else:               self.sticky_labels = set(self.selected_entities)                  # replace with selected
+                    self._applyLabelStateAcrossStack_()
+                    self.__refreshView__(info=False, all_ents=False, sel_ents=False)
 
             #
             # "T" - Collapse (to a point, horizontal line, or vertical line)
@@ -3871,10 +4027,11 @@ class LINKPI(_TooltipMixin_, JSComponent):
                     await self._refreshViewOffloop_()
 
             #
-            # "D" - Detect graph communities (louvain) & color the nodes by community;
-            #       ctrl-d restores the node coloring that the LinkP was created with
-            #       (ctrl, to match ctrl-b clearing the background).  shift-d is unbound,
-            #       held for a community-algorithm picker.
+            # "D" - Detect graph communities with the selected algorithm & color the nodes
+            #       by community; ctrl-d restores the node coloring that the LinkP was
+            #       created with (ctrl, to match ctrl-b clearing the background).  shift-d
+            #       never reaches here: it opens the algorithm picker in the browser, the
+            #       way shift-b opens the background-producer picker.
             #
             elif self.key_op_finished == 'd':
                 if self.ctrlkey:
@@ -4167,18 +4324,26 @@ class LINKPI(_TooltipMixin_, JSComponent):
         _op_g_      = _base_g_.edge_subgraph(_inc_edges_) if _inc_edges_ else nx.Graph()
         return self._refilter_union_(_op_g_)
 
-    def apply_community_detection(self):
-        """Simulate the 'd' key: louvain communities over the graph at this stack level,
-        one color per community. Nodes that share an exact position are merged first (the
-        same treatment the layout algorithms give them) so a stacked group counts as a
-        single community member. Node positions are not touched. Returns the
-        {node: '#rrggbb'} map, or None when there is nothing to color."""
+    def apply_community_detection(self, algorithm: str | None = None) -> dict | None:
+        """Simulate the 'd' key: communities over the graph at this stack level, one
+        color per community, found by `algorithm` (a shift-d picker label; default: the
+        selected community_algorithm). Nodes that share an exact position are merged
+        first (the same treatment the layout algorithms give them) so a stacked group
+        counts as a single community member. Node positions are not touched. Returns the
+        {node: '#rrggbb'} map, or None when there is nothing to color or the
+        confirmation gate asked first."""
+        _algo_ = self.community_algorithm if algorithm is None else algorithm
+        if _algo_ not in _COMMUNITY_ALGORITHMS_:
+            raise ValueError(f'linkpi: unknown community algorithm {_algo_!r} '
+                             f'(one of {list(_COMMUNITY_ALGORITHMS_)})')
         _ln_, _g_ = self.dfs_layout[self.df_level], self.graphs[self.df_level]
         if _g_ is None or _g_.number_of_nodes() == 0: return None
-        # Louvain is cheap at every size measured, so this never refuses today.  It is
-        # wired anyway so community detection is covered by the same gate as the layout
-        # operations rather than being the one keystroke nothing can see.
-        if not self.__confirmGate__('community detection', COMMUNITY_DETECTION,
+        # Only greedy modularity is declared to ask (interactive_treatments); the rest are
+        # cheap at every size measured and are gated anyway, so no keystroke is the one
+        # nothing can see.  The key is the algorithm, so confirming one cannot be
+        # redeemed by pressing 'd' after switching to another.
+        if not self.__confirmGate__(f'community detection ({_algo_})',
+                                    community_treatment_for(_algo_),
                                     _g_.number_of_nodes()):
             return None
 
@@ -4186,13 +4351,12 @@ class LINKPI(_TooltipMixin_, JSComponent):
         if _contracted_ is None: _g_c_, _members_ = _g_, {_n_: [_n_] for _n_ in _g_.nodes()}
         else:                    _g_c_, _, _, _members_ = _contracted_
 
-        _communities_ = nx.community.louvain_communities(nx.to_undirected(_g_c_),
-                                                         weight='weight', resolution=1.0, seed=42)
+        _communities_ = _COMMUNITY_ALGORITHMS_[_algo_](nx.to_undirected(_g_c_))
         if not _communities_: return None
 
         # One color per community, hashed off the community's canonical (lexicographically
         # smallest) member so that re-running 'd' keeps colors stable rather than
-        # reshuffling them with louvain's community ordering.
+        # reshuffling them with the algorithm's community ordering.
         _keys_    = [min(str(_m_) for _m_ in _comm_) for _comm_ in _communities_]
         _key_hex_ = self.rt_self.colors(_keys_)
 

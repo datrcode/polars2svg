@@ -10,6 +10,7 @@
     "brush_state",
     "brushing_mode",
     "cancel_seq",
+    "community_algorithm",
     "config_panel_rows",
     "ctrlkey",
     "drag_op_finished",
@@ -38,6 +39,7 @@
     "move_op_finished",
     "name",
     "node_size_choice",
+    "palette",
     "search_op_finished",
     "search_str",
     "selection_labels",
@@ -124,7 +126,7 @@
         },
         "keyboardhelp": {
           "tag": "g",
-          "kids": 31,
+          "kids": 33,
           "text": ".. | [[p(cs)^2]] plain replaces | ctrl adds | shift removes | ctrl-shift intersects .. | [[selected matters]] acts on th"
         },
         "drag": {

@@ -29,10 +29,14 @@
 //   headers           {kind: header text} for the picker
 //   params            {kind: model param name holding that kind's current value}
 //   setValue          (kind, label) -> void; the single write path into the data model
+//   getValue          optional (kind) -> value; the read side, for a view whose kinds do
+//                     not each have a param (the generic views' render rows share one
+//                     dict).  Absent, a kind's value is model[params[kind]].
 //
 
 function p2sConfigPanel(ctx) {
   const model = ctx.model, state = ctx.state;
+  const getValue = ctx.getValue || function(kind) { return model[ctx.params[kind]]; };
   const menuNode = ctx.menuNode, panelNode = ctx.panelNode;
   const STYLE_ = 'font-family: \'Courier New\', monospace; font-size: 11px; fill: #222;';
 
@@ -40,7 +44,7 @@ function p2sConfigPanel(ctx) {
 
   function menuOpen(event) {
       var _items_   = state.menu_items[state.menu_kind];
-      var _current_ = model[ctx.params[state.menu_kind]];
+      var _current_ = getValue(state.menu_kind);
       state.menu_index = 0;
       for (var _i_ = 0; _i_ < _items_.length; _i_++) {
           if (_items_[_i_][1] == _current_) { state.menu_index = _i_; break; }
@@ -189,7 +193,7 @@ function p2sConfigPanel(ctx) {
   function panelValue(kind) {
       var _p_ = state.panel_pending[kind];
       if (_p_ !== undefined) { return _p_; }
-      var _v_ = model[ctx.params[kind]];
+      var _v_ = getValue(kind);
       return (_v_ === undefined || _v_ === null) ? '' : _v_;
   }
 

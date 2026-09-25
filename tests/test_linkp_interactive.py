@@ -1,7 +1,7 @@
 import asyncio
 import unittest
 import polars as pl
-from view_js_utils import component_script
+from view_js_utils import component_js, component_script
 from polars2svg import Polars2SVG
 from polars2svg.interactive_controller import linkpi, InteractionController
 
@@ -928,14 +928,76 @@ class TestCommunityDetection(unittest.TestCase):
         self.assertEqual(self.ctrl.dfs_layout[0].node_color, self.ctrl._orig_node_color_)
         self.assertIsNone(self.ctrl.community_colors)
 
-    def test_shift_d_is_unbound(self):
-        # Held for a community-algorithm picker; until then it must do nothing rather
-        # than keep clearing the colours it used to.
+    # ── the algorithm picker (shift-d / the settings panel's 'd' row) ────────
+
+    def test_the_default_algorithm_is_louvain(self):
+        """What 'd' ran before there was a choice, so an untouched view is unchanged."""
+        self.assertEqual(self.ctrl.community_algorithm, 'louvain')
+        self.assertEqual(self.ctrl.menu_items['community'][0][:2], ['l', 'louvain'])
+
+    def test_every_algorithm_in_the_picker_colors_every_node(self):
+        _nodes_ = set(self.ctrl.graphs[self.ctrl.df_level].nodes())
+        for _m_, _label_, *_ in self.ctrl.menu_items['community']:
+            with self.subTest(algorithm=_label_):
+                _nc_ = self.ctrl.apply_community_detection(_label_)
+                self.assertEqual(set(_nc_.keys()), _nodes_)
+
+    def test_the_algorithms_actually_differ(self):
+        """The bridge a1-b1 joins the two triangles: one component, two communities."""
+        self.assertEqual(len(set(self.ctrl.apply_community_detection('louvain').values())), 2)
+        self.assertEqual(len(set(self.ctrl.apply_community_detection('connected components').values())), 1)
+
+    def test_d_runs_the_selected_algorithm(self):
+        self.ctrl.community_algorithm = 'connected components'
         self._press('d')
-        _colors_ = self.ctrl.community_colors
-        self._press('D')
-        self.assertEqual(self.ctrl.community_colors, _colors_)
-        self.assertEqual(self.ctrl.dfs_layout[0].node_color, _colors_)
+        self.assertEqual(len(set(self.ctrl.community_colors.values())), 1)
+
+    def test_selecting_an_algorithm_does_not_run_it(self):
+        """Picking only selects, as with the background producer; 'd' is what runs."""
+        self.ctrl.community_algorithm = 'connected components'
+        self.assertIsNone(self.ctrl.community_colors)
+
+    def test_repeat_runs_are_stable_for_the_randomised_algorithms(self):
+        for _label_ in ('louvain (coarse)', 'louvain (fine)', 'label propagation'):
+            with self.subTest(algorithm=_label_):
+                self.assertEqual(self.ctrl.apply_community_detection(_label_),
+                                 self.ctrl.apply_community_detection(_label_))
+
+    def test_an_unknown_algorithm_is_an_error_not_a_silent_louvain(self):
+        with self.assertRaises(ValueError):
+            self.ctrl.apply_community_detection('leiden')
+
+    def test_greedy_modularity_asks_above_its_threshold(self):
+        import unittest.mock as mock
+        _g_ = self.ctrl.graphs[self.ctrl.df_level]
+        with mock.patch.object(_g_, 'number_of_nodes', return_value=8_001):
+            self.assertIsNone(self.ctrl.apply_community_detection('greedy modularity'))
+            self.assertIn('repeat to run', self.ctrl._last_cost_note_)
+            self.assertIsNotNone(self.ctrl.apply_community_detection('greedy modularity'))
+
+    def test_a_confirmation_is_not_redeemed_by_another_algorithm(self):
+        """The gate is keyed by algorithm: arm greedy, then run louvain -- louvain runs
+        (it never asks) and disarms greedy, which must ask again."""
+        import unittest.mock as mock
+        _g_ = self.ctrl.graphs[self.ctrl.df_level]
+        with mock.patch.object(_g_, 'number_of_nodes', return_value=8_001):
+            self.assertIsNone(self.ctrl.apply_community_detection('greedy modularity'))
+            self.assertIsNotNone(self.ctrl.apply_community_detection('louvain'))
+            self.assertIsNone(self.ctrl.apply_community_detection('greedy modularity'))
+
+    def test_the_picker_says_which_algorithm_will_ask(self):
+        _display_ = {_i_[1]: _i_[2] for _i_ in self.ctrl.menu_items['community']}
+        self.assertIn('asks >8,000 nodes', _display_['greedy modularity'])
+        self.assertEqual(_display_['louvain'], 'louvain')
+
+    def test_shift_d_opens_the_picker_in_the_browser(self):
+        _js_ = component_js(self.ctrl)
+        self.assertIn("state.menu_kind = 'community'; menuOpen();", _js_)
+        self.assertIn("else if (kind == 'community')        { model.community_algorithm   = label; }", _js_)
+
+    def test_the_settings_panel_has_the_row(self):
+        self.assertIn(['d', 'community', 'community detection', True],
+                      self.ctrl.config_panel_rows)
 
     def test_popped_stack_nodes_are_absent_from_the_color_dict(self):
         # Detect at a deeper level, then pop: the nodes only present at the shallower
@@ -1154,22 +1216,39 @@ class TestStickyLabelsAcrossStack(unittest.TestCase):
             self.assertTrue(_layout_.draw_node_labels)
             self.assertEqual(_layout_.label_only, set())
 
-    def test_ctrl_shift_s_now_removes_from_the_sticky_set(self):
-        '''It used to cycle label_mode, which is the panel's 'labels' row now.
+    # ── sticky set -> selection (ctrl-shift-s) ───────────────────────────────
 
-        With that branch gone it falls to the shiftkey one, so ctrl-shift-s does what
-        shift-s does: remove the selection from the sticky set.  Asserted rather than
-        left to be discovered -- an absorbed binding that quietly starts doing something
-        ELSE is worse than one that stops working.
+    def test_ctrl_shift_s_selects_the_sticky_nodes(self):
+        '''The reverse of 's': the sticky set replaces the selection.
+
+        It used to cycle label_mode (the panel's 'labels' row now), then briefly fell to
+        the shiftkey branch as a duplicate of shift-s.  Neither the sticky set nor the
+        label mode may move -- this reads the set, it does not edit it.
         '''
         self.ctrl.label_mode = 'sticky labels'
-        self.ctrl.selected_entities = {'a1', 'a2'}
-        self._press('s')                                # sticky = {a1, a2}
-        self.assertEqual(self.ctrl.sticky_labels, {'a1', 'a2'})
-        self.ctrl.selected_entities = {'a2'}
+        self.ctrl.selected_entities = {'a1', 'b2'}
+        self._press('s')                                # sticky = {a1, b2}
+        self.ctrl.selected_entities = {'a3'}
         self._press('S', shift=True, ctrl=True)
-        self.assertEqual(self.ctrl.sticky_labels, {'a1'})
+        self.assertEqual(self.ctrl.selected_entities, {'a1', 'b2'})
+        self.assertEqual(self.ctrl.sticky_labels,     {'a1', 'b2'})
         self.assertEqual(self.ctrl.label_mode, 'sticky labels', 'the mode must not move')
+
+    def test_ctrl_shift_s_skips_sticky_nodes_pushed_off_this_level(self):
+        self.ctrl.selected_entities = {'a1', 'b2'}
+        self._press('s')                                # sticky = {a1, b2}
+        self.ctrl.selected_entities = {'b2'}
+        self.ctrl.apply_push_selected()                 # level 1: b2 is gone
+        self.ctrl.selected_entities = set()
+        self._press('S', shift=True, ctrl=True)
+        self.assertEqual(self.ctrl.selected_entities, {'a1'})
+        self.assertEqual(self.ctrl.sticky_labels,     {'a1', 'b2'}, 'the set itself is untouched')
+
+    def test_ctrl_shift_s_with_no_sticky_set_clears_the_selection(self):
+        '''Replace semantics, so an empty sticky set empties the selection.'''
+        self.ctrl.selected_entities = {'a1'}
+        self._press('S', shift=True, ctrl=True)
+        self.assertEqual(self.ctrl.selected_entities, set())
 
 
 @unittest.skipUnless(_PANEL_AVAILABLE_, 'panel not installed')

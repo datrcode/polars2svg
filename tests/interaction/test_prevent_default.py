@@ -30,13 +30,13 @@ import pytest
 #: at all now, so there is nothing to suppress and select-all, the address bar, Open
 #: File and Print go back to the browser -- which is the correct outcome and is asserted
 #: below rather than left implicit.  ctrl-shift-s survives as a guard although it no
-#: longer cycles the label mode: it still reaches the sticky-label handler.
+#: longer cycles the label mode: it selects the sticky-labelled nodes now.
 CTRL_GUARDS = [
     ('c', dict(ctrl=True),             'ctrl-c  copy selection (vs native copy)'),
     ('C', dict(ctrl=True, shift=True), 'ctrl-shift-c  copy labels'),
     ('e', dict(ctrl=True),             'ctrl-e  expand reversed (vs search-bar focus)'),
     ('s', dict(ctrl=True),             'ctrl-s  sticky labels (vs Save Page As)'),
-    ('S', dict(ctrl=True, shift=True), 'ctrl-shift-s  subtract from sticky labels'),
+    ('S', dict(ctrl=True, shift=True), 'ctrl-shift-s  select the sticky nodes'),
 ]
 
 #: The same keys without ctrl.  None of them may suppress anything.
@@ -233,6 +233,23 @@ def test_ctrl_s_still_adds_the_selection_to_sticky_labels(linkpi_page):
         linkpi_page.press('s')
         _after_ = linkpi_page.wait_for_mod_change(_before_)
     assert _after_ != _before_
+
+
+def test_ctrl_shift_s_selects_the_sticky_nodes(linkpi_page):
+    """The reverse of 's': the sticky set comes back as the selection.
+
+    Held rather than tapped, like ctrl-s above -- the handler branches on both
+    modifiers, so they have to survive until Python reads them.  'q' (invert) moves the
+    selection off the sticky set first, so the final count can only come from the chord.
+    """
+    linkpi_page.hover(200, 150)
+    _select_one_colour_group(linkpi_page, 1)
+    linkpi_page.expect_selected(3)
+    linkpi_page.press('s')                        # sticky = those three
+    linkpi_page.press('q')                        # selection = everything else
+    with linkpi_page.holding(ctrl=True, shift=True):
+        linkpi_page.press('S')
+    linkpi_page.expect_selected(3)
 
 
 # ── the race the above used to have to work around (PLANNING.md U3) ─────────

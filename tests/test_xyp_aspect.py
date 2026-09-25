@@ -126,8 +126,9 @@ class Testxyp_aspect(unittest.TestCase):
         _asp_  = self.p2s.xyp(self.df, 'lon', 'lat', wxh=(512, 256), dot_size=3.0, aspect='equal')
         def _labels_(_xyp_): return re.findall(r'<text[^>]*>([^<]*)</text>', _xyp_.svg)
         # without aspect the x axis is labelled at the data extent
-        self.assertIn('0.0',  _labels_(_base_))
-        self.assertIn('10.0', _labels_(_base_))
+        # (unitizeInt drops a whole number's trailing '.0', as the grid labels always did)
+        self.assertIn('0',    _labels_(_base_))
+        self.assertIn('10',   _labels_(_base_))
         # with it, both the end labels and the grid lines follow the widened window
         _asp_labels_ = _labels_(_asp_)
         self.assertTrue(any(_l_.startswith('-5.31') for _l_ in _asp_labels_),
@@ -138,7 +139,7 @@ class Testxyp_aspect(unittest.TestCase):
         self.assertIn('-4', _asp_labels_)
         self.assertIn('14', _asp_labels_)
         # the y axis was not widened, so its labels are untouched
-        for _l_ in ('40.0', '50.0'): self.assertIn(_l_, _asp_labels_)
+        for _l_ in ('40', '50'): self.assertIn(_l_, _asp_labels_)
 
     #
     # Interaction with x_range / y_range: the requested window is a floor, never a ceiling

@@ -25,6 +25,7 @@
     "middle_op_finished",
     "mod_inner",
     "name",
+    "palette",
     "search_op_finished",
     "search_str",
     "select_shape",
@@ -64,17 +65,17 @@
         "svgparentxypi": {
           "tag": "svg",
           "kids": 11,
-          "text": ".rect-group-N rect { width: 1px; height: 1px; } 10.0x90.010.0y90.02040608020406080 in any picker menu: arrows or j/k cyc"
+          "text": ".rect-group-N rect { width: 1px; height: 1px; } 10x9010y902040608020406080 in any picker menu: arrows or j/k cycle, mnem"
         },
         "mod": {
           "tag": "svg",
           "kids": 1,
-          "text": ".rect-group-N rect { width: 1px; height: 1px; } 10.0x90.010.0y90.02040608020406080"
+          "text": ".rect-group-N rect { width: 1px; height: 1px; } 10x9010y902040608020406080"
         },
         "xyp_N": {
           "tag": "svg",
           "kids": 28,
-          "text": ".rect-group-N rect { width: 1px; height: 1px; } 10.0x90.010.0y90.02040608020406080"
+          "text": ".rect-group-N rect { width: 1px; height: 1px; } 10x9010y902040608020406080"
         },
         "plotClip-N": {
           "tag": "clippath",
@@ -166,17 +167,17 @@
         "svgparentxypi": {
           "tag": "svg",
           "kids": 11,
-          "text": ".rect-group-N rect { width: 1px; height: 1px; } 10.0x90.010.0y90.02040608020406080 in any picker menu: arrows or j/k cyc"
+          "text": ".rect-group-N rect { width: 1px; height: 1px; } 10x9010y902040608020406080 in any picker menu: arrows or j/k cycle, mnem"
         },
         "mod": {
           "tag": "svg",
           "kids": 1,
-          "text": ".rect-group-N rect { width: 1px; height: 1px; } 10.0x90.010.0y90.02040608020406080"
+          "text": ".rect-group-N rect { width: 1px; height: 1px; } 10x9010y902040608020406080"
         },
         "xyp_N": {
           "tag": "svg",
           "kids": 28,
-          "text": ".rect-group-N rect { width: 1px; height: 1px; } 10.0x90.010.0y90.02040608020406080"
+          "text": ".rect-group-N rect { width: 1px; height: 1px; } 10x9010y902040608020406080"
         },
         "plotClip-N": {
           "tag": "clippath",
@@ -263,17 +264,17 @@
         "svgparentxypi": {
           "tag": "svg",
           "kids": 11,
-          "text": ".rect-group-N rect { width: 1px; height: 1px; } 10.0x90.010.0y90.02040608020406080 in any picker menu: arrows or j/k cyc"
+          "text": ".rect-group-N rect { width: 1px; height: 1px; } 10x9010y902040608020406080 in any picker menu: arrows or j/k cycle, mnem"
         },
         "mod": {
           "tag": "svg",
           "kids": 1,
-          "text": ".rect-group-N rect { width: 1px; height: 1px; } 10.0x90.010.0y90.02040608020406080"
+          "text": ".rect-group-N rect { width: 1px; height: 1px; } 10x9010y902040608020406080"
         },
         "xyp_N": {
           "tag": "svg",
           "kids": 28,
-          "text": ".rect-group-N rect { width: 1px; height: 1px; } 10.0x90.010.0y90.02040608020406080"
+          "text": ".rect-group-N rect { width: 1px; height: 1px; } 10x9010y902040608020406080"
         },
         "plotClip-N": {
           "tag": "clippath",
@@ -360,17 +361,17 @@
         "svgparentxypi": {
           "tag": "svg",
           "kids": 11,
-          "text": ".rect-group-N rect { width: 1px; height: 1px; } 10.0x90.010.0y90.02040608020406080 in any picker menu: arrows or j/k cyc"
+          "text": ".rect-group-N rect { width: 1px; height: 1px; } 10x9010y902040608020406080 in any picker menu: arrows or j/k cycle, mnem"
         },
         "mod": {
           "tag": "svg",
           "kids": 1,
-          "text": ".rect-group-N rect { width: 1px; height: 1px; } 10.0x90.010.0y90.02040608020406080"
+          "text": ".rect-group-N rect { width: 1px; height: 1px; } 10x9010y902040608020406080"
         },
         "xyp_N": {
           "tag": "svg",
           "kids": 28,
-          "text": ".rect-group-N rect { width: 1px; height: 1px; } 10.0x90.010.0y90.02040608020406080"
+          "text": ".rect-group-N rect { width: 1px; height: 1px; } 10x9010y902040608020406080"
         },
         "plotClip-N": {
           "tag": "clippath",
@@ -462,17 +463,17 @@
         "svgparentxypi": {
           "tag": "svg",
           "kids": 11,
-          "text": ".rect-group-N rect { width: 1px; height: 1px; } 10.0x90.010.0y90.02040608020406080 circ r=5in any picker menu: arrows or"
+          "text": ".rect-group-N rect { width: 1px; height: 1px; } 10x9010y902040608020406080 circ r=5in any picker menu: arrows or j/k cyc"
         },
         "mod": {
           "tag": "svg",
           "kids": 1,
-          "text": ".rect-group-N rect { width: 1px; height: 1px; } 10.0x90.010.0y90.02040608020406080"
+          "text": ".rect-group-N rect { width: 1px; height: 1px; } 10x9010y902040608020406080"
         },
         "xyp_N": {
           "tag": "svg",
           "kids": 28,
-          "text": ".rect-group-N rect { width: 1px; height: 1px; } 10.0x90.010.0y90.02040608020406080"
+          "text": ".rect-group-N rect { width: 1px; height: 1px; } 10x9010y902040608020406080"
         },
         "plotClip-N": {
           "tag": "clippath",
@@ -554,17 +555,17 @@
         "svgparentxypi": {
           "tag": "svg",
           "kids": 11,
-          "text": ".rect-group-N rect { width: 1px; height: 1px; } 10.0x90.010.0y90.02040608020406080 in any picker menu: arrows or j/k cyc"
+          "text": ".rect-group-N rect { width: 1px; height: 1px; } 10x9010y902040608020406080 in any picker menu: arrows or j/k cycle, mnem"
         },
         "mod": {
           "tag": "svg",
           "kids": 1,
-          "text": ".rect-group-N rect { width: 1px; height: 1px; } 10.0x90.010.0y90.02040608020406080"
+          "text": ".rect-group-N rect { width: 1px; height: 1px; } 10x9010y902040608020406080"
         },
         "xyp_N": {
           "tag": "svg",
           "kids": 28,
-          "text": ".rect-group-N rect { width: 1px; height: 1px; } 10.0x90.010.0y90.02040608020406080"
+          "text": ".rect-group-N rect { width: 1px; height: 1px; } 10x9010y902040608020406080"
         },
         "plotClip-N": {
           "tag": "clippath",
@@ -630,17 +631,17 @@
         "svgparentxypi": {
           "tag": "svg",
           "kids": 11,
-          "text": ".rect-group-N rect { width: 1px; height: 1px; } 10.0x90.010.0y90.02040608020406080 in any picker menu: arrows or j/k cyc"
+          "text": ".rect-group-N rect { width: 1px; height: 1px; } 10x9010y902040608020406080 in any picker menu: arrows or j/k cycle, mnem"
         },
         "mod": {
           "tag": "svg",
           "kids": 1,
-          "text": ".rect-group-N rect { width: 1px; height: 1px; } 10.0x90.010.0y90.02040608020406080"
+          "text": ".rect-group-N rect { width: 1px; height: 1px; } 10x9010y902040608020406080"
         },
         "xyp_N": {
           "tag": "svg",
           "kids": 28,
-          "text": ".rect-group-N rect { width: 1px; height: 1px; } 10.0x90.010.0y90.02040608020406080"
+          "text": ".rect-group-N rect { width: 1px; height: 1px; } 10x9010y902040608020406080"
         },
         "plotClip-N": {
           "tag": "clippath",

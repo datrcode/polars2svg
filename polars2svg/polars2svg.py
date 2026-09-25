@@ -759,6 +759,8 @@ class Polars2SVG(P2SColorsMixin,
 
         Any field value not included in the order will be assigned a value of maximum plus one.
 
+        x_order|y_order = 'reverse'                      # the default (ascending) sort, descending
+        x_order|y_order = 'count'                        # most rows first; ties in the default order
         x_order|y_order = 'spectral'                     # spectral (Fiedler) seriation of a categorical axis
 
         With 'spectral', the axis categories are ordered by the Fiedler vector (the

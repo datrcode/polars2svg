@@ -190,6 +190,139 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   diverged (44% and 88% similar), and this had not diverged at all because the generic
   half did not exist yet.
 
+- **`linkpi`: `ctrl-shift-s` selects the sticky-labelled nodes.** This is the reverse of
+  `s`: the sticky set replaces the selection, so a set of labelled nodes can be picked
+  back up as a selection and sent to linked views. Only sticky nodes that are still
+  visible at the current stack level are selected. Neither the sticky set nor the label
+  mode changes. The operation only replaces, with none of the other selection keys'
+  ctrl/shift set operations: plain, ctrl and shift already set, add to and remove from
+  the sticky set, so no modifier is left for those. This chord had duplicated `shift-s`
+  since the settings panel took over its old label-mode cycle (see the `ctrl-shift-s`
+  entry below), so no function is lost. It is still guarded with `preventDefault` (on
+  Windows and Linux it is Firefox's screenshot shortcut).
+
+  The four `linkpi` parity goldens were re-recorded. The keyboard help gains one line
+  (31 → 32), and the recorded parameter list picks up the `palette` parameter from the
+  F5 overlay theming. That list is not compared, which is why it went stale without
+  failing.
+
+- **`xyp`: `x_order=` / `y_order=` accept `'reverse'` and `'count'`.** `'reverse'` is
+  the default sort, descending. `'count'` puts the values with the most rows first, with
+  ties in the default order. Like `'spectral'`, both need a categorical axis and raise
+  `ValueError` on any other kind. **The default (`None`, an ascending sort) is
+  unchanged**, so existing plots render as before. With a shared axis in small
+  multiples (`sm_shared={SM_X}`), the order is computed once over all the data and
+  applied to every tile, as for `'spectral'`, so tiles don't each reorder by their own
+  counts.
+
+  `XYp` also gains `axisIsCategorical(axis)`, `axisIsNumeric(axis)` and
+  `axisIsPeriodicTime(axis)`. These are the rules validation already used, moved out of
+  closures inside `__validateInput__` into methods, so the interactive panel offers
+  exactly the settings the constructor accepts.
+
+- **`xypi`: settings-panel rows that change the render.** The generic views' panel
+  had two rows (selection shape, tooltip), neither of which touched the plot. xypi now
+  has nine more. Each starts on the value read from the view's `xyp`, and **a panel
+  left untouched renders the view exactly as built** (the overrides are empty, not an
+  equivalent restatement):
+
+  | key | row | values | live when |
+  |---|---|---|---|
+  | `d` | distributions (*what they measure*) | off / x / y / x+y | always |
+  | `p` | placement | auto / inside / outside | distributions on |
+  | `b` | bins | auto, auto /4, /2, x2, x4 | a distributed axis is not periodic time |
+  | `e` | aspect | none / equal / geo | both axes numeric |
+  | `o` | dot opacity | 10 … 100 (linkpi's list) | opacity is not a column |
+  | `c` | color scale | magnitude / stretched | color is a magnitude/stretched mode |
+  | `l` | legend | off / right / bottom / top / left | there is a color |
+  | `x` / `y` | x order / y order | sorted / reverse / by count / spectral | the axis is categorical |
+
+  How the rows behave:
+  - **What the distributions measure is part of the row's label** (`distributions
+    (rows)`, `distributions (bytes)`), not a separate read-only row. A greyed-out row
+    already means "unavailable" on this panel.
+  - **Turning on an axis that had no distribution** measures what the other axis
+    measured, or row counts if neither had one.
+  - **Bins are multiples of xyp's own auto count**, which is derived from the plot's
+    pixel size, so every option is already scaled to the view. The auto count is read
+    from a probe render at the same settings rather than recomputed from a copy of the
+    formula.
+  - **A value the view was built with that the list doesn't carry** (an explicit bin
+    count, a list `x_order=`, opacity 0.37, a legend dict) appears as an extra `#` item
+    showing that value, or `as built`, as linkpi's pickers already do.
+  - **If a setting is refused** (the component raises), it is logged and the row snaps
+    back, and the view is left as it was.
+  - **Stack levels:** only the frame on screen is re-rendered. The cache is emptied, so
+    every other stack level picks up the new settings when it is next shown.
+  - Dot size was left out on purpose. xyp's `dot_size` switches render mode between an
+    int (pixel squares) and a float (circles), and it also drives the auto-bin count
+    and the distribution-placement heuristic. A size menu would silently flip modes.
+
+  **The mechanism is shared, not specific to xypi**:
+  - `polars2svg/interactive_render_rows.py` (new, fully typed, no Panel import)
+    declares `RenderRow` / `RenderRowSet` and xyp's row set.
+  - `_InteractivePBase` gains a `render_settings` dict parameter, a
+    `_render_rows_cls_` hook, and overrides passed through `render_with()`.
+  - The panel fragment gains an optional `getValue` read hook, so linkpi is unchanged.
+  - histopi, timepi, chordpi and piepi get a panel like this by declaring a row set;
+    none does yet.
+
+- **`linkpi`: choosing a community-detection algorithm (`shift-d`, and a settings-panel
+  row).** `d` runs the selected algorithm, `shift-d` opens a picker that only selects
+  one, and `ctrl-d` still clears the colours. This is the same pattern as `b` /
+  `shift-b` / `ctrl-b` for the background producer. The panel gains a
+  `[d] community detection` row after `background producer`. The default is `louvain`,
+  so an untouched view behaves as before. The choices:
+
+  | label | what it is |
+  |---|---|
+  | `louvain` | resolution 1.0, the old behaviour |
+  | `louvain (coarse)` / `louvain (fine)` | resolution 0.5 / 2.0: fewer, larger or more, smaller communities |
+  | `label propagation` | networkx `fast_label_propagation_communities`, the fastest |
+  | `greedy modularity` | Clauset-Newman-Moore; **asks before running above 8,000 nodes** |
+  | `connected components` | not community detection, but often the first split wanted on a netflow graph |
+
+  Everything is seeded where the algorithm is randomised, so pressing `d` twice gives
+  the same colours. Each algorithm has its own confirmation key, so confirming greedy
+  modularity is not carried over to another algorithm.
+
+  The threshold comes from timings measured today on Barabasi-Albert and powerlaw-cluster
+  graphs, n = 500 to 8,000 (recorded in `interactive_treatments.py`):
+  - Louvain at every resolution stays under 1.0 s at n = 8,000.
+  - Label propagation stays under 0.1 s.
+  - Greedy modularity roughly quadruples with each doubling and reached 11.6 s at
+    n = 8,000. It gets `GREEDY_MODULARITY` (`confirm_above=8000`); the rest keep
+    `COMMUNITY_DETECTION`.
+
+  Three algorithms were left out on purpose:
+  - **Leiden:** networkx 3.6 only forwards it to other backends, so without
+    igraph/leidenalg it raises `NotImplementedError`.
+  - **k-clique:** its communities overlap, and one colour per node cannot show that.
+  - **Girvan-Newman:** too slow to be interactive at any useful size.
+
+  Other changes:
+  - `apply_community_detection()` takes an optional algorithm label, and raises
+    `ValueError` on an unknown one instead of silently running Louvain.
+  - It is now annotated, so `interactive_controller`'s unannotated-function ceiling drops
+    from 141 to 140.
+  - The keyboard help gains a `shift-d` line. The four `linkpi` parity goldens were
+    re-recorded for that line (32 → 33) and the new `community_algorithm` parameter;
+    nothing else in them changed.
+
+- **Tooltips abbreviate magnitudes, and only magnitudes.** The record count and a
+  field's `N distinct` count use `unitize()` at 4 characters (`45.6M records`,
+  `2.02K records`, `1.5K distinct`). Field values are abbreviated only when the field
+  comes from a **measure** encoding and the column is numeric:
+  - measure encodings are `count=` (timepi, histopi, piep, chordp, linkp), `dot_size=`
+    (xyp) and linkp's `link_size=`, declared per view as `_tooltip_measure_encodings_`
+    (linkpi has its own `_tooltipMeasures_`);
+  - x, y, color, bin_by and relationships are left exactly as they are, because in
+    netflow data they are as often identifiers as quantities, and port 8080 shown as
+    `8.08K` is wrong, not just terse.
+
+  `tooltip_fields=` chooses which fields are *shown*. Whether a shown field counts as a
+  magnitude still depends on the encodings.
+
 ### Changed
 
 - **`linkpi`: picking a background producer no longer runs it — `b` does.** The
@@ -239,6 +372,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   argument: with the tooltip off, a hover issues no round trip at all.
 
 ### Fixed
+
+- **`unitizeInt()` dropped digits and added a spurious `.0`.** This is the K/M/B/T/Q formatter
+  behind xyp's axis end labels, legend values and `stack_control`'s row count. It
+  stopped adding decimal places as soon as one more place left the string unchanged, so
+  `2_024` came out `2.0K` and every digit after a zero was lost. `round(x, 0)` also returns a
+  float, so whole numbers got a trailing `.0` (`443.0`, `20.0 Rows`), and small values
+  collapsed (`0.000123` became `0.0`). It is now a pure function, `unitize()` in
+  `p2s_text_mixin.py`, which `unitizeInt` calls:
+  - `num_of_digits` is still the character budget, decimal point included:
+    `1_231` → `1.231K`, and `45_612_314` → `45.6M` at 4.
+  - Trailing zeros are dropped: `2K`, `443`.
+  - A value that rounds up to 1000 moves to the next unit: `999_999` → `1M`.
+  - Values below one keep their significant digits.
+
+  Visible effect: whole-number labels lose the `.0`. The `test_xyp_label` pins change to
+  match: `100.0M` → `100.2M` (a lost digit restored) and `-124.0K` → `-124K`.
+
+  21 SVG goldens were regenerated (xyp, legend, smallp and their dark variants), with
+  their PNGs. The text changes are all `N.0` → `N` (178 of them). The attribute changes
+  come from the narrower labels: axis titles are centred between the shorter end labels,
+  and the legend colorbar gets back the width that `0.0` took. The `xypi` and
+  `stack_controli` parity goldens were re-recorded for the same label text. `histopi`
+  and `timepi` changed only by the uncompared `palette` entry in the recorded parameter
+  list (see the `ctrl-shift-s` entry).
+
+  `unitizeInt_extendUntilDifferent()` still uses `round()` and can still print `1.0K`
+  next to `1.001K`. It is used only when both xyp end labels would otherwise print the
+  same, and it is left for a separate change.
 
 - **`tests/view_js_utils.py`'s source scanner mis-read any JS file containing a URL.**
   `test_js_assets.py` stripped comments and string literals with a *sequence* of regexes,
@@ -323,6 +484,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   branch and removes the selection from the sticky set, exactly as `shift-s` does. Called
   out rather than left to be discovered: an absorbed binding that quietly starts doing
   something *else* is worse than one that stops working.
+  *(Superseded: the chord now selects the sticky-labelled nodes -- see Added.)*
 
 - **Re-recorded the four `linkpi` parity goldens** (`linkpi`, `linkpi_menu`,
   `linkpi_search`, `linkpi_wheel_multiplicity`). The diffs are the intended change and

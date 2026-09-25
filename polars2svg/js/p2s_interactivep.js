@@ -187,17 +187,42 @@ export function render({ model, el }) {
       tooltip:      'tooltip:',
   };
 
+  // Render rows (interactive_render_rows.py) are the kinds with no param of their own:
+  // every one of them lives in the single render_settings dict, and a kind is one when
+  // it is a key there.  Their picker header is the row's own label, read off
+  // config_panel_rows, because the kinds are per component and this module is shared.
+  function isRenderKind(kind) {
+      return model.render_settings && Object.prototype.hasOwnProperty.call(model.render_settings, kind);
+  }
+  function syncRenderHeaders() {
+      for (const _row_ of (model.config_panel_rows || [])) {
+          if (isRenderKind(_row_[1])) { MENU_HEADER_[_row_[1]] = _row_[2] + ':'; }
+      }
+  }
+  syncRenderHeaders();
+
+  function menuGetValue(kind) {
+      return isRenderKind(kind) ? model.render_settings[kind] : model[MENU_PARAM_[kind]];
+  }
+
   // The single write path for every choice a picker or a panel row can make.  An
   // explicit chain, matching LINKPI's, rather than MENU_PARAM_[kind]: the write side is
   // where a kind gets to be special, and spelling it out is what makes that visible.
+  // A render row writes a whole new dict -- reassigning is what syncs a Dict param.
   function menuSetValue(kind, label) {
       if      (kind == 'select_shape') { model.select_shape = label; }
       else if (kind == 'tooltip')      { model.tooltip      = label; }
+      else if (isRenderKind(kind)) {
+          const _s_ = Object.assign({}, model.render_settings);
+          _s_[kind] = label;
+          model.render_settings = _s_;
+      }
   }
 
   const _cp_ = p2sConfigPanel({
       model: model, state: state, menuNode: pickermenu, panelNode: configpanel,
       headers: MENU_HEADER_, params: MENU_PARAM_, setValue: menuSetValue,
+      getValue: menuGetValue,
   });
   // Only the entry points this module still calls.  The rest of the fragment's surface
   // is reached through menuKeyDown / panelKeyDown, which own the two modal key blocks.
@@ -436,8 +461,8 @@ export function render({ model, el }) {
   // The configuration panel is a live display, so every value it shows re-renders it --
   // including one Python changed by itself.  config_panel_rows carries the row order AND
   // the per-row enabled flag.
-  for (const _pp_ of ['config_panel_rows', 'select_shape']) {
-    model.on(_pp_, function() { panelRender(); });
+  for (const _pp_ of ['config_panel_rows', 'select_shape', 'render_settings']) {
+    model.on(_pp_, function() { syncRenderHeaders(); panelRender(); });
   }
   // The tooltip row's value list varies per view -- the icon state exists only when the
   // view was built with icon= -- so the snapshot in state has to be refreshed rather

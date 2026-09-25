@@ -83,7 +83,25 @@ ASSUMED_CHEAP = Treatment(killable=True)
 # n=500/1000/2000/4000 (2026-08-27) -- comfortably interactive, and imported, so there is
 # no loop to interrupt.  Declared anyway: it is reachable from a keystroke like everything
 # else, and an operation nothing can see is an operation nothing can protect.
+#
+# The default for every community algorithm in the shift-d picker except the one in
+# COMMUNITY_TREATMENTS below.  Re-measured with the picker (2026-09-24) on Barabasi-Albert
+# m=2 and powerlaw-cluster (m=3, p=0.3) graphs at n=500..8000: louvain at resolution 0.5 /
+# 1 / 2 stays under 1.0 s at n=8000, fast label propagation under 0.1 s, connected
+# components ~0.
 COMMUNITY_DETECTION = Treatment(truncatable=False, killable=True)
+
+# networkx greedy_modularity_communities (Clauset-Newman-Moore).  The one community
+# algorithm that is not cheap: measured 0.08 / 0.25 / 0.82 / 2.68 / 11.55 s at
+# n=500/1000/2000/4000/8000 on powerlaw-cluster graphs (2026-09-24), ~4x per doubling,
+# and 2.27 s at n=8000 on Barabasi-Albert.  Imported, so there is no loop to truncate.
+# The next doubling past 8000 is ~45 s, which is where SPRING_NX's reasoning puts the
+# threshold too.
+GREEDY_MODULARITY = Treatment(truncatable=False, killable=True, confirm_above=8000)
+
+COMMUNITY_TREATMENTS = {
+    'greedy modularity': GREEDY_MODULARITY,
+}
 
 # link_shape='flowmap' (ODFlowLayout).  The one genuinely unbounded operation still
 # reachable from a keystroke.  Measured 1.90 / 29.41 / 284.61 s at 100 / 200 / 400 flows
@@ -142,6 +160,12 @@ LAYOUT_TREATMENTS = {
 def treatment_for(label: str) -> Any:
     '''The declaration for a layout-operation menu label; CHEAP when none is recorded.'''
     return LAYOUT_TREATMENTS.get(label, CHEAP)
+
+
+def community_treatment_for(label: str) -> Any:
+    '''The declaration for a community-algorithm menu label; COMMUNITY_DETECTION when none
+    is recorded.'''
+    return COMMUNITY_TREATMENTS.get(label, COMMUNITY_DETECTION)
 
 
 def menu_annotation(treatment: Any, unit: str = 'nodes') -> str | None:

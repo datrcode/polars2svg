@@ -237,6 +237,57 @@ class TestTextContent(_TooltipTestCase):
         self.assertEqual(_lines_[-1], '...')
 
 
+# ── magnitudes: abbreviated only where the number IS a magnitude ────────────
+
+class TestMagnitudeText(_TooltipTestCase):
+    def test_the_record_count_is_abbreviated(self):
+        _recs_ = pl.DataFrame({'v': list(range(2_024))})
+        self.assertEqual(ic._tooltipTextLines_(_recs_, [])[0], '2.02K records')
+
+    def test_a_small_record_count_is_left_alone(self):
+        self.assertEqual(ic._tooltipTextLines_(_df(), [])[0], '5 records')
+
+    def test_a_distinct_count_is_abbreviated_whatever_the_field(self):
+        _recs_ = pl.DataFrame({'sip': [f'10.0.{_i_ // 256}.{_i_ % 256}' for _i_ in range(1_500)]})
+        self.assertIn('1.5K distinct', ' '.join(ic._tooltipTextLines_(_recs_, ['sip'])))
+
+    def test_a_measure_field_is_abbreviated(self):
+        _recs_ = pl.DataFrame({'bytes': [45_612_314]})
+        _lines_ = ic._tooltipTextLines_(_recs_, ['bytes'], measures={'bytes'})
+        self.assertIn('45.6M', _lines_[1])
+
+    def test_an_identifier_field_is_not(self):
+        """The reason abbreviation is opt-in per encoding: port 8080 is not '8.08K'."""
+        _recs_ = pl.DataFrame({'dport': [8080], 'bytes': [8080]})
+        _lines_ = ic._tooltipTextLines_(_recs_, ['dport', 'bytes'], measures={'bytes'})
+        self.assertTrue(_lines_[1].endswith('8080'), _lines_)
+        self.assertTrue(_lines_[2].endswith('8.08K'), _lines_)
+
+    def test_a_non_numeric_measure_is_printed_as_is(self):
+        _lines_ = ic._tooltipTextLines_(_df().head(1), ['sip'], measures={'sip'})
+        self.assertIn('10.0.0.1', _lines_[1])
+
+    def test_histopi_treats_count_as_the_measure_and_bin_by_as_not(self):
+        _df_ = pl.DataFrame({'dport': [8080, 8080, 443], 'bytes': [2_000_000, 500_000, 7]})
+        _v_  = self.p2s.histopi(self.p2s.histop(_df_, bin_by='dport', count='bytes', wxh=(128, 128)))
+        _recs_ = _df_.filter(pl.col('dport') == 8080)
+        self.assertEqual(_v_._tooltipMeasures_(_recs_), {'bytes'})
+        _lines_ = ic._tooltipTextLines_(_recs_, _v_._tooltipFields_(_recs_), _v_._tooltipMeasures_(_recs_))
+        _body_  = ' '.join(_lines_)
+        self.assertIn('8080', _body_)
+        self.assertIn('2M, 500K', _body_)
+
+    def test_xypi_measures_dot_size_only(self):
+        _df_ = pl.DataFrame({'x': [1.0, 2.0], 'y': [1.0, 2.0], 'bytes': [1_000, 2_000_000]})
+        _v_  = self.p2s.xypi(self.p2s.xyp(_df_, x='x', y='y', dot_size='bytes', wxh=(128, 128)))
+        self.assertEqual(_v_._tooltipMeasures_(_df_), {'bytes'})
+
+    def test_linkpi_measures_count(self):
+        _df_ = pl.DataFrame({'fm': ['a', 'b'], 'to': ['b', 'c'], 'bytes': [10, 20]})
+        _v_  = self.p2s.linkpi(self.p2s.linkp(_df_, relationships=[('fm', 'to')], count='bytes'))
+        self.assertEqual(_v_._tooltipMeasures_(_df_), {'bytes'})
+
+
 # ── icon mode ───────────────────────────────────────────────────────────────
 
 class TestIconMode(_TooltipTestCase):

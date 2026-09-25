@@ -222,6 +222,13 @@ class XYpKwargs(TypedDict, total=False):
 #
 # XYp
 #
+#: The string values x_order= / y_order= accept.  None (the default) sorts the axis values
+#: ascending; 'reverse' sorts them descending; 'count' puts the values with the most rows
+#: first; 'spectral' is the Fiedler seriation (see __spectralOrder__).  Every one of them
+#: needs a categorical axis.
+_ORDER_STRINGS_ = ('reverse', 'count', 'spectral')
+
+
 class XYp(P2SBackgroundMixin, ExportMixin):
 
     _COMPONENT_NAME_ = 'XYp'   # background transform/error message prefix
@@ -471,8 +478,8 @@ class XYp(P2SBackgroundMixin, ExportMixin):
             'dot_size_supersample':  1,          # int >= 1; only affects integer dot_size (raster) plots
             'x_distributions':       None,
             'y_distributions':       None,
-            'x_order':               None,             # None / list / dict / 'spectral' (Fiedler seriation)
-            'y_order':               None,             # None / list / dict / 'spectral' (Fiedler seriation)
+            'x_order':               None,             # None (sorted) / list / dict / 'reverse' / 'count' / 'spectral' (Fiedler seriation)
+            'y_order':               None,             # None (sorted) / list / dict / 'reverse' / 'count' / 'spectral' (Fiedler seriation)
             'spectral_by':           None,             # signal column(s) for spectral order; None = the opposite axis
             'spectral_weight':       None,             # numeric column summed into the contingency (None = row counts)
             'spectral_similarity':   'cosine',         # 'cosine' / 'linear' / 'correlation'
@@ -656,6 +663,50 @@ class XYp(P2SBackgroundMixin, ExportMixin):
             if self.__isEnum__(v):
                 return None, False, {v}
             return [v], self.__isLiteral__(v, attr_name), set()
+
+    #
+    # axisIsCategorical() / axisIsNumeric() - what kind of axis 'x' or 'y' is, by the rules
+    # validation applies: x_order='spectral'/'count'/'reverse' needs a categorical axis,
+    # aspect= needs two numeric ones.  Public so an interactive view can offer (or grey out)
+    # exactly the settings the constructor would accept, rather than keeping a second copy
+    # of the rules that drifts.  A time axis is neither.
+    #
+    def axisIsCategorical(self, axis: str) -> bool:
+        return self.__axisCleanIsCategorical__(*self.__axisCleanAndEnums__(axis))
+
+    def axisIsNumeric(self, axis: str) -> bool:
+        return self.__axisCleanIsNumeric__(*self.__axisCleanAndEnums__(axis))
+
+    #
+    # axisIsPeriodicTime() - a periodic time transform, whose distribution bins are one per
+    # period unit and so not the caller's to choose
+    #
+    def axisIsPeriodicTime(self, axis: str) -> bool:
+        _clean_ = self.__axisCleanAndEnums__(axis)[0]
+        return _clean_ is not None and self.__axisIsPeriodicTime__(_clean_)
+
+    def __axisCleanAndEnums__(self, axis: str) -> tuple:
+        if axis not in ('x', 'y'): raise ValueError(f"XYp: axis must be 'x' or 'y', got {axis!r}")
+        return (self.x_clean, self.x_enums) if axis == 'x' else (self.y_clean, self.y_enums)
+
+    def __axisCleanIsCategorical__(self, clean: list | None, enums: set) -> bool:
+        if self.p2s.SETp in enums: return True
+        if clean is None:          return False
+        for _field_ in clean:
+            if isinstance(_field_, tuple): return True   # multi-field -> struct
+            if self.df is not None:
+                _dt_ = self.df.schema.get(_field_)
+                if isinstance(_dt_, pl.String) or isinstance(_dt_, pl.Struct): return True
+        return False
+
+    def __axisCleanIsNumeric__(self, clean: list | None, enums: set) -> bool:
+        if clean is None:          return False  # enum-only axis
+        if self.p2s.SETp in enums: return False  # explicitly categorical
+        if len(enums & (self.p2s.time_linear_types | self.p2s.time_periodic_types)) > 0: return False
+        for field in clean:
+            if isinstance(field, tuple):                   return False  # multi-field -> struct/categorical
+            if not self.p2s.numericColumn(self.df, field): return False
+        return True
 
     #
     # __separateAndCleanParam__() - separate into a clean tuple and a set of enums
@@ -1198,24 +1249,17 @@ class XYp(P2SBackgroundMixin, ExportMixin):
         # order on a numeric/temporal axis would be silently ignored downstream,
         # so fail loudly here instead.
         #
-        def _axis_is_categorical_(clean: list, enums: set) -> bool:
-            if self.p2s.SETp in enums: return True
-            if clean is None:          return False
-            for _field_ in clean:
-                if isinstance(_field_, tuple): return True   # multi-field -> struct
-                if self.df is not None:
-                    _dt_ = self.df.schema.get(_field_)
-                    if isinstance(_dt_, pl.String) or isinstance(_dt_, pl.Struct): return True
-            return False
+        _axis_is_categorical_ = self.__axisCleanIsCategorical__
         for _which_, _order_, _clean_, _enums_ in [('x', self.x_order, self.x_clean, self.x_enums),
                                                    ('y', self.y_order, self.y_clean, self.y_enums)]:
             if isinstance(_order_, str):
-                if _order_ != 'spectral':
-                    raise ValueError(f"XYp.__validateInput__(): {_which_}_order string must be 'spectral', got {_order_!r}")
+                if _order_ not in _ORDER_STRINGS_:
+                    raise ValueError(f"XYp.__validateInput__(): {_which_}_order string must be one of "
+                                     f"{list(_ORDER_STRINGS_)}, got {_order_!r}")
                 if self.df is not None and not _axis_is_categorical_(_clean_, _enums_):
-                    raise ValueError(f"XYp.__validateInput__(): {_which_}_order='spectral' requires a categorical "
+                    raise ValueError(f"XYp.__validateInput__(): {_which_}_order={_order_!r} requires a categorical "
                                      f"{_which_} axis (string / struct column, or a SETp-tagged field)")
-        if self.df is not None and (isinstance(self.x_order, str) or isinstance(self.y_order, str)):
+        if self.df is not None and (self.x_order == 'spectral' or self.y_order == 'spectral'):
             _by_cols_ = [] if self.spectral_by is None else \
                         (list(self.spectral_by) if isinstance(self.spectral_by, (list, tuple)) else [self.spectral_by])
             if self.spectral_weight is not None: _by_cols_ = _by_cols_ + [self.spectral_weight]
@@ -1278,17 +1322,9 @@ class XYp(P2SBackgroundMixin, ExportMixin):
         # reports itself through __validateColumnTypes__() first.
         #
         if self.aspect is not None and self.df is not None:
-            def _axis_is_numeric_(clean: list, enums: set) -> bool:
-                if clean is None:          return False  # enum-only axis
-                if self.p2s.SETp in enums: return False  # explicitly categorical
-                if len(enums & (self.p2s.time_linear_types | self.p2s.time_periodic_types)) > 0: return False
-                for field in clean:
-                    if isinstance(field, tuple):                   return False  # multi-field -> struct/categorical
-                    if not self.p2s.numericColumn(self.df, field): return False
-                return True
             _bad_ = [_w_ for _w_, _c_, _e_ in [('x', self.x_clean, self.x_enums),
                                                ('y', self.y_clean, self.y_enums)]
-                     if not _axis_is_numeric_(_c_, _e_)]
+                     if not self.__axisCleanIsNumeric__(_c_, _e_)]
             if _bad_:
                 raise ValueError(f'XYp.__validateInput__(): aspect= requires numeric x and y axes; '
                                  f'{" and ".join(_bad_)} is categorical or temporal')
@@ -1574,10 +1610,20 @@ class XYp(P2SBackgroundMixin, ExportMixin):
                         _order_ = self.__spectralOrder__(_src_)
 
                     #
-                    # No user specified order -- make one by sorting the values
+                    # No user specified order -- make one by sorting the values.  'reverse'
+                    # is the same sort descending; 'count' puts the values with the most
+                    # rows first (ties broken by the ascending sort, so it is deterministic).
                     #
-                    if _order_ is None or len(_order_) == 0:
-                        _dfi_: pl.DataFrame | pl.LazyFrame = _df_.select([_src_]).unique().sort(_src_).with_row_index(_dst_)
+                    if _order_ is None or len(_order_) == 0 or _order_ == 'reverse':
+                        _dfi_: pl.DataFrame | pl.LazyFrame = _df_.select([_src_]).unique() \
+                                                                 .sort(_src_, descending=(_order_ == 'reverse')).with_row_index(_dst_)
+                        if self.use_lazy_execution: _dfi_ = _dfi_.lazy()
+                        _df_  = _joinInSameMode_(_df_, _dfi_, on=_src_, how='left')
+
+                    elif _order_ == 'count':
+                        _dfi_ = _df_.group_by(_src_).agg(pl.len().alias('__order_n__')) \
+                                    .sort(['__order_n__', _src_], descending=[True, False]) \
+                                    .drop('__order_n__').with_row_index(_dst_)
                         if self.use_lazy_execution: _dfi_ = _dfi_.lazy()
                         _df_  = _joinInSameMode_(_df_, _dfi_, on=_src_, how='left')
 
@@ -3810,10 +3856,11 @@ class XYp(P2SBackgroundMixin, ExportMixin):
             if self.p2s.SM_Y in self.sm_shared and len(_ref_.df_flat) > 0:
                 _kwargs_shared_['y_shared_label_range'] = _shared_labels_('y')
 
-            # Spectral order on a SHARED axis must be computed once globally, not
-            # per tile -- otherwise each tile seriates its own category subset into
+            # A computed order ('spectral', and equally 'count' / 'reverse') on a SHARED
+            # axis must be computed once globally, not per tile -- otherwise each tile
+            # orders its own category subset (seriation, or its own row counts) into
             # a different order and the "shared axis" comparability is lost.  _ref_
-            # already ran the global Fiedler seriation over df_all, so lift its
+            # already ran the global order over df_all, so lift its
             # category order (values sorted by the resolved __xi__/__yi__ index) and
             # inject it as a concrete list.  That list overrides the cloned
             # 'spectral' string in every tile (kwarg overrides beat template state),

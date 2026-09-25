@@ -24,17 +24,17 @@
         "svgstackcontrol": {
           "tag": "svg",
           "kids": 3,
-          "text": "MLX: unavailableCUDA: unavailable20.0 Rowsbase .rect-group-N rect { width: 1px; height: 1px; } 10.0x90.010.0y90.02040608"
+          "text": "MLX: unavailableCUDA: unavailable20 Rowsbase .rect-group-N rect { width: 1px; height: 1px; } 10x9010y902040608020406080 "
         },
         "mod": {
           "tag": "svg",
           "kids": 1,
-          "text": "MLX: unavailableCUDA: unavailable20.0 Rowsbase .rect-group-N rect { width: 1px; height: 1px; } 10.0x90.010.0y90.02040608"
+          "text": "MLX: unavailableCUDA: unavailable20 Rowsbase .rect-group-N rect { width: 1px; height: 1px; } 10x9010y902040608020406080"
         },
         "xyp_N": {
           "tag": "svg",
           "kids": 28,
-          "text": ".rect-group-N rect { width: 1px; height: 1px; } 10.0x90.010.0y90.02040608020406080"
+          "text": ".rect-group-N rect { width: 1px; height: 1px; } 10x9010y902040608020406080"
         },
         "plotClip-N": {
           "tag": "clippath",
@@ -66,17 +66,17 @@
         "svgstackcontrol": {
           "tag": "svg",
           "kids": 3,
-          "text": "MLX: unavailableCUDA: unavailable20.0 Rowsbase .rect-group-N rect { width: 1px; height: 1px; } 10.0x90.010.0y90.02040608"
+          "text": "MLX: unavailableCUDA: unavailable20 Rowsbase .rect-group-N rect { width: 1px; height: 1px; } 10x9010y902040608020406080 "
         },
         "mod": {
           "tag": "svg",
           "kids": 1,
-          "text": "MLX: unavailableCUDA: unavailable20.0 Rowsbase .rect-group-N rect { width: 1px; height: 1px; } 10.0x90.010.0y90.02040608"
+          "text": "MLX: unavailableCUDA: unavailable20 Rowsbase .rect-group-N rect { width: 1px; height: 1px; } 10x9010y902040608020406080"
         },
         "xyp_N": {
           "tag": "svg",
           "kids": 28,
-          "text": ".rect-group-N rect { width: 1px; height: 1px; } 10.0x90.010.0y90.02040608020406080"
+          "text": ".rect-group-N rect { width: 1px; height: 1px; } 10x9010y902040608020406080"
         },
         "plotClip-N": {
           "tag": "clippath",
@@ -113,17 +113,17 @@
         "svgstackcontrol": {
           "tag": "svg",
           "kids": 3,
-          "text": "MLX: unavailableCUDA: unavailable20.0 Rowsbase .rect-group-N rect { width: 1px; height: 1px; } 10.0x90.010.0y90.02040608"
+          "text": "MLX: unavailableCUDA: unavailable20 Rowsbase .rect-group-N rect { width: 1px; height: 1px; } 10x9010y902040608020406080 "
         },
         "mod": {
           "tag": "svg",
           "kids": 1,
-          "text": "MLX: unavailableCUDA: unavailable20.0 Rowsbase .rect-group-N rect { width: 1px; height: 1px; } 10.0x90.010.0y90.02040608"
+          "text": "MLX: unavailableCUDA: unavailable20 Rowsbase .rect-group-N rect { width: 1px; height: 1px; } 10x9010y902040608020406080"
         },
         "xyp_N": {
           "tag": "svg",
           "kids": 28,
-          "text": ".rect-group-N rect { width: 1px; height: 1px; } 10.0x90.010.0y90.02040608020406080"
+          "text": ".rect-group-N rect { width: 1px; height: 1px; } 10x9010y902040608020406080"
         },
         "plotClip-N": {
           "tag": "clippath",

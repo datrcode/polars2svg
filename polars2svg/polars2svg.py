@@ -305,8 +305,8 @@ class Polars2SVG(P2SColorsMixin,
         def alias(self) -> str: return str(self)
         def __repr__(self) -> str: return f'TField({self.column!r}, {self.transform})'
 
-    # The thirteen classes that replaced the RenderEnumsP grab-bag, plus the tuple
-    # and union alias that still mean "any render enum".
+    # The thirteen classes that replaced the RenderEnumsP grab-bag, OrderKeyP since,
+    # and the tuple and union alias that still mean "any render enum".
     RowCountP              = _enums_.RowCountP
     DistributionPlacementP = _enums_.DistributionPlacementP
     DistributionScaleP     = _enums_.DistributionScaleP
@@ -320,6 +320,7 @@ class Polars2SVG(P2SColorsMixin,
     NodeColorP             = _enums_.NodeColorP
     PieStyleP              = _enums_.PieStyleP
     OrderBucketP           = _enums_.OrderBucketP
+    OrderKeyP              = _enums_.OrderKeyP
     RENDER_ENUM_CLASSES    = _enums_.RENDER_ENUM_CLASSES
     RenderEnum             = _enums_.RenderEnum
 
@@ -396,7 +397,7 @@ class Polars2SVG(P2SColorsMixin,
     PT_M_Sp:     _enums_.TimePeriodicTypeP
     PT_Sp:       _enums_.TimePeriodicTypeP
 
-    # The render enums (RowCountP .. OrderBucketP)
+    # The render enums (RowCountP .. OrderKeyP)
     ROW_COUNTp:                          _enums_.RowCountP
     DISTRIBUTION_INSIDEp:                _enums_.DistributionPlacementP
     DISTRIBUTION_OUTSIDEp:               _enums_.DistributionPlacementP
@@ -439,6 +440,7 @@ class Polars2SVG(P2SColorsMixin,
     SM_SLICE_ORDERp:                     _enums_.SmallMultipleP
     SM_PARTOFWHOLEp:                     _enums_.SmallMultipleP
     REMAINDERp:                          _enums_.OrderBucketP
+    LABELp:                              _enums_.OrderKeyP
 
     def __init__(self, palette: str = 'light') -> None:
         # Every Polars2SVG() builds its own instance, so everything below is per-instance
@@ -1091,10 +1093,11 @@ class Polars2SVG(P2SColorsMixin,
         color_stat_range_shared = (min, max)                       # shared spectrum range across small multiples (set automatically by smallp)
 
         order          = p2s.ROW_COUNTp                            # default — sort bars by count, descending
+                       = p2s.LABELp                                # sort by the bins' own values (numbers as numbers)
                        = 'field'                                   # sort by the sum of this field
                        = ('field', p2s.SETp)                       # sort by the number of unique values
                        = ('field', <statistic enum>)               # sort by the specified statistic
-        descending     = True (default) | False
+        descending     = True (default) | False                    # largest first, whatever order= is -- False for A to Z
 
         style          = p2s.BARCHARTp                             # default
                        = p2s.BOXPLOTp

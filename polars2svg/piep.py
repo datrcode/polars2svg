@@ -440,6 +440,22 @@ class Piep(ExportMixin):
         else:
             raise ValueError(f'Piep: unsupported color enum {_enum_}')
 
+    #
+    # colorMode() - the mode __resolveColor__ settled on (above).  Only 'cset' and
+    # 'spectrum' draw a legend, and only 'spectrum' has a magnitude / stretched scale -- a
+    # magnitude enum on a text field falls back to 'cset', with a warning.
+    # styleDrawsLabels() - whether draw_labels= draws anything in a style (this render's,
+    # by default): slice labels belong to the pie and the donut, and the waffle renderer
+    # draws none.
+    # Public so an interactive view greys out a row that would change nothing, rather
+    # than keeping a second copy of the rules.
+    #
+    def colorMode(self) -> str:
+        return getattr(self, '_color_mode_', 'none')
+
+    def styleDrawsLabels(self, style: Any = None) -> bool:
+        return (self.style if style is None else style) is not self.p2s.WAFFLEp
+
     def __addColumnsToDataFrame__(self) -> None:
         # __init__ gates the render stage on `self.df is not None`, so this cannot
         # fire; the guard is what lets a checker see it.  Same idiom as the other

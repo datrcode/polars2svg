@@ -391,14 +391,26 @@ class Histop(P2SBinComponentMixin, ExportMixin):
         if isinstance(self.count, tuple):      return {_f_ for _f_ in self.count if isinstance(_f_, str)}
         return set()
 
-    def __findNumericCountField__(self) -> str | None:
-        if isinstance(self.count, str) and self.p2s.numericColumn(self.df, self.count):
-            return self.count
-        elif isinstance(self.count, tuple):
-            for _f_ in self.count:
+    #
+    # numericCountField() - the numeric field a boxplot summarises for a count= spec (this
+    # render's own when none is given), or None when a boxplot would fall back to bars.
+    # distributionStripFits() - whether this render had room for the distribution strip,
+    # by __constructGeometry__'s size and space rules, whatever distribution= says (a
+    # boxplot never draws one either).  Public so an interactive view offers exactly what
+    # the constructor would draw, rather than keeping a second copy of the rules.
+    #
+    def numericCountField(self, count: Any = None) -> str | None:
+        _count_ = self.count if count is None else count
+        if isinstance(_count_, str) and self.p2s.numericColumn(self.df, _count_):
+            return _count_
+        elif isinstance(_count_, tuple):
+            for _f_ in _count_:
                 if isinstance(_f_, str) and self.p2s.numericColumn(self.df, _f_):
                     return _f_
         return None
+
+    def distributionStripFits(self) -> bool:
+        return bool(getattr(self, '_strip_fits_', False))   # False before a render
 
     def __orderAggExpr__(self) -> pl.Expr:
         if self.order == self.p2s.ROW_COUNTp:
@@ -486,7 +498,7 @@ class Histop(P2SBinComponentMixin, ExportMixin):
 
         # ── BOXPLOT ───────────────────────────────────────────────────────
         if self.style in {self.p2s.BOXPLOTp, self.p2s.BOXPLOT_W_SWARMp}:
-            _nf_ = self.__findNumericCountField__()
+            _nf_ = self.numericCountField()
             if _nf_ is None:
                 self.p2s.logger.warning('Histop: BOXPLOTp requires a numeric count field; falling back to BARCHARTp')
                 self.style = self.p2s.BARCHARTp
@@ -579,17 +591,27 @@ class Histop(P2SBinComponentMixin, ExportMixin):
                 )
 
         # ── SORT ORDER FOR BINS ────────────────────────────────────────────
-        if self._agg_type_ == 'stacked':
-            _order_df_ = self.df_agg.group_by(self._bin_col_).agg(pl.col('__count__').sum().alias('__order_metric__'))
-        elif self._agg_type_ == 'boxplot':
-            _order_df_ = self.df_agg.select([self._bin_col_, pl.col('__count__').alias('__order_metric__')])
-        elif self.order == self.p2s.ROW_COUNTp:
-            # Sort by the actual bar length (df_agg['__count__']), not raw row count.
-            # This ensures set-based counts (n_unique) sort correctly by what the bars show.
-            _order_df_ = self.df_agg.select([self._bin_col_, pl.col('__count__').alias('__order_metric__')])
+        # order= is the sort key on every path.  Stacked and boxplot bars used to sort by
+        # their count whatever it said -- and a categorical colour makes every bar chart
+        # stacked, so order= silently did nothing on any coloured histogram.
+        if self.order is self.p2s.LABELp:
+            # The bins' own values: numbers as numbers (port 80 before 443), and a
+            # missing value last whichever way the sort runs.
+            self._sorted_bins_ = (self.df_agg.select(pl.col(self._bin_col_).unique())
+                                  .sort(self._bin_col_, descending=self.descending, nulls_last=True)
+                                  [self._bin_col_].to_list())
         else:
-            _order_df_ = self.df.group_by(self._bin_col_).agg(self.__orderAggExpr__())
-        self._sorted_bins_ = _order_df_.sort('__order_metric__', descending=self.descending)[self._bin_col_].to_list()
+            if self.order == self.p2s.ROW_COUNTp and self._agg_type_ == 'stacked':
+                # A stacked bar's length is its segments' total.
+                _order_df_ = self.df_agg.group_by(self._bin_col_).agg(pl.col('__count__').sum().alias('__order_metric__'))
+            elif self.order == self.p2s.ROW_COUNTp:
+                # Sort by the actual bar length (df_agg['__count__']), not raw row count.
+                # This ensures set-based counts (n_unique) sort correctly by what the bars
+                # show.  (A boxplot's '__count__' is its row count.)
+                _order_df_ = self.df_agg.select([self._bin_col_, pl.col('__count__').alias('__order_metric__')])
+            else:
+                _order_df_ = self.df.group_by(self._bin_col_).agg(self.__orderAggExpr__())
+            self._sorted_bins_ = _order_df_.sort('__order_metric__', descending=self.descending)[self._bin_col_].to_list()
 
         # ── COUNT RANGE ───────────────────────────────────────────────────
         if self.count_range_shared is not None:
@@ -696,10 +718,10 @@ class Histop(P2SBinComponentMixin, ExportMixin):
         _raw_strip_h_        = max(1, self.distribution_bin_w)
         _candidate_strip_y0_ = self._avail_y1_ - y_ins - _raw_strip_h_
         _min_bar_bottom_     = self._plot_y0_ + self._slot_h_ + 4
-        if (not self.distribution
-                or w < 48 or h < 48
-                or self._agg_type_ == 'boxplot'
-                or _candidate_strip_y0_ < _min_bar_bottom_):
+        # Room is a fact about this geometry whatever distribution= says, so it is kept
+        # for distributionStripFits().
+        self._strip_fits_    = not (w < 48 or h < 48 or _candidate_strip_y0_ < _min_bar_bottom_)
+        if not self.distribution or self._agg_type_ == 'boxplot' or not self._strip_fits_:
             self._dist_h_        = 0
             self._dist_strip_y0_ = self._avail_y1_
         else:

@@ -298,6 +298,22 @@ class Testxyp_aspect(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.p2s.xyp(_df_, 'ts',  'val', dot_size=3.0, aspect='equal')
 
+    def test_a_periodic_time_axis_is_not_numeric(self):
+        """A periodic t-field's derived column is an integer (0-6 for day of week), and it
+        used to pass the numeric check.  aspect= then either rendered a meaningless ratio
+        or -- equal aspect padding a one-day range to fractional bounds -- crashed labelling
+        the axis with KeyError: 0.5.  It is refused like any other time axis now, and
+        axisIsNumeric() says so, which is what greys out xypi's aspect row."""
+        _df_ = pl.DataFrame({'ts': pl.datetime_range(pl.datetime(2026, 1, 1), pl.datetime(2026, 1, 1, 7),
+                                                     '1h', eager=True),
+                             'val': [3.0, 4.0, 5.0, 1.0, 2.0, 9.0, 6.0, 7.0]})
+        for _enum_ in (self.p2s.PT_DoWp, self.p2s.PT_Hp, self.p2s.LT_Y_m_dp):
+            _x_ = self.p2s.tField('ts', _enum_)
+            with self.subTest(transform=_enum_.name):
+                self.assertFalse(self.p2s.xyp(_df_, _x_, 'val', dot_size=3.0).axisIsNumeric('x'))
+                with self.assertRaises(ValueError):
+                    self.p2s.xyp(_df_, _x_, 'val', dot_size=3.0, aspect='equal')
+
     def test_unknown_kwarg_still_rejected(self):
         with self.assertRaises(TypeError):
             self.p2s.xyp(self.df, 'lon', 'lat', dot_size=3.0, aspct='equal')

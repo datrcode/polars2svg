@@ -254,6 +254,7 @@ export function render({ model, el }) {
   const _cp_ = p2sConfigPanel({
       model: model, state: state, menuNode: pickermenu, panelNode: configpanel,
       headers: MENU_HEADER_, params: MENU_PARAM_, setValue: menuSetValue,
+      root: svgparent,
   });
   const menuOpen  = _cp_.menuOpen,  menuCommit  = _cp_.menuCommit,
         panelOpen = _cp_.panelOpen, panelRender = _cp_.panelRender;

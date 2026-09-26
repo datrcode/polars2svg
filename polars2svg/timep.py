@@ -8,7 +8,69 @@ import polars2svg
 from polars2svg.p2s_displaylist import DisplayList
 from polars2svg.export import ExportMixin
 from polars2svg.p2s_bin_component_mixin import P2SBinComponentMixin
-from polars2svg.p2s_enums import BarStyleP, SelectShapeP, TimeLinearTypeP
+from polars2svg.p2s_enums import BarStyleP, SelectShapeP, TimeLinearTypeP, TimePeriodicTypeP
+
+#: Seconds in one bin of each linear truncation -- enough to size a spine from a frame's
+#: span without building it.
+_SECS_PER_TRUNC_ = {
+    '1y': 365.25*86400, '3mo': 91.3125*86400, '1mo': 30.4375*86400,
+    '1d': 86400, '4h': 14400, '1h': 3600, '15m': 900, '1m': 60, '15s': 15, '1s': 1,
+}
+
+#: Each time level's name.  'month / day' was 'day of month' -- which is PT_dp's meaning,
+#: and the two could sit side by side in a picker.
+_TIME_LEVEL_NAMES_ = {
+    TimeLinearTypeP.LT_Yp:               'yearly',
+    TimeLinearTypeP.LT_Y_Qp:             'quarterly',
+    TimeLinearTypeP.LT_Y_mp:             'monthly',
+    TimeLinearTypeP.LT_Y_m_dp:           'daily',
+    TimeLinearTypeP.LT_Y_m_d_4Hp:        'every 4 hours',
+    TimeLinearTypeP.LT_Y_m_d_Hp:         'hourly',
+    TimeLinearTypeP.LT_Y_m_d_H_15Mp:     'every 15 min',
+    TimeLinearTypeP.LT_Y_m_d_H_Mp:       'by minute',
+    TimeLinearTypeP.LT_Y_m_d_H_M_15Sp:   'every 15 sec',
+    TimeLinearTypeP.LT_Y_m_d_H_M_Sp:     'by second',
+    TimePeriodicTypeP.PT_Qp:             'quarter',
+    TimePeriodicTypeP.PT_mp:             'month',
+    TimePeriodicTypeP.PT_m_dp:           'month / day',
+    TimePeriodicTypeP.PT_m_d_Hp:         'month / day / hour',
+    TimePeriodicTypeP.PT_DoYp:           'day of year',
+    TimePeriodicTypeP.PT_DoWp:           'day of week',
+    TimePeriodicTypeP.PT_DoW_Hp:         'day of week / hour',
+    TimePeriodicTypeP.PT_DoW_H_Mp:       'day of week / hour / min',
+    TimePeriodicTypeP.PT_dp:             'day',
+    TimePeriodicTypeP.PT_d_Hp:           'day / hour',
+    TimePeriodicTypeP.PT_d_H_Mp:         'day / hour / min',
+    TimePeriodicTypeP.PT_Hp:             'hour',
+    TimePeriodicTypeP.PT_H_Mp:           'hour / minute',
+    TimePeriodicTypeP.PT_H_M_Sp:         'hour / min / sec',
+    TimePeriodicTypeP.PT_Mp:             'minute',
+    TimePeriodicTypeP.PT_M_Sp:           'minute / second',
+    TimePeriodicTypeP.PT_Sp:             'second',
+}
+
+#: The finest linear level each periodic level needs the data to resolve: an hour-of-day
+#: level reads the hour, which a Date column does not have and midnight-only timestamps
+#: never vary.
+_PERIODIC_NEEDS_ = {
+    TimePeriodicTypeP.PT_Qp:       TimeLinearTypeP.LT_Y_m_dp,
+    TimePeriodicTypeP.PT_mp:       TimeLinearTypeP.LT_Y_m_dp,
+    TimePeriodicTypeP.PT_m_dp:     TimeLinearTypeP.LT_Y_m_dp,
+    TimePeriodicTypeP.PT_DoYp:     TimeLinearTypeP.LT_Y_m_dp,
+    TimePeriodicTypeP.PT_DoWp:     TimeLinearTypeP.LT_Y_m_dp,
+    TimePeriodicTypeP.PT_dp:       TimeLinearTypeP.LT_Y_m_dp,
+    TimePeriodicTypeP.PT_m_d_Hp:   TimeLinearTypeP.LT_Y_m_d_Hp,
+    TimePeriodicTypeP.PT_DoW_Hp:   TimeLinearTypeP.LT_Y_m_d_Hp,
+    TimePeriodicTypeP.PT_d_Hp:     TimeLinearTypeP.LT_Y_m_d_Hp,
+    TimePeriodicTypeP.PT_Hp:       TimeLinearTypeP.LT_Y_m_d_Hp,
+    TimePeriodicTypeP.PT_DoW_H_Mp: TimeLinearTypeP.LT_Y_m_d_H_Mp,
+    TimePeriodicTypeP.PT_d_H_Mp:   TimeLinearTypeP.LT_Y_m_d_H_Mp,
+    TimePeriodicTypeP.PT_H_Mp:     TimeLinearTypeP.LT_Y_m_d_H_Mp,
+    TimePeriodicTypeP.PT_Mp:       TimeLinearTypeP.LT_Y_m_d_H_Mp,
+    TimePeriodicTypeP.PT_H_M_Sp:   TimeLinearTypeP.LT_Y_m_d_H_M_Sp,
+    TimePeriodicTypeP.PT_M_Sp:     TimeLinearTypeP.LT_Y_m_d_H_M_Sp,
+    TimePeriodicTypeP.PT_Sp:       TimeLinearTypeP.LT_Y_m_d_H_M_Sp,
+}
 
 
 #
@@ -446,6 +508,41 @@ class Timep(P2SBinComponentMixin, ExportMixin):
         elif                                   _all_same_s_: return self.p2s.LT_Y_m_d_H_Mp
         else:                                                return self.p2s.LT_Y_m_d_H_M_Sp
 
+    #
+    # __maxTimeBins__() - the most bins the plot has room for, two pixels each: the budget
+    # the auto resolution and timeLevels() both work to.
+    # __granularityStatExprs__() / __granularityCapFromStats__() - the finest linear level
+    # the data resolves: timestamps whose minutes and seconds never move are hourly data,
+    # and so on, and a Date column is daily.  The expressions ride along in a caller's
+    # single select.
+    #
+    def __maxTimeBins__(self) -> int:
+        w, _h_   = self.wxh
+        x_ins, _ = self.insets
+        _axis_w_ = self.txt_h if self.draw_context else 0
+        return max(2, (w - 2 * x_ins - _axis_w_) // 2)
+
+    def __granularityStatExprs__(self) -> list[pl.Expr]:
+        _tf_ = pl.col(self._time_field_)
+        return [
+            _tf_.dt.hour()  .n_unique().alias('__nh__'),
+            _tf_.dt.minute().n_unique().alias('__nm__'),
+            _tf_.dt.second().n_unique().alias('__ns__'),
+            _tf_.dt.hour()  .min()     .alias('__h0__'),
+            _tf_.dt.minute().min()     .alias('__m0__'),
+            _tf_.dt.second().min()     .alias('__s0__'),
+        ]
+
+    def __granularityCapFromStats__(self, stats: dict, is_date: bool) -> TimeLinearTypeP:
+        if is_date: return self.p2s.LT_Y_m_dp
+        _all_same_h_ = stats['__nh__'] == 1 and stats['__h0__'] == 0
+        _all_same_m_ = stats['__nm__'] == 1 and stats['__m0__'] == 0
+        _all_same_s_ = stats['__ns__'] == 1 and stats['__s0__'] == 0
+        if   _all_same_h_ and _all_same_m_ and _all_same_s_: return self.p2s.LT_Y_m_dp
+        elif                  _all_same_m_ and _all_same_s_: return self.p2s.LT_Y_m_d_Hp
+        elif                                   _all_same_s_: return self.p2s.LT_Y_m_d_H_Mp
+        else:                                                return self.p2s.LT_Y_m_d_H_M_Sp
+
     def __autoResolveLinearEnum2__(self) -> TimeLinearTypeP:
         '''Like __autoResolveLinearEnum__ but avoids sort+group_by_dynamic.
         Counts distinct bins via dt.truncate().n_unique() — no sort required.
@@ -459,19 +556,10 @@ class Timep(P2SBinComponentMixin, ExportMixin):
         analytically from the span, and the surviving truncations (plus the
         granularity-cap statistics for datetime columns) are evaluated in one
         select over the data instead of one select per enum.'''
-        w, _h_       = self.wxh
-        x_ins, _     = self.insets
-        _axis_w_     = self.txt_h if self.draw_context else 0
-        _plot_w_     = w - 2 * x_ins - _axis_w_
-        _max_bins_   = max(2, _plot_w_ // 2)
+        _max_bins_   = self.__maxTimeBins__()
         _trunc_map_  = self.__linearTruncMap__()
         _enum_order_ = self.__linearEnumOrder__()
         _selected_   = self.p2s.LT_Y_mp  # fallback
-        # Approximate seconds per truncation string — used to estimate spine length.
-        _secs_per_trunc_ = {
-            '1y': 365.25*86400, '3mo': 91.3125*86400, '1mo': 30.4375*86400,
-            '1d': 86400, '4h': 14400, '1h': 3600, '15m': 900, '1m': 60, '15s': 15, '1s': 1,
-        }
         if len(cast(pl.DataFrame, self.df)) == 0: return _selected_
         _tf_       = pl.col(self._time_field_)
         _mn_, _mx_ = cast(pl.DataFrame, self.df).select(_tf_.min().alias('__mn__'), _tf_.max().alias('__mx__')).row(0)
@@ -486,7 +574,7 @@ class Timep(P2SBinComponentMixin, ExportMixin):
         _candidates_ = []
         for _enum_ in _enum_order_:  # coarsest → finest
             if _is_date_ and _enum_order_.index(_enum_) > _enum_order_.index(self.p2s.LT_Y_m_dp): break
-            _secs_ = _secs_per_trunc_.get(_trunc_map_[_enum_])
+            _secs_ = _SECS_PER_TRUNC_.get(_trunc_map_[_enum_])
             if _secs_ is not None and int(_span_s_ / _secs_) + 2 > _max_bins_: break
             _candidates_.append(_enum_)
         if not _candidates_: return _selected_
@@ -496,31 +584,12 @@ class Timep(P2SBinComponentMixin, ExportMixin):
         _exprs_ = [_tf_.dt.truncate(_trunc_map_[_e_]).n_unique().alias(f'_nu{_i_}_')
                    for _i_, _e_ in enumerate(_candidates_)]
         if not _is_date_:
-            _exprs_ += [
-                _tf_.dt.hour()  .n_unique().alias('__nh__'),
-                _tf_.dt.minute().n_unique().alias('__nm__'),
-                _tf_.dt.second().n_unique().alias('__ns__'),
-                _tf_.dt.hour()  .min()     .alias('__h0__'),
-                _tf_.dt.minute().min()     .alias('__m0__'),
-                _tf_.dt.second().min()     .alias('__s0__'),
-            ]
+            _exprs_ += self.__granularityStatExprs__()
         try:
             _stats_ = cast(pl.DataFrame, self.df).select(_exprs_).row(0, named=True)
         except Exception:
             return _selected_
-
-        # Granularity cap (same logic as __dataGranularityCap__)
-        if _is_date_:
-            _cap_enum_ = self.p2s.LT_Y_m_dp
-        else:
-            _all_same_h_ = _stats_['__nh__'] == 1 and _stats_['__h0__'] == 0
-            _all_same_m_ = _stats_['__nm__'] == 1 and _stats_['__m0__'] == 0
-            _all_same_s_ = _stats_['__ns__'] == 1 and _stats_['__s0__'] == 0
-            if   _all_same_h_ and _all_same_m_ and _all_same_s_: _cap_enum_ = self.p2s.LT_Y_m_dp
-            elif                  _all_same_m_ and _all_same_s_: _cap_enum_ = self.p2s.LT_Y_m_d_Hp
-            elif                                   _all_same_s_: _cap_enum_ = self.p2s.LT_Y_m_d_H_Mp
-            else:                                                _cap_enum_ = self.p2s.LT_Y_m_d_H_M_Sp
-        _cap_idx_ = _enum_order_.index(_cap_enum_)
+        _cap_idx_ = _enum_order_.index(self.__granularityCapFromStats__(_stats_, _is_date_))
 
         # n_unique also grows monotonically with finer granularity → break on first failure.
         for _i_, _enum_ in enumerate(_candidates_):
@@ -530,6 +599,54 @@ class Timep(P2SBinComponentMixin, ExportMixin):
             if _n_ <= _max_bins_: _selected_ = _enum_
             else: break
         return _selected_
+
+    #
+    # timeLevels() - the time levels an interactive view can offer this plot, coarsest
+    # first: every linear level whose spine fits the plot, then every periodic level whose
+    # cycle does -- each no finer than the data resolves, and each drawing at least two
+    # bars.  The budget and the granularity cap are the auto resolution's (above), which
+    # settles on one linear level per frame.  Computed on `df`, df_orig by default -- the
+    # widest frame, so a level that fits it fits every frame of the stack.  Public so an
+    # interactive view never offers a level that would build a spine of tens of thousands
+    # of bins (PT_H_M_Sp is 86,400), rather than keeping a second copy of the rules.
+    #
+    def timeLevels(self, df: pl.DataFrame | None = None) -> list[TimeLinearTypeP | TimePeriodicTypeP]:
+        _df_ = self.df_orig if df is None else df
+        if _df_ is None or len(_df_) == 0 or self._time_field_ not in _df_.columns: return []
+        _tf_        = pl.col(self._time_field_)
+        _mn_, _mx_  = _df_.select(_tf_.min().alias('__mn__'), _tf_.max().alias('__mx__')).row(0)
+        if _mn_ is None or _mx_ is None: return []
+        _span_s_    = (_mx_ - _mn_).total_seconds()
+        _is_date_   = self.p2s.dateColumn(_df_, self._time_field_)
+        _max_bins_  = self.__maxTimeBins__()
+        _order_     = self.__linearEnumOrder__()
+        _trunc_map_ = self.__linearTruncMap__()
+        _day_       = _order_.index(self.p2s.LT_Y_m_dp)
+
+        _linear_: list[TimeLinearTypeP] = []
+        for _enum_ in _order_:      # coarsest -> finest, and the spine only grows
+            if _is_date_ and _order_.index(_enum_) > _day_: break
+            if int(_span_s_ / _SECS_PER_TRUNC_[_trunc_map_[_enum_]]) + 2 > _max_bins_: break
+            _linear_.append(_enum_)
+        def _cycle_(enum: TimePeriodicTypeP) -> int:
+            _lo_, _hi_ = self.p2s.timePeriodicRange(enum)
+            return _hi_ - _lo_ + 1
+        # A Date column cannot even compute an hour, so sub-day cycles are dropped before
+        # the select rather than by its result.
+        _periodic_ = [_e_ for _e_ in self.p2s.TimePeriodicTypeP
+                      if not (_is_date_ and _order_.index(_PERIODIC_NEEDS_[_e_]) > _day_)
+                      and _cycle_(_e_) <= _max_bins_]
+
+        _exprs_ = ([_tf_.dt.truncate(_trunc_map_[_e_]).n_unique().alias(f'_l{_i_}_') for _i_, _e_ in enumerate(_linear_)]
+                   + [self.p2s.polarsOperationForEnum(self._time_field_, _e_).n_unique().alias(f'_p{_i_}_')
+                      for _i_, _e_ in enumerate(_periodic_)]
+                   + ([] if _is_date_ else self.__granularityStatExprs__()))
+        _stats_ = _df_.select(_exprs_).row(0, named=True)
+        _cap_   = _order_.index(self.__granularityCapFromStats__(_stats_, _is_date_))
+        return ([_e_ for _i_, _e_ in enumerate(_linear_)
+                 if _order_.index(_e_) <= _cap_ and _stats_[f'_l{_i_}_'] >= 2]
+                + [_e_ for _i_, _e_ in enumerate(_periodic_)
+                   if _order_.index(_PERIODIC_NEEDS_[_e_]) <= _cap_ and _stats_[f'_p{_i_}_'] >= 2])
 
     # ── Count aggregate expression ─────────────────────────────────────────
 
@@ -630,7 +747,7 @@ class Timep(P2SBinComponentMixin, ExportMixin):
 
             # Boxplot — keep sort+group_by_dynamic: fill_null(0) is wrong for stat columns
             if self.style in {self.p2s.BOXPLOTp, self.p2s.BOXPLOT_W_SWARMp}:
-                _nf_ = self.__findNumericCountField__()
+                _nf_ = self.numericCountField()
                 if _nf_ is None:
                     self.p2s.logger.warning('Timep: BOXPLOTp requires a numeric count field; falling back to BARCHARTp')
                     self.style = self.p2s.BARCHARTp
@@ -772,7 +889,7 @@ class Timep(P2SBinComponentMixin, ExportMixin):
 
             # Boxplot styles
             if self.style in {self.p2s.BOXPLOTp, self.p2s.BOXPLOT_W_SWARMp}:
-                _nf_ = self.__findNumericCountField__()
+                _nf_ = self.numericCountField()
                 if _nf_ is None:
                     self.p2s.logger.warning('Timep: BOXPLOTp requires a numeric count field; falling back to BARCHARTp')
                     self.style = self.p2s.BARCHARTp
@@ -886,11 +1003,18 @@ class Timep(P2SBinComponentMixin, ExportMixin):
                     self._color_stat_min_ = round(float(cast(float, _valid_ser_.min())), 3)
                     self._color_stat_max_ = round(float(cast(float, _valid_ser_.max())), 3)
 
-    def __findNumericCountField__(self) -> str | None:
-        if isinstance(self.count, str) and self.p2s.numericColumn(self.df, self.count):
-            return self.count
-        elif isinstance(self.count, tuple):
-            for _f_ in self.count:
+    #
+    # numericCountField() - the numeric field a boxplot summarises for a count= spec (this
+    # render's own when none is given), or None when a boxplot would fall back to bars.
+    # Public so an interactive view offers the boxplot styles exactly when they would be
+    # drawn (histop has the same rule, and the same method).
+    #
+    def numericCountField(self, count: Any = None) -> str | None:
+        _count_ = self.count if count is None else count
+        if isinstance(_count_, str) and self.p2s.numericColumn(self.df, _count_):
+            return _count_
+        elif isinstance(_count_, tuple):
+            for _f_ in _count_:
                 if isinstance(_f_, str) and self.p2s.numericColumn(self.df, _f_):
                     return _f_
         return None
@@ -1289,39 +1413,15 @@ class Timep(P2SBinComponentMixin, ExportMixin):
 
     def __timeGranularityStr__(self) -> str:
         '''Human-readable granularity label for the center position below the axis.'''
-        if self._is_periodic_:
-            return {
-                self.p2s.PT_Qp:       'quarter',
-                self.p2s.PT_mp:       'month',
-                self.p2s.PT_m_dp:     'day of month',
-                self.p2s.PT_m_d_Hp:   'month/day/hour',
-                self.p2s.PT_DoYp:     'day of year',
-                self.p2s.PT_DoWp:     'day of week',
-                self.p2s.PT_DoW_Hp:   'day of week / hour',
-                self.p2s.PT_DoW_H_Mp: 'day of week / hour / min',
-                self.p2s.PT_dp:       'day',
-                self.p2s.PT_d_Hp:     'day / hour',
-                self.p2s.PT_d_H_Mp:   'day / hour / min',
-                self.p2s.PT_Hp:       'hour',
-                self.p2s.PT_H_Mp:     'hour / minute',
-                self.p2s.PT_H_M_Sp:   'hour / min / sec',
-                self.p2s.PT_Mp:       'minute',
-                self.p2s.PT_M_Sp:     'minute / second',
-                self.p2s.PT_Sp:       'second',
-            }.get(self._time_enum_, 'periodic')
-        else:
-            return {
-                self.p2s.LT_Yp:           'yearly',
-                self.p2s.LT_Y_Qp:         'quarterly',
-                self.p2s.LT_Y_mp:         'monthly',
-                self.p2s.LT_Y_m_dp:           'daily',
-                self.p2s.LT_Y_m_d_4Hp:        'every 4 hours',
-                self.p2s.LT_Y_m_d_Hp:         'hourly',
-                self.p2s.LT_Y_m_d_H_15Mp:     'every 15 min',
-                self.p2s.LT_Y_m_d_H_Mp:       'by minute',
-                self.p2s.LT_Y_m_d_H_M_15Sp:   'every 15 sec',
-                self.p2s.LT_Y_m_d_H_M_Sp:     'by second',
-            }.get(self._time_enum_, 'by time')
+        return self.timeLevelName(self._time_enum_)
+
+    #
+    # timeLevelName() - a time level as people say it: the label under the axis, and what
+    # an interactive view's granularity picker calls the same level.
+    #
+    def timeLevelName(self, level: Any) -> str:
+        if isinstance(level, TimePeriodicTypeP): return _TIME_LEVEL_NAMES_.get(level, 'periodic')
+        return _TIME_LEVEL_NAMES_.get(level, 'by time')
 
     def __renderTimeContextBG__(self, _dl_: Any, grid_color: str) -> None:
         '''Draw context cues inside the chart at the top, in a light color.

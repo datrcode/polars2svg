@@ -155,6 +155,7 @@ all = ["polars2svg[interactive,layouts,export,mlx]"]
 [dependency-groups]
 dev = [
   "pytest",
+  "pytest-xdist",
   "coverage",
   # The two gate tools, pinned to a minor.  CI and tools/preflight.sh used to
   # invoke them as bare `uvx ruff` / `uvx mypy`, which resolves whatever is

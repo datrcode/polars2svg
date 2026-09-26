@@ -464,9 +464,79 @@ def test_a_render_rows_picker_is_headed_by_the_rows_label(xypi_page):
     xypi_page.hover(200, 150)
     xypi_page.press('a')
     xypi_page.expect_panel_open()
-    xypi_page.press('l')                          # the legend row
+    xypi_page.press('g')                          # the legend row
     xypi_page.press('Enter')
     xypi_page.expect_menu_open('legend:')
+
+
+def test_histopi_order_row_re_renders_at_the_default_size(default_size_grid):
+    """space on the order row turns 'largest first' into 'smallest first', and the bars
+    redraw the other way up ('a' has 12 rows, 'b' 8).  At histopi's default 128 px, which
+    is narrower than the panel."""
+    _hp_ = default_size_grid['histopi']
+    _hp_.settle()
+    _hp_.hover(10, 10)
+    _before_ = _hp_.mod_html()
+    _hp_.press('a')
+    _hp_.expect_panel_open()
+    assert _hp_.panel_values().get('order') == 'largest first'
+    _hp_.press('r')                               # the order row
+    _hp_.press(' ')
+    _hp_.expect_panel_value('order', 'smallest first')
+    assert _hp_.wait_for_mod_change(_before_) != _before_
+
+
+def test_piepi_style_row_re_renders_at_the_default_size(default_size_grid):
+    """space on the style row turns the pie into a donut.  At piepi's default 160 px,
+    which is narrower than the panel."""
+    _pp_ = default_size_grid['piepi']
+    _pp_.settle()
+    _pp_.hover(10, 10)
+    _before_ = _pp_.mod_html()
+    _pp_.press('a')
+    _pp_.expect_panel_open()
+    assert _pp_.panel_values().get('style') == 'pie'
+    _pp_.press('t')                               # the style row
+    _pp_.press(' ')
+    _pp_.expect_panel_value('style', 'donut')
+    assert _pp_.wait_for_mod_change(_before_) != _before_
+
+
+def test_chordpi_link_shape_row_re_renders_at_the_default_size(default_size_grid):
+    """space on the link-shape row turns curves into bundled links, and the bundle-strength
+    row -- greyed while the links are not bundled -- comes live."""
+    _cp_ = default_size_grid['chordpi']
+    _cp_.settle()
+    _cp_.hover(10, 10)
+    _before_ = _cp_.mod_html()
+    _cp_.press('a')
+    _cp_.expect_panel_open()
+    assert _cp_.panel_values().get('link shape') == 'curve'
+    assert _cp_.panel_row_is_disabled('bundle strength')
+    _cp_.press('h')                               # the link-shape row
+    _cp_.press(' ')
+    _cp_.expect_panel_value('link shape', 'bundled')
+    assert _cp_.wait_for_mod_change(_before_) != _before_
+    _cp_.expect_panel_row_disabled('bundle strength', disabled=False)
+
+
+def test_timepi_granularity_row_re_renders_at_the_default_size(default_size_grid):
+    """space on the granularity row moves from 'auto' to the first level timep offers,
+    and the bars redraw at it."""
+    from polars2svg.interactive_render_rows import TimepRenderRows
+    _tp_   = default_size_grid['timepi']
+    _next_ = TimepRenderRows(_tp_.plot).rows[0].items[1][1]
+    assert _next_ != _tp_.plot.timeLevelName(_tp_.plot._time_enum_), 'the first level is what auto chose'
+    _tp_.settle()
+    _tp_.hover(10, 10)
+    _before_ = _tp_.mod_html()
+    _tp_.press('a')
+    _tp_.expect_panel_open()
+    assert _tp_.panel_values().get('granularity') == 'auto'
+    _tp_.press('q')                               # the granularity row
+    _tp_.press(' ')
+    _tp_.expect_panel_value('granularity', _next_)
+    assert _tp_.wait_for_mod_change(_before_) != _before_
 
 if __name__ == '__main__':
     unittest.main()

@@ -9,6 +9,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`timep.timeLevels()`: the time levels an interactive view can offer.** It lists
+  the linear levels whose spine fits the plot, then the periodic levels whose cycle fits.
+  - The room check is two pixels per bar, the budget the auto resolution already uses.
+  - No level is finer than the data resolves, so there is nothing sub-day on a `Date`
+    column or on midnight-only timestamps.
+  - Every level draws at least two bars.
+  - It is computed on the view's full frame by default, so every level it lists also
+    fits every drill-down.
+
+  `timepi`'s time-granularity row will offer exactly these levels, so a picker can never
+  build a spine the plot has no room for. `PT_H_M_Sp` alone is 86,400 bins. The auto
+  resolution now shares its budget and granularity cap with this method, and renders are
+  unchanged.
+
+- **`histop`: `order=p2s.LABELp` sorts the bars by their own values.** Before this,
+  bars could only be sorted by a count or an aggregate, which is no help for ports
+  (`order=p2s.LABELp, descending=False` gives 22, 80, 443, 8080).
+  - Numbers sort as numbers and text alphabetically, and a missing value goes last
+    either way.
+  - `descending=` keeps its meaning for every key: its default is largest first, so
+    pass `descending=False` to read A to Z.
+  - It is an enum (new class `OrderKeyP`) rather than a string, because a string
+    `order=` already names a field to sum. `label` is a real column name in netflow
+    data, and `order='label'` still sums that column.
+
 - **A dark palette, and a selectable palette generally** (PLANNING.md §7 **F5**, the
   dark-mode half). The framework's semantic color table was a dict literal with
   `#ffffff` baked into it, so every render was light. It now lives in
@@ -231,10 +256,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   | `d` | distributions (*what they measure*) | off / x / y / x+y | always |
   | `p` | placement | auto / inside / outside | distributions on |
   | `b` | bins | auto, auto /4, /2, x2, x4 | a distributed axis is not periodic time |
-  | `e` | aspect | none / equal / geo | both axes numeric |
+  | `e` | aspect | none / equal / geo | both axes numeric (a time axis is not) |
   | `o` | dot opacity | 10 … 100 (linkpi's list) | opacity is not a column |
   | `c` | color scale | magnitude / stretched | color is a magnitude/stretched mode |
-  | `l` | legend | off / right / bottom / top / left | there is a color |
+  | `g` | legend | off / right / bottom / top / left | there is a color |
   | `x` / `y` | x order / y order | sorted / reverse / by count / spectral | the axis is categorical |
 
   How the rows behave:
@@ -260,12 +285,147 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   **The mechanism is shared, not specific to xypi**:
   - `polars2svg/interactive_render_rows.py` (new, fully typed, no Panel import)
-    declares `RenderRow` / `RenderRowSet` and xyp's row set.
+    declares `RenderRow` / `RenderRowSet` and xyp's row set. Most rows are a
+    `ParamRow`: one parameter, with a fixed value for each label. These need no
+    override code of their own. The legend, colour-scale and opacity rows are shared
+    builders that read their starting value from the template. Only xyp's
+    distributions group has custom code.
+  - **Each row's key comes from one table**, `RENDER_ROW_KEYS`, so a setting has the
+    same key on every view that has it: legend is `g`, colour scale `c`, labels `l`, and
+    so on. The table covers the rows planned for the other views too.
+  - One test suite checks every row set:
+    - An untouched panel overrides nothing.
+    - Each row's key is its table entry.
+    - Every setting reachable in two panel moves renders without logging a warning that
+      the view as built does not also log.
   - `_InteractivePBase` gains a `render_settings` dict parameter, a
     `_render_rows_cls_` hook, and overrides passed through `render_with()`.
   - The panel fragment gains an optional `getValue` read hook, so linkpi is unchanged.
   - histopi, timepi, chordpi and piepi get a panel like this by declaring a row set;
-    none does yet.
+    all four do now (the next four entries).
+  - The generic views' `h` help no longer says the panel holds only the selection-shape
+    and tooltip rows. It also points at the key each row shows in its `[ ]`, because the
+    row keys differ from view to view.
+
+- **`histopi`: settings-panel rows that change the render.** The histogram view gets
+  seven rows, on the same mechanism and keys as `xypi`'s. A panel left untouched still
+  renders the view exactly as built.
+
+  | key | row | values | live when |
+  |---|---|---|---|
+  | `t` | style | bar / boxplot / boxplot+swarm | the count row holds a numeric field |
+  | `m` | count | rows / the view's own field | the view was built with a field, and it is not a boxplot |
+  | `r` | order | largest first / smallest first / sorted / reverse | always |
+  | `l` | labels | off / on | always |
+  | `d` | distribution | off / on | not a boxplot, and the plot has room for the strip |
+  | `g` | legend | off / right / bottom / top / left | there is a color, and it is not a boxplot |
+  | `c` | color scale | magnitude / stretched | the color is a magnitude/stretched mode, and it is not a boxplot |
+
+  - **The boxplot styles link the rows, using histop's own rules.**
+    - A boxplot needs a numeric count field. Without one, histop draws bars instead,
+      with only a log warning. So the style row is live only while the count row holds
+      a numeric field, and the count row is greyed out while a boxplot is chosen.
+    - A boxplot draws no legend, strip or colour, so those rows are greyed out with it.
+    - Two new public histop methods state the rules the rows use:
+      `numericCountField(count)` and `distributionStripFits()`.
+  - **`stacked` is not offered.** `STACKEDBARp` draws exactly what `BARCHARTp` draws,
+    because a categorical colour stacks either one. A view built with it shows
+    `stacked` as its as-built value.
+  - **The order row sets `order=` and `descending=` together.**
+    - `sorted` and `reverse` order the bins by their own values (`p2s.LABELp`). They are
+      the words xypi uses for the same two orders.
+    - An order the row doesn't include, such as a field, shows as its as-built value,
+      e.g. `by bytes, ascending`.
+  - **The count row offers only rows and the field the view was built with**, not every
+    numeric column, because in netflow data a numeric column is as often an identifier
+    (a port) as a quantity.
+
+- **`piepi`: settings-panel rows that change the render.** Six rows, on the same
+  mechanism and keys. A panel left untouched still renders the view exactly as built.
+
+  | key | row | values | live when |
+  |---|---|---|---|
+  | `t` | style | pie / donut / waffle | always |
+  | `m` | count | rows / the view's own field | the view was built with a field |
+  | `r` | slice order | largest first / smallest first | always |
+  | `l` | labels | off / on | not a waffle |
+  | `g` | legend | off / right / bottom / top / left | the colour is categorical or a spectrum |
+  | `c` | color scale | magnitude / stretched | the colour is a spectrum |
+
+  - **The gates are piep's own rules, exposed as two new public methods:**
+    `Piep.styleDrawsLabels(style)` and `Piep.colorMode()`.
+    - A waffle draws no slice labels.
+    - A fixed colour, or a list of them, draws no legend.
+    - A magnitude enum on a text field is categorical to piep, which logs a warning to
+      say so. It therefore has a legend but no scale to swap.
+  - `start_angle`, `donut_ratio`, `waffle_n` and `min_slice_deg` are left out on purpose.
+    They are fine-tuning, not settings to flip while exploring.
+
+- **`chordpi`: settings-panel rows that change the render.** Eleven rows, plus a twelfth
+  when `node_color=` holds a magnitude/stretched mode. They use the same mechanism and
+  keys, and linkpi's keys wherever linkpi has the same row. A panel left untouched still
+  renders the view exactly as built.
+
+  | key | row | values | live when |
+  |---|---|---|---|
+  | `h` | link shape | line / curve / bundled | always |
+  | `u` | bundle strength | 0.5 / 0.85 / 1.0 | links are bundled |
+  | `n` | node size | fixed / vary | always |
+  | `z` | link size | none / nil / small / medium / large / vary | always |
+  | `f` | node opacity | 10 … 100 | node opacity is not a column |
+  | `o` | link opacity | 10 … 100 | link opacity is not a column |
+  | `l` | labels | off / on | always |
+  | `v` | label style | radial / circular | labels are on |
+  | `m` | count | rows / the view's own field | the view was built with a field, and a size is `vary` |
+  | `g` | legend | off / right / bottom / top / left | the link or node colour is data-driven |
+  | `c` | color scale | magnitude / stretched | the link colour is a magnitude/stretched mode |
+  | `C` | node color scale | magnitude / stretched | present only when `node_color=` holds such a mode |
+
+  - **Node size offers only fixed / vary, not linkpi's six names.** chordp draws every
+    size name except `'vary'` the same way, so four of those six values would have
+    changed nothing. Link sizes do differ, so the link-size row keeps linkpi's list, where
+    `none` hides the links.
+  - **Count only has an effect through a `'vary'` size.** A re-render keeps the view's
+    node order, which is what holds the nodes still on a drill-down, so changing
+    `count=` cannot re-derive that order. The count row is therefore live only while a
+    size row is on `vary`.
+  - **The legend row can be live for a view coloured only by node.** chordp's legend
+    shows the link colour when that is data-driven, and otherwise the node colour. A new
+    public method, `ChP.colorIsLegendable()`, states that rule. The shared legend row
+    now accepts a component's own version of this check.
+  - **There is no order row.** chordp orders nodes only by its leaf walk or by an
+    explicit list. `pos=` is preserved through every row change.
+
+- **`timepi`: settings-panel rows that change the render, with time granularity first.**
+  Five rows, on the same mechanism and keys. A panel left untouched still renders the
+  view exactly as built.
+
+  | key | row | values | live when |
+  |---|---|---|---|
+  | `q` | granularity | auto / the levels `Timep.timeLevels()` lists | there is a level besides auto |
+  | `t` | style | bar / boxplot / boxplot+swarm | the count row holds a numeric field |
+  | `m` | count | rows / the view's own field | the view was built with a field, and it is not a boxplot |
+  | `g` | legend | off / right / bottom / top / left | there is a color, and it is not a boxplot |
+  | `c` | color scale | magnitude / stretched | a magnitude/stretched color, and it is not a boxplot |
+
+  - **Granularity offers `auto`, meaning the view's own resolution frame by frame, plus
+    the levels timep lists as safe:**
+    - linear levels whose spine fits the plot, then periodic levels whose cycle fits;
+    - each no finer than the data resolves, and each drawing at least two bars;
+    - all computed on the full frame.
+
+    An explicit level becomes `time=p2s.tField(column, level)` and applies at every
+    level of the stack, and every level it offers fits every drill-down. Choosing `auto`
+    on a view built with a level hands the choice back to timep.
+  - **Each level has a fixed key**, whichever levels a view offers: lower case for
+    linear (`d` daily, `h` hourly, ...) and upper case for periodic (`W` day of week, `H`
+    hour, ...). Levels use the names timep prints under the axis, from one shared table.
+  - **On a periodic level the time-expand keys (`e`, `u`) do nothing**, because a cycle
+    has no timeframe to widen. On an explicit linear level they expand by whole bins of
+    that level.
+  - Style, count, legend and colour scale follow histopi's rules. They are gated by
+    timep's own new `numericCountField()`, because a boxplot needs a numeric count field
+    and draws no legend and no colour.
 
 - **`linkpi`: choosing a community-detection algorithm (`shift-d`, and a settings-panel
   row).** `d` runs the selected algorithm, `shift-d` opens a picker that only selects
@@ -372,6 +532,78 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   argument: with the tooltip off, a hover issues no round trip at all.
 
 ### Fixed
+
+- **The settings panel and its pickers were cut off on small views.** Both are drawn
+  inside the view's root `<svg>`, which clips to the view, and both are sized to their
+  text rather than to the view. At the components' default sizes the panel is wider than
+  `histopi` (128 px), `piepi` (160 px) and `linkpi` (256 px). `xypi`'s render rows made it
+  wider than `xypi` (256 px) too, and cut off their value column. A picker opened from the
+  panel is drawn to the panel's right, so on those views it started outside the view and
+  could not be seen at all. In a grid there was a second problem: the next view in the
+  layout painted over whatever did get out.
+
+  Now, while the panel or a picker is open **and the view has focus**, the overlays may
+  extend past the view, and the view is raised above its neighbours:
+  - Moving the pointer onto another view gives that view focus. The first view's panel
+    stays open but is clipped back to its own box, and it comes back in full when you
+    return.
+  - Nothing else extends past the view. The views park some elements outside their own
+    area, such as the hidden keyboard help at `x = -1000` and the idle drag band at
+    `(-10, -10)`. So the clip area becomes the view plus the two overlays' boxes, rather
+    than being removed.
+  - The change is in the shared `js/fragments/p2s_config_panel.js`, so `linkpi` gets it
+    too.
+
+  Every browser fixture was 400×300, which is why nothing caught this. The new
+  `tests/interaction/test_panel_overhang.py` runs on a `default_size_grid` fixture: all six
+  views at their default sizes, in two rows. `InteractivePage.overlay_is_on_top()` checks
+  that an overlay is the topmost element at its corners and centre. The `h` keyboard help
+  has the same defect and is not fixed here. It is 790 px wide on the generic views, so
+  it is still clipped on all of them.
+
+- **`xyp` accepted `aspect=` on a periodic time axis, and could then crash.** A
+  `p2s.tField(col, PT_*)` axis (day of week, hour, ...) passed the "numeric axes" check,
+  because the column it derives is an integer. A linear time axis or a raw datetime
+  column was already refused.
+  - Usually the result was a meaningless ratio, such as days of the week against bytes.
+  - When the frame covered a single period, `aspect='equal'` padded the axis to
+    fractional bounds, and labelling it raised `KeyError: 0.5`.
+
+  The axis now counts as temporal: `aspect=` raises the same `ValueError` as for any
+  other time axis, and `axisIsNumeric()` returns False. That also greys out `xypi`'s
+  aspect row on such an axis, instead of offering values that could only fail. The new
+  render-row test suite found this the first time it ran.
+
+- **`chordp` warned that `count=` had no effect on every re-render.** `render_with()`
+  copies the template's node order, which is what keeps the nodes still when a
+  `chordpi` drills down. It also copied it in a way that looked pinned. So with `count=`
+  set and fixed sizes, every re-render logged "count= is set but has no visible effect
+  ... with order= or pos= supplied", even though the caller had supplied neither, and
+  `count=` had in fact shaped that order.
+  - chordp now records whether the order came from the caller (`order=` or `pos=`) or
+    was derived from the data, and a clone inherits that along with the order.
+  - The warning fires only for an order the caller pinned, whether on the template or
+    in the `render_with()` call itself.
+  - The rendered output is unchanged.
+
+- **The interactive tooltip dropped the time field of a view built on a `p2s.tField`.**
+  A t-field is a `str` whose own value (`'ts|DoWp'`) is not a column, so the tooltip found
+  no column to name. It now names the t-field's column. This matters more now that
+  timepi's granularity row sets `time=` to exactly such a field.
+
+- **timep's axis called `PT_m_dp` "day of month".** That level is the month and day
+  (366 bars), and `PT_dp` is the day of the month. It now reads "month / day", and
+  `PT_m_d_Hp` reads "month / day / hour" to match. The names live in one table, which
+  timepi's granularity picker uses too (`Timep.timeLevelName()`).
+
+- **`histop` ignored `order=` whenever its bars stacked or were boxplots.** Both paths
+  sorted by their count, whatever `order=` said, and gave no warning. A categorical
+  `color=` makes every bar chart stacked, so `order='bytes'` did nothing on any coloured
+  histogram. `order=` is now the sort key on every path.
+
+  The default is unchanged: `p2s.ROW_COUNTp` still sorts by what the bars show, a
+  stacked bar's total or a boxplot's row count. `descending=` was already honoured
+  everywhere. No golden image moved, since the one golden with `order=` has no colour.
 
 - **`unitizeInt()` dropped digits and added a spurious `.0`.** This is the K/M/B/T/Q formatter
   behind xyp's axis end labels, legend values and `stack_control`'s row count. It

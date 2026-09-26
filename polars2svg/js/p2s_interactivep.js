@@ -222,7 +222,7 @@ export function render({ model, el }) {
   const _cp_ = p2sConfigPanel({
       model: model, state: state, menuNode: pickermenu, panelNode: configpanel,
       headers: MENU_HEADER_, params: MENU_PARAM_, setValue: menuSetValue,
-      getValue: menuGetValue,
+      getValue: menuGetValue, root: root,
   });
   // Only the entry points this module still calls.  The rest of the fragment's surface
   // is reached through menuKeyDown / panelKeyDown, which own the two modal key blocks.

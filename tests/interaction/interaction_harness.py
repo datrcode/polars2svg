@@ -981,6 +981,46 @@ class InteractivePage:
             f'panel row {label!r} is {"enabled" if disabled else "disabled"}, '
             f'expected the opposite')
 
+    def overlay_is_on_top(self, template_id: str) -> list[bool] | None:
+        """Whether an overlay (``configpanel`` / ``pickermenu``) is the topmost thing at
+        five points of its backdrop rect -- just inside each corner, and the centre.
+
+        This is what "the user can see all of it" comes to: a point fails if the root
+        <svg> clipped it away or a neighbouring view painted over it, and those were the
+        two halves of the clipped-panel defect.  A bounding box cannot show either -- the
+        backdrop reports its full size whether or not a pixel of it is visible.
+
+        A deep ``elementFromPoint``, because the page-level one stops at the first shadow
+        host and has to be asked again of each shadow root on the way down.  The
+        overlays are ``pointer-events: none`` by design (the plot under an open panel
+        stays live), so the group is made hit-testable for the probe and put back.
+        """
+        return self.root.evaluate("""(rootEl, id) => {
+            const g    = rootEl.querySelector('[id="' + id + '"]');
+            const rect = g && g.querySelector('rect');
+            if (!rect) { return null; }
+            const b   = rect.getBoundingClientRect();
+            const pts = [[b.left + 2, b.top + 2], [b.right - 2, b.top + 2],
+                         [b.left + b.width / 2, b.top + b.height / 2],
+                         [b.left + 2, b.bottom - 2], [b.right - 2, b.bottom - 2]];
+            const was = g.getAttribute('pointer-events');
+            g.setAttribute('pointer-events', 'all');
+            try {
+                return pts.map(([x, y]) => {
+                    let hit = document.elementFromPoint(x, y);
+                    while (hit && hit.shadowRoot) {
+                        const inner = hit.shadowRoot.elementFromPoint(x, y);
+                        if (!inner || inner === hit) { break; }
+                        hit = inner;
+                    }
+                    return !!hit && g.contains(hit);
+                });
+            } finally {
+                if (was === null) { g.removeAttribute('pointer-events'); }
+                else              { g.setAttribute('pointer-events', was); }
+            }
+        }""", f'{template_id}{self.suffix}')
+
     def expect_panel_value(self, label: str, value: str) -> None:
         """Poll until a row shows a value -- the panel commit is debounced ~300ms."""
         _deadline_ = time.monotonic() + self.timeout_ms / 1000.0

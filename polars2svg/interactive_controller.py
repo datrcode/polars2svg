@@ -36,7 +36,8 @@ from panel.reactive import ReactiveHTML
 
 from .p2s_esm import esm
 from .p2s_text_mixin import unitize
-from .interactive_render_rows import RenderRowSet, XYpRenderRows
+from .interactive_render_rows import (ChordpRenderRows, HistopRenderRows, PiepRenderRows,
+                                      RenderRowSet, TimepRenderRows, XYpRenderRows)
 from shapely.geometry import Polygon
 
 from .mds_at_scale                  import LandmarkMDSLayout, PivotMDSLayout
@@ -636,7 +637,10 @@ def _tooltipFieldNames_(spec: Any, columns: Any) -> list[str]:
     if spec is None:
         return []
     if isinstance(spec, str):
-        return [spec] if spec in columns else []
+        # A t-field is a str whose own value ('ts|DoWp') is no column, but it names one --
+        # the time field a timepi granularity row sets is exactly this.
+        _col_ = getattr(spec, 'column', spec)
+        return [_col_] if _col_ in columns else []
     if isinstance(spec, (list, tuple, set)):
         _out_ = []
         for _s_ in spec:
@@ -866,9 +870,9 @@ def _interactivePKeyboardCommands_(kbd_r_desc: str, has_z_key: bool,
                       '\nctrl+e . | (time x-axis) expand timeframe forward (later events)') if has_time_keys else ''
     return f"""
 in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closes
-a . | open the settings panel: selection shape, tooltip
+a . | open the settings panel: selection shape, tooltip, and how the view is drawn
  .. | in the panel ... | space cycles the row, shift-space reverses, enter opens that row's picker, esc closes
- .. | ............... | a / shift-a move the row cursor; s selection shape, i tooltip
+ .. | ............... | a / shift-a move the row cursor, or press the key shown in a row's [ ]
  .. | tooltip ....... | hover to read what is under the pointer (off | text | icon, when the view has icon=)
 h . | toggle help display
 q . | subtract the current from the top
@@ -1336,6 +1340,7 @@ class TIMEPI(_InteractivePBase):
     _fallback_shape_ = 'SELECT_VERTICALp'
     _tooltip_encodings_ = ('time', 'color', 'count')
     _tooltip_measure_encodings_ = ('count',)
+    _render_rows_cls_ = TimepRenderRows
     _kbd_r_desc_     = 'toggle brush on/off'
     _keyboard_commands_ = _interactivePKeyboardCommands_(
         _kbd_r_desc_, has_z_key=False, has_search=False, has_time_keys=True)
@@ -1353,6 +1358,7 @@ class HISTOPI(_InteractivePBase):
     _fallback_shape_ = 'SELECT_HORIZONTALp'
     _tooltip_encodings_ = ('bin_by', 'color', 'count')
     _tooltip_measure_encodings_ = ('count',)
+    _render_rows_cls_ = HistopRenderRows
     _kbd_r_desc_     = 'toggle brush on/off'
     _keyboard_commands_ = _interactivePKeyboardCommands_(
         _kbd_r_desc_, has_z_key=False, has_search=True, has_time_keys=False)
@@ -1388,6 +1394,7 @@ class CHORDPI(_InteractivePBase):
     _fallback_shape_ = 'SELECT_CIRCLEp'
     _tooltip_encodings_ = ('relationships', 'color', 'node_color', 'count')
     _tooltip_measure_encodings_ = ('count',)
+    _render_rows_cls_ = ChordpRenderRows
     _kbd_r_desc_     = 'toggle brush on/off'
     _keyboard_commands_ = _interactivePKeyboardCommands_(
         _kbd_r_desc_, has_z_key=False, has_search=False, has_time_keys=False)
@@ -1405,6 +1412,7 @@ class PIEPI(_InteractivePBase):
     _fallback_shape_ = 'SELECT_CIRCLEp'
     _tooltip_encodings_ = ('bin_by', 'color', 'count')
     _tooltip_measure_encodings_ = ('count',)
+    _render_rows_cls_ = PiepRenderRows
     _kbd_r_desc_     = 'toggle brush on/off'
     _keyboard_commands_ = _interactivePKeyboardCommands_(
         _kbd_r_desc_, has_z_key=False, has_search=True, has_time_keys=False)

@@ -11,6 +11,12 @@ that only showed up in certain selections. Instances are now independent (each
 that sets overrides builds its own instance in ``setUp``, so the isolation is structural
 rather than something a fixture has to keep restoring.
 """
+from collections.abc import Generator
+from typing import Any
+
+import pytest
+
+
 def pytest_addoption(parser):
     """--interaction: run the browser-driven suite under tests/interaction/.
 
@@ -24,3 +30,26 @@ def pytest_addoption(parser):
     """
     parser.addoption('--interaction', action='store_true', default=False,
                      help='run the browser-driven interaction tests (require chromium)')
+
+
+_WIRE_SAFE_ = (str, int, float, bool, type(None))
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_report_to_serializable(report: pytest.TestReport) -> Generator[None, dict[str, Any] | None, dict[str, Any] | None]:
+    """Let subtest reports cross the pytest-xdist worker boundary.
+
+    xdist ships every report from worker to controller through execnet, which can only
+    serialize builtin types -- and pytest's subtest report carries the ``subTest(...)``
+    kwargs verbatim.  A subtest keyed by an enum member, a polars dtype or an arbitrary
+    object therefore crashes the worker's report with ``DumpError: can't serialize``
+    under ``-n``, while passing serially.  The kwargs are only ever used to label the
+    subtest, so anything that is not exactly a wire-safe scalar is replaced by its repr
+    (``type(...) in`` rather than isinstance: an IntEnum *is* an int but still fails).
+    """
+    _data_ = yield
+    _ctx_ = (_data_ or {}).get('_subtest.context')
+    if _ctx_ and _ctx_.get('kwargs'):
+        _ctx_['kwargs'] = {_k_: _v_ if type(_v_) in _WIRE_SAFE_ else repr(_v_)
+                           for _k_, _v_ in _ctx_['kwargs'].items()}
+    return _data_

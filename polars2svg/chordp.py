@@ -737,6 +737,15 @@ class ChP(P2SComponentColorMixin, ExportMixin):
             self._shared_view_y_     = kwargs['_shared_view_y_']
             self._bundled_skeleton_  = self._shared_view_y_  # pre-seed cache; survives template reset
 
+        # Whether the node order is the caller's (order= / pos=) rather than one the leaf
+        # walk derived from the data.  A template clone inherits the answer along with the
+        # order itself -- a derived order included, which is what holds the nodes still
+        # across a drill-down -- and asks again only when this call names order= or pos=.
+        # The count= warning keys off it: a derived order carried over is not one the
+        # caller pinned, and count= shaped it.
+        if self.template is None or 'order' in kwargs or 'pos' in kwargs or _pos_from_pos_ is not None:
+            self._order_pinned_ = self.order is not None or bool(self.pos)
+
         # Same guard linkp applies, for the same two shapes -- see rejectBoolParam().
         self.p2s.rejectBoolParam(self.node_labels, 'ChP', 'node_labels',
                                  'a {node_name: display_str} dict', 'draw_labels')
@@ -867,11 +876,13 @@ class ChP(P2SComponentColorMixin, ExportMixin):
         # count= is consumed by 'vary' sizing or -- when the node order is derived
         # from the data -- by the edge-weight clustering that picks the order
         # (leafWalkFromEdges).  With the order pinned (order= / pos= / a shared
-        # small-multiples view) and fixed sizes, nothing reads it.
+        # small-multiples view) and fixed sizes, nothing reads it.  A clone's inherited
+        # order is not pinned by this test: every re-render of a template built with
+        # count= (every drill-down of a chordpi) used to warn here.
         if self.count != self.p2s.ROW_COUNTp and \
            self.node_size != 'vary' and self.link_size != 'vary' and \
            self._shared_view_x_ is None and \
-           (self.order is not None or bool(self.pos)):
+           self._order_pinned_:
             self.p2s.logger.warning(
                 "ChP: count= is set but has no visible effect at the current settings; "
                 "with order= or pos= supplied, count is only consumed when "
@@ -1104,6 +1115,16 @@ class ChP(P2SComponentColorMixin, ExportMixin):
     # ('default' / 'fixed_hex' / node-dict overrides do not).
     _LEGENDABLE_KINDS_ = frozenset({'categorical', 'cset', 'crow_magnitude', 'crow_stretched',
                                     'cset_magnitude', 'cset_stretched', 'stat_magnitude', 'stat_stretched'})
+
+    #
+    # colorIsLegendable() - whether a legend would have anything to show: the link colour
+    # when it is data-driven, else the node colour (__legendPrepare__'s rule, below).  A
+    # fixed colour, a node-colour dict or no colour at all has nothing to explain.  Public
+    # so an interactive view greys out a legend row that would draw nothing.
+    #
+    def colorIsLegendable(self) -> bool:
+        return any(getattr(self, _attr_, {'kind': 'default'})['kind'] in self._LEGENDABLE_KINDS_
+                   for _attr_ in ('_link_color_mode_', '_node_color_mode_'))
 
     #
     # __legendPrepare__() - resolve legend kind/metadata (the capture hook) and the

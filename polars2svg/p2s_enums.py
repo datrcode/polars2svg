@@ -226,6 +226,13 @@ class OrderBucketP(P2SEnum):
                    # values are appended in sorted order and keep their identity.
 
 
+class OrderKeyP(P2SEnum):
+    '''A sort-key ``order=`` (histop) that is neither ``p2s.ROW_COUNTp`` nor a field.
+    Exposed as ``p2s.LABELp``.'''
+    LABELp = 1 # order by the labels themselves: numbers as numbers, text alphabetically.
+               # An enum, not a string, because a string order= names the column to sum.
+
+
 #
 # RENDER_ENUM_CLASSES / RenderEnum - what `RenderEnumsP` used to mean.  The tuple
 # is for isinstance(); the union alias is the same thing spelled as a type, and
@@ -235,12 +242,13 @@ RENDER_ENUM_CLASSES: tuple[type[Enum], ...] = (
     RowCountP, DistributionPlacementP, DistributionScaleP,
     LineWidthP, LineStyleP, LineColorP, LineOpacityP,
     SmallMultipleP, BarStyleP, SelectShapeP, NodeColorP, PieStyleP, OrderBucketP,
+    OrderKeyP,
 )
 
 RenderEnum = (RowCountP | DistributionPlacementP | DistributionScaleP
               | LineWidthP | LineStyleP | LineColorP | LineOpacityP
               | SmallMultipleP | BarStyleP | SelectShapeP | NodeColorP
-              | PieStyleP | OrderBucketP)
+              | PieStyleP | OrderBucketP | OrderKeyP)
 
 
 #

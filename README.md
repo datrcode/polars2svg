@@ -192,7 +192,10 @@ p2s.panelize([[xi], [hi]])    # two rows, stacked
 
 Press `h` in any interactive view for its key bindings, and `a` for the settings
 panel — a live display of how the view is drawn (and, on `linkp`, of what its layout and
-background keys will do), editable in place. One of its rows is
+background keys will do), editable in place. On `xypi`, `histopi`, `timepi`, `chordpi`
+and `piepi` its rows re-render the view: legend, colour scale, style, count and order,
+the marks' sizes and opacity, and on `timepi` the time granularity. A panel you leave
+alone changes nothing. One of its rows is
 the **hover tooltip**: rest the pointer on a mark and it says what is under it, as text
 or as a whole component re-rendered against just those records.
 

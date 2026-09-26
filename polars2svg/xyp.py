@@ -669,7 +669,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     # validation applies: x_order='spectral'/'count'/'reverse' needs a categorical axis,
     # aspect= needs two numeric ones.  Public so an interactive view can offer (or grey out)
     # exactly the settings the constructor would accept, rather than keeping a second copy
-    # of the rules that drifts.  A time axis is neither.
+    # of the rules that drifts.  A time axis is neither, a periodic t-field included.
     #
     def axisIsCategorical(self, axis: str) -> bool:
         return self.__axisCleanIsCategorical__(*self.__axisCleanAndEnums__(axis))
@@ -705,6 +705,10 @@ class XYp(P2SBackgroundMixin, ExportMixin):
         if len(enums & (self.p2s.time_linear_types | self.p2s.time_periodic_types)) > 0: return False
         for field in clean:
             if isinstance(field, tuple):                   return False  # multi-field -> struct/categorical
+            # A t-field is a time axis, whatever its derived column holds: a periodic one
+            # (day of week, hour, ...) is an integer column, and the numeric check below
+            # used to let aspect= through on it.
+            if isinstance(field, self.p2s.TField):         return False
             if not self.p2s.numericColumn(self.df, field): return False
         return True
 

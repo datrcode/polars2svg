@@ -191,6 +191,44 @@ class TestChordPCountInertWarning(_WarningTestBase_):
         self.p2s.chordp(relationships=_RELS_, order=_ORDER_, count='w')
         self.assertNotWarned()
 
+    # --- re-renders: a template clone carries the order over ---
+
+    def _forget_(self):
+        """Clear what this test has logged so far, and the warn-once memory with it, so
+        the next render's warning is observed on its own."""
+        self.handler.records.clear()
+        for _f_ in self.logger.filters:
+            if type(_f_).__name__ == 'OnceFilter':
+                _f_.seen_messages.clear()
+
+    def test_no_warning_when_a_derived_order_is_carried_into_a_re_render(self):
+        """render_with() -- so every chordpi drill-down -- copies the template's derived
+        order, which holds the nodes still.  That order is not one the caller pinned, and
+        count= shaped it, so the re-render must not warn.  It used to, every time
+        (PLANNING.md section 5, C-chordp-clone-count-warning)."""
+        _t_ = self.p2s.chordp(_DF_, relationships=_RELS_, count='w')
+        self._forget_()
+        _t_.render_with(_DF_.head(6))
+        self.assertNotWarned()
+
+    def test_a_re_render_of_a_pinned_order_still_warns(self):
+        _t_ = self.p2s.chordp(_DF_, relationships=_RELS_, order=_ORDER_, count='w')
+        self._forget_()
+        _t_.render_with(_DF_.head(6))
+        self.assertWarned('ChP')
+
+    def test_a_re_render_that_pins_the_order_itself_warns(self):
+        _t_ = self.p2s.chordp(_DF_, relationships=_RELS_, count='w')
+        self._forget_()
+        _t_.render_with(_DF_, pos=_POS_)
+        self.assertWarned('ChP')
+
+    def test_a_re_render_keeps_the_derived_order(self):
+        """Ground truth for the first re-render test: the order really is carried over
+        rather than re-derived, which is why count= there is not the caller's to pin."""
+        _t_ = self.p2s.chordp(_DF_, relationships=_RELS_, count='w')
+        self.assertEqual(_t_.render_with(_DF_).order, _t_.order)
+
     # --- ground truth: the warning matches actual render behavior ---
 
     def test_count_actually_changes_derived_order_at_defaults(self):

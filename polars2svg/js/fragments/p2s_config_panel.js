@@ -32,6 +32,8 @@
 //   getValue          optional (kind) -> value; the read side, for a view whose kinds do
 //                     not each have a param (the generic views' render rows share one
 //                     dict).  Absent, a kind's value is model[params[kind]].
+//   root              optional; the view's root <svg>.  Given, the two overlays may
+//                     overhang the view while it has focus (see "the overhang" below).
 //
 
 function p2sConfigPanel(ctx) {
@@ -39,6 +41,55 @@ function p2sConfigPanel(ctx) {
   const getValue = ctx.getValue || function(kind) { return model[ctx.params[kind]]; };
   const menuNode = ctx.menuNode, panelNode = ctx.panelNode;
   const STYLE_ = 'font-family: \'Courier New\', monospace; font-size: 11px; fill: #222;';
+
+  // ── the overhang ───────────────────────────────────────────────────────────
+  //
+  // Both overlays are drawn inside the view's root <svg>, which clips to the view, and
+  // both are sized to their text rather than to the view.  At histopi's default 128 px
+  // the panel is 287 px wide, and a picker opened from it starts at panel_w + 16 --
+  // outside the view before it has drawn a pixel.  So while either overlay is open, and
+  // only while the view has focus, the root lets them overhang and the view is raised
+  // above its neighbours: a later sibling in a Panel Row / Column otherwise paints over
+  // the overhang.  Focus moving to a neighbour withdraws it, so the view being worked in
+  // is never covered by one that was left with its panel open.
+  //
+  // Not a bare overflow:visible.  The roots also PARK things outside the view -- the
+  // keyboard help at translate(-1000), the idle drag band and LINKPI's layout marks at
+  // (-10,-10) -- and unclipped those would show beside the view, or over whatever sits
+  // 1000 px to its left.  (stack_control met the same thing and hides its help with
+  // `display`.)  So the clip becomes the view PLUS the two overlays' boxes, and
+  // everything else stays clipped exactly as before.
+  //
+  const root = ctx.root || null;
+  const drawn = { panel: null, menu: null };          // [x, y, w, h] while drawn
+
+  function overhangApply(event) {
+      if (root === null) { return; }
+      var _host_  = root.getRootNode().host || null;
+      var _boxes_ = [drawn.panel, drawn.menu].filter(function(b) { return b !== null; });
+      if (_boxes_.length === 0 || root.getRootNode().activeElement !== root) {
+          root.style.overflow = '';
+          root.style.clipPath = '';
+          if (_host_ !== null) { _host_.style.zIndex = ''; }
+          return;
+      }
+      // One clockwise subpath per box, which the default nonzero rule unions.  Each
+      // overlay box grows by a pixel for the half of its 1px stroke that lies outside it.
+      var _d_ = 'M0,0 H' + root.getAttribute('width') + ' V' + root.getAttribute('height') + ' H0 Z';
+      for (var _i_ = 0; _i_ < _boxes_.length; _i_++) {
+          var _b_ = _boxes_[_i_];
+          _d_ += ' M' + (_b_[0] - 1) + ',' + (_b_[1] - 1) + ' h' + (_b_[2] + 2)
+               + ' v' + (_b_[3] + 2) + ' h' + (-(_b_[2] + 2)) + ' Z';
+      }
+      root.style.overflow = 'visible';
+      root.style.clipPath = "path('" + _d_ + "')";
+      if (_host_ !== null) { _host_.style.zIndex = '10'; }
+  }
+
+  if (root !== null) {
+      root.addEventListener('focus', overhangApply);
+      root.addEventListener('blur',  overhangApply);
+  }
 
   // ── the picker menu ────────────────────────────────────────────────────────
 
@@ -77,6 +128,8 @@ function p2sConfigPanel(ctx) {
                   + '[' + _items_[_i_][0] + '] ' + (_items_[_i_][2] || _items_[_i_][1]) + '</text>';
       }
       menuNode.innerHTML = _html_;
+      drawn.menu = [_ox_, 8, _w_menu_, _h_menu_];
+      overhangApply();
   }
 
   function menuCommit(event) {
@@ -91,6 +144,8 @@ function p2sConfigPanel(ctx) {
       state.menu_kind    = '';
       state.menu_x       = 8;
       menuNode.innerHTML = '';
+      drawn.menu         = null;
+      overhangApply();
       // A picker opened from the panel hands control back to it, showing whatever was
       // just committed.  panelRender is a no-op when the panel is closed.
       panelRender();
@@ -207,7 +262,12 @@ function p2sConfigPanel(ctx) {
 
   function panelRender(event) {
       if (panelNode === null) { return; }
-      if (!state.panel_open) { panelNode.innerHTML = ''; return; }
+      if (!state.panel_open) {
+          panelNode.innerHTML = '';
+          drawn.panel = null;
+          overhangApply();
+          return;
+      }
       var _rows_   = panelRows();
       var _header_ = 'settings:';
       var _lw_     = 0;
@@ -239,6 +299,8 @@ function p2sConfigPanel(ctx) {
       }
       panelNode.innerHTML = _html_;
       state.panel_w = _w_;
+      drawn.panel   = [8, 8, _w_, _h_];
+      overhangApply();
   }
 
   function panelStep(delta) {

@@ -1,4 +1,8 @@
+import datetime as dt
 import unittest
+
+import polars as pl
+
 from polars2svg import Polars2SVG
 from timep_dataframes import makeTimeDf, makeDateDf
 
@@ -107,6 +111,79 @@ class TestTimepTimeFields(unittest.TestCase):
         for _enum_ in self.p2s.TimePeriodicTypeP:
             t = self.p2s.timep(df, ('ts', _enum_), wxh=(256, 96))
             self.assertIn('<svg', t._repr_svg_())
+
+
+class TestTimepTimeLevels(unittest.TestCase):
+    """timeLevels(): the levels an interactive view may offer.  Its job is to keep a picker
+    from building a spine the plot has no room for -- PT_H_M_Sp is 86,400 bins -- and from
+    offering a level the data cannot resolve or that draws a single bar."""
+
+    def setUp(self):
+        self.p2s = Polars2SVG()
+
+    def _hourly(self, days=3):
+        return pl.DataFrame({'ts': pl.datetime_range(dt.datetime(2026, 1, 1), dt.datetime(2026, 1, days, 23),
+                                                     '1h', eager=True)})
+
+    def _names(self, levels):
+        return [_e_.name for _e_ in levels]
+
+    def test_linear_levels_stop_where_the_spine_outgrows_the_plot(self):
+        """72 hourly bins fit 512 px (two px a bar) but not 128, so hourly drops out there."""
+        _p_ = self.p2s
+        _wide_   = _p_.timep(self._hourly(), 'ts').timeLevels()
+        _narrow_ = _p_.timep(self._hourly(), 'ts', wxh=(128, 256)).timeLevels()
+        _linear_ = lambda levels: [_e_ for _e_ in levels if isinstance(_e_, _p_.TimeLinearTypeP)]  # noqa: E731
+        self.assertEqual(_linear_(_wide_),   [_p_.LT_Y_m_dp, _p_.LT_Y_m_d_4Hp, _p_.LT_Y_m_d_Hp])
+        self.assertEqual(_linear_(_narrow_), [_p_.LT_Y_m_dp, _p_.LT_Y_m_d_4Hp])
+
+    def test_the_auto_level_is_the_finest_linear_level_offered(self):
+        """Same budget and cap as the auto resolution, which settles on one of these."""
+        _p_ = self.p2s
+        for _df_, _wxh_ in ((self._hourly(), (512, 256)), (self._hourly(), (128, 256)),
+                            (makeTimeDf(n=200, year=(2015, 2025), month=(1, 12), day=(1, 28)), (512, 256))):
+            with self.subTest(wxh=_wxh_, rows=len(_df_)):
+                _t_ = _p_.timep(_df_, 'ts', wxh=_wxh_)
+                _linear_ = [_e_ for _e_ in _t_.timeLevels() if isinstance(_e_, _p_.TimeLinearTypeP)]
+                self.assertEqual(_linear_[-1], _t_._time_enum_)
+
+    def test_a_periodic_cycle_has_to_fit_the_plot_too(self):
+        """Day of year is 366 bars: too many for 512 px, room enough at 1024.  The
+        second-of-the-hour cycle never fits a default view."""
+        _year_ = pl.DataFrame({'ts': pl.datetime_range(dt.datetime(2025, 1, 1), dt.datetime(2025, 12, 31, 23),
+                                                       '1h', eager=True)})
+        self.assertNotIn('PT_DoYp', self._names(self.p2s.timep(_year_, 'ts').timeLevels()))
+        self.assertIn('PT_DoYp', self._names(self.p2s.timep(_year_, 'ts', wxh=(1024, 256)).timeLevels()))
+        _secs_ = pl.DataFrame({'ts': pl.datetime_range(dt.datetime(2026, 1, 1), dt.datetime(2026, 1, 1, 1),
+                                                       '1s', eager=True)})
+        self.assertNotIn('PT_H_M_Sp', self._names(self.p2s.timep(_secs_, 'ts').timeLevels()))
+
+    def test_nothing_finer_than_the_data_resolves(self):
+        """A Date column has no hour -- polars cannot even compute one, which is why these
+        are dropped before the select -- and midnight-only timestamps never move theirs."""
+        _dates_ = pl.DataFrame({'d': pl.date_range(dt.date(2025, 1, 1), dt.date(2025, 3, 31), '1d', eager=True)})
+        _midnights_ = pl.DataFrame({'ts': pl.datetime_range(dt.datetime(2025, 1, 1), dt.datetime(2025, 3, 31),
+                                                            '1d', eager=True)})
+        for _df_, _col_ in ((_dates_, 'd'), (_midnights_, 'ts')):
+            with self.subTest(column=_col_):
+                _names_ = self._names(self.p2s.timep(_df_, _col_).timeLevels())
+                self.assertIn('LT_Y_m_dp', _names_)
+                self.assertFalse({'LT_Y_m_d_4Hp', 'LT_Y_m_d_Hp', 'PT_Hp', 'PT_DoW_Hp'} & set(_names_))
+
+    def test_a_level_that_draws_one_bar_is_left_out(self):
+        """Three days of data are one year, one quarter and one month, whichever way the
+        calendar is cut."""
+        _names_ = self._names(self.p2s.timep(self._hourly(), 'ts').timeLevels())
+        self.assertFalse({'LT_Yp', 'LT_Y_Qp', 'LT_Y_mp', 'PT_Qp', 'PT_mp'} & set(_names_))
+        self.assertEqual(self.p2s.timep(pl.DataFrame({'ts': [dt.datetime(2026, 1, 1)] * 3}), 'ts').timeLevels(), [])
+
+    def test_it_is_computed_on_the_widest_frame(self):
+        """df_orig by default: a level offered there is safe at every stack level, where a
+        narrower frame alone would allow finer ones."""
+        _t_ = self.p2s.timep(self._hourly(days=10), 'ts', wxh=(256, 256))
+        self.assertEqual(_t_.timeLevels(), _t_.timeLevels(_t_.df_orig))
+        self.assertNotIn('LT_Y_m_d_Hp', self._names(_t_.timeLevels()))
+        self.assertIn('LT_Y_m_d_Hp', self._names(_t_.timeLevels(self._hourly(days=2))))
 
 
 if __name__ == '__main__':

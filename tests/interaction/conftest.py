@@ -414,6 +414,51 @@ if _PLAYWRIGHT_AVAILABLE_:
         return _ip_
 
     @pytest.fixture
+    def default_size_grid(page: Any, served: Callable[..., Any]) -> dict[str, InteractivePage]:
+        """Every view with a settings panel, at its component's DEFAULT ``wxh``, as a grid.
+
+        Every other fixture here is 400x300, and that is how the panel shipped clipped:
+        at the defaults it is wider than histopi (128), piepi (160) and linkpi (256), and
+        xypi's render rows made it wider than xypi (256) too -- none of which a 400 px
+        view could show.  A grid rather than one page per view, because the defect has
+        two halves and the second only exists beside a neighbour: the root <svg> clips
+        the overhang, and a later sibling in the layout paints over it.
+
+            histopi  xypi    timepi       (128x256, 256x256, 512x256)
+            piepi    chordpi linkpi       (160x160, 256x256, 256x256)
+
+        So histopi's and xypi's panels overhang a neighbour, and piepi's overhangs
+        chordpi.  Returns ``{kind: InteractivePage}``, keyed by the view's kind.
+        """
+        import datetime
+        _p2s_ = Polars2SVG()
+        _df_  = _grid_df().with_columns(
+            pl.Series('ts', [datetime.datetime(2024, 1, 1) + datetime.timedelta(days=_i_ * 3)
+                             for _i_ in range(20)]),
+            pl.Series('fm', list('abcde') * 4),
+            pl.Series('to', list('bcdea') * 4))
+        _plots_ = {
+            'histopi': _p2s_.histop(_df_, 'cat'),
+            'xypi':    _p2s_.xyp(_df_, 'x', 'y', color='cat'),
+            'timepi':  _p2s_.timep(_df_, 'ts', color='cat'),
+            'piepi':   _p2s_.piep(_df_, 'cat'),
+            'chordpi': _p2s_.chordp(_df_, [('fm', 'to')]),
+            'linkpi':  _p2s_.linkp(_df_, relationships=[('fm', 'to')]),
+        }
+        for _plot_ in _plots_.values():
+            _plot_._repr_svg_()
+        _app_ = served([[_plots_['histopi'], _plots_['xypi'],    _plots_['timepi']],
+                        [_plots_['piepi'],   _plots_['chordpi'], _plots_['linkpi']]])
+        page.goto(_app_.url, wait_until='load')
+        _out_: dict[str, InteractivePage] = {}
+        for _kind_, _plot_ in _plots_.items():
+            _root_id_ = 'svgparent' if _kind_ == 'linkpi' else f'svgparent{_kind_}'
+            _ip_ = InteractivePage(page, _plot_, root_id=_root_id_)
+            _ip_.app = _app_
+            _out_[_kind_] = _ip_
+        return _out_
+
+    @pytest.fixture
     def linked_pair(page: Any, served: Callable[..., Any]) -> Any:
         """A LINKPI and an XYPI on one page, over the same dataframe.
 

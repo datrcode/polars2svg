@@ -378,6 +378,14 @@ class TestMypyErrorRatchet(unittest.TestCase):
     def setUpClass(cls):
         if importlib.util.find_spec('mypy') is None:
             raise unittest.SkipTest('mypy is not installed (it is in the dev group)')
+        # The table is measured without mlx (see the docstring).  With mlx on the path
+        # mypy resolves its real stubs and the counts in od_flow_layout / tfdp_layout /
+        # ncp_layout move, so .venv-mlx and .venv-cuda would fail on numbers that were
+        # never theirs.  find_spec, not import: a Linux mlx with no backend extra cannot
+        # import, but mypy reads its stubs all the same.
+        if importlib.util.find_spec('mlx') is not None:
+            raise unittest.SkipTest('mlx is installed -- the ceilings are measured without '
+                                    'it; run the ratchet under the clean-room .venv')
         _root_ = Path(inspect.getfile(polars2svg)).parent.parent
         if not (_root_ / 'pyproject.toml').is_file():
             raise unittest.SkipTest('not a source checkout (installed-wheel test run)')

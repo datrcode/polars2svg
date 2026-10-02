@@ -52,7 +52,7 @@ export function render({ model, el }) {
     // is what the shared picker and the panel both read.
     menu_items: model.menu_items,
     menu_open: false, menu_kind: '', menu_index: 0, menu_timer: null, menu_x: 8,
-    panel_open: false, panel_row: 0, panel_pending: {}, panel_timer: null, panel_w: 0,
+    panel_open: false, panel_row: 0, panel_by_key: false, panel_pending: {}, panel_timer: null, panel_w: 0,
     search_mode: false, search_buffer: '',
     pending_mods: null,
     // F1.  seq_sent is what the browser has asked for, seq_drawn what it has answered or
@@ -142,7 +142,7 @@ export function render({ model, el }) {
                  : (model.shiftkey)                  ? p2sInk(model, 'subtract')
                  : (model.ctrlkey)                   ? p2sInk(model, 'add')
                  :                                     p2sInk(model, 'replace');
-    if (state.drag_op && model.select_shape == 'oval') {
+    if (state.drag_op && model.has_select_shape && model.select_shape == 'oval') {
       var cx = state.x0_drag, cy = state.y0_drag;
       var rx = Math.abs(state.x1_drag - state.x0_drag);
       var ry = Math.abs(state.y1_drag - state.y0_drag);
@@ -314,7 +314,9 @@ export function render({ model, el }) {
     // the one picker (CP3).
     else if (event.key == 'a' && !event.ctrlKey) { panelOpen(false); }
     else if (event.key == 'A' && !event.ctrlKey) { panelOpen(true);  }
-    else if (event.key == 'F') { state.menu_kind = 'select_shape'; menuOpen(); }
+    // Only where the view offers an oval (has_select_shape): histopi, timepi and piepi
+    // select bars and slices, which a rectangle already does.
+    else if (event.key == 'F' && model.has_select_shape) { state.menu_kind = 'select_shape'; menuOpen(); }
     else if (event.key == 'h') {
       if (model.keyboardhelp_x == -1000) { model.keyboardhelp_x =     5; }
       else                               { model.keyboardhelp_x = -1000; }
@@ -332,12 +334,21 @@ export function render({ model, el }) {
   // modifier already gone -- the handler took the unmodified branch, and ctrl-c zoomed
   // the view instead of copying (U3).
   //
-  // The release is not discarded, it is deferred: the key_op_finished handler applies it
-  // as soon as Python reports the operation done.  Simply skipping the clear would leave
-  // the modifier stuck on until the next keydown, and the drag band -- which reads these
-  // to colour itself -- would name the wrong set-operation.
+  // The release is not discarded, it is deferred: applyPendingMods applies it as soon as
+  // Python reports the operation done.  Simply skipping the clear would leave the
+  // modifier stuck on until the next keydown, and the drag band -- which reads these to
+  // colour itself -- would name the wrong set-operation.
+  //
+  // A rubber-band drag is the same race: applyDragOp reads shiftkey to decide between
+  // keeping and removing what the band covers, so letting go of shift the moment the
+  // button came up kept the records it was meant to remove (PLANNING.md §5
+  // C-interactive-modifier-release-race).
+  function modsInUse() {
+    return model.key_op_finished !== '' || model.drag_op_finished;
+  }
+
   function myOnKeyUp(event) {
-    if (model.key_op_finished === '') {
+    if (!modsInUse()) {
       model.shiftkey = event.shiftKey;
       model.ctrlkey  = event.ctrlKey;
     } else {
@@ -392,6 +403,10 @@ export function render({ model, el }) {
       if (state.drag_op) {
         state.shiftkey        = event.shiftKey;
         state.ctrlkey         = event.ctrlKey;
+        // The drag's own modifiers, as linkpi takes them: what was held when the button
+        // came up, not whatever the last keydown the view happened to see had said.
+        model.shiftkey         = event.shiftKey;
+        model.ctrlkey          = event.ctrlKey;
         state.drag_op         = false;
         myUpdateDragRect();
         model.drag_x0          = state.x0_drag;
@@ -445,17 +460,20 @@ export function render({ model, el }) {
   model.on('info_str', function() {
     infostr.innerHTML = model.info_str;
   });
-  model.on('key_op_finished', function() {
-    if (model.key_op_finished === '' && state.pending_mods) {
+  function applyPendingMods() {
+    if (!modsInUse() && state.pending_mods) {
       model.ctrlkey  = state.pending_mods[0];
       model.shiftkey = state.pending_mods[1];
       state.pending_mods = null;
     }
-  });
+  }
+  model.on('key_op_finished',  applyPendingMods);
+  model.on('drag_op_finished', applyPendingMods);
   // ${keyboardhelp_x} was an attribute binding, so it is an initial setAttribute (done
   // above, at construction) plus this.
   model.on('keyboardhelp_x', function() {
     keyboardhelp.setAttribute('transform', 'translate(' + model.keyboardhelp_x + ' 0)');
+    _cp_.helpOverhang(keyboardhelp, model.keyboardhelp_x);
   });
 
   // The configuration panel is a live display, so every value it shows re-renders it --

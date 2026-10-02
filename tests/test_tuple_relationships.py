@@ -20,6 +20,7 @@ import polars as pl
 
 from polars2svg import Polars2SVG
 from polars2svg.spreadlinepi import _filter_out_nodes
+from svg_test_utils import normalize_svg
 
 
 def _make_df():
@@ -126,9 +127,11 @@ class TestTemplateCloneTupleEndpoints(unittest.TestCase):
     def setUp(self):
         self.df = _make_df()
 
-    def _assert_clone_renders(self, comp):
+    def assertCloneRenders(self, comp):
         _clone_ = comp.render_with(self.df)
         self.assertIn('<svg', _clone_._repr_svg_())
+        # on the frame it was built from, the clone draws what its template drew
+        self.assertEqual(normalize_svg(_clone_._repr_svg_()), normalize_svg(comp._repr_svg_()))
         # the clone re-derives both specs from the pristine one, so it is not one
         # rewrite deeper than its template
         self.assertEqual(_clone_.relationships_orig, comp.relationships_orig)
@@ -138,23 +141,23 @@ class TestTemplateCloneTupleEndpoints(unittest.TestCase):
     def test_linkp_clone(self):
         _lp_ = self.p2s.linkp(self.df, [(('fm', 'port'), 'to')], wxh=(512, 512))
         _lp_._repr_svg_()
-        _clone_ = self._assert_clone_renders(_lp_)
+        _clone_ = self.assertCloneRenders(_lp_)
         self.assertIn('__fm0__', _clone_.df.columns)
 
     def test_linkp_clone_with_tuple_on_the_to_side(self):
         _lp_ = self.p2s.linkp(self.df, [('to', ('fm', 'port'))], wxh=(512, 512))
         _lp_._repr_svg_()
-        self._assert_clone_renders(_lp_)
+        self.assertCloneRenders(_lp_)
 
     def test_linkp_clone_with_a_link_label_field(self):
         _lp_ = self.p2s.linkp(self.df, [(('fm', 'port'), 'to', 'category')], wxh=(512, 512))
         _lp_._repr_svg_()
-        self._assert_clone_renders(_lp_)
+        self.assertCloneRenders(_lp_)
 
     def test_chordp_clone(self):
         _ch_ = self.p2s.chordp(self.df, [(('fm', 'port'), 'to')], wxh=(512, 512))
         _ch_._repr_svg_()
-        self._assert_clone_renders(_ch_)
+        self.assertCloneRenders(_ch_)
 
     def test_spreadlinesp_clone(self):
         _df_ = self.df.with_columns(

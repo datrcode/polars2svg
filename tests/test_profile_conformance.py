@@ -251,7 +251,7 @@ class TestInjectionCorpusConformsToProfileA(unittest.TestCase):
         for _pname_, _payload_ in PAYLOADS.items():
             for _case_ in renderMatrix(self.p2s, _payload_):
                 with self.subTest(payload=_pname_, case=_case_.name):
-                    ET.fromstring(_case_.render()._repr_svg_())
+                    self.assertEqual(ET.fromstring(_case_.render()._repr_svg_()).tag.rsplit('}', 1)[-1], 'svg')
 
 
 class TestInjectionCorpusIsNotVacuous(unittest.TestCase):

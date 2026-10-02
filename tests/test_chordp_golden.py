@@ -52,7 +52,7 @@ class TestChordPGolden(unittest.TestCase):
         assert_image_matches_golden(cp.svg, 'chordp_node_color_by_name')
 
     def test_link_color_src(self):
-        cp = self.p2s.chordp(**_params(color='src'))
+        cp = self.p2s.chordp(**_params(color=self.p2s.COLOR_BY_SRC_NODE))
         assert_svg_matches_golden(cp.svg, 'chordp_link_color_src')
         assert_image_matches_golden(cp.svg, 'chordp_link_color_src')
 

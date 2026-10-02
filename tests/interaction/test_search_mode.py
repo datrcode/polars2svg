@@ -60,14 +60,14 @@ def test_escape_cancels_without_selecting(search_page):
     _search(search_page, 'alp')
     search_page.press('Escape')
     assert search_page.el('searchtext').text_content() == ''
-    search_page.expect_selected(0)          # nothing selected, nothing drawn
+    search_page.assert_selected(0)          # nothing selected, nothing drawn
 
 
 def test_enter_on_an_empty_buffer_leaves_the_mode_without_searching(search_page):
     _search(search_page, '')
     search_page.press('Enter')
     assert search_page.el('searchtext').text_content() == ''
-    search_page.expect_selected(0)
+    search_page.assert_selected(0)
 
 
 # ── committing, and the set operations ───────────────────────────────────────
@@ -76,49 +76,49 @@ def test_enter_commits_a_substring_and_selects_the_matches(search_page):
     """'alp' matches alpha and alpine, and only those."""
     _search(search_page, 'alp')
     search_page.press('Enter')
-    search_page.expect_selected(2)
+    search_page.assert_selection(['alpha', 'alpine'])
     assert search_page.el('searchtext').text_content() == ''
 
 
 def test_a_second_search_replaces_the_selection_by_default(search_page):
     _search(search_page, 'alp')
     search_page.press('Enter')
-    search_page.expect_selected(2)
+    search_page.assert_selection(['alpha', 'alpine'])
 
     _search(search_page, 'beta')
     search_page.press('Enter')
-    search_page.expect_selected(1)
+    search_page.assert_selection(['beta'])
 
 
 def test_plus_prefix_adds_to_the_selection(search_page):
     _search(search_page, 'alp')
     search_page.press('Enter')
-    search_page.expect_selected(2)
+    search_page.assert_selection(['alpha', 'alpine'])
 
     _search(search_page, '+beta')
     search_page.press('Enter')
-    search_page.expect_selected(3)
+    search_page.assert_selection(['alpha', 'alpine', 'beta'])
 
 
 def test_minus_prefix_subtracts_from_the_selection(search_page):
     _search(search_page, 'alp')
     search_page.press('Enter')
-    search_page.expect_selected(2)
+    search_page.assert_selection(['alpha', 'alpine'])
 
     _search(search_page, '-alpha')
     search_page.press('Enter')
-    search_page.expect_selected(1)
+    search_page.assert_selection(['alpine'])
 
 
 def test_ampersand_prefix_intersects_with_the_selection(search_page):
     """alpha+alpine intersected with everything starting 'alpi' leaves alpine."""
     _search(search_page, 'alp')
     search_page.press('Enter')
-    search_page.expect_selected(2)
+    search_page.assert_selection(['alpha', 'alpine'])
 
     _search(search_page, '&alpi')
     search_page.press('Enter')
-    search_page.expect_selected(1)
+    search_page.assert_selection(['alpine'])
 
 
 def test_a_slash_delimited_pattern_is_treated_as_a_regex(search_page):
@@ -129,29 +129,29 @@ def test_a_slash_delimited_pattern_is_treated_as_a_regex(search_page):
     """
     _search(search_page, '/^a/')
     search_page.press('Enter')
-    search_page.expect_selected(2)
+    search_page.assert_selection(['alpha', 'alpine'])
 
 
 def test_matching_is_case_insensitive(search_page):
     _search(search_page, 'ALP')
     search_page.press('Enter')
-    search_page.expect_selected(2)
+    search_page.assert_selection(['alpha', 'alpine'])
 
 
 def test_a_search_matching_nothing_clears_the_selection(search_page):
     _search(search_page, 'alp')
     search_page.press('Enter')
-    search_page.expect_selected(2)
+    search_page.assert_selection(['alpha', 'alpine'])
 
     _search(search_page, 'zzzz')
     search_page.press('Enter')
-    search_page.expect_selected(0)
+    search_page.assert_selection([])
 
 
 # ── modality ─────────────────────────────────────────────────────────────────
 
 # NOTE on the oracle used below and in the two cancellation tests above.  These
-# assert "no selection ran" with expect_selected(0) -- the count in #infostr *and*
+# assert "no selection ran" with assert_selected(0) -- the count in #infostr *and*
 # an empty #selectionlayer.  They used to assert `'Selected' not in info_text()`,
 # which passed for the wrong reason: until PLANNING.md U5 was fixed the info line
 # was pinned to its param default (" | | grid") for the whole life of the page, so
@@ -166,14 +166,14 @@ def test_ordinary_bindings_are_inert_while_typing(search_page):
     """
     _search(search_page, 'z')
     assert search_page.el('searchtext').text_content() == f'/ z{CURSOR}'
-    search_page.expect_selected(0)          # 'z' reached the selection handler if this fails
+    search_page.assert_selected(0)          # 'z' reached the selection handler if this fails
 
 
 def test_digits_type_rather_than_selecting_by_degree(search_page):
     """The digit bindings select by node degree; in search mode they are text."""
     _search(search_page, 'a1')
     assert search_page.el('searchtext').text_content() == f'/ a1{CURSOR}'
-    search_page.expect_selected(0)
+    search_page.assert_selected(0)
 
 
 # ── which ReDoS guard is actually live under Panel ───────────────────────────
@@ -204,7 +204,7 @@ def test_the_regex_search_records_which_guard_was_live(search_page):
     """
     _search(search_page, '/^a/')
     search_page.press('Enter')
-    search_page.expect_selected(2)          # the search really ran
+    search_page.assert_selected(2)          # the search really ran
 
     _ctrl_ = search_page.app.view(0)
     assert _ctrl_._last_regex_guard_ == 'screen', (
@@ -222,7 +222,7 @@ def test_an_ordinary_substring_search_leaves_the_guard_alone(search_page):
     the recording says "screened" about a search that was never bounded that way."""
     _search(search_page, 'alp')
     search_page.press('Enter')
-    search_page.expect_selected(2)
+    search_page.assert_selection(['alpha', 'alpine'])
     assert search_page.app.view(0)._last_regex_guard_ is None
 
 

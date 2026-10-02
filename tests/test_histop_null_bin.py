@@ -15,6 +15,7 @@ Covered here for each entry point the interactive controller calls:
   recordsAt()          brush              (applyBrushOp → _doBrushAt)
   filterBySubstring()  '/' search         (applySearchOp)
 """
+import re
 import unittest
 import polars as pl
 from polars2svg import Polars2SVG
@@ -58,8 +59,10 @@ class TestHistopNullBinSingleField(unittest.TestCase):
     def test_null_bin_is_the_largest(self):
         self.assertEqual(self.h._sorted_bins_[0], None)
 
-    def test_null_bin_renders_as_none_label(self):
-        self.assertIn('None', self.h._repr_svg_())
+    def test_null_bin_renders_as_null_label(self):
+        # '(null)', as linkp labels a null node -- 'None' is what a real text value reads
+        self.assertIn('>(null)<', self.h._repr_svg_())
+        self.assertNotIn('>None<', self.h._repr_svg_())
 
     # ── filterByRectangle ─────────────────────────────────────────────────────
 
@@ -114,14 +117,14 @@ class TestHistopNullBinSingleField(unittest.TestCase):
 
     # ── filterBySubstring ('/' search) ────────────────────────────────────────
 
-    def test_substring_none_selects_null_bin(self):
-        """The bar is labelled 'None', so '/none' has to match it."""
-        result = self.h.filterBySubstring('none')
+    def test_substring_null_selects_null_bin(self):
+        """The bar is labelled '(null)', so '/null' has to match it."""
+        result = self.h.filterBySubstring('null')
         self.assertEqual(len(result), 5)
         self.assertTrue(all(v is None for v in result['cat'].to_list()))
 
-    def test_substring_none_remove_drops_null_bin(self):
-        result = self.h.filterBySubstring('none', remove_bins=True)
+    def test_substring_null_remove_drops_null_bin(self):
+        result = self.h.filterBySubstring('null', remove_bins=True)
         self.assertEqual(len(result), 5)
         self.assertNotIn(None, result['cat'].to_list())
 
@@ -252,6 +255,48 @@ class TestHistopNullBinDistributionStrip(unittest.TestCase):
         _y1_  = _y0_ + self.h.distribution_bin_w - 1.0
         result = self.h.filterByRectangle((_x0_, _y0_, _x1_, _y1_))
         self.assertEqual(result['cat'].null_count(), 5)
+
+
+
+class TestHistopNullBinBesideATextNone(unittest.TestCase):
+    '''User report 2026-09-30, the millionaire-habits survey: tax_planning_behavior holds
+    the text "None" (26,833 rows) AND nulls (11,447).  Both bars read "None", and with a
+    color= the null bar was not drawn at all -- the stacked path filtered and joined on
+    the bin without nulls_equal, so the null bin had no segments and no y.'''
+
+    @classmethod
+    def setUpClass(cls):
+        cls.p2s = Polars2SVG()
+        # 'None' (text) = 6, null = 4, 'Basic' = 2; colours split every bin
+        cls.df = pl.DataFrame({
+            'tax':     ['None'] * 6 + [None] * 4 + ['Basic'] * 2,
+            'country': ['us', 'uk'] * 6,
+        })
+
+    def _histop_(self, **kw):
+        _h_ = self.p2s.histop(self.df, 'tax', wxh=(256, 256), bar_h=16, v_gap=0, draw_context=False, **kw)
+        _h_._repr_svg_()
+        return _h_
+
+    def test_the_two_are_labelled_apart(self):
+        _svg_ = self._histop_().svg
+        self.assertEqual(_svg_.count('>None<'), 1)
+        self.assertEqual(_svg_.count('>(null)<'), 1)
+
+    def _bar_segments_(self, h, index):
+        # plain bars write y="18.0", stacked segments y="18"
+        _y_ = int(h._plot_y0_ + index * h._slot_h_)
+        return re.findall(rf'<rect x="[^"]+" y="{_y_}(?:\.0)?" width="([^"]+)" height="{int(h.bar_h)}(?:\.0)?"', h.svg)
+
+    def test_a_coloured_null_bar_is_drawn(self):
+        _h_ = self._histop_(color='country')
+        _i_ = _h_._sorted_bins_.index(None)
+        _segs_ = self._bar_segments_(_h_, _i_)
+        self.assertEqual(len(_segs_), 2, 'the null bar should have one segment per country')
+        # ... and is as long as an uncoloured null bar
+        _plain_ = self._histop_()
+        _w_ = float(self._bar_segments_(_plain_, _plain_._sorted_bins_.index(None))[0])
+        self.assertAlmostEqual(sum(float(_s_) for _s_ in _segs_), _w_, delta=1.0)
 
 
 if __name__ == '__main__':

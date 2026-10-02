@@ -136,7 +136,7 @@ if _PLAYWRIGHT_AVAILABLE_:
         ``_select_by_attribute_at_mouse_`` collected both their colours and unioned both
         groups.  Over 2,000 constructions of this graph 0.15% produced such a hover
         (closest pair seen: 2.2px apart), which is how a green suite went red on an
-        unrelated dependabot bump on 2026-09-18 -- ``expect_selected(1)`` saw
+        unrelated dependabot bump on 2026-09-18 -- ``assert_selected(1)`` saw
         ``2 Selected``.  ``view_window`` is pinned with it for the reason
         ``quad_linkp`` spells out: without it the auto-fit pushes the pinned
         coordinates straight back out to the canvas edges.
@@ -918,7 +918,7 @@ if _PLAYWRIGHT_AVAILABLE_:
         colour per node bounds the selection at one only while the cursor is over one
         node: ``entitiesAtPoint`` returns everything overlapping a +/-5px box, so a
         random layout that dropped two of these four within one box made ``z`` union two
-        colour groups and ``expect_selected(1)`` see ``2 Selected``.  That is the
+        colour groups and ``assert_selected(1)`` see ``2 Selected``.  That is the
         2026-09-18 flake; ``two_color_linkp`` carries the measurement and the same fix.
         ``view_window`` is pinned with ``pos`` or the auto-fit undoes it (``quad_linkp``).
 

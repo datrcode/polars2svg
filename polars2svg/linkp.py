@@ -670,6 +670,9 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
             else: raise ValueError(f'LinkP: relationship tuples must have 2 or 3 parts, got {_edge_!r}')
             i += 1
 
+        # color= is checked here rather than in __validateInput__: the categorical column
+        # below is pre-built from its field, and a misspelt one would fail inside polars first
+        self.__validateColorSpec__(self.color, 'color')
         # Classify color modes and pre-build categorical color columns (must happen before group_by)
         self._link_color_mode_ = self.__colorModeInfo__(self.__effectiveColorSpec__('links'))
         self._node_color_mode_ = self.__colorModeInfo__(self.__effectiveColorSpec__('nodes'))
@@ -783,7 +786,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
         for _rel_ in self.relationships:
             for _field_ in _rel_[:2]:
                 if _field_ not in self.df.columns:
-                    raise ValueError(f'LinkP.__validateInput__(): field "{_field_}" not found in DataFrame{_rel_hint_}')
+                    raise ValueError(f'LinkP.__validateInput__(): field "{_field_}" not found in DataFrame{self.p2s.columnSuggestion(_field_, self.df)}{_rel_hint_}')
         # null_nodes= materializes a missing endpoint as that entity's own null node, in
         # BOTH frames: df drives this render, while df_orig is what linkpi() puts on the
         # interaction stack and builds its NetworkX graph from. Filling only one of them
@@ -799,7 +802,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
             for _rel_ in self.relationships:
                 if len(_rel_) == 3 and _rel_[2] not in self.df.columns:
                     raise ValueError(f'LinkP.__validateInput__(): link label field "{_rel_[2]}" '
-                                     f'not found in DataFrame{_rel_hint_}')
+                                     f'not found in DataFrame{self.p2s.columnSuggestion(_rel_[2], self.df)}{_rel_hint_}')
             if self.link_shape == 'flowmap':
                 self.p2s.logger.warning(
                     "LinkP: draw_link_labels= is set but link_shape='flowmap' edges are not "
@@ -818,7 +821,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
                 )
         for _field_ in self.__countFields__():
             if _field_ not in self.df.columns:
-                raise ValueError(f'LinkP.__validateInput__(): count field "{_field_}" not found in DataFrame')
+                raise ValueError(f'LinkP.__validateInput__(): count field "{_field_}" not found in DataFrame{self.p2s.columnSuggestion(_field_, self.df)}')
         if self.color == self.p2s.COLOR_BY_NODE_NAME:
             raise ValueError(
                 'LinkP.__validateInput__(): color=p2s.COLOR_BY_NODE_NAME is not valid for the '
@@ -875,7 +878,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
                 f'(field, TimeLinearTypeP|TimePeriodicTypeP) tuple, got {self.time!r}'
             )
         if self._time_field_ not in self.df.columns:
-            raise ValueError(f'LinkP.__validateInput__(): time field "{self._time_field_}" not found in DataFrame')
+            raise ValueError(f'LinkP.__validateInput__(): time field "{self._time_field_}" not found in DataFrame{self.p2s.columnSuggestion(self._time_field_, self.df)}')
         if not (self.p2s.dateColumn(self.df, self._time_field_) or self.p2s.dateTimeColumn(self.df, self._time_field_)):
             raise ValueError(f'LinkP.__validateInput__(): time field "{self._time_field_}" is not a date/datetime column')
         self._is_periodic_ = isinstance(self._time_enum_, self.p2s.TimePeriodicTypeP)
@@ -2126,7 +2129,10 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
                             pl.col('__nm__').list.get(0).alias('__first__'),
                         )
         )
-        self.df_node = self.__applyColorToDF__(self.df_node, self._node_color_mode_, 'nc', _bg_co_)
+        # When the links carry a colour scale of their own, the scale -- the legend's domain,
+        # smallp's shared SM_COLOR range -- stays theirs (PLANNING.md §5 C-linkp-two-scales).
+        self.df_node = self.__applyColorToDF__(self.df_node, self._node_color_mode_, 'nc', _bg_co_,
+                                               owns_scale=self._link_color_mode_['kind'] not in self._SCALE_KINDS_)
 
         # Node dict override: apply per-node-name hex colors after grouping (keyed on __first__)
         if isinstance(self.node_color, dict):
@@ -2517,7 +2523,9 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
     # renderSmallMultiples() - smallp integration
     # - each panel gets the same pos/relationships (graph layout) but a different data subset
     #
-    def renderSmallMultiples(self, df_all: pl.DataFrame, df_lu: dict, all_key: str) -> dict:
+    def renderSmallMultiples(self, df_all: pl.DataFrame, df_lu: dict, all_key: str,
+                             category_fields: list[str] | None = None) -> dict:
+        # category_fields: smallp's category column(s); only xyp uses them (line_split_by=).
         _kwargs_: dict[str, Any] = {}
 
         # The template's computed view_window would otherwise be inherited by every sub-panel

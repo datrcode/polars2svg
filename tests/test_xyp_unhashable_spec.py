@@ -1,4 +1,6 @@
+import re
 import unittest
+import polars as pl
 from polars2svg import Polars2SVG
 
 from random_dataframe import randomDataFrame
@@ -14,7 +16,7 @@ class Testxyp_unhashable_spec(unittest.TestCase):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.p2s = Polars2SVG()
-        self.df  = randomDataFrame(100)
+        self.df  = randomDataFrame(100, seed=51)
 
     def _assertNotUnhashableTypeError(self, fn):
         # The whole point: never surface a bare `TypeError: unhashable type`.
@@ -69,12 +71,27 @@ class Testxyp_unhashable_spec(unittest.TestCase):
     # Regression: valid specs must still parse without error               #
     # ------------------------------------------------------------------ #
     def test_valid_specs_still_parse(self):
-        self.p2s.xyp(self.df, x=('a', 'b'), y='b')
-        self.p2s.xyp(self.df, x=('a', self.p2s.SETp), y='b')
-        self.p2s.xyp(self.df, x='a', y='b', color='#ff0000')
-        self.p2s.xyp(self.df, x='a', y='b', x_distributions=('a', 'b'))
-        self.p2s.xyp(self.df, x='a', y='b', x_distributions=['a', 'b', self.p2s.SETp])
-        self.p2s.xyp(self.df, x='a', y='b', y_distributions=self.p2s.ROW_COUNTp)
+        # ... and each draws what it says
+        _kept_ = self.df.filter(pl.col('b').is_not_null())      # rows with y
+        # a tuple axis is one category per distinct (a, b) pair of the rows it keeps
+        _xyp_ = self.p2s.xyp(self.df, x=('a', 'b'), y='b')
+        self.assertEqual(_xyp_.df_flat['__xi__'].n_unique(), _kept_.select(pl.struct('a', 'b')).unique().height)
+        # SETp makes a numeric column categorical: one slot per distinct value
+        _xyp_ = self.p2s.xyp(self.df, x=('a', self.p2s.SETp), y='b')
+        self.assertEqual(_xyp_.df_flat['__xi__'].n_unique(), _kept_.filter(pl.col('a').is_not_null())['a'].n_unique())
+        # a hex colour is every dot's colour
+        _dots_ = re.search(r'<g class="(?:rect|circle)-group-\d+"[^>]*>(.*?)</g>',
+                           self.p2s.xyp(self.df, x='a', y='b', color='#ff0000').svg, re.S).group(1)
+        self.assertEqual(set(re.findall(r'fill="([^"]*)"', _dots_)), {'#ff0000'})
+        # several distribution fields draw one outline each, in two colours
+        for _spec_ in (('a', 'b'), ['a', 'b', self.p2s.SETp]):
+            with self.subTest(x_distributions=str(_spec_)):
+                _outlines_ = re.findall(r'<path d="[^"]*" stroke="(#[0-9a-f]{6})" stroke-width="0.5" fill="none" />',
+                                        self.p2s.xyp(self.df, x='a', y='b', x_distributions=_spec_).svg)
+                self.assertEqual(len(set(_outlines_)), 2, f'expected two field outlines, got {_outlines_}')
+        # a row-count distribution draws its bars
+        _svg_ = self.p2s.xyp(self.df, x='a', y='b', y_distributions=self.p2s.ROW_COUNTp).svg
+        self.assertGreater(len(re.findall(r'<rect [^>]*stroke-opacity="0.9"', _svg_)), 0)
 
     # ------------------------------------------------------------------ #
     # Unit tests of the helpers themselves                                 #

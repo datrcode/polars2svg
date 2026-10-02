@@ -97,12 +97,18 @@ class P2SInteractiveMixin:
 
     def histopi(self, _histop_: Any, **kwargs: Any) -> Any:
         '''Wrap a static ``histop`` component as an interactive, cross-linkable panel
-        (bar selection). Pass the result to ``panelize()``.'''
+        (bar selection). Pass the result to ``panelize()``.
+
+        ``count_fields=[...]`` names the further columns the settings panel's count row
+        may switch to -- by default it offers rows and the field the view was built with.'''
         return _importInteractiveController_().histopi(_histop_, **kwargs)
 
     def timepi(self, _timep_: Any, **kwargs: Any) -> Any:
         '''Wrap a static ``timep`` component as an interactive, cross-linkable panel
-        (time-range selection). Pass the result to ``panelize()``.'''
+        (time-range selection). Pass the result to ``panelize()``.
+
+        ``count_fields=[...]`` names the further columns the settings panel's count row
+        may switch to -- by default it offers rows and the field the view was built with.'''
         return _importInteractiveController_().timepi(_timep_, **kwargs)
 
     def linkpi(self, _linkp_: Any, mvc: Any = None, **kwargs: Any) -> Any:
@@ -117,12 +123,18 @@ class P2SInteractiveMixin:
 
     def chordpi(self, _chordp_: Any, **kwargs: Any) -> Any:
         '''Wrap a static ``chordp`` diagram as an interactive, cross-linkable panel
-        (arc/ribbon selection). Pass the result to ``panelize()``.'''
+        (arc/ribbon selection). Pass the result to ``panelize()``.
+
+        ``count_fields=[...]`` names the further columns the settings panel's count row
+        may switch to -- by default it offers rows and the field the view was built with.'''
         return _importInteractiveController_().chordpi(_chordp_, **kwargs)
 
     def piepi(self, _piep_: Any, **kwargs: Any) -> Any:
         '''Wrap a static ``piep`` chart as an interactive, cross-linkable panel
-        (wedge selection). Pass the result to ``panelize()``.'''
+        (wedge selection). Pass the result to ``panelize()``.
+
+        ``count_fields=[...]`` names the further columns the settings panel's count row
+        may switch to -- by default it offers rows and the field the view was built with.'''
         return _importInteractiveController_().piepi(_piep_, **kwargs)
 
     def spreadlinepi(self, _spread_: Any, **kwargs: Any) -> Any:

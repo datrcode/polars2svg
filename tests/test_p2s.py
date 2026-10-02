@@ -2,6 +2,7 @@ import unittest
 import polars as pl
 import datetime
 from polars2svg import Polars2SVG
+from svg_test_utils import DURATION_TOLERANCE, durationSeconds
 
 
 class Testp2s(unittest.TestCase):
@@ -10,11 +11,17 @@ class Testp2s(unittest.TestCase):
         self.p2s = Polars2SVG()
 
     def test_humanReadablTimeDeltas(self):
-        _seconds_ = 1.0
+        '''From a second to three decades: every label is a run of unit tokens, largest
+        first; it says the duration to within the formatter's own rounding; and a longer
+        duration never reads as a shorter one.'''
+        _seconds_, _last_ = 1.0, 0.0
         while _seconds_ < 1_000_000_000:
-            _td_  = datetime.timedelta(seconds=_seconds_)
-            self.p2s.humanReadableTimeDelta(_td_)
-            _seconds_ *= 1.1
+            _label_ = self.p2s.humanReadableTimeDelta(datetime.timedelta(seconds=_seconds_))
+            _says_  = durationSeconds(_label_)
+            self.assertIsNotNone(_says_, f'{_label_!r} for {_seconds_}s')
+            self.assertLessEqual(abs(_says_ - _seconds_), DURATION_TOLERANCE * _seconds_, f'{_label_!r} for {_seconds_}s')
+            self.assertGreaterEqual(_says_, _last_, f'{_label_!r} for {_seconds_}s reads shorter than the one before')
+            _seconds_, _last_ = _seconds_ * 1.1, _says_
 
 
 class TestIsTemplate(unittest.TestCase):

@@ -1,11 +1,13 @@
+import re
 import unittest
 import datetime
 import polars as pl
 from polars2svg import Polars2SVG
-from timep_dataframes import makeTimeDf
+from timep_dataframes import makeTimeDf, TimepAssertions
+from svg_test_utils import SmallpAssertions, normalize_svg
 
 
-class TestTimepSmalp(unittest.TestCase):
+class TestTimepSmalp(TimepAssertions, SmallpAssertions, unittest.TestCase):
     '''Tests for smallp() with a timep template.
 
     Bug fixed: Timep.__parseInput__ previously raised "df already set" when
@@ -52,32 +54,40 @@ class TestTimepSmalp(unittest.TestCase):
         self.assertEqual(len(result.category_to_xy), 3)   # 'a', 'b', 'c'
 
     def test_smallp_timep_default_barchart(self):
+        # Each panel is its own rows' time histogram, labelled with its category
         df       = self._makeSmallpDf()
         template = self.p2s.timep(df)
-        self.p2s.smallp(df, template, 'category')
+        result   = self.p2s.smallp(df, template, 'category')
+        for _k_, _panel_ in self.assertPanelsAreTemplateOn(result, df, 'category', template).items():
+            self.assertColumnsShow(_panel_, df.filter(pl.col('category') == _k_), 'ts', pl.len())
+        self.assertEqual(sorted(re.findall(r'>([abc])</text>', result._repr_svg_())), ['a', 'b', 'c'])
 
     def test_smallp_timep_with_periodic_enum(self):
-        df       = makeTimeDf(n=300, year=(2022, 2024), month=(1, 12))
-        df       = df.with_columns(pl.col('category'))
+        df       = makeTimeDf(n=300, year=(2022, 2024), month=(1, 12), seed=21)
         template = self.p2s.timep(df, ('ts', self.p2s.PT_mp), color='category')
-        self.p2s.smallp(df, template, 'category')
+        for _k_, _panel_ in self.assertPanelsAreTemplateOn(self.p2s.smallp(df, template, 'category'), df, 'category', template).items():
+            self.assertStacksShow(_panel_, df.filter(pl.col('category') == _k_), 'ts', 'category', pl.len())
 
     def test_smallp_timep_with_linear_enum(self):
-        df       = makeTimeDf(n=300, year=(2022, 2024), month=(1, 12))
+        df       = makeTimeDf(n=300, year=(2022, 2024), month=(1, 12), seed=22)
         template = self.p2s.timep(df, ('ts', self.p2s.LT_Y_mp), color='category')
-        self.p2s.smallp(df, template, 'category')
+        for _k_, _panel_ in self.assertPanelsAreTemplateOn(self.p2s.smallp(df, template, 'category'), df, 'category', template).items():
+            self.assertEqual(_panel_._time_enum_, self.p2s.LT_Y_mp)
+            self.assertStacksShow(_panel_, df.filter(pl.col('category') == _k_), 'ts', 'category', pl.len())
 
     # ── various styles ────────────────────────────────────────────────────────
 
     def test_smallp_timep_stackedbar_style(self):
-        df       = self._makeSmallpDf()
-        template = self.p2s.timep(df, color='category', style=self.p2s.STACKEDBARp)
-        self.p2s.smallp(df, template, 'category')
+        # A categorical colour already stacks: STACKEDBARp spells out the default
+        df = self._makeSmallpDf()
+        _explicit_ = self.p2s.smallp(df, self.p2s.timep(df, color='category', style=self.p2s.STACKEDBARp), 'category')
+        _default_  = self.p2s.smallp(df, self.p2s.timep(df, color='category'), 'category')
+        self.assertEqual(normalize_svg(_explicit_._repr_svg_()), normalize_svg(_default_._repr_svg_()))
 
     def test_smallp_timep_boxplot_style(self):
         df       = self._makeSmallpDf()
         template = self.p2s.timep(df, count='value', style=self.p2s.BOXPLOTp)
-        self.p2s.smallp(df, template, 'category')
+        self.assertPanelsAreTemplateOn(self.p2s.smallp(df, template, 'category'), df, 'category', template)
 
     # ── include_all ───────────────────────────────────────────────────────────
 
@@ -91,14 +101,24 @@ class TestTimepSmalp(unittest.TestCase):
     # ── draw_labels / wxh ────────────────────────────────────────────────────
 
     def test_smallp_timep_no_draw_labels(self):
+        # The panels are unchanged; only the category labels go
         df       = self._makeSmallpDf()
         template = self.p2s.timep(df, color='category')
-        self.p2s.smallp(df, template, 'category', draw_labels=False)
+        _off_ = self.p2s.smallp(df, template, 'category', draw_labels=False)
+        _on_  = self.p2s.smallp(df, template, 'category')
+        self.assertPanelsAreTemplateOn(_off_, df, 'category', template)
+        self.assertEqual(re.findall(r'>([abc])</text>', _off_._repr_svg_()), [])
+        self.assertEqual(sorted(re.findall(r'>([abc])</text>', _on_._repr_svg_())), ['a', 'b', 'c'])
 
     def test_smallp_timep_custom_wxh(self):
+        # The composite is 1024 wide and the 256-wide tiles sit on a 256px grid inside it
         df       = self._makeSmallpDf()
         template = self.p2s.timep(df, color='category', wxh=(256, 128))
-        self.p2s.smallp(df, template, 'category', wxh=(1024, None))
+        result   = self.p2s.smallp(df, template, 'category', wxh=(1024, None))
+        self.assertEqual(result.wxh[0], 1024)
+        self.assertPanelsAreTemplateOn(result, df, 'category', template)
+        for _k_, (_x_, _y_) in result.category_to_xy.items():
+            self.assertTrue(_x_ % 256 == 0 and _x_ + 256 <= 1024, f'panel {_k_} at x={_x_}')
 
 
 if __name__ == '__main__':

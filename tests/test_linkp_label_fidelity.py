@@ -4,7 +4,7 @@ import xml.etree.ElementTree as ET
 import polars as pl
 
 from polars2svg import Polars2SVG
-from label_fidelity_data import FIDELITY_LABELS, svg_text_contents
+from label_fidelity_data import FIDELITY_LABELS, SVG_NS, svg_text_contents
 
 
 def _build_linkp(p2s, labels, node_labels=None):
@@ -73,7 +73,9 @@ class TestLinkPLabelFidelity(unittest.TestCase):
     def test_rendered_svg_is_well_formed_xml(self):
         # Escaping must keep the SVG parseable even with &, <, > in labels.
         lp = _build_linkp(self.p2s, FIDELITY_LABELS)
-        ET.fromstring(lp.svg)  # raises on malformed XML
+        _root_ = ET.fromstring(lp.svg)  # raises on malformed XML
+        self.assertEqual(_root_.tag, SVG_NS + 'svg')
+        self.assertEqual(len(list(_root_.iter(SVG_NS + 'text'))), len(FIDELITY_LABELS))
 
     def test_special_symbol_labels_are_escaped_in_source(self):
         # The raw SVG string must carry entity-escaped forms, not bare &, <, > from labels.

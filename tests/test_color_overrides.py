@@ -13,7 +13,13 @@ class TestColorOverrides(unittest.TestCase):
     # ── setColorOverrides validation ─────────────────────────────────────────
 
     def test_set_color_overrides_accepted(self):
+        '''Accepted, and in effect: the named values take their colours and the rest keep
+        the hash they had.'''
+        _was_ = {v: self.p2s.color(v) for v in ('A', 'B', 'C')}
         self.p2s.setColorOverrides({'A': '#ff0000', 'B': '#00ff00'})
+        self.assertEqual({v: self.p2s.color(v) for v in ('A', 'B', 'C')},
+                         {'A': '#ff0000', 'B': '#00ff00', 'C': _was_['C']})
+        self.assertNotEqual(_was_['A'], '#ff0000', 'the override would change nothing')
 
     def test_set_color_overrides_invalid_hex_raises(self):
         with self.assertRaises(ValueError):
@@ -49,7 +55,11 @@ class TestColorOverrides(unittest.TestCase):
         self.assertIn('B', self.p2s.color_overrides_lu)
 
     def test_remove_color_overrides_missing_key_silent(self):
-        self.p2s.removeColorOverrides('nonexistent')
+        '''Removing a key that was never set is silent, and leaves the others be.'''
+        self.p2s.setColorOverrides({'A': '#ff0000'})
+        self.assertIsNone(self.p2s.removeColorOverrides('nonexistent'))
+        self.assertEqual(self.p2s.color_overrides_lu, {'A': '#ff0000'})
+        self.assertEqual(self.p2s.color('A'), '#ff0000')
 
     # ── colorizeColumnPolarsOperations behavior ───────────────────────────────
 

@@ -1,57 +1,78 @@
 import unittest
 import polars as pl
 from polars2svg import Polars2SVG
-from histop_dataframes import makeHistoDf, makeOrderedHistoDf
-from svg_test_utils import assert_ordered_keys
+from histop_dataframes import makeHistoDf, makeOrderedHistoDf, makeStatisticHistoDf, HistopAssertions, orderedBins
+from svg_test_utils import assert_ordered_keys, normalize_svg
 
 
-class TestHistopOrder(unittest.TestCase):
+_STAT_EXPRS_ = {'rows':   pl.len(),
+                'sum':    pl.col('value').sum(),
+                'min':    pl.col('value').min(),
+                'max':    pl.col('value').max(),
+                'mean':   pl.col('score').mean(),
+                'median': pl.col('score').median(),
+                'std':    pl.col('score').std(),
+                'set':    pl.col('group').n_unique()}
+
+
+class TestHistopOrder(HistopAssertions, unittest.TestCase):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.p2s = Polars2SVG()
 
-    # ── order variants — smoke tests ──────────────────────────────────────────
+    # The per-bin value of one statistic on the statistic frame, as {bin: value}
+    def statistic(self, name: str) -> dict:
+        return dict(makeStatisticHistoDf().group_by('cat').agg(_STAT_EXPRS_[name].alias('m')).iter_rows())
+
+    # The bars come in the order the statistic gives, and are still their row counts:
+    # order= moves bars, it never resizes them
+    def assertOrderedBy(self, name: str, order) -> None:
+        _h_ = self.p2s.histop(makeStatisticHistoDf(), 'cat', order=order)
+        self.assertBarsShow(_h_, self.statistic('rows'), orderedBins(self.statistic(name)))
+
+    def test_the_statistic_frame_separates_every_order(self):
+        _orders_ = {name: tuple(orderedBins(self.statistic(name))) for name in _STAT_EXPRS_}
+        for name in _STAT_EXPRS_:
+            self.assertEqual(len(set(self.statistic(name).values())), 4, f'{name} ties two bins')
+        self.assertEqual(len(set(_orders_.values())), len(_orders_), f'two keys share an order: {_orders_}')
+
+    # ── order variants ────────────────────────────────────────────────────────
 
     def test_order_default_row_count(self):
-        df = makeHistoDf(n=100)
-        self.p2s.histop(df, 'cat')
+        self.assertBarsShow(self.p2s.histop(makeStatisticHistoDf(), 'cat'), self.statistic('rows'), orderedBins(self.statistic('rows')))
 
     def test_order_explicit_row_count(self):
         df = makeHistoDf(n=100)
-        self.p2s.histop(df, 'cat', order=self.p2s.ROW_COUNTp)
+        self.assertEqual(normalize_svg(self.p2s.histop(df, 'cat', order=self.p2s.ROW_COUNTp).svg),
+                         normalize_svg(self.p2s.histop(df, 'cat').svg))
 
     def test_order_numeric_field_sum(self):
-        df = makeHistoDf(n=100)
-        self.p2s.histop(df, 'cat', order='value')
+        self.assertOrderedBy('sum', 'value')
 
     def test_order_set_tuple(self):
         '''(field, SETp) → order by n_unique of that field per bin.'''
-        df = makeHistoDf(n=100)
-        self.p2s.histop(df, 'cat', order=('group', self.p2s.SETp))
+        self.assertOrderedBy('set', ('group', self.p2s.SETp))
 
     def test_order_statistic_min(self):
-        df = makeHistoDf(n=100)
-        self.p2s.histop(df, 'cat', order=('value', self.p2s.MINp))
+        self.assertOrderedBy('min', ('value', self.p2s.MINp))
 
     def test_order_statistic_max(self):
-        df = makeHistoDf(n=100)
-        self.p2s.histop(df, 'cat', order=('value', self.p2s.MAXp))
+        self.assertOrderedBy('max', ('value', self.p2s.MAXp))
 
     def test_order_statistic_mean(self):
-        df = makeHistoDf(n=100)
-        self.p2s.histop(df, 'cat', order=('score', self.p2s.MEANp))
+        self.assertOrderedBy('mean', ('score', self.p2s.MEANp))
 
     def test_order_statistic_median(self):
-        df = makeHistoDf(n=100)
-        self.p2s.histop(df, 'cat', order=('score', self.p2s.MEDIANp))
+        self.assertOrderedBy('median', ('score', self.p2s.MEDIANp))
 
     def test_order_statistic_std(self):
-        df = makeHistoDf(n=100)
-        self.p2s.histop(df, 'cat', order=('score', self.p2s.STDp))
+        self.assertOrderedBy('std', ('score', self.p2s.STDp))
 
     def test_order_statistic_sum(self):
-        df = makeHistoDf(n=100)
-        self.p2s.histop(df, 'cat', order=('value', self.p2s.SUMp))
+        # SUMp spelled out is what a bare field name means
+        self.assertOrderedBy('sum', ('value', self.p2s.SUMp))
+        self.assertEqual(normalize_svg(self.p2s.histop(makeStatisticHistoDf(), 'cat', order=('value', self.p2s.SUMp)).svg),
+                         normalize_svg(self.p2s.histop(makeStatisticHistoDf(), 'cat', order='value').svg))
 
     # ── descending flag ───────────────────────────────────────────────────────
 

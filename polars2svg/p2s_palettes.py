@@ -32,8 +32,12 @@ _LIGHT_: dict[tuple[str, str], str] = {
     ('data',          'default'):     '#3939ff',
     ('axis',          'default'):     '#a0a0a0',
     ('axis',          'label'):       '#404040',
-    ('axis',          'min'):         '#0015D2',
-    ('axis',          'max'):         '#A10000',
+    # xyp's two extreme axis labels.  They were blue (min) and red (max), which reads as a
+    # meaning the labels do not carry -- low/high, below/above -- and no record says what
+    # it was for (user feedback 2026-09-27).  They are the label colour now; the slots stay
+    # so setColorOverrides() can still single the ends out.
+    ('axis',          'min'):         '#404040',
+    ('axis',          'max'):         '#404040',
     ('axis',          'inner'):       '#a0a0a0',
     ('axis',          'origin'):      '#404040',
     ('error',         'default'):     '#ff0000',
@@ -89,8 +93,8 @@ _DARK_: dict[tuple[str, str], str] = {
     ('data',          'default'):     '#6e6eff',
     ('axis',          'default'):     '#575757',
     ('axis',          'label'):       '#c1c1c1',
-    ('axis',          'min'):         '#7f9cff',
-    ('axis',          'max'):         '#ff7b7b',
+    ('axis',          'min'):         '#c1c1c1',     # the label colour -- see _LIGHT_
+    ('axis',          'max'):         '#c1c1c1',
     ('axis',          'inner'):       '#575757',
     ('axis',          'origin'):      '#c1c1c1',
     ('error',         'default'):     '#ff4d4d',

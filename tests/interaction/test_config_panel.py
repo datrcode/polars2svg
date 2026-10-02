@@ -32,6 +32,8 @@ import unittest
 
 import pytest
 
+from interaction_harness import assert_eventually
+
 
 #: Row label -> mnemonic, in the panel's own top-to-bottom order.  Duplicated from
 #: _CONFIG_PANEL_ROWS_ on purpose: a test that imported the table could not catch a
@@ -67,7 +69,7 @@ def _open(ip):
     ip.settle()
     ip.hover(200, 150)
     ip.press('a')
-    ip.expect_panel_open()
+    ip.assert_panel_open()
 
 
 # ── the frame ────────────────────────────────────────────────────────────────
@@ -76,7 +78,7 @@ def test_a_opens_the_panel_and_escape_closes_it(linkpi_page):
     assert not linkpi_page.panel_is_open(), 'the panel must not be open at mount'
     _open(linkpi_page)
     linkpi_page.press('Escape')
-    linkpi_page.expect_panel_closed()
+    linkpi_page.assert_panel_closed()
 
 
 def test_every_row_is_drawn_with_a_value(timing_page):
@@ -107,11 +109,11 @@ def test_the_rows_show_what_the_view_is_actually_doing(timing_page):
 
 def test_the_panel_key_advances_the_cursor(timing_page):
     _open(timing_page)
-    timing_page.expect_panel_row(0)
+    timing_page.assert_panel_row(0)
     timing_page.press('a')
-    timing_page.expect_panel_row(1)
+    timing_page.assert_panel_row(1)
     timing_page.press('a')
-    timing_page.expect_panel_row(2)
+    timing_page.assert_panel_row(2)
 
 
 def test_shift_panel_key_retreats_the_cursor(timing_page):
@@ -123,11 +125,11 @@ def test_shift_panel_key_retreats_the_cursor(timing_page):
     the one place a one-directional implementation would show.
     """
     _open(timing_page)
-    timing_page.expect_panel_row(0)
+    timing_page.assert_panel_row(0)
     timing_page.press('A')
-    timing_page.expect_panel_row(len(ROWS) - 2)   # wraps past the gated 'background'
+    timing_page.assert_panel_row(len(ROWS) - 2)   # wraps past the gated 'background'
     timing_page.press('A')
-    timing_page.expect_panel_row(len(ROWS) - 3)
+    timing_page.assert_panel_row(len(ROWS) - 3)
 
 
 @pytest.mark.parametrize('label,mnemonic', ENABLED_ROWS,
@@ -135,7 +137,7 @@ def test_shift_panel_key_retreats_the_cursor(timing_page):
 def test_a_mnemonic_jumps_straight_to_its_row(timing_page, label, mnemonic):
     _open(timing_page)
     timing_page.press(mnemonic)
-    timing_page.expect_panel_row([_l_ for _l_, _ in ROWS].index(label))
+    timing_page.assert_panel_row([_l_ for _l_, _ in ROWS].index(label))
 
 
 def test_the_mnemonics_are_distinct_and_do_not_include_the_panel_key(timing_page):
@@ -165,16 +167,16 @@ def test_the_cursor_skips_a_disabled_row(linkpi_page):
     and 2 are the gated pair here, so one advance from row 0 must reach row 3.
     """
     _open(linkpi_page)
-    linkpi_page.expect_panel_row(0)               # arrows
+    linkpi_page.assert_panel_row(0)               # arrows
     linkpi_page.press('a')
-    linkpi_page.expect_panel_row(3)               # labels -- 1 and 2 skipped
+    linkpi_page.assert_panel_row(3)               # labels -- 1 and 2 skipped
 
 
 def test_a_disabled_row_ignores_its_mnemonic(linkpi_page):
     _open(linkpi_page)
-    linkpi_page.expect_panel_row(0)
+    linkpi_page.assert_panel_row(0)
     linkpi_page.press('t')                        # 'timing marks', gated off here
-    linkpi_page.expect_panel_row(0)
+    linkpi_page.assert_panel_row(0)
 
 
 def test_gating_follows_the_view_rather_than_the_graph(timing_page):
@@ -186,12 +188,12 @@ def test_gating_follows_the_view_rather_than_the_graph(timing_page):
     assert not timing_page.panel_row_is_disabled('spacing')
     timing_page.press('t')                        # the 'timing marks' row
     timing_page.press(' ')                        # -> off
-    timing_page.expect_panel_value('timing marks', 'off')
+    timing_page.assert_panel_value('timing marks', 'off')
     # Polled, not asserted: the value shows locally at once, while the gate comes back
     # from Python on the refresh that the debounced commit provokes.
-    timing_page.expect_panel_row_disabled('spacing')
+    timing_page.assert_panel_row_disabled('spacing')
     timing_page.press(' ')                        # -> back on
-    timing_page.expect_panel_row_disabled('spacing', False)
+    timing_page.assert_panel_row_disabled('spacing', False)
 
 
 # ── cycling ──────────────────────────────────────────────────────────────────
@@ -200,7 +202,7 @@ def test_space_cycles_the_selected_row_forward(timing_page):
     _open(timing_page)
     timing_page.press('h')                        # link shape: line / curve / flowmap
     timing_page.press(' ')
-    timing_page.expect_panel_value('link shape', 'curve')
+    timing_page.assert_panel_value('link shape', 'curve')
 
 
 def test_shift_space_cycles_backward(timing_page):
@@ -210,9 +212,89 @@ def test_shift_space_cycles_backward(timing_page):
     _open(timing_page)
     timing_page.press('r')                        # arrows: off / on
     timing_page.press(' ')
-    timing_page.expect_panel_value('arrows', 'on')
+    timing_page.assert_panel_value('arrows', 'on')
     timing_page.press(' ', shift=True)
-    timing_page.expect_panel_value('arrows', 'off')
+    timing_page.assert_panel_value('arrows', 'off')
+
+
+def test_a_rows_key_pressed_again_cycles_it(timing_page):
+    """User feedback 2026-09-27: the key that jumps to a row should, pressed again,
+    move the row to its next value -- the same as `space`."""
+    _open(timing_page)
+    _before_ = timing_page.panel_values()['node size']
+    timing_page.press('n')                        # jump: node size, value unchanged
+    timing_page.assert_panel_row([_l_ for _l_, _ in ROWS].index('node size'))
+    assert timing_page.panel_values()['node size'] == _before_
+    timing_page.press('n')                        # again: cycles
+    assert_eventually(lambda: timing_page.panel_values()['node size'] != _before_,
+                      "pressing the row's key a second time did not cycle it")
+
+
+def test_the_first_press_on_the_row_the_panel_opened_on_only_jumps(timing_page):
+    """The panel opens on 'arrows'.  Its key, pressed once, must not flip it: the user
+    has not asked that row for anything yet.  Twice is a cycle."""
+    _open(timing_page)
+    timing_page.assert_panel_row(0)
+    timing_page.press('r')
+    timing_page.assert_panel_value('arrows', 'off')
+    timing_page.press('r')
+    timing_page.assert_panel_value('arrows', 'on')
+
+
+def test_a_rows_key_pressed_again_cycles_it_on_a_generic_view(histopi_page):
+    """The generic views share the panel code with linkpi but have their own entry
+    module and state object -- the tooltip row is on every one of them."""
+    _open(histopi_page)
+    _before_ = histopi_page.panel_values()['tooltip']
+    histopi_page.press('i')
+    assert histopi_page.panel_values()['tooltip'] == _before_
+    histopi_page.press('i')
+    assert_eventually(lambda: histopi_page.panel_values()['tooltip'] != _before_,
+                      "pressing the tooltip row's key a second time did not cycle it")
+
+
+def test_xypi_sets_each_axis_placement_and_bins_on_its_own(xypi_page):
+    """User feedback 2026-09-27: time along a long x and a number up a short y need their
+    own bins, and their own placement.  The y rows take the shifted keys (P / B)."""
+    _open(xypi_page)
+    for _ in range(4):                            # jump, then off -> x -> y -> x+y
+        xypi_page.press('d')
+    xypi_page.assert_panel_value('distributions (rows)', 'x+y')
+    xypi_page.assert_panel_row_disabled('y placement', False)     # the gate comes back from Python
+    xypi_page.press('P')
+    xypi_page.press('P')
+    xypi_page.assert_panel_value('y placement', 'inside')
+    xypi_page.press('B')
+    xypi_page.press('B')
+    xypi_page.assert_panel_value('y bins', 'auto /4')
+    assert xypi_page.panel_values()['x placement'] == 'auto'
+    assert xypi_page.panel_values()['x bins'] == 'auto'
+    _view_ = xypi_page.app.view()
+    _inside_ = _view_.template.p2s.DISTRIBUTION_INSIDEp
+    assert_eventually(lambda: _inside_ in (_view_._overrides_.get('y_distributions') or [])
+                              and _inside_ not in (_view_._overrides_.get('x_distributions') or []),
+                      "y's placement did not reach the render, or reached x too")
+
+
+def test_moving_the_cursor_away_and_back_resets_the_key(timing_page):
+    _open(timing_page)
+    timing_page.press('r')                        # jump to arrows (already there)
+    timing_page.press('a')                        # cursor away ...
+    timing_page.press('A')                        # ... and back, by the cursor keys
+    timing_page.assert_panel_row(0)
+    timing_page.press('r')                        # a first press again: jump only
+    timing_page.assert_panel_value('arrows', 'off')
+    timing_page.press('r')
+    timing_page.assert_panel_value('arrows', 'on')
+
+
+def test_space_between_presses_keeps_the_row_selected_by_its_key(timing_page):
+    _open(timing_page)
+    timing_page.press('r')
+    timing_page.press(' ')
+    timing_page.assert_panel_value('arrows', 'on')
+    timing_page.press('r')                        # still the key's row: cycles
+    timing_page.assert_panel_value('arrows', 'off')
 
 
 def test_a_cycled_value_reaches_python(timing_page):
@@ -220,15 +302,10 @@ def test_a_cycled_value_reaches_python(timing_page):
     _open(timing_page)
     timing_page.press('r')
     timing_page.press(' ')
-    timing_page.expect_panel_value('arrows', 'on')
+    timing_page.assert_panel_value('arrows', 'on')
     _view_ = timing_page.app.view()
-    _deadline_ = time.monotonic() + 10.0
-    while time.monotonic() < _deadline_:
-        if all(_lp_.link_arrows for _lp_ in _view_.dfs_layout):
-            break
-        time.sleep(0.05)
-    else:
-        raise AssertionError('the arrows row committed on screen but not onto the LinkP')
+    assert_eventually(lambda: all(_lp_.link_arrows for _lp_ in _view_.dfs_layout),
+                      'the arrows row committed on screen but not onto the LinkP')
 
 
 def test_the_two_timing_rows_are_independent(timing_page):
@@ -236,11 +313,11 @@ def test_the_two_timing_rows_are_independent(timing_page):
     arrows / marks per step, so a given combination cost up to three presses."""
     _open(timing_page)
     timing_page.press('r'); timing_page.press(' ')
-    timing_page.expect_panel_value('arrows', 'on')
-    timing_page.expect_panel_value('timing marks', 'on')      # untouched
+    timing_page.assert_panel_value('arrows', 'on')
+    timing_page.assert_panel_value('timing marks', 'on')      # untouched
     timing_page.press('t'); timing_page.press(' ')
-    timing_page.expect_panel_value('timing marks', 'off')
-    timing_page.expect_panel_value('arrows', 'on')            # still untouched
+    timing_page.assert_panel_value('timing marks', 'off')
+    timing_page.assert_panel_value('arrows', 'on')            # still untouched
 
 
 # ── CP7: the commit is debounced ─────────────────────────────────────────────
@@ -267,7 +344,7 @@ def test_cycling_past_a_value_does_not_commit_it(timing_page):
     timing_page.press('h')
     for _ in range(3):                            # line -> curve -> flowmap -> line
         timing_page.page.keyboard.press(' ')      # no idle wait between them
-    timing_page.expect_panel_value('link shape', 'line')
+    timing_page.assert_panel_value('link shape', 'line')
 
     time.sleep(1.0)                               # well past the 300ms debounce
     assert 'flowmap' not in _seen_, (
@@ -281,13 +358,9 @@ def test_the_debounced_commit_does_eventually_land(timing_page):
     _view_ = timing_page.app.view()
     timing_page.press('h')
     timing_page.press(' ')
-    _deadline_ = time.monotonic() + 10.0
-    while time.monotonic() < _deadline_:
-        if _view_.link_shape_choice == 'curve':
-            return
-        time.sleep(0.05)
-    raise AssertionError(f'link_shape_choice is still {_view_.link_shape_choice!r} '
-                         f'-- the debounced commit never fired')
+    assert_eventually(lambda: _view_.link_shape_choice == 'curve',
+                      lambda: f'link_shape_choice is still {_view_.link_shape_choice!r} '
+                              f'-- the debounced commit never fired')
 
 
 def test_escape_flushes_rather_than_discards(timing_page):
@@ -301,13 +374,9 @@ def test_escape_flushes_rather_than_discards(timing_page):
     timing_page.press('r')
     timing_page.page.keyboard.press(' ')
     timing_page.page.keyboard.press('Escape')     # inside the debounce window
-    timing_page.expect_panel_closed()
-    _deadline_ = time.monotonic() + 10.0
-    while time.monotonic() < _deadline_:
-        if _view_.link_arrows_choice == 'on':
-            return
-        time.sleep(0.05)
-    raise AssertionError('esc discarded a value that had already been cycled on screen')
+    timing_page.assert_panel_closed()
+    assert_eventually(lambda: _view_.link_arrows_choice == 'on',
+                      'esc discarded a value that had already been cycled on screen')
 
 
 # ── CP5: modality ────────────────────────────────────────────────────────────
@@ -344,8 +413,8 @@ def test_the_panel_survives_a_render(timing_page):
     _open(timing_page)
     timing_page.press('r')
     timing_page.press(' ')                        # a real re-render: arrows redraw
-    timing_page.expect_panel_value('arrows', 'on')
-    timing_page.expect_panel_row(ROWS.index(('arrows', 'r')))
+    timing_page.assert_panel_value('arrows', 'on')
+    timing_page.assert_panel_row(ROWS.index(('arrows', 'r')))
     assert timing_page.panel_is_open()
 
 

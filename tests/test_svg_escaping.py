@@ -69,6 +69,16 @@ class _EscapeBase(unittest.TestCase):
     def _runs(self, component):
         return _text_runs(component._repr_svg_())
 
+    # The label is shown whole, or cut to a prefix of its RAW text and an ellipsis -- a cut
+    # that fell inside an entity would read back as some other string.  cropped=True / False
+    # also says which of the two it must be.
+    def assertShowsPrefix(self, runs, label, cropped=None):
+        _shown_ = [r for r in runs if r == label or
+                   (r.endswith(('...', '…')) and r.rstrip('.…') and label.startswith(r.rstrip('.…')))]
+        self.assertTrue(_shown_, f'{label!r} is not among {runs}')
+        if cropped is not None:
+            self.assertEqual(any(r != label for r in _shown_), cropped, _shown_)
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # The door itself
@@ -150,9 +160,11 @@ class TestLinkpNodeLabelEntityIntegrity(_EscapeBase):
             for _k_ in range(0, 24):
                 _label_ = 'a' * _k_ + _ch_ + 'b' * (23 - _k_)
                 with self.subTest(char=_ch_, offset=_k_):
-                    # Parses at all == the entity survived the truncation.
-                    self._runs(self._linkp(_label_, label_line_width=10,
-                                           label_max_lines=2, label_ellipsis=True))
+                    # Parses at all == the entity survived the truncation; and the cut is
+                    # two lines of ten RAW characters, the last given up to the ellipsis
+                    _runs_ = self._runs(self._linkp(_label_, label_line_width=10,
+                                                    label_max_lines=2, label_ellipsis=True))
+                    self.assertEqual([_r_ for _r_ in _runs_ if _r_ != 'beta'], [_label_[:19] + '…'])
 
     def test_wrap_boundaries_are_measured_on_raw_text(self):
         '''Wrapping is by character count, so '&' must count as one character.
@@ -194,11 +206,15 @@ class TestLinkpLinkLabelEntityIntegrity(_EscapeBase):
         '''cropText() cuts by pixel width on the raw string; the escape has to
         happen after it, or the crop lands inside an entity.'''
         for _label_ in (_PAYLOAD_, _LONG_PAYLOAD_, '&' * 20, 'x<' * 15):
-            with self.subTest(label=_label_):
-                _df_ = pl.DataFrame({'fm': ['a', 'b'], 'to': ['b', 'a'],
-                                     'l': [_label_, 'z']})
-                self._runs(self.p2s.linkp(_df_, relationships=[('fm', 'to', 'l')],
-                                          draw_link_labels=True, wxh=(400, 400)))
+            for _w_ in (400, 120, 80):
+                with self.subTest(label=_label_, wxh=_w_):
+                    _df_ = pl.DataFrame({'fm': ['a', 'b'], 'to': ['b', 'a'],
+                                         'l': [_label_, 'z']})
+                    _runs_ = self._runs(self.p2s.linkp(_df_, relationships=[('fm', 'to', 'l')],
+                                                       draw_link_labels=True, wxh=(_w_, _w_)))
+                    # 400px has room for all four; at 80px only the short payload fits
+                    self.assertShowsPrefix(_runs_, _label_,
+                                           cropped={400: False, 80: _label_ != _PAYLOAD_}.get(_w_))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -271,7 +287,7 @@ class TestLabelEscapingAcrossComponents(_EscapeBase):
         '''The cropping/wrapping paths, where the entity-splitting bug lived.'''
         for _name_, _component_ in self._cases(_LONG_PAYLOAD_).items():
             with self.subTest(component=_name_):
-                self._runs(_component_)
+                self.assertShowsPrefix(self._runs(_component_), _LONG_PAYLOAD_)
 
     def test_quote_bearing_labels_stay_well_formed(self):
         for _name_, _component_ in self._cases('it\'s "A&B"').items():

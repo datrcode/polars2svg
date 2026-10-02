@@ -21,6 +21,8 @@ import unittest
 
 import pytest
 
+from interaction_harness import assert_eventually
+
 
 #: (event.key, modifiers, human label).  Every `preventDefault` site inside
 #: myOnKeyDown's binding chain -- `grep -n preventDefault polars2svg/js/p2s_linkpi.js`.
@@ -147,7 +149,7 @@ def test_ctrl_c_copies_the_selected_node_ids(linkpi_page):
     """
     _sentinel_ = _clipboard_or_skip()
     _select_one_colour_group(linkpi_page, 1)
-    linkpi_page.expect_selected(3)
+    linkpi_page.assert_selected(3)
 
     linkpi_page.hover_node(1)
     with linkpi_page.holding(ctrl=True):
@@ -163,7 +165,7 @@ def test_ctrl_shift_c_copies_the_node_labels_instead_of_the_ids(labelled_page):
     of having both: ctrl-c writes ids, ctrl-shift-c writes the display labels."""
     _sentinel_ = _clipboard_or_skip()
     _select_one_colour_group(labelled_page, 1)
-    labelled_page.expect_selected(3)
+    labelled_page.assert_selected(3)
 
     labelled_page.hover_node(1)
     with labelled_page.holding(ctrl=True, shift=True):
@@ -183,12 +185,12 @@ def test_ctrl_e_still_expands_along_reversed_edges(chain_page):
     """
     chain_page.hover_node(4)
     chain_page.press('z')
-    chain_page.expect_selected(1)
+    chain_page.assert_selection([4])
 
     chain_page.hover_node(4)
     with chain_page.holding(ctrl=True):
         chain_page.press('e')
-        chain_page.expect_selected(2)
+        chain_page.assert_selection([3, 4])
 
 
 def test_the_labels_row_cycles_the_label_mode(linkpi_page):
@@ -199,10 +201,10 @@ def test_the_labels_row_cycles_the_label_mode(linkpi_page):
     """
     linkpi_page.hover(200, 150)
     linkpi_page.press('a')
-    linkpi_page.expect_panel_open()
+    linkpi_page.assert_panel_open()
     linkpi_page.press('l')                        # the 'labels' row
     linkpi_page.press(' ')
-    linkpi_page.expect_panel_value('labels', 'node labels')
+    linkpi_page.assert_panel_value('labels', 'node labels')
 
 
 def test_ctrl_s_still_adds_the_selection_to_sticky_labels(linkpi_page):
@@ -215,17 +217,17 @@ def test_ctrl_s_still_adds_the_selection_to_sticky_labels(linkpi_page):
     """
     linkpi_page.hover(200, 150)
     linkpi_page.press('a')
-    linkpi_page.expect_panel_open()
+    linkpi_page.assert_panel_open()
     linkpi_page.press('l')
     linkpi_page.press(' ')
-    linkpi_page.expect_panel_value('labels', 'node labels')
+    linkpi_page.assert_panel_value('labels', 'node labels')
     linkpi_page.press(' ')
-    linkpi_page.expect_panel_value('labels', 'sticky labels')
+    linkpi_page.assert_panel_value('labels', 'sticky labels')
     linkpi_page.press('Escape')
-    linkpi_page.expect_panel_closed()
+    linkpi_page.assert_panel_closed()
 
     _select_one_colour_group(linkpi_page, 1)
-    linkpi_page.expect_selected(3)
+    linkpi_page.assert_selected(3)
 
     _before_ = linkpi_page.mod_html()
     linkpi_page.hover_node(1)
@@ -244,12 +246,13 @@ def test_ctrl_shift_s_selects_the_sticky_nodes(linkpi_page):
     """
     linkpi_page.hover(200, 150)
     _select_one_colour_group(linkpi_page, 1)
-    linkpi_page.expect_selected(3)
+    linkpi_page.assert_selection([1, 2, 3])
     linkpi_page.press('s')                        # sticky = those three
     linkpi_page.press('q')                        # selection = everything else
+    linkpi_page.assert_selection([4, 5])
     with linkpi_page.holding(ctrl=True, shift=True):
         linkpi_page.press('S')
-    linkpi_page.expect_selected(3)
+    linkpi_page.assert_selection([1, 2, 3])
 
 
 # ── the race the above used to have to work around (PLANNING.md U3) ─────────
@@ -269,7 +272,7 @@ def test_a_tapped_ctrl_c_copies_just_like_a_held_one(linkpi_page):
     """
     _sentinel_ = _clipboard_or_skip()
     _select_one_colour_group(linkpi_page, 1)
-    linkpi_page.expect_selected(3)
+    linkpi_page.assert_selected(3)
 
     linkpi_page.hover_node(1)
     linkpi_page.press('c', ctrl=True)           # tapped, not held
@@ -292,19 +295,11 @@ def test_the_live_modifier_state_still_follows_the_keyboard(linkpi_page):
     linkpi_page.hover(200, 150)
     with linkpi_page.holding(ctrl=True):
         linkpi_page.press('c')
-        _await_true(lambda: _view_.ctrlkey is True, 'ctrlkey never went live')
+        assert_eventually(lambda: _view_.ctrlkey is True, 'ctrlkey never went live')
 
-    _await_true(lambda: _view_.ctrlkey is False,
+    assert_eventually(lambda: _view_.ctrlkey is False,
                 'ctrlkey stayed set after the modifier was released')
 
-
-def _await_true(predicate, message, budget_s=10.0):
-    _deadline_ = time.monotonic() + budget_s
-    while time.monotonic() < _deadline_:
-        if predicate():
-            return
-        time.sleep(0.05)
-    raise AssertionError(message)
 
 
 def test_the_confirm_gate_prompt_reaches_the_info_line(linkpi_page):
@@ -328,7 +323,7 @@ def test_the_confirm_gate_prompt_reaches_the_info_line(linkpi_page):
 
     linkpi_page.hover(200, 150)
     linkpi_page.press('w')                      # apply the layout operation
-    linkpi_page.expect_info_contains('repeat to run')
+    linkpi_page.assert_info_contains('repeat to run')
 
 
 def _lower_confirm_threshold(view, op, limit=1):

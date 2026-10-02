@@ -14,6 +14,7 @@
     "drag_y1",
     "has_focus",
     "has_search",
+    "has_select_shape",
     "has_time_keys",
     "has_z_key",
     "info_str",
@@ -26,6 +27,7 @@
     "mod_inner",
     "name",
     "palette",
+    "render_settings",
     "search_op_finished",
     "search_str",
     "select_shape",
@@ -89,8 +91,8 @@
         },
         "keyboardhelp": {
           "tag": "g",
-          "kids": 15,
-          "text": "in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closesa . | open the settings panel: sel"
+          "kids": 14,
+          "text": "in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closesa . | open the settings panel: too"
         },
         "drag": {
           "tag": "rect",
@@ -191,8 +193,8 @@
         },
         "keyboardhelp": {
           "tag": "g",
-          "kids": 15,
-          "text": "in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closesa . | open the settings panel: sel"
+          "kids": 14,
+          "text": "in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closesa . | open the settings panel: too"
         },
         "drag": {
           "tag": "rect",
@@ -264,17 +266,17 @@
         "svgparenttimepi": {
           "tag": "svg",
           "kids": 11,
-          "text": "102024-01-28daily2024-01-28in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closesa . | o"
+          "text": "Feb102024-01-25daily2024-02-03in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closesa . "
         },
         "mod": {
           "tag": "svg",
           "kids": 1,
-          "text": "102024-01-28daily2024-01-28"
+          "text": "Feb102024-01-25daily2024-02-03"
         },
         "timep_N": {
           "tag": "svg",
-          "kids": 9,
-          "text": "102024-01-28daily2024-01-28"
+          "kids": 21,
+          "text": "Feb102024-01-25daily2024-02-03"
         },
         "brushindicator": {
           "tag": "g",
@@ -288,8 +290,8 @@
         },
         "keyboardhelp": {
           "tag": "g",
-          "kids": 15,
-          "text": "in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closesa . | open the settings panel: sel"
+          "kids": 14,
+          "text": "in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closesa . | open the settings panel: too"
         },
         "drag": {
           "tag": "rect",
@@ -356,17 +358,17 @@
         "svgparenttimepi": {
           "tag": "svg",
           "kids": 11,
-          "text": "102024-01-28daily2024-01-28in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closesa . | o"
+          "text": "Feb102024-01-25daily2024-02-03in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closesa . "
         },
         "mod": {
           "tag": "svg",
           "kids": 1,
-          "text": "102024-01-28daily2024-01-28"
+          "text": "Feb102024-01-25daily2024-02-03"
         },
         "timep_N": {
           "tag": "svg",
-          "kids": 9,
-          "text": "102024-01-28daily2024-01-28"
+          "kids": 21,
+          "text": "Feb102024-01-25daily2024-02-03"
         },
         "brushindicator": {
           "tag": "g",
@@ -380,8 +382,8 @@
         },
         "keyboardhelp": {
           "tag": "g",
-          "kids": 15,
-          "text": "in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closesa . | open the settings panel: sel"
+          "kids": 14,
+          "text": "in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closesa . | open the settings panel: too"
         },
         "drag": {
           "tag": "rect",
@@ -453,17 +455,17 @@
         "svgparenttimepi": {
           "tag": "svg",
           "kids": 11,
-          "text": "102024-01-28daily2024-01-28circ r=5in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc close"
+          "text": "Feb102024-01-25daily2024-02-03circ r=5in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc cl"
         },
         "mod": {
           "tag": "svg",
           "kids": 1,
-          "text": "102024-01-28daily2024-01-28"
+          "text": "Feb102024-01-25daily2024-02-03"
         },
         "timep_N": {
           "tag": "svg",
-          "kids": 9,
-          "text": "102024-01-28daily2024-01-28"
+          "kids": 21,
+          "text": "Feb102024-01-25daily2024-02-03"
         },
         "brushindicator": {
           "tag": "g",
@@ -477,8 +479,8 @@
         },
         "keyboardhelp": {
           "tag": "g",
-          "kids": 15,
-          "text": "in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closesa . | open the settings panel: sel"
+          "kids": 14,
+          "text": "in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closesa . | open the settings panel: too"
         },
         "drag": {
           "tag": "rect",
@@ -540,17 +542,17 @@
         "svgparenttimepi": {
           "tag": "svg",
           "kids": 11,
-          "text": "102024-01-28daily2024-01-28in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closesa . | o"
+          "text": "Feb102024-01-25daily2024-02-03in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closesa . "
         },
         "mod": {
           "tag": "svg",
           "kids": 1,
-          "text": "102024-01-28daily2024-01-28"
+          "text": "Feb102024-01-25daily2024-02-03"
         },
         "timep_N": {
           "tag": "svg",
-          "kids": 9,
-          "text": "102024-01-28daily2024-01-28"
+          "kids": 21,
+          "text": "Feb102024-01-25daily2024-02-03"
         },
         "brushindicator": {
           "tag": "g",
@@ -564,8 +566,8 @@
         },
         "keyboardhelp": {
           "tag": "g",
-          "kids": 15,
-          "text": "in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closesa . | open the settings panel: sel"
+          "kids": 14,
+          "text": "in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closesa . | open the settings panel: too"
         },
         "drag": {
           "tag": "rect",
@@ -611,17 +613,17 @@
         "svgparenttimepi": {
           "tag": "svg",
           "kids": 11,
-          "text": "102024-01-28daily2024-01-28in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closesa . | o"
+          "text": "Feb102024-01-25daily2024-02-03in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closesa . "
         },
         "mod": {
           "tag": "svg",
           "kids": 1,
-          "text": "102024-01-28daily2024-01-28"
+          "text": "Feb102024-01-25daily2024-02-03"
         },
         "timep_N": {
           "tag": "svg",
-          "kids": 9,
-          "text": "102024-01-28daily2024-01-28"
+          "kids": 21,
+          "text": "Feb102024-01-25daily2024-02-03"
         },
         "brushindicator": {
           "tag": "g",
@@ -635,8 +637,8 @@
         },
         "keyboardhelp": {
           "tag": "g",
-          "kids": 15,
-          "text": "in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closesa . | open the settings panel: sel"
+          "kids": 14,
+          "text": "in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closesa . | open the settings panel: too"
         },
         "drag": {
           "tag": "rect",

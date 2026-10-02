@@ -196,6 +196,25 @@ class Smallp(ExportMixin):
         self.timing_metrics[callable.__name__] += t1 - t0
         return _results_
 
+    # Raise, naming every name in `spec` that is not a column (a t-field counts as its
+    # base column) and what each was probably meant to be.  A no-op when all are columns.
+    def __raiseMissingColumns__(self, param: str, spec: Any) -> None:
+        if self.df is None: return
+        _names_   = (spec,) if isinstance(spec, str) else tuple(spec) if isinstance(spec, tuple) else ()
+        _missing_ = [_n_ for _n_ in _names_ if isinstance(_n_, str) and not self.p2s.columnInDataFrame(_n_, self.df)]
+        if not _missing_: return
+        _said_ = '; '.join(f'{_m_!r}{self.p2s.columnSuggestion(_m_, self.df)}' for _m_ in _missing_)
+        raise ValueError(f'Smallp: {param}={spec!r} names {"a column" if len(_missing_) == 1 else "columns"} '
+                         f'the DataFrame does not have: {_said_}')
+
+    # The column(s) a category is read from -- a t-field included, since
+    # __addColumnsToDataFrame__ materialises it under its own name -- or [] when the
+    # categories are a list / dict of filters, which name no column.
+    def __categoryFields__(self) -> list[str]:
+        if isinstance(self.category_by, str):   return [self.category_by]
+        if isinstance(self.category_by, tuple): return [_f_ for _f_ in self.category_by if isinstance(_f_, str)]
+        return []
+
     def _label_for_tuple_(self, _tuple_: str | tuple) -> str:
         if   _tuple_ == '__remainder__': return 'Remainder'
         elif _tuple_ == '__all__':       return 'All'
@@ -286,6 +305,10 @@ class Smallp(ExportMixin):
             elif isinstance(arg, dict) and __elementsAreDataFrames__(list(arg.values())):
                 if self.category_by is not None: raise ValueError('Smallp.__parseInput__(): category_by already set (5)')
                 self.category_by = arg
+            # A string or tuple here can only have been meant as category_by -- say which
+            # name is not a column, and what it was probably meant to be.
+            elif isinstance(arg, (str, tuple)) and self.df is not None:
+                self.__raiseMissingColumns__('category_by', arg)
             else:
                 raise ValueError('Smallp.__parseInput__(): Unknown argument type: ' + str(type(arg)))
 
@@ -337,6 +360,12 @@ class Smallp(ExportMixin):
         # re-validation needed here.
 
         if self.df is not None:
+            # category_by= and order= given by keyword skip the positional check above; a
+            # name that is not a column would otherwise surface as polars' ColumnNotFound.
+            if isinstance(self.category_by, (str, tuple)):
+                self.__raiseMissingColumns__('category_by', self.category_by)
+            if isinstance(self.order, (str, tuple)):
+                self.__raiseMissingColumns__('order', self.order)
             if isinstance(self.category_by, str) and self.p2s.isTField(self.category_by, df=self.df):
                 self._validate_tfield_column_(self.category_by)
             elif isinstance(self.category_by, tuple):
@@ -630,7 +659,13 @@ class Smallp(ExportMixin):
                 for key in self.category_to_xy
             }
         else:
-            _render_lu_ = self.sm_template.renderSmallMultiples(self.df, self.category_to_df, '__all__')
+            # Only the placed slots: category_to_df also holds '__remainder__' as None when
+            # there is no remainder, and a template given df=None renders its own whole
+            # frame -- a hidden full render per smallp, which xyp's SM_COUNT / SM_COLOR pass
+            # also counted into the shared scale (PLANNING.md §5 C-smallp-remainder-render)
+            _placed_    = {k: v for k, v in self.category_to_df.items() if k in self.category_to_xy}
+            _render_lu_ = self.sm_template.renderSmallMultiples(self.df, _placed_, '__all__',
+                                                                category_fields=self.__categoryFields__())
         self._render_lu_  = _render_lu_   # retained for the WebGPU composition path
         self._gpu_dl_     = None          # invalidate cached GPU state
         self._gpu_payload_ = None

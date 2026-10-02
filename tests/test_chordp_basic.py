@@ -168,11 +168,11 @@ class TestChordPBasic(unittest.TestCase):
         self.assertIn('#00ff00', cp.svg)
 
     def test_link_color_src(self):
-        cp = _p(color='src')
+        cp = _p(color=self.p2s.COLOR_BY_SRC_NODE)
         self.assertIn('<path', cp.svg)
 
     def test_link_color_dst(self):
-        cp = _p(color='dst')
+        cp = _p(color=self.p2s.COLOR_BY_DST_NODE)
         self.assertIn('<path', cp.svg)
 
     def test_link_color_vary(self):

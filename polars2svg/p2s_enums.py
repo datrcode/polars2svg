@@ -207,8 +207,12 @@ class SelectShapeP(P2SEnum):
 
 
 class NodeColorP(P2SEnum):
-    '''Node coloring mode for the graph components.'''
+    '''Coloring by node for the graph components: a node by the hash of its own name
+    (``node_color=p2s.COLOR_BY_NODE_NAME``), or a chordp link by its source or
+    destination node's color (``color=p2s.COLOR_BY_SRC_NODE`` / ``p2s.COLOR_BY_DST_NODE``).'''
     COLOR_BY_NODE_NAME = 1
+    COLOR_BY_SRC_NODE  = 2
+    COLOR_BY_DST_NODE  = 3
 
 
 class PieStyleP(P2SEnum):

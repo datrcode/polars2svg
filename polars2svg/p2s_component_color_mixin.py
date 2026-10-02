@@ -1,6 +1,6 @@
 from typing import Any, cast
 import polars as pl
-from .p2s_enums import ColorSpec
+from .p2s_enums import ColorSpec, P2SEnum
 
 
 class P2SComponentColorMixin:
@@ -45,6 +45,12 @@ class P2SComponentColorMixin:
     # component mixing this in provides them.
     #
     _COMPONENT_NAME_ = 'Component'
+
+    # The color-mode kinds that map a number onto the spectrum -- a colour scale.  A
+    # component with two colour channels lets only one of them own the scale (the
+    # legend's domain, smallp's shared SM_COLOR range); see owns_scale below.
+    _SCALE_KINDS_ = frozenset({'crow_magnitude', 'crow_stretched', 'cset_magnitude', 'cset_stretched',
+                               'stat_magnitude', 'stat_stretched'})
 
     #
     # __effectiveColorSpec__() - resolve the color spec for links or nodes
@@ -143,8 +149,13 @@ class P2SComponentColorMixin:
 
     #
     # __applyColorToDF__() - add f'__{prefix}_hex__' column to an aggregated DataFrame
+    # - owns_scale=False: a second colour channel beside one that already carries the
+    #   component's scale.  Its colours are normalised on its own range, and it feeds
+    #   neither the legend's domain nor the range smallp shares (SM_COLOR) -- those
+    #   belong to the channel the legend describes.
     #
-    def __applyColorToDF__(self, df: pl.DataFrame, mode_info: dict, prefix: str, default_hex: str) -> pl.DataFrame:
+    def __applyColorToDF__(self, df: pl.DataFrame, mode_info: dict, prefix: str, default_hex: str,
+                           owns_scale: bool = True) -> pl.DataFrame:
         kind    = mode_info['kind']
         col_hex = f'__{prefix}_hex__'
         if kind == 'fixed_hex':
@@ -178,9 +189,9 @@ class P2SComponentColorMixin:
             # made the two comparisons below 34 errors.  cast() is a no-op at runtime.
             _lg_min_ = cast('float | None', df[_sc_].cast(pl.Float64).min())
             _lg_max_ = cast('float | None', df[_sc_].cast(pl.Float64).max())
-            if _lg_min_ is not None and (getattr(self, '_legend_stat_min_', None) is None or _lg_min_ < self._legend_stat_min_):
+            if owns_scale and _lg_min_ is not None and (getattr(self, '_legend_stat_min_', None) is None or _lg_min_ < self._legend_stat_min_):
                 self._legend_stat_min_ = float(_lg_min_)
-            if _lg_max_ is not None and (getattr(self, '_legend_stat_max_', None) is None or _lg_max_ > self._legend_stat_max_):
+            if owns_scale and _lg_max_ is not None and (getattr(self, '_legend_stat_max_', None) is None or _lg_max_ > self._legend_stat_max_):
                 self._legend_stat_max_ = float(_lg_max_)
             if kind in ('crow_stretched', 'cset_stretched', 'stat_stretched'):
                 _n_unique_ = df[_sc_].n_unique()
@@ -188,7 +199,7 @@ class P2SComponentColorMixin:
                     ((pl.col(_sc_).rank('dense') - 1).cast(pl.Float64) / max(_n_unique_ - 1, 1)).alias(_norm_)
                 )
             else:
-                if self.color_stat_range_shared is not None:
+                if owns_scale and self.color_stat_range_shared is not None:
                     _cs_min_ = float(self.color_stat_range_shared[0])
                     _cs_max_ = float(self.color_stat_range_shared[1])
                 else:
@@ -196,9 +207,9 @@ class P2SComponentColorMixin:
                     _max_v_ = df[_sc_].cast(pl.Float64).max()
                     _cs_min_ = float(_min_v_) if _min_v_ is not None else 0.0
                     _cs_max_ = float(_max_v_) if _max_v_ is not None else 1.0
-                if self._color_stat_min_ is None or _cs_min_ < self._color_stat_min_:
+                if owns_scale and (self._color_stat_min_ is None or _cs_min_ < self._color_stat_min_):
                     self._color_stat_min_ = _cs_min_
-                if self._color_stat_max_ is None or _cs_max_ > self._color_stat_max_:
+                if owns_scale and (self._color_stat_max_ is None or _cs_max_ > self._color_stat_max_):
                     self._color_stat_max_ = _cs_max_
                 df = df.with_columns(
                     ((pl.col(_sc_).cast(pl.Float64) - _cs_min_) /
@@ -215,23 +226,46 @@ class P2SComponentColorMixin:
             return df.with_columns(pl.lit(default_hex).alias(col_hex))
 
     #
-    # __validateColorSpec__() - raise ValueError if a node_color value is not a recognized form
+    # __validateColorSpec__() - raise ValueError if a color / node_color value is not a recognized form
+    # - a field name, bare or inside a tuple, must be a DataFrame column: a misspelt one used
+    #   to render silently in the default colour (a bare string) or fail deep inside polars
+    #   with its own ColumnNotFoundError (a tuple) -- PLANNING.md §5 C-graph-color-unvalidated
+    # - keywords: the bare strings this parameter also accepts (chordp's deprecated 'src' /
+    #   'dst'); a column of the same name still wins, which is the column check above them
+    # - constants: the enum members this parameter accepts beyond the common ones
+    #   (chordp's color=p2s.COLOR_BY_SRC_NODE / COLOR_BY_DST_NODE); any other member is
+    #   refused by name
     #
-    def __validateColorSpec__(self, spec: ColorSpec, param_name: str, allow_dict: bool = False) -> None:
+    def __validateColorSpec__(self, spec: ColorSpec, param_name: str, allow_dict: bool = False,
+                              keywords: tuple = (), constants: tuple = ()) -> None:
         if spec is None: return
         if isinstance(spec, dict):
             if not allow_dict:
                 raise ValueError(f'{self._COMPONENT_NAME_}.__validateInput__(): {param_name} does not support dict values')
             return
-        if isinstance(spec, tuple): return
+        if isinstance(spec, tuple):
+            _missing_ = [f for f in spec if isinstance(f, str) and self.df is not None and f not in self.df.columns]
+            if _missing_:
+                raise ValueError(
+                    f'{self._COMPONENT_NAME_}.__validateInput__(): {param_name}={spec!r} names '
+                    f'{_missing_}, which {"is not a DataFrame column" if len(_missing_) == 1 else "are not DataFrame columns"}'
+                    + ''.join(f'; {_m_!r}{self.p2s.columnSuggestion(_m_, self.df)}' for _m_ in _missing_)
+                )
+            return
         _p2s_ = self.p2s
         if spec in (_p2s_.CROW_MAGNITUDEp, _p2s_.CROW_STRETCHEDp, _p2s_.COLOR_BY_NODE_NAME): return
+        if isinstance(spec, P2SEnum):
+            if spec in constants: return
+            raise ValueError(f'{self._COMPONENT_NAME_}.__validateInput__(): {param_name}=p2s.{spec.name} '
+                             f'is not a constant {param_name} accepts')
         if isinstance(spec, self.p2s.HexColorString): return
         if isinstance(spec, str):
             if self.df is not None and spec in self.df.columns: return
+            if spec in keywords: return
+            _kw_ = ''.join(f', {k!r}' for k in keywords)
             raise ValueError(
                 f'{self._COMPONENT_NAME_}.__validateInput__(): {param_name}={spec!r} is not a hex color, '
-                f'a recognized constant, or a DataFrame column name'
+                f'a recognized constant{_kw_}, or a DataFrame column name'
             )
         raise ValueError(
             f'{self._COMPONENT_NAME_}.__validateInput__(): {param_name}={spec!r} has unsupported type {type(spec).__name__}'

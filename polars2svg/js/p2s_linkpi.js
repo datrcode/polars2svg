@@ -38,7 +38,7 @@ export function render({ model, el }) {
     // the values cycled but not yet committed -- CP7: cycling renders every intermediate
     // state, and link shape passes THROUGH flowmap on its way to off, so the write is
     // debounced rather than issued on every space.
-    panel_open: false, panel_row: 0, panel_pending: {}, panel_timer: null, panel_w: 0,
+    panel_open: false, panel_row: 0, panel_by_key: false, panel_pending: {}, panel_timer: null, panel_w: 0,
     x0_drag: -10, y0_drag: -10, x1_drag: -5, y1_drag: -5,
     cur_mouse_x: 0, cur_mouse_y: 0,
     drag_op: false, move_op: false, unselected_move_op: false,
@@ -395,12 +395,16 @@ export function render({ model, el }) {
       // ctrl-<key> arrive with the modifier already gone -- the handler took the
       // unmodified branch, and ctrl-c zoomed the view instead of copying (U3).
       //
-      // The release is not discarded, it is deferred: the key_op_finished script
-      // applies it as soon as Python reports the operation done.  Simply skipping
-      // the clear would leave the modifier stuck on until the next keydown, and the
-      // drag band -- which reads these to colour itself -- would name the wrong
-      // set-operation.
-      if (model.key_op_finished === '') {
+      // The release is not discarded, it is deferred: applyPendingMods applies it as
+      // soon as Python reports the operation done.  Simply skipping the clear would
+      // leave the modifier stuck on until the next keydown, and the drag band --
+      // which reads these to colour itself -- would name the wrong set-operation.
+      //
+      // Every mouse operation whose handler reads them is the same race (modsInUse):
+      // letting go of shift the moment the button came up made a subtract drag arrive
+      // as a replace, and a shift-click on a selected node deselect nothing
+      // (PLANNING.md §5 C-linkpi-drag-modifier-race, C-interactive-modifier-release-race).
+      if (!modsInUse()) {
           model.ctrlkey  = event.ctrlKey;
           model.shiftkey = event.shiftKey;
       } else {
@@ -654,17 +658,29 @@ export function render({ model, el }) {
 
   // ── param-change handlers ──────────────────────────────────────────────────
 
-  model.on('key_op_finished', function() {
-      // Python empties this when it has finished the operation; that is the moment
-      // a modifier release deferred by myOnKeyUp can safely be applied.  If a
-      // re-render has wiped state in between the release is simply lost, and the
-      // next keydown sets the modifiers correctly anyway.
-      if (model.key_op_finished === '' && state.pending_mods) {
+  // An operation whose Python handler reads ctrlkey / shiftkey after an async hop is
+  // still in flight: a key op, a rubber-band drag (its set-operation), a move of the
+  // selection (shift-click deselects) or a press on an unselected node (ctrl / shift add
+  // or remove it).  Python empties or resets each flag when it has finished.
+  function modsInUse() {
+      return model.key_op_finished !== '' || model.drag_op_finished ||
+             model.move_op_finished || model.unselected_move_op_finished;
+  }
+
+  // Once none is in flight, a modifier release deferred by myOnKeyUp can safely be
+  // applied.  If a re-render has wiped state in between the release is simply lost, and
+  // the next keydown sets the modifiers correctly anyway.
+  function applyPendingMods() {
+      if (!modsInUse() && state.pending_mods) {
           model.ctrlkey  = state.pending_mods[0];
           model.shiftkey = state.pending_mods[1];
           state.pending_mods = null;
       }
-  });
+  }
+  model.on('key_op_finished',             applyPendingMods);
+  model.on('drag_op_finished',            applyPendingMods);
+  model.on('move_op_finished',            applyPendingMods);
+  model.on('unselected_move_op_finished', applyPendingMods);
 
   model.on('mod_inner', function() {
       mod.innerHTML       = model.mod_inner;
@@ -769,6 +785,7 @@ export function render({ model, el }) {
   // ${keyboardhelp_x} was an attribute binding; the initial value is set above.
   model.on('keyboardhelp_x', function() {
     keyboardhelp.setAttribute('transform', 'translate(' + model.keyboardhelp_x + ' 0)');
+    _cp_.helpOverhang(keyboardhelp, model.keyboardhelp_x);
   });
 
   // `render` also reset these on every ReactiveHTML subtree rebuild; once per mount now.

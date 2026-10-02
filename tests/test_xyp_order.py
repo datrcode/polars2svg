@@ -3,58 +3,87 @@ import polars as pl
 from polars2svg import Polars2SVG
 from svg_test_utils import normalize_svg
 
+#
+# _expectedSlots_() -- the index each value present in the data gets under an order, by
+# the rule Testxyp_partial_order documents: a listed value takes its position (list
+# index, or dict value); a listed value with no rows still holds its slot, so positions
+# stay put when a view is filtered; every unlisted value follows, in ascending order,
+# after the highest listed position.  No order is the ascending sort.
+#
+def _expectedSlots_(values: list, order) -> dict:
+    if order is None: return {v: i for i, v in enumerate(sorted(values))}
+    _pos_ = dict(order) if isinstance(order, dict) else {v: i for i, v in enumerate(order)}
+    _next_ = max(_pos_.values()) + 1
+    for _v_ in sorted(v for v in values if v not in _pos_):
+        _pos_[_v_] = _next_
+        _next_ += 1
+    return {v: _pos_[v] for v in values}
+
+
+# {value: index} the render actually assigned (a struct value comes back as a tuple)
+def _slots_(inst, axis: str = 'x') -> dict:
+    _v_, _i_ = f'__{axis}__', f'__{axis}i__'
+    return {(tuple(a.values()) if isinstance(a, dict) else a): b for a, b in inst.df_flat.select([_v_, _i_]).unique().iter_rows()}
+
+
 class Testxyp_order(unittest.TestCase):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.p2s = Polars2SVG()
 
-    def test_list(self):
-        for _lazy_ in [True, False]:
-            df = pl.DataFrame({'qty':[1,2,3,10,4], 'pet':['cat','dog','parakeet','goldfish','ferret']})
-            _params_ = {'df':df, 'x':'pet', 'y':'qty', 'color':'pet', 'dot_size':10}
-            _params_['use_lazy_execution'] = _lazy_
-            self.p2s.xyp(**_params_)                                                                    # default
-            self.p2s.xyp(**_params_, x_order=['goldfish', 'ferret', 'parakeet', 'dog', 'cat'])          # complete order (decreasing qtys)
-            self.p2s.xyp(**_params_, x_order=['goldfish', 'ferret', 'parakeet', 'dog', 'cat', 'snake']) # complete order + extra (decreasing qtys)
-            self.p2s.xyp(**_params_, x_order=['goldfish', 'ferret'])                                    # incomplete order
-            self.p2s.xyp(**_params_, x_order=['goldfish', 'ferret', 'snake'])                           # incomplete order + extra
+    #
+    # Under every order: each value sits where the rule puts it, lazy and eager execution
+    # draw the same picture, and drawing it again draws it again.  The last two are the
+    # invariants the categorical-label nondeterminism (643f9f7) broke under these very
+    # tests while they asserted nothing.
+    #
+    def assertOrders(self, params: dict, values: list, orders: list) -> None:
+        for _order_ in orders:
+            with self.subTest(x_order=_order_):
+                _kw_ = dict(params, **({} if _order_ is None else {'x_order': _order_}))
+                _eager_ = self.p2s.xyp(**_kw_, use_lazy_execution=False)
+                _lazy_  = self.p2s.xyp(**_kw_, use_lazy_execution=True)
+                self.assertEqual(_slots_(_eager_), _expectedSlots_(values, _order_))
+                self.assertEqual(_slots_(_lazy_),  _expectedSlots_(values, _order_))
+                self.assertEqual(normalize_svg(_lazy_.svg), normalize_svg(_eager_.svg), 'lazy and eager drew different pictures')
+                self.assertEqual(normalize_svg(self.p2s.xyp(**_kw_, use_lazy_execution=False).svg), normalize_svg(_eager_.svg),
+                                 'the same call drew a different picture')
 
-    def test_listTuple(self):
-        for _lazy_ in [True, False]:
-            df = pl.DataFrame({'qty':  [2,        8,         5,          15],
-                               'type': ['cat',    'cat',     'dog',      'goldfish'],
-                               'color':['gray',   'orange',  'spotted',  'orange']})
-            _params_ = {'df':df, 'x':('type','color'), 'y':'qty', 'color':'color', 'dot_size':10}
-            _params_['use_lazy_execution'] = _lazy_
-            self.p2s.xyp(**_params_)
-            self.p2s.xyp(**_params_, x_order=[('goldfish','orange'), ('cat','orange'), ('dog','spotted'), ('cat','gray')])                     # complete
-            self.p2s.xyp(**_params_, x_order=[('goldfish','orange'), ('cat','orange'), ('dog','spotted'), ('cat','gray'), ('snake','albino')]) # complete + extra
-            self.p2s.xyp(**_params_, x_order=[('goldfish','orange'), ('cat','gray')])                                                          # incomplete
-            self.p2s.xyp(**_params_, x_order=[('goldfish','orange'), ('cat','gray'), ('snake', 'albino')])                                     # incomplete + extra
-
-    def test_dict(self):
-        for _lazy_ in [True, False]:
-            df = pl.DataFrame({'qty':[1,2,3,10,4], 'pet':['cat','dog','parakeet','goldfish','ferret']})
-            _params_ = {'df':df, 'x':'pet', 'y':'qty', 'color':'pet', 'dot_size':10}
-            _params_['use_lazy_execution'] = _lazy_
-            self.p2s.xyp(**_params_)                                                                                      # default
-            self.p2s.xyp(**_params_, x_order={'goldfish':10, 'ferret':15, 'parakeet':20, 'dog':25, 'cat':30})             # complete order (decreasing qtys)
-            self.p2s.xyp(**_params_, x_order={'goldfish':10, 'ferret':15, 'parakeet':20, 'dog':25, 'cat':30, 'snake':35}) # complete order + extra (decreasing qtys)
-            self.p2s.xyp(**_params_, x_order={'goldfish':10, 'ferret':15})                                                # incomplete order
-            self.p2s.xyp(**_params_, x_order={'goldfish':10, 'ferret':15, 'snake':35})                                    # incomplete order + extra
-
-    def test_dictTuple(self):
-        for _lazy_ in [True, False]:
-            df = pl.DataFrame({'qty':  [2,        8,         5,          15],
+    _PETS_ = pl.DataFrame({'qty':[1,2,3,10,4], 'pet':['cat','dog','parakeet','goldfish','ferret']})
+    _TYPES_ = pl.DataFrame({'qty':  [2,        8,         5,          15],
                             'type': ['cat',    'cat',     'dog',      'goldfish'],
                             'color':['gray',   'orange',  'spotted',  'orange']})
-            _params_ = {'df':df, 'x':('type','color'), 'y':'qty', 'color':'color', 'dot_size':10}
-            _params_['use_lazy_execution'] = _lazy_
-            self.p2s.xyp(**_params_)
-            self.p2s.xyp(**_params_, x_order={('goldfish','orange'):5, ('cat','orange'):6, ('dog','spotted'):7, ('cat','gray'):10})                        # complete
-            self.p2s.xyp(**_params_, x_order={('goldfish','orange'):5, ('cat','orange'):6, ('dog','spotted'):7, ('cat','gray'):10, ('snake','albino'):20}) # complete + extra
-            self.p2s.xyp(**_params_, x_order={('goldfish','orange'):5, ('cat','gray'):10})                                                                 # incomplete
-            self.p2s.xyp(**_params_, x_order={('goldfish','orange'):5, ('cat','gray'):10, ('snake', 'albino'):20})                                         # incomplete + extra
+
+    def test_list(self):
+        self.assertOrders({'df': self._PETS_, 'x': 'pet', 'y': 'qty', 'color': 'pet', 'dot_size': 10},
+                          self._PETS_['pet'].to_list(),
+                          [None,
+                           ['goldfish', 'ferret', 'parakeet', 'dog', 'cat'],            # complete order (decreasing qtys)
+                           ['goldfish', 'ferret', 'parakeet', 'dog', 'cat', 'snake'],   # complete order + extra
+                           ['goldfish', 'ferret'],                                      # incomplete order
+                           ['goldfish', 'ferret', 'snake']])                            # incomplete order + extra
+
+    def test_listTuple(self):
+        _g_, _co_, _d_, _cg_, _s_ = ('goldfish','orange'), ('cat','orange'), ('dog','spotted'), ('cat','gray'), ('snake','albino')
+        self.assertOrders({'df': self._TYPES_, 'x': ('type','color'), 'y': 'qty', 'color': 'color', 'dot_size': 10},
+                          list(self._TYPES_.select('type', 'color').iter_rows()),
+                          [None, [_g_, _co_, _d_, _cg_], [_g_, _co_, _d_, _cg_, _s_], [_g_, _cg_], [_g_, _cg_, _s_]])
+
+    def test_dict(self):
+        self.assertOrders({'df': self._PETS_, 'x': 'pet', 'y': 'qty', 'color': 'pet', 'dot_size': 10},
+                          self._PETS_['pet'].to_list(),
+                          [None,
+                           {'goldfish':10, 'ferret':15, 'parakeet':20, 'dog':25, 'cat':30},               # complete order
+                           {'goldfish':10, 'ferret':15, 'parakeet':20, 'dog':25, 'cat':30, 'snake':35},   # complete order + extra
+                           {'goldfish':10, 'ferret':15},                                                  # incomplete order
+                           {'goldfish':10, 'ferret':15, 'snake':35}])                                     # incomplete order + extra
+
+    def test_dictTuple(self):
+        _g_, _co_, _d_, _cg_, _s_ = ('goldfish','orange'), ('cat','orange'), ('dog','spotted'), ('cat','gray'), ('snake','albino')
+        self.assertOrders({'df': self._TYPES_, 'x': ('type','color'), 'y': 'qty', 'color': 'color', 'dot_size': 10},
+                          list(self._TYPES_.select('type', 'color').iter_rows()),
+                          [None, {_g_:5, _co_:6, _d_:7, _cg_:10}, {_g_:5, _co_:6, _d_:7, _cg_:10, _s_:20},
+                           {_g_:5, _cg_:10}, {_g_:5, _cg_:10, _s_:20}])
 
 def _axis_order_(inst, axis='x'):
     """The axis values in resolved-index order (a struct value comes back as a tuple)."""

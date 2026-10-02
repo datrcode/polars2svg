@@ -20,6 +20,8 @@ import unittest
 import pytest
 from playwright.sync_api import expect
 
+from interaction_harness import assert_eventually
+
 
 @pytest.mark.parametrize('fixture_name', ['xypi_page', 'histopi_page', 'timepi_page'])
 def test_the_component_is_sized_per_instance(request, fixture_name):
@@ -87,9 +89,9 @@ def test_r_turns_the_brush_on_and_off(request, fixture):
     assert _brush_shape(_ip_) == 'none'
 
 
-@pytest.mark.parametrize('fixture', ['xypi_page', 'histopi_page', 'timepi_page'])
+@pytest.mark.parametrize('fixture', ['xypi_page'])
 def test_F_opens_the_selection_shape_picker(request, fixture):
-    """Every generic component can switch its rubber band between rectangle and oval.
+    """xypi (and chordpi) can switch the rubber band between rectangle and oval.
 
     LINKPI has no such menu -- this is one of the places the two handlers genuinely
     differ, rather than one being a subset of the other.
@@ -98,11 +100,26 @@ def test_F_opens_the_selection_shape_picker(request, fixture):
     _ip_.settle()
     _ip_.hover(200, 150)
     _ip_.press('F')
-    _ip_.expect_menu_open('rectangle')
+    _ip_.assert_menu_open('rectangle')
     assert 'oval' in _ip_.menu_text()
 
 
-@pytest.mark.parametrize('fixture', ['xypi_page', 'histopi_page', 'timepi_page'])
+@pytest.mark.parametrize('fixture', ['histopi_page', 'timepi_page'])
+def test_F_does_nothing_where_there_is_no_oval(request, fixture):
+    """histopi and timepi select bars, which a rectangle already does: no picker, and
+    the settings panel opens on its tooltip row (user feedback 2026-09-27)."""
+    _ip_ = request.getfixturevalue(fixture)
+    _ip_.settle()
+    _ip_.hover(200, 150)
+    _ip_.press('F')
+    _ip_.assert_menu_closed()
+    _ip_.press('a')
+    _ip_.assert_panel_open()
+    assert 'selection shape' not in _ip_.panel_values()
+    assert 'tooltip' in _ip_.panel_values()
+
+
+@pytest.mark.parametrize('fixture', ['xypi_page'])
 def test_the_picker_highlights_the_current_shape_and_moves_with_the_keys(request, fixture):
     """Which row is highlighted, not just that a menu appeared.
 
@@ -120,12 +137,12 @@ def test_the_picker_highlights_the_current_shape_and_moves_with_the_keys(request
     _ip_.settle()
     _ip_.hover(200, 150)
     _ip_.press('F')
-    _ip_.expect_menu_open('rectangle')
+    _ip_.assert_menu_open('rectangle')
 
     # menu_items is [['r','rectangle'], ['o','oval']] and the fresh shape is rectangle,
     # so the picker must open *on* it rather than at the top of the list by default.
     # This assertion alone is what a misplaced highlight fails.
-    _ip_.expect_menu_index(0)
+    _ip_.assert_menu_index(0)
 
     # One navigation step, not several.  `menuArmTimer` auto-commits 2500ms after the
     # last keystroke, and an earlier version of this test chained four moves into one
@@ -134,10 +151,10 @@ def test_the_picker_highlights_the_current_shape_and_moves_with_the_keys(request
     # (`test_menu_state_machine.py`); what is new here is that *these* components have a
     # picker at all, that it opens on the current shape, and that it responds to the keys.
     _ip_.press('ArrowDown', wait_idle=False)
-    _ip_.expect_menu_index(1)
+    _ip_.assert_menu_index(1)
 
     _ip_.press('Escape', wait_idle=False)
-    _ip_.expect_menu_closed()
+    _ip_.assert_menu_closed()
 
 
 # ── the per-kind brush sequences ─────────────────────────────────────────────
@@ -254,6 +271,32 @@ def test_a_drag_filters_the_data_and_redraws(xypi_page):
     assert xypi_page.wait_for_mod_change(_before_) != _before_
 
 
+def test_a_shift_drag_removes_what_the_band_covers_even_released_with_the_button(xypi_page):
+    """Shift turns the filter around: the frame pushed is everything *outside* the band.
+
+    applyDragOp reads shiftkey after an async hop, and letting go of shift the moment
+    the button came up -- the ordinary way to do it -- used to have cleared it by then,
+    so the drag kept the records it was meant to remove (PLANNING.md §5
+    C-interactive-modifier-release-race).  Compared with the plot's own filter, called
+    both ways, so the test knows which answer is which.
+    """
+    _box_  = (20, 20, 200, 160)
+    _view_ = xypi_page.app.view()
+    _keep_ = _view_._plot_.filterByRectangle(_box_)
+    _drop_ = _view_._plot_.filterByRectangle(_box_, remove_records=True)
+    assert len(_keep_) > 0 and len(_drop_) > 0 and len(_keep_) != len(_drop_)
+
+    _stack_ = xypi_page.app.container.mvc.stacks['default']
+    _depth_ = len(_stack_['dfs'])
+    with xypi_page.holding(shift=True):
+        xypi_page.drag(*_box_)                       # shift comes up with the button
+    assert_eventually(lambda: len(_stack_['dfs']) > _depth_, 'the shift-drag pushed nothing')
+    _top_ = _stack_['dfs'][_stack_['index']]
+    assert _top_.sort(_top_.columns).equals(_drop_.sort(_drop_.columns)), (
+        f'pushed {len(_top_)} rows; the outside of the band is {len(_drop_)}, the inside {len(_keep_)}')
+    assert_eventually(lambda: _view_.shiftkey is False, 'shift stayed set after the drag')
+
+
 def test_the_oval_shape_draws_an_ellipse_instead_of_a_rectangle(xypi_page):
     """Committing 'oval' in the F picker changes which band element the drag draws.
 
@@ -262,9 +305,9 @@ def test_the_oval_shape_draws_an_ellipse_instead_of_a_rectangle(xypi_page):
     xypi_page.settle()
     xypi_page.hover(200, 150)
     xypi_page.press('F')
-    xypi_page.expect_menu_open('rectangle')
+    xypi_page.assert_menu_open('rectangle')
     xypi_page.press('o')                       # mnemonic for 'oval'
-    xypi_page.expect_menu_closed()
+    xypi_page.assert_menu_closed()
 
     xypi_page.mouse_down(200, 150)
     xypi_page.mouse_move_to(260, 200)
@@ -298,7 +341,7 @@ def _arm_brush(link, xy):
     _full_ = xy.marks().count()
     link.hover(200, 150)
     link.press('r')
-    xy.expect_marks(_full_)
+    xy.assert_marks(_full_)
     return _full_
 
 
@@ -319,15 +362,11 @@ def _spy_on_brush(view):
     return _calls_
 
 
-def _await_call(calls, kind, budget_s=15.0):
-    import time
-    _deadline_ = time.monotonic() + budget_s
-    while time.monotonic() < _deadline_:
-        _hit_ = [_c_ for _c_ in calls if _c_[0] == kind]
-        if _hit_:
-            return _hit_[0]
-        time.sleep(0.05)
-    raise AssertionError(f'no {kind!r} broadcast within {budget_s}s; saw {calls}')
+def assert_broadcast(calls, kind, budget_s=15.0):
+    """Wait for the first `kind` broadcast the spy saw, and return it."""
+    assert_eventually(lambda: any(_c_[0] == kind for _c_ in calls),
+                      lambda: f'no {kind!r} broadcast within {budget_s}s; saw {calls}', budget_s)
+    return next(_c_ for _c_ in calls if _c_[0] == kind)
 
 
 def test_brushing_broadcasts_the_records_under_the_pointer(linked_pair):
@@ -343,22 +382,26 @@ def test_brushing_broadcasts_the_records_under_the_pointer(linked_pair):
 
     _calls_ = _spy_on_brush(_link_.app.view())
     _link_.hover(*_link_.node_screen_xy('a'))
-    assert _await_call(_calls_, 'update') == ('update', 2)
+    assert assert_broadcast(_calls_, 'update') == ('update', 2)
 
 
 def test_leaving_the_component_broadcasts_a_clear(linked_pair):
-    """brush_leave_done -> brushClear, so peers return to the unbrushed dataframe."""
+    """brush_leave_done -> brushClear, so peers return to the unbrushed dataframe.
+
+    Both halves: the clear is broadcast, and the peer -- brushed first, so there is
+    something to undo -- draws its full, unbrushed marks again."""
     _link_, _xy_ = linked_pair
     _link_.settle()
-    _link_.hover(200, 150)
-    _link_.press('r')
+    _full_ = _arm_brush(_link_, _xy_)
     _link_.hover(*_link_.node_screen_xy('a'))
+    _xy_.assert_marks_change_from(_full_)
 
     _calls_ = _spy_on_brush(_link_.app.view())
     _box_ = _link_.root.bounding_box()
     _link_.page.mouse.move(_box_['x'] + _box_['width'] + 100,
                            _box_['y'] + _box_['height'] + 100)
-    _await_call(_calls_, 'clear')
+    assert_broadcast(_calls_, 'clear')
+    _xy_.assert_marks(_full_)
 
 
 def test_nothing_is_broadcast_while_the_brush_is_off(linked_pair):
@@ -403,7 +446,7 @@ def test_a_stale_brush_result_cannot_overwrite_a_newer_one(linked_pair):
     _calls_ = _spy_on_brush(_link_.app.view())
     _link_.press('r')                              # op 1: bare canvas -> a clear
     _link_.hover(*_link_.node_screen_xy('a'))      # op 2: on a node   -> an update
-    _await_call(_calls_, 'update')
+    assert_broadcast(_calls_, 'update')
 
     import time
     time.sleep(1.0)                                # give any straggler time to land
@@ -422,7 +465,7 @@ def test_the_peer_stays_brushed_while_the_pointer_rests_on_a_node(linked_pair):
     _full_ = _arm_brush(_link_, _xy_)
 
     _link_.hover(*_link_.node_screen_xy('a'))
-    _xy_.expect_marks_to_change_from(_full_)
+    _xy_.assert_marks_change_from(_full_)
 
     import time
     time.sleep(1.0)                                # a stale clear would land by now
@@ -438,7 +481,7 @@ def test_xypi_panel_shows_its_render_rows_with_their_built_values(xypi_page):
     xypi_page.settle()
     xypi_page.hover(200, 150)
     xypi_page.press('a')
-    xypi_page.expect_panel_open()
+    xypi_page.assert_panel_open()
     _values_ = xypi_page.panel_values()
     for _label_, _value_ in (('distributions (rows)', 'off'), ('aspect', 'none'),
                              ('dot opacity', '100'), ('legend', 'off')):
@@ -451,10 +494,10 @@ def test_a_render_row_re_renders_the_view(xypi_page):
     xypi_page.hover(200, 150)
     _before_ = xypi_page.mod_html()
     xypi_page.press('a')
-    xypi_page.expect_panel_open()
+    xypi_page.assert_panel_open()
     xypi_page.press('e')                          # the aspect row
     xypi_page.press(' ')
-    xypi_page.expect_panel_value('aspect', 'equal')
+    xypi_page.assert_panel_value('aspect', 'equal')
     assert xypi_page.wait_for_mod_change(_before_) != _before_
 
 
@@ -463,10 +506,10 @@ def test_a_render_rows_picker_is_headed_by_the_rows_label(xypi_page):
     xypi_page.settle()
     xypi_page.hover(200, 150)
     xypi_page.press('a')
-    xypi_page.expect_panel_open()
+    xypi_page.assert_panel_open()
     xypi_page.press('g')                          # the legend row
     xypi_page.press('Enter')
-    xypi_page.expect_menu_open('legend:')
+    xypi_page.assert_menu_open('legend:')
 
 
 def test_histopi_order_row_re_renders_at_the_default_size(default_size_grid):
@@ -478,11 +521,11 @@ def test_histopi_order_row_re_renders_at_the_default_size(default_size_grid):
     _hp_.hover(10, 10)
     _before_ = _hp_.mod_html()
     _hp_.press('a')
-    _hp_.expect_panel_open()
+    _hp_.assert_panel_open()
     assert _hp_.panel_values().get('order') == 'largest first'
     _hp_.press('r')                               # the order row
     _hp_.press(' ')
-    _hp_.expect_panel_value('order', 'smallest first')
+    _hp_.assert_panel_value('order', 'smallest first')
     assert _hp_.wait_for_mod_change(_before_) != _before_
 
 
@@ -494,11 +537,11 @@ def test_piepi_style_row_re_renders_at_the_default_size(default_size_grid):
     _pp_.hover(10, 10)
     _before_ = _pp_.mod_html()
     _pp_.press('a')
-    _pp_.expect_panel_open()
+    _pp_.assert_panel_open()
     assert _pp_.panel_values().get('style') == 'pie'
     _pp_.press('t')                               # the style row
     _pp_.press(' ')
-    _pp_.expect_panel_value('style', 'donut')
+    _pp_.assert_panel_value('style', 'donut')
     assert _pp_.wait_for_mod_change(_before_) != _before_
 
 
@@ -510,32 +553,32 @@ def test_chordpi_link_shape_row_re_renders_at_the_default_size(default_size_grid
     _cp_.hover(10, 10)
     _before_ = _cp_.mod_html()
     _cp_.press('a')
-    _cp_.expect_panel_open()
+    _cp_.assert_panel_open()
     assert _cp_.panel_values().get('link shape') == 'curve'
     assert _cp_.panel_row_is_disabled('bundle strength')
     _cp_.press('h')                               # the link-shape row
     _cp_.press(' ')
-    _cp_.expect_panel_value('link shape', 'bundled')
+    _cp_.assert_panel_value('link shape', 'bundled')
     assert _cp_.wait_for_mod_change(_before_) != _before_
-    _cp_.expect_panel_row_disabled('bundle strength', disabled=False)
+    _cp_.assert_panel_row_disabled('bundle strength', disabled=False)
 
 
 def test_timepi_granularity_row_re_renders_at_the_default_size(default_size_grid):
     """space on the granularity row moves from 'auto' to the first level timep offers,
     and the bars redraw at it."""
-    from polars2svg.interactive_render_rows import TimepRenderRows
+    from polars2svg.interactive_render_rows import TimepRenderRows, time_level_label
     _tp_   = default_size_grid['timepi']
     _next_ = TimepRenderRows(_tp_.plot).rows[0].items[1][1]
-    assert _next_ != _tp_.plot.timeLevelName(_tp_.plot._time_enum_), 'the first level is what auto chose'
+    assert _next_ != time_level_label(_tp_.plot, _tp_.plot._time_enum_), 'the first level is what auto chose'
     _tp_.settle()
     _tp_.hover(10, 10)
     _before_ = _tp_.mod_html()
     _tp_.press('a')
-    _tp_.expect_panel_open()
+    _tp_.assert_panel_open()
     assert _tp_.panel_values().get('granularity') == 'auto'
     _tp_.press('q')                               # the granularity row
     _tp_.press(' ')
-    _tp_.expect_panel_value('granularity', _next_)
+    _tp_.assert_panel_value('granularity', _next_)
     assert _tp_.wait_for_mod_change(_before_) != _before_
 
 if __name__ == '__main__':

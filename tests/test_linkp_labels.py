@@ -217,9 +217,16 @@ class TestLabelOnlyWithIntegerNodeIds(unittest.TestCase):
         return lp
 
     def test_integer_ids_do_not_raise(self):
-        lp = self._int_id_linkp()
-        lp.labelOnly({1, 2})
-        lp.renderSVG()          # used to raise InvalidOperationError
+        '''Either shape of int selection -- a set or a list -- renders a whole SVG; this
+        used to raise InvalidOperationError.  Which labels it draws is the next test's.'''
+        for _ids_ in ({1, 2}, [1, 2]):
+            with self.subTest(ids=_ids_):
+                lp = self._int_id_linkp()
+                _before_ = lp.renderSVG()
+                lp.labelOnly(_ids_)
+                _svg_ = lp.renderSVG()
+                self.assertTrue(_svg_.startswith('<svg') and _svg_.endswith('</svg>'))
+                self.assertNotEqual(_svg_, _before_, 'labelOnly() did not re-render')
 
     def test_integer_ids_label_only_the_named_nodes(self):
         lp = self._int_id_linkp()

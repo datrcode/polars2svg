@@ -106,7 +106,7 @@ def test_linkpi_parity(linkpi_page):
     with _trace_.gesture('escape'):
         _ip_.press('Escape')
 
-    _trace_.compare_or_record('linkpi')
+    _trace_.assert_matches_golden('linkpi')
 
 
 def test_linkpi_menu_parity(linkpi_page):
@@ -143,7 +143,7 @@ def test_linkpi_menu_parity(linkpi_page):
     with _trace_.gesture('menu-close'):
         _ip_.press('Escape')
 
-    _trace_.compare_or_record('linkpi_menu')
+    _trace_.assert_matches_golden('linkpi_menu')
 
 
 def test_linkpi_search_parity(search_page):
@@ -165,7 +165,7 @@ def test_linkpi_search_parity(search_page):
     with _trace_.gesture('search-commit'):
         _ip_.press('Enter')
 
-    _trace_.compare_or_record('linkpi_search')
+    _trace_.assert_matches_golden('linkpi_search')
 
 
 # ── the generic interactivep contract ────────────────────────────────────────
@@ -203,7 +203,7 @@ def test_generic_component_parity(request, fixture_name):
     with _trace_.gesture('escape'):
         _ip_.press('Escape')
 
-    _trace_.compare_or_record(fixture_name.replace('_page', ''))
+    _trace_.assert_matches_golden(fixture_name.replace('_page', ''))
 
 
 # ── the three remaining contracts ────────────────────────────────────────────
@@ -224,7 +224,7 @@ def test_smallpi_parity(smallpi_page):
     with _trace_.gesture('escape'):
         _ip_.press('Escape')
 
-    _trace_.compare_or_record('smallpi')
+    _trace_.assert_matches_golden('smallpi')
 
 
 def test_slpi_parity(slpi_page):
@@ -243,7 +243,7 @@ def test_slpi_parity(slpi_page):
     with _trace_.gesture('escape'):
         _ip_.press('Escape')
 
-    _trace_.compare_or_record('slpi')
+    _trace_.assert_matches_golden('slpi')
 
 
 # ── multiplicity, which the net-effect trace deliberately cannot see ─────────
@@ -276,7 +276,7 @@ def test_one_wheel_event_finishes_one_operation(linkpi_page):
     _counts_ = {_n_: _trace_.write_count(_n_)
                 for _n_ in ('wheel_op_finished', 'wheel_rots', 'wheel_x', 'wheel_y')}
     _trace_.results[-1]['write_counts'] = _counts_
-    _trace_.compare_or_record('linkpi_wheel_multiplicity')
+    _trace_.assert_matches_golden('linkpi_wheel_multiplicity')
 
 
 def test_stack_control_parity(stack_control_page):
@@ -300,4 +300,4 @@ def test_stack_control_parity(stack_control_page):
         _ct_.hover(80, 170)
         _ct_.page.mouse.click(*_ct_._page_xy(80, 170))
 
-    _trace_.compare_or_record('stack_controli')
+    _trace_.assert_matches_golden('stack_controli')

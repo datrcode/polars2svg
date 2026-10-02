@@ -50,11 +50,11 @@ def test_a_ctrl_drag_survives_the_secondary_click(quad_page):
     _mid_y_ = (_c_['nw'][1] + _c_['sw'][1]) // 2
 
     quad_page.drag(2, 2, 398, _mid_y_)          # the northern row
-    quad_page.expect_selected(2)
+    quad_page.assert_selection(['nw', 'ne'])
 
     with quad_page.holding(ctrl=True):
-        quad_page.drag(2, 2, 398, 298)          # ctrl-drag everything: add
-    quad_page.expect_selected(4)
+        quad_page.drag(2, _mid_y_, 398, 298)    # ctrl-drag the southern row: add
+    quad_page.assert_selection(['nw', 'ne', 'sw', 'se'])           # a replace would leave the south alone
 
 
 def test_the_guard_does_not_swallow_the_ordinary_left_drag(quad_page):
@@ -64,7 +64,7 @@ def test_the_guard_does_not_swallow_the_ordinary_left_drag(quad_page):
     everything".
     """
     quad_page.drag(2, 2, 398, 298)
-    quad_page.expect_selected(4)
+    quad_page.assert_selection(['nw', 'ne', 'sw', 'se'])
 
 
 if __name__ == '__main__':

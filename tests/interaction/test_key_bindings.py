@@ -14,6 +14,8 @@ import unittest
 
 import pytest
 
+from interaction_harness import assert_eventually
+
 
 def _select_colour_group(ip, node=1):
     ip.hover_node(node)
@@ -32,22 +34,17 @@ def test_h_slides_the_help_overlay_into_view(linkpi_page):
 
     linkpi_page.hover(200, 150)
     linkpi_page.press('h')
-    from playwright.sync_api import expect
-    expect(linkpi_page.el('keyboardhelp')).to_have_attribute(
-        'transform', 'translate(5 0)', timeout=linkpi_page.timeout_ms)
+    linkpi_page.assert_attribute('keyboardhelp', 'transform', 'translate(5 0)')
 
 
 def test_h_again_slides_it_back_out(linkpi_page):
-    from playwright.sync_api import expect
     linkpi_page.hover(200, 150)
     linkpi_page.press('h')
-    expect(linkpi_page.el('keyboardhelp')).to_have_attribute(
-        'transform', 'translate(5 0)', timeout=linkpi_page.timeout_ms)
+    linkpi_page.assert_attribute('keyboardhelp', 'transform', 'translate(5 0)')
 
     linkpi_page.hover(200, 150)
     linkpi_page.press('h')
-    expect(linkpi_page.el('keyboardhelp')).to_have_attribute(
-        'transform', 'translate(-1000 0)', timeout=linkpi_page.timeout_ms)
+    linkpi_page.assert_attribute('keyboardhelp', 'transform', 'translate(-1000 0)')
 
 
 # ── digits: select by node degree ────────────────────────────────────────────
@@ -57,13 +54,13 @@ def test_h_again_slides_it_back_out(linkpi_page):
 def test_digit_2_selects_the_degree_two_nodes(linkpi_page):
     linkpi_page.hover(200, 150)
     linkpi_page.press('2')
-    linkpi_page.expect_selected(3)
+    linkpi_page.assert_selection([1, 2, 3])
 
 
 def test_digit_1_selects_the_degree_one_nodes(linkpi_page):
     linkpi_page.hover(200, 150)
     linkpi_page.press('1')
-    linkpi_page.expect_selected(2)
+    linkpi_page.assert_selection([4, 5])
 
 
 def test_the_shifted_digit_is_an_alias(linkpi_page):
@@ -71,40 +68,40 @@ def test_the_shifted_digit_is_an_alias(linkpi_page):
     still works on a keyboard where the user's hand is already on shift."""
     linkpi_page.hover(200, 150)
     linkpi_page.press('@')
-    linkpi_page.expect_selected(3)
+    linkpi_page.assert_selection([1, 2, 3])
 
 
 def test_ctrl_digit_adds_to_the_selection(linkpi_page):
     linkpi_page.hover(200, 150)
     linkpi_page.press('1')
-    linkpi_page.expect_selected(2)
+    linkpi_page.assert_selection([4, 5])
 
     linkpi_page.hover(200, 150)
     with linkpi_page.holding(ctrl=True):
         linkpi_page.press('2')
-        linkpi_page.expect_selected(5)
+        linkpi_page.assert_selection([1, 2, 3, 4, 5])
 
 
 def test_shift_digit_removes_from_the_selection(linkpi_page):
     linkpi_page.hover(200, 150)
     linkpi_page.press('2')
-    linkpi_page.expect_selected(3)
+    linkpi_page.assert_selection([1, 2, 3])
 
     linkpi_page.hover(200, 150)
     with linkpi_page.holding(shift=True):
         linkpi_page.press('@')            # shift-2 on a US layout
-        linkpi_page.expect_selected(0)
+        linkpi_page.assert_selection([])
 
 
 # ── selection algebra ────────────────────────────────────────────────────────
 
 def test_q_inverts_the_selection(linkpi_page):
     _select_colour_group(linkpi_page, 1)
-    linkpi_page.expect_selected(3)
+    linkpi_page.assert_selection([1, 2, 3])
 
     linkpi_page.hover_node(1)
     linkpi_page.press('q')
-    linkpi_page.expect_selected(2)
+    linkpi_page.assert_selection([4, 5])
 
 
 def test_n_selects_every_node_of_the_same_shape(linkpi_page):
@@ -115,14 +112,14 @@ def test_n_selects_every_node_of_the_same_shape(linkpi_page):
     """
     linkpi_page.hover_node(1)
     linkpi_page.press('n')
-    linkpi_page.expect_selected(5)
+    linkpi_page.assert_selection([1, 2, 3, 4, 5])
 
 
 # ── the dataframe stack ──────────────────────────────────────────────────────
 
 def test_x_removes_the_selected_nodes_and_pushes_the_stack(linkpi_page):
     _select_colour_group(linkpi_page, 1)
-    linkpi_page.expect_selected(3)
+    linkpi_page.assert_selected(3)
     assert _node_circles(linkpi_page) == 5
 
     _before_ = linkpi_page.mod_html()
@@ -169,22 +166,22 @@ def test_e_expands_the_selection_along_undirected_edges(chain_page):
     """On 1->2->3->4, undirected expansion from 3 reaches both neighbours."""
     chain_page.hover_node(3)
     chain_page.press('z')
-    chain_page.expect_selected(1)
+    chain_page.assert_selection([3])
 
     chain_page.hover_node(3)
     chain_page.press('e')
-    chain_page.expect_selected(3)             # 2, 3, 4
+    chain_page.assert_selection([2, 3, 4])
 
 
 def test_shift_e_expands_only_forward_along_directed_edges(chain_page):
     """The distinction between 'e' and 'E': direction.  From 3, forward is 4 alone."""
     chain_page.hover_node(3)
     chain_page.press('z')
-    chain_page.expect_selected(1)
+    chain_page.assert_selection([3])
 
     chain_page.hover_node(3)
     chain_page.press('E')
-    chain_page.expect_selected(2)             # 3, 4
+    chain_page.assert_selection([3, 4])
 
 
 # ── geometry ─────────────────────────────────────────────────────────────────
@@ -192,7 +189,7 @@ def test_shift_e_expands_only_forward_along_directed_edges(chain_page):
 def test_t_collapses_the_selection_to_a_point(linkpi_page):
     """The three selected nodes end up sharing one position, so the render changes."""
     _select_colour_group(linkpi_page, 1)
-    linkpi_page.expect_selected(3)
+    linkpi_page.assert_selected(3)
 
     _before_ = linkpi_page.mod_html()
     linkpi_page.hover_node(1)
@@ -232,14 +229,14 @@ def test_digit_7_selects_the_degree_range_not_an_exact_degree(hub_page):
     """
     hub_page.hover(200, 150)
     hub_page.press('7')
-    hub_page.expect_selected(1)
+    hub_page.assert_selection(['hub'])
 
 
 def test_digit_1_still_means_exactly_one_on_the_same_graph(hub_page):
     """The eight leaves, and not the hub -- the exact branch, for contrast."""
     hub_page.hover(200, 150)
     hub_page.press('1')
-    hub_page.expect_selected(8)
+    hub_page.assert_selection([f'leaf{_i_}' for _i_ in range(8)])
 
 
 @pytest.mark.parametrize('key', ['8', '9', '0'])
@@ -251,11 +248,11 @@ def test_the_higher_ranges_match_nothing_on_a_small_graph(hub_page, key):
     """
     hub_page.hover(200, 150)
     hub_page.press('7')
-    hub_page.expect_selected(1)
+    hub_page.assert_selection(['hub'])
 
     hub_page.hover(200, 150)
     hub_page.press(key)
-    hub_page.expect_selected(0)
+    hub_page.assert_selection([])
 
 
 # ── layout operations and undo ───────────────────────────────────────────────
@@ -295,7 +292,7 @@ def test_shift_t_collapses_the_selection_horizontally(quad_page):
            for _r_ in quad_page.plot.df_node.iter_rows(named=True)}
     _mid_y_ = (_c_['nw'][1] + _c_['sw'][1]) // 2
     quad_page.drag(2, 2, 398, _mid_y_)
-    quad_page.expect_selected(2)
+    quad_page.assert_selected(2)
     quad_page.wait_until_idle()             # #mod reads back empty mid-rebuild
 
     _before_ = quad_page.node_positions()
@@ -333,9 +330,9 @@ def test_v_collapses_the_selection_vertically(quad_page):
     _mid_x_ = (_c_['nw'][0] + _c_['ne'][0]) // 2
 
     quad_page.drag(2, 2, _mid_x_, 298)
-    quad_page.expect_selected(2)
+    quad_page.assert_selected(2)
     # Not optional, and it became necessary only once U5 was fixed: info_str now
-    # updates without a rebuild, so expect_selected() can return while the mod_inner
+    # updates without a rebuild, so assert_selected() can return while the mod_inner
     # redraw is still in flight -- and #mod reads back empty mid-rebuild.
     quad_page.wait_until_idle()
 
@@ -372,7 +369,7 @@ def test_shift_c_zooms_to_the_selection_and_its_neighbours(chain_page):
     """
     chain_page.hover_node(2)
     chain_page.press('z')
-    chain_page.expect_selected(1)
+    chain_page.assert_selected(1)
 
     _before_ = chain_page.node_positions()
     chain_page.hover_node(2)
@@ -390,16 +387,16 @@ def test_shift_q_selects_the_common_neighbours(chain_page):
     """
     chain_page.hover_node(1)
     chain_page.press('z')
-    chain_page.expect_selected(1)
+    chain_page.assert_selection([1])
 
     chain_page.hover_node(3)
     with chain_page.holding(ctrl=True):
         chain_page.press('z')
-        chain_page.expect_selected(2)
+        chain_page.assert_selection([1, 3])
 
     chain_page.hover(200, 150)
     chain_page.press('Q')
-    chain_page.expect_selected(1)
+    chain_page.assert_selection([2])
 
 
 # ── stack-growing operations ─────────────────────────────────────────────────
@@ -432,12 +429,12 @@ def test_f_refills_an_edge_that_was_thinned(multi_edge_page):
     multi_edge_page.hover(200, 150)
     with multi_edge_page.holding(ctrl=True, shift=True):
         multi_edge_page.press('X')
-        _await_(lambda: _rows_() < _full_, 'ctrl-shift-X did not collapse the edges')
+        assert_eventually(lambda: _rows_() < _full_, 'ctrl-shift-X did not collapse the edges')
     _collapsed_ = _rows_()
 
     multi_edge_page.hover(200, 150)
     multi_edge_page.press('f')
-    _await_(lambda: _rows_() > _collapsed_, "'f' recovered nothing")
+    assert_eventually(lambda: _rows_() > _collapsed_, "'f' recovered nothing")
     assert _rows_() == _full_, (
         f"'f' restored {_rows_()} of the {_full_} base rows on the visible edges")
 
@@ -453,7 +450,7 @@ def test_f_cannot_bring_back_a_node_that_was_removed(chain_page):
 
     chain_page.hover_node(4)
     chain_page.press('z')
-    chain_page.expect_selected(1)
+    chain_page.assert_selected(1)
 
     _before_ = chain_page.mod_html()
     chain_page.hover_node(4)
@@ -481,7 +478,7 @@ def test_shift_f_pulls_back_a_removed_neighbour(chain_page):
     def _circles_(): return chain_page.within('mod', 'circle').count()
     chain_page.hover_node(4)
     chain_page.press('z')
-    chain_page.expect_selected(1)
+    chain_page.assert_selected(1)
 
     _before_ = chain_page.mod_html()
     chain_page.hover_node(4)
@@ -495,16 +492,6 @@ def test_shift_f_pulls_back_a_removed_neighbour(chain_page):
     chain_page.wait_for_mod_change(_removed_)
     assert _circles_() == 4, "'F' did not restore the removed neighbour"
 
-
-def _await_(predicate, message, budget_s=15.0):
-    """Bounded poll on frame state, which has no DOM representation."""
-    import time
-    _deadline_ = time.monotonic() + budget_s
-    while time.monotonic() < _deadline_:
-        if predicate():
-            return
-        time.sleep(0.05)
-    raise AssertionError(message)
 
 
 def test_ctrl_shift_x_collapses_edges_onto_the_stack(multi_edge_page):

@@ -9,6 +9,7 @@ from polars2svg.p2s_displaylist import DisplayList
 from polars2svg.export import ExportMixin
 from polars2svg.p2s_bin_component_mixin import P2SBinComponentMixin
 from polars2svg.p2s_enums import BarStyleP, SelectShapeP, TimeLinearTypeP, TimePeriodicTypeP
+from polars2svg.exceptions import InvalidSpecError
 
 #: Seconds in one bin of each linear truncation -- enough to size a spine from a frame's
 #: span without building it.
@@ -210,6 +211,7 @@ class Timep(P2SBinComponentMixin, ExportMixin):
             self.gatherMetrics(self.__addColumnsToDataFrame__)
             self.gatherMetrics(self.__computeAggregates2__)
             self.gatherMetrics(self.__constructGeometry__)
+            self.gatherMetrics(self.__poolForThePlot__)
             self.gatherMetrics(self.__renderSVG__, rand_id)
         self.t_end     = time.time()
         self.t_overall = self.t_end - self.t_start
@@ -353,11 +355,24 @@ class Timep(P2SBinComponentMixin, ExportMixin):
             raise ValueError(f'Timep.__validateInput__(): time must be str or tuple, got {type(self.time)}')
 
         if self._time_field_ not in self.df.columns:
-            raise ValueError(f'Timep.__validateInput__(): time field "{self._time_field_}" not found in DataFrame')
+            raise ValueError(f'Timep.__validateInput__(): time field "{self._time_field_}" not found in DataFrame{self.p2s.columnSuggestion(self._time_field_, self.df)}')
         if not (self.p2s.dateColumn(self.df, self._time_field_) or self.p2s.dateTimeColumn(self.df, self._time_field_)):
             raise ValueError(f'Timep.__validateInput__(): time field "{self._time_field_}" is not a date/datetime column')
 
         self._is_periodic_ = isinstance(self._time_enum_, self.p2s.TimePeriodicTypeP)
+
+        # A Date column has no time of day, so a level finer than a day has nothing to read.
+        # It used to fail inside polars -- "`hour` operation not supported for dtype `date`",
+        # or date_range's "interval must consist of full days" -- naming neither the level
+        # nor the column (PLANNING.md §5 C-timep-date-subday-levels).  timeLevels() never
+        # offers these, so only a direct call gets here.
+        if self._time_enum_ is not None and self.p2s.dateColumn(self.df, self._time_field_):
+            _order_ = self.__linearEnumOrder__()
+            _needs_ = _PERIODIC_NEEDS_[self._time_enum_] if self._is_periodic_ else self._time_enum_
+            if _order_.index(_needs_) > _order_.index(self.p2s.LT_Y_m_dp):
+                raise InvalidSpecError(
+                    f'Timep.__validateInput__(): {self._time_enum_.name} reads the time of day, but '
+                    f'"{self._time_field_}" is a Date column; use a daily or coarser level, or a Datetime column')
 
         # Validate count
         if self.count != self.p2s.ROW_COUNTp:
@@ -492,13 +507,15 @@ class Timep(P2SBinComponentMixin, ExportMixin):
             return self.p2s.LT_Y_m_dp   # Date columns have no sub-day component
         # Datetime: check time components efficiently
         if len(sorted_df) == 0: return self.p2s.LT_Y_m_dp
+        # drop_nulls(): n_unique() counts a null as one more distinct value, so a single null
+        # timestamp in midnight-only data read as "two hours" and the axis went hourly
         _stats_ = sorted_df.select([
-            pl.col(self._time_field_).dt.hour()  .n_unique().alias('__nh__'), # number of hours
-            pl.col(self._time_field_).dt.minute().n_unique().alias('__nm__'), # number of minutes
-            pl.col(self._time_field_).dt.second().n_unique().alias('__ns__'), # number of seconds
-            pl.col(self._time_field_).dt.hour()  .min()     .alias('__h0__'), # hour minimum
-            pl.col(self._time_field_).dt.minute().min()     .alias('__m0__'), # minute minimum
-            pl.col(self._time_field_).dt.second().min()     .alias('__s0__'), # second minimum
+            pl.col(self._time_field_).dt.hour()  .drop_nulls().n_unique().alias('__nh__'), # number of hours
+            pl.col(self._time_field_).dt.minute().drop_nulls().n_unique().alias('__nm__'), # number of minutes
+            pl.col(self._time_field_).dt.second().drop_nulls().n_unique().alias('__ns__'), # number of seconds
+            pl.col(self._time_field_).dt.hour()  .min()                  .alias('__h0__'), # hour minimum
+            pl.col(self._time_field_).dt.minute().min()                  .alias('__m0__'), # minute minimum
+            pl.col(self._time_field_).dt.second().min()                  .alias('__s0__'), # second minimum
         ]).row(0, named=True)
         _all_same_h_ = _stats_['__nh__'] == 1 and _stats_['__h0__'] == 0
         _all_same_m_ = _stats_['__nm__'] == 1 and _stats_['__m0__'] == 0
@@ -524,13 +541,13 @@ class Timep(P2SBinComponentMixin, ExportMixin):
 
     def __granularityStatExprs__(self) -> list[pl.Expr]:
         _tf_ = pl.col(self._time_field_)
-        return [
-            _tf_.dt.hour()  .n_unique().alias('__nh__'),
-            _tf_.dt.minute().n_unique().alias('__nm__'),
-            _tf_.dt.second().n_unique().alias('__ns__'),
-            _tf_.dt.hour()  .min()     .alias('__h0__'),
-            _tf_.dt.minute().min()     .alias('__m0__'),
-            _tf_.dt.second().min()     .alias('__s0__'),
+        return [   # drop_nulls() -- see __dataGranularityCap__()
+            _tf_.dt.hour()  .drop_nulls().n_unique().alias('__nh__'),
+            _tf_.dt.minute().drop_nulls().n_unique().alias('__nm__'),
+            _tf_.dt.second().drop_nulls().n_unique().alias('__ns__'),
+            _tf_.dt.hour()  .min()                  .alias('__h0__'),
+            _tf_.dt.minute().min()                  .alias('__m0__'),
+            _tf_.dt.second().min()                  .alias('__s0__'),
         ]
 
     def __granularityCapFromStats__(self, stats: dict, is_date: bool) -> TimeLinearTypeP:
@@ -581,7 +598,7 @@ class Timep(P2SBinComponentMixin, ExportMixin):
 
         # One pass: distinct-bin counts for every candidate, plus the time-component
         # statistics that __dataGranularityCap__ would otherwise compute separately.
-        _exprs_ = [_tf_.dt.truncate(_trunc_map_[_e_]).n_unique().alias(f'_nu{_i_}_')
+        _exprs_ = [_tf_.dt.truncate(_trunc_map_[_e_]).drop_nulls().n_unique().alias(f'_nu{_i_}_')
                    for _i_, _e_ in enumerate(_candidates_)]
         if not _is_date_:
             _exprs_ += self.__granularityStatExprs__()
@@ -637,8 +654,9 @@ class Timep(P2SBinComponentMixin, ExportMixin):
                       if not (_is_date_ and _order_.index(_PERIODIC_NEEDS_[_e_]) > _day_)
                       and _cycle_(_e_) <= _max_bins_]
 
-        _exprs_ = ([_tf_.dt.truncate(_trunc_map_[_e_]).n_unique().alias(f'_l{_i_}_') for _i_, _e_ in enumerate(_linear_)]
-                   + [self.p2s.polarsOperationForEnum(self._time_field_, _e_).n_unique().alias(f'_p{_i_}_')
+        # drop_nulls(): a null timestamp is not a bar (see __dataGranularityCap__())
+        _exprs_ = ([_tf_.dt.truncate(_trunc_map_[_e_]).drop_nulls().n_unique().alias(f'_l{_i_}_') for _i_, _e_ in enumerate(_linear_)]
+                   + [self.p2s.polarsOperationForEnum(self._time_field_, _e_).drop_nulls().n_unique().alias(f'_p{_i_}_')
                       for _i_, _e_ in enumerate(_periodic_)]
                    + ([] if _is_date_ else self.__granularityStatExprs__()))
         _stats_ = _df_.select(_exprs_).row(0, named=True)
@@ -734,8 +752,10 @@ class Timep(P2SBinComponentMixin, ExportMixin):
 
         self._agg_type_         = 'simple'
         self.df_swarm           = None
+        self._df_agg_unpooled_: pl.DataFrame | None = None
+        self._pool_bin_col_:    str | None          = None
         self._numeric_field_    = None
-        self._color_categories_ = []
+        self._color_categories_: list = []
 
         # ── LINEAR ────────────────────────────────────────────────────────
         if not self._is_periodic_:
@@ -774,8 +794,11 @@ class Timep(P2SBinComponentMixin, ExportMixin):
                             self.df_swarm = self.df.lazy().select([self._time_field_, _nf_]).sort(self._time_field_).collect()
                         else:
                             self.df_swarm = self.df.select([self._time_field_, _nf_]).sort(self._time_field_)
+                        # Ranked within each bin -- group_by_dynamic's window, the truncated
+                        # time -- not within each raw timestamp, which capped nothing
+                        # (PLANNING.md §5 C-timep-swarm-cap)
                         self.df_swarm = (self.df_swarm
-                            .with_columns(pl.int_range(pl.len()).over(self._time_field_).alias('__rank__'))
+                            .with_columns(pl.int_range(pl.len()).over(pl.col(self._time_field_).dt.truncate(_every_)).alias('__rank__'))
                             .filter(pl.col('__rank__') < self.swarm_max_pts)
                             .drop('__rank__'))
 
@@ -815,40 +838,15 @@ class Timep(P2SBinComponentMixin, ExportMixin):
                                  .with_columns(pl.col(self._time_field_).dt.truncate(_trunc_).alias('__bin__'))
                                  .group_by(['__bin__', self._color_field_])
                                  .agg(self.__countAggExpr__()))
-                # Merge color categories whose estimated max pixel height is below
-                # remainder_threshold into a single '(other)' bucket.  This bounds
-                # df_agg to O(bins × visible_colors) regardless of input cardinality.
-                _est_plot_h_  = float(self.wxh[1])
-                _max_bt_      = float(cast('float | None', _partial_.group_by('__bin__')
-                                               .agg(pl.col('__count__').sum().alias('__bt__'))
-                                               ['__bt__'].max()) or 1.0)
-                # Use max count of each color in any single bin (not the total across bins).
-                # A color that appears in many bins but contributes < remainder_threshold px
-                # in each individual bin should be collapsed into the remainder bucket.
-                _color_stats_ = (_partial_.group_by(self._color_field_)
-                                          .agg(pl.col('__count__').max().alias('__max_in_bin__'))
-                                          .with_columns(
-                                              (pl.col('__max_in_bin__') / _max_bt_ * _est_plot_h_)
-                                              .alias('__est_px__')))
-                _visible_     = set(_color_stats_.filter(pl.col('__est_px__') >= self.remainder_threshold)
-                                                 [self._color_field_].to_list())
-                if len(_visible_) < len(_color_stats_):
-                    _visible_str_ = {str(v) for v in _visible_}
-                    _partial_     = (_partial_
-                        .with_columns(pl.col(self._color_field_).cast(pl.String))
-                        .with_columns(
-                            pl.when(pl.col(self._color_field_).is_in(_visible_str_))
-                              .then(pl.col(self._color_field_))
-                              .otherwise(pl.lit('(other)'))
-                              .alias(self._color_field_))
-                        .group_by(['__bin__', self._color_field_])
-                        .agg(pl.col('__count__').sum()))
+                _partial_ = self.__clampNegativeCounts__(_partial_, '__bin__')
                 # Store full spine for correct bar positioning (empty bins must keep their x slot)
                 self._all_stacked_bins_ = _spine_['__bin__'].to_list()
                 self.df_agg = (_partial_
                                .rename({'__bin__': self._time_field_})
                                .sort([self._time_field_, self._color_field_]))
-                self._color_categories_ = _sortedCategories_(self.df_agg[self._color_field_].unique().to_list())
+                # Pool the colours too thin to draw into '(other)' -- against the canvas
+                # here, against the plot once it exists (__poolForThePlot__)
+                self.__poolFirstPass__(self._time_field_)
                 self._agg_type_ = 'stacked'
 
             # Simple barchart (row count, numeric sum, or numeric spectrum colour)
@@ -873,7 +871,7 @@ class Timep(P2SBinComponentMixin, ExportMixin):
                                  .group_by('__bin__')
                                  .agg(_agg_exprs_))
                 self.df_agg = (_spine_
-                               .join(_partial_, on='__bin__', how='left')
+                               .join(self.__clampNegativeCounts__(_partial_, '__bin__'), on='__bin__', how='left')
                                .fill_null(0)
                                .rename({'__bin__': self._time_field_}))
                 if self._color_is_crow_:
@@ -930,30 +928,8 @@ class Timep(P2SBinComponentMixin, ExportMixin):
                     self.df_agg = self.df.group_by(['__time_bin__', self._color_field_]) \
                                          .agg(self.__countAggExpr__()) \
                                          .sort(['__time_bin__', self._color_field_])
-                _est_plot_h_  = float(self.wxh[1])
-                _max_bt_      = float(cast('float | None', self.df_agg.group_by('__time_bin__')
-                                                  .agg(pl.col('__count__').sum().alias('__bt__'))
-                                                  ['__bt__'].max()) or 1.0)
-                _color_stats_ = (self.df_agg.group_by(self._color_field_)
-                                            .agg(pl.col('__count__').max().alias('__max_in_bin__'))
-                                            .with_columns(
-                                                (pl.col('__max_in_bin__') / _max_bt_ * _est_plot_h_)
-                                                .alias('__est_px__')))
-                _visible_     = set(_color_stats_.filter(pl.col('__est_px__') >= self.remainder_threshold)
-                                                 [self._color_field_].to_list())
-                if len(_visible_) < len(_color_stats_):
-                    _visible_str_ = {str(v) for v in _visible_}
-                    self.df_agg   = (self.df_agg
-                        .with_columns(pl.col(self._color_field_).cast(pl.String))
-                        .with_columns(
-                            pl.when(pl.col(self._color_field_).is_in(_visible_str_))
-                              .then(pl.col(self._color_field_))
-                              .otherwise(pl.lit('(other)'))
-                              .alias(self._color_field_))
-                        .group_by(['__time_bin__', self._color_field_])
-                        .agg(pl.col('__count__').sum())
-                        .sort(['__time_bin__', self._color_field_]))
-                self._color_categories_ = _sortedCategories_(self.df_agg[self._color_field_].unique().to_list())
+                self.df_agg = self.__clampNegativeCounts__(self.df_agg, '__time_bin__')
+                self.__poolFirstPass__('__time_bin__')
                 self._agg_type_ = 'stacked'
 
             # Simple barchart (row count, numeric sum, or numeric spectrum colour)
@@ -967,7 +943,8 @@ class Timep(P2SBinComponentMixin, ExportMixin):
                     _agg_partial_ = self.df.lazy().group_by('__time_bin__').agg(_agg_exprs_).collect()
                 else:
                     _agg_partial_ = self.df.group_by('__time_bin__').agg(_agg_exprs_)
-                self.df_agg = _all_bins_.join(_agg_partial_, on='__time_bin__', how='left').fill_null(0)
+                self.df_agg = _all_bins_.join(self.__clampNegativeCounts__(_agg_partial_, '__time_bin__'),
+                                              on='__time_bin__', how='left').fill_null(0)
                 if self._color_is_crow_:
                     self.df_agg = self.df_agg.with_columns(
                         pl.col('__row_count__').cast(pl.Float64).alias('__color_stat__')
@@ -1066,6 +1043,35 @@ class Timep(P2SBinComponentMixin, ExportMixin):
         elif _pos_ == 'top':    self._legend_region_ = (0, 0, self.wxh[0], _t_)
         else:                   self._legend_region_ = (0, self.wxh[1] - _b_, self.wxh[0], _b_)
 
+    #
+    # __poolFirstPass__() - pool df_agg's thin colours into '(other)', estimating the plot as
+    # the whole canvas height (the plot does not exist yet), and keep the unpooled frame
+    # for __poolForThePlot__
+    #
+    def __poolFirstPass__(self, bin_col: str) -> None:
+        self._df_agg_unpooled_, self._pool_bin_col_ = self.df_agg, bin_col
+        _max_bt_ = float(cast('float | None', self.df_agg.group_by(bin_col)
+                                      .agg(pl.col('__count__').sum().alias('__bt__'))
+                                      ['__bt__'].max()) or 1.0)
+        self.df_agg = self.__poolThinColors__(self.df_agg, bin_col, float(self.wxh[1]) / _max_bt_)
+        self._color_categories_ = _sortedCategories_(self.df_agg[self._color_field_].unique().to_list())
+
+    #
+    # __poolForThePlot__() - pool again against the plot's real height and count scale.  The
+    # plot is never taller than the canvas the first pass assumed, so this only pools
+    # more; if it does, the legend and geometry are rebuilt around it (PLANNING.md §5
+    # C-histop-two-remainders).
+    #
+    def __poolForThePlot__(self) -> None:
+        if self._agg_type_ != 'stacked' or self._df_agg_unpooled_ is None or self._pool_bin_col_ is None: return
+        _span_ = max(float(self._count_max_) - float(self._count_min_), 1e-9)
+        _new_  = self.__poolThinColors__(self._df_agg_unpooled_, self._pool_bin_col_, float(self._plot_h_) / _span_)
+        _cf_   = self._color_field_
+        if set(_new_[_cf_].cast(pl.String).to_list()) == set(self.df_agg[_cf_].cast(pl.String).to_list()): return
+        self.df_agg = _new_
+        self._color_categories_ = _sortedCategories_(self.df_agg[_cf_].unique().to_list())
+        self.__constructGeometry__()
+
     def __constructGeometry__(self) -> None:
         w, h         = self.wxh
         # Legend strip (if any) comes out of wxh first -- the plot region shrinks,
@@ -1113,6 +1119,14 @@ class Timep(P2SBinComponentMixin, ExportMixin):
 
         self._bar_w_raw_ = self._plot_w_ / self._n_bins_
         self._bar_w_     = min(self._bar_w_raw_, max(self.min_bar_w, self._bar_w_raw_ - 1.0))
+        # min_bar_w cannot help when the slot itself is under a pixel, so a level whose cycle
+        # outgrows the plot drew bars of width 0.0 -- a blank chart, silently (PLANNING.md §5
+        # C-timep-subpixel-levels).  The auto resolution never picks such a level.
+        if self._bar_w_raw_ < 1.0:
+            _level_ = self._time_enum_.name if self._time_enum_ is not None else 'the time level'
+            self.p2s.logger.warning(
+                f'Timep: {_level_} lays {self._n_bins_:,} bars across a {self._plot_w_:.0f}px plot, under a pixel '
+                f'each, so they will barely show; use a coarser level or a wider plot')
 
     def __renderSVG__(self, rand_id: int) -> None:
         w, h          = self.wxh
@@ -1514,7 +1528,9 @@ class Timep(P2SBinComponentMixin, ExportMixin):
             dl=_dl_,
         )
 
-    def renderSmallMultiples(self, df_all: pl.DataFrame, df_lu: dict, all_key: str) -> dict:
+    def renderSmallMultiples(self, df_all: pl.DataFrame, df_lu: dict, all_key: str,
+                             category_fields: list[str] | None = None) -> dict:
+        # category_fields: smallp's category column(s); only xyp uses them (line_split_by=).
         _kwargs_: dict[str, Any] = {}
         _needs_ref_ = (self.p2s.SM_COUNT in self.sm_shared or
                        self.p2s.SM_COLOR  in self.sm_shared or

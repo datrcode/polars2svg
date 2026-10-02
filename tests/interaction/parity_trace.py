@@ -158,7 +158,7 @@ class ParityTrace:
         trace = ParityTrace(ip)
         with trace.gesture('hover-centre'):
             ip.hover(200, 150)
-        trace.compare_or_record('linkpi')
+        trace.assert_matches_golden('linkpi')
     '''
 
     def __init__(self, ip, view=None):
@@ -300,7 +300,9 @@ class ParityTrace:
     def payload(self) -> dict:
         return {'params_watched': self.names, 'gestures': self.results}
 
-    def compare_or_record(self, name: str) -> None:
+    # Assert the trace matches parity/<name>.json.  With P2S_PARITY_RECORD=1 it writes
+    # the golden instead, as UPDATE_GOLDEN=1 does for assert_svg_matches_golden.
+    def assert_matches_golden(self, name: str) -> None:
         from pathlib import Path
         _path_ = Path(__file__).parent / 'parity' / f'{name}.json'
         _now_  = self.payload()

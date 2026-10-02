@@ -98,6 +98,36 @@ class TestSpreadLinesPBasic(unittest.TestCase):
         assert_valid_svg(self, sp.svg)
 
 
+class TestSpreadLinesPNullTimestamps(unittest.TestCase):
+    """A row with no timestamp has no bin to be drawn in.
+
+    It used to crash the layout -- the bin labels were sorted with None among them -- and
+    had it got that far, the null would have been counted as one more hour, minute and
+    second, so midnight-only data looked sub-daily (PLANNING.md §5
+    C-spreadlinesp-null-granularity, the bug timep had).  Now the picture, and the level
+    chosen, are exactly those the row's deletion gives."""
+
+    def setUp(self):
+        import datetime
+        self.p2s = Polars2SVG()
+        _days_ = [datetime.datetime(2024, 1, d) for d in (1, 1, 2, 2, 3, 3, 4)]     # all at midnight
+        self.df = pl.DataFrame({'fm': ['e'] * 7, 'to': list('abcdefg'), 't': _days_})
+        self.df_null = pl.concat([self.df, pl.DataFrame({'fm': ['e'], 'to': ['h'], 't': [None]}, schema=self.df.schema)])
+
+    def _sp(self, df):
+        return self.p2s.spreadlinesp(df, [('fm', 'to')], ego='e', time='t', wxh=(600, 200))
+
+    def test_a_null_timestamp_draws_what_deleting_its_row_does(self):
+        from svg_test_utils import normalize_svg
+        _with_, _without_ = self._sp(self.df_null), self._sp(self.df)
+        self.assertEqual(normalize_svg(_with_._repr_svg_()), normalize_svg(_without_._repr_svg_()))
+        self.assertEqual(_with_.ts_list, _without_.ts_list)
+
+    def test_a_null_timestamp_does_not_make_the_data_look_sub_daily(self):
+        self.assertEqual(self._sp(self.df)._ts_enum_, self.p2s.LT_Y_m_dp)
+        self.assertEqual(self._sp(self.df_null)._ts_enum_, self.p2s.LT_Y_m_dp)
+
+
 class TestSpreadLinesPIdScoping(unittest.TestCase):
     '''Two spreadlinesp figures on one page must not collide on SVG ids.
 

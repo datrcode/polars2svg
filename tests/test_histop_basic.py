@@ -2,8 +2,9 @@ import re
 import unittest
 import polars as pl
 from polars2svg import Polars2SVG
-from histop_dataframes import makeHistoDf
-from svg_test_utils import assert_valid_svg, assert_timing_metrics_populated, capture_log_warnings
+from histop_dataframes import makeHistoDf, histopBars
+from svg_test_utils import assert_valid_svg, assert_timing_metrics_populated, capture_log_warnings, normalize_svg
+
 
 
 class TestHistopBasic(unittest.TestCase):
@@ -14,27 +15,55 @@ class TestHistopBasic(unittest.TestCase):
     def setUp(self):
         self.df = makeHistoDf(n=100)
 
+    # Every bar is its bin's row count: one bar per bin, largest first and ties A to Z,
+    # the longest spanning the plot and the rest in proportion.  `keys` is each row's bin.
+    def assertBarsAreRowCounts(self, h, keys: pl.Series) -> None:
+        _want_ = dict(keys.value_counts().iter_rows())
+        _bars_ = histopBars(h)
+        self.assertEqual([_lbl_ for _lbl_, *_ in _bars_], sorted(_want_, key=lambda k: (-_want_[k], k)),
+                         'one bar per bin, largest first, ties in label order')
+        _top_ = max(_want_.values())
+        for _label_, _x_, _y_, _w_ in _bars_:
+            self.assertAlmostEqual(_w_, h._plot_w_ * _want_[_label_] / _top_, delta=0.06,
+                                   msg=f'bar {_label_!r} is not as long as its {_want_[_label_]} rows')
+
+    # Two calls that mean the same thing render identically
+    def assertSameRender(self, a, b) -> None:
+        self.assertEqual(normalize_svg(a._repr_svg_()), normalize_svg(b._repr_svg_()))
+
     # ── bin_by specification ──────────────────────────────────────────────────
 
     def test_bin_by_positional_string(self):
         '''bin_by as the first positional string arg.'''
-        self.p2s.histop(self.df, 'cat')
+        self.assertBarsAreRowCounts(self.p2s.histop(self.df, 'cat'), self.df['cat'])
 
     def test_bin_by_keyword(self):
         '''bin_by as an explicit keyword argument.'''
-        self.p2s.histop(self.df, bin_by='cat')
+        self.assertSameRender(self.p2s.histop(self.df, bin_by='cat'), self.p2s.histop(self.df, 'cat'))
 
     def test_df_as_keyword_arg(self):
         '''df= may be supplied as a keyword argument.'''
-        self.p2s.histop(df=self.df, bin_by='cat')
+        self.assertSameRender(self.p2s.histop(df=self.df, bin_by='cat'), self.p2s.histop(self.df, 'cat'))
 
     def test_bin_by_tuple_two_fields(self):
         '''bin_by as a tuple of two field names; bins are joined with "|".'''
-        self.p2s.histop(self.df, ('cat', 'group'))
+        self.assertBarsAreRowCounts(self.p2s.histop(self.df, ('cat', 'group')),
+                                    self.df.select(pl.concat_str('cat', 'group', separator='|'))['cat'])
 
     def test_bin_by_tuple_keyword(self):
         '''bin_by tuple supplied as a keyword argument.'''
-        self.p2s.histop(self.df, bin_by=('cat', 'group'))
+        self.assertSameRender(self.p2s.histop(self.df, bin_by=('cat', 'group')), self.p2s.histop(self.df, ('cat', 'group')))
+
+    def test_tied_bins_are_in_label_order(self):
+        '''Bins with equal counts sort by their own value, every time.  Their order used
+        to be group_by's: three bins of two rows came out in all six orders over thirty
+        identical calls.'''
+        df = pl.DataFrame({'cat': list('ccaabbd')})
+        for _descending_, _want_ in ((True, ['a', 'b', 'c', 'd']), (False, ['d', 'a', 'b', 'c'])):
+            with self.subTest(descending=_descending_):
+                _orders_ = {tuple(_lbl_ for _lbl_, *_ in histopBars(self.p2s.histop(df, 'cat', descending=_descending_)))
+                            for _ in range(20)}
+                self.assertEqual(_orders_, {tuple(_want_)})
 
     # ── SVG output ────────────────────────────────────────────────────────────
 
@@ -57,13 +86,13 @@ class TestHistopBasic(unittest.TestCase):
     # ── edge-case DataFrames ──────────────────────────────────────────────────
 
     def test_single_bin(self):
-        '''DataFrame with only one unique bin value renders without error.'''
+        '''One unique bin value: one full-width bar of three rows.'''
         df = pl.DataFrame({'cat': ['A', 'A', 'A'], 'value': [1, 2, 3]})
-        self.p2s.histop(df, 'cat')
+        self.assertBarsAreRowCounts(self.p2s.histop(df, 'cat'), df['cat'])
 
     def test_single_row(self):
         df = self.df.head(1)
-        self.p2s.histop(df, 'cat')
+        self.assertBarsAreRowCounts(self.p2s.histop(df, 'cat'), df['cat'])
 
     def test_empty_df_returns_blank_svg(self):
         '''An empty DataFrame should not crash; it returns a blank SVG.'''
@@ -75,18 +104,33 @@ class TestHistopBasic(unittest.TestCase):
 
     def test_various_wxh(self):
         for w, h in [(128, 256), (256, 512), (512, 1024)]:
-            self.p2s.histop(self.df, 'cat', wxh=(w, h))
+            with self.subTest(wxh=(w, h)):
+                _h_ = self.p2s.histop(self.df, 'cat', wxh=(w, h))
+                self.assertIn(f'width="{w}" height="{h}"', _h_._repr_svg_())
+                self.assertBarsAreRowCounts(_h_, self.df['cat'])
 
     def test_draw_context_true(self):
-        self.p2s.histop(self.df, 'cat', draw_context=True)
+        # The default: the count axis -- grid lines, the 'Rows' title, the largest count
+        _h_ = self.p2s.histop(self.df, 'cat', draw_context=True)
+        self.assertSameRender(_h_, self.p2s.histop(self.df, 'cat'))
+        _svg_ = _h_._repr_svg_()
+        self.assertIn('<line', _svg_)
+        self.assertIn('>Rows</text>', _svg_)
+        self.assertIn(f'>{self.df["cat"].value_counts()["count"].max()}</text>', _svg_)
 
     def test_draw_context_false(self):
-        self.p2s.histop(self.df, 'cat', draw_context=False)
+        # No count axis at all, and the bars are unchanged in proportion
+        _h_ = self.p2s.histop(self.df, 'cat', draw_context=False)
+        _svg_ = _h_._repr_svg_()
+        self.assertNotIn('<line', _svg_)
+        self.assertNotIn('>Rows</text>', _svg_)
+        self.assertBarsAreRowCounts(_h_, self.df['cat'])
 
     def test_draw_context_false_no_axis_elements(self):
         '''Disabling context means no vertical grid lines; SVG is still valid.'''
         t = self.p2s.histop(self.df, 'cat', draw_context=False)
         self.assertIn('<svg', t._repr_svg_())
+        self.assertNotIn('<line', t._repr_svg_())
 
     def test_draw_labels_false_no_bin_labels(self):
         '''Bin labels (per-bin entity labels) are suppressed when draw_labels=False;
@@ -143,8 +187,12 @@ class TestHistopBasic(unittest.TestCase):
                                          _right_)
 
     def test_custom_txt_h(self):
+        # The bin labels are drawn at txt_h, and the bars are txt_h + 4 tall to hold them
         for txt_h in [8, 10, 12, 16]:
-            self.p2s.histop(self.df, 'cat', txt_h=txt_h)
+            with self.subTest(txt_h=txt_h):
+                _h_ = self.p2s.histop(self.df, 'cat', txt_h=txt_h)
+                self.assertEqual(_h_.bar_h, txt_h + 4)
+                self.assertBarsAreRowCounts(_h_, self.df['cat'])   # which finds the labels by their font-size
 
     def test_custom_bar_h(self):
         '''Explicit bar_h overrides the txt_h default.'''
@@ -162,15 +210,35 @@ class TestHistopBasic(unittest.TestCase):
         self.assertEqual(t.bar_h, 5)
 
     def test_custom_v_gap(self):
-        self.p2s.histop(self.df, 'cat', v_gap=4)
+        # Bar rows are bar_h + v_gap apart
+        _h_ = self.p2s.histop(self.df, 'cat', v_gap=4)
+        _ys_ = [y for _, _, y, _ in histopBars(_h_)]
+        self.assertEqual({round(b - a, 3) for a, b in zip(_ys_, _ys_[1:])}, {_h_.bar_h + 4})
 
     def test_custom_insets(self):
+        # insets move the plot: the bars start insets[0] in, and insets[1] further down
+        _top0_ = histopBars(self.p2s.histop(self.df, 'cat', insets=(0, 0)))[0][2]
         for insets in [(0, 0), (2, 2), (5, 10)]:
-            self.p2s.histop(self.df, 'cat', insets=insets)
+            with self.subTest(insets=insets):
+                _h_    = self.p2s.histop(self.df, 'cat', insets=insets)
+                _bars_ = histopBars(_h_)
+                self.assertEqual({x for _, x, _, _ in _bars_}, {float(insets[0])})
+                self.assertEqual(_bars_[0][2], _top0_ + insets[1])
+                self.assertBarsAreRowCounts(_h_, self.df['cat'])
 
     def test_draw_distribution_tall_widget(self):
-        '''draw_distribution=True with enough vertical space renders without error.'''
-        self.p2s.histop(self.df, 'cat', draw_distribution=True, wxh=(256, 600))
+        '''draw_distribution=True draws a histogram of the bar lengths below the bars:
+        how many bins' counts fall in each tenth of [smallest count, largest count].'''
+        _h_ = self.p2s.histop(self.df, 'cat', draw_distribution=True, wxh=(256, 600))
+        _svg_ = _h_._repr_svg_()
+        _heights_ = [float(hh) for hh in re.findall(r'<rect x="[\d.]+" y="[\d.]+" width="[\d.]+" height="([\d.]+)" fill="#[0-9a-fA-F]{6}" fill-opacity="0.4"', _svg_)]
+        _counts_ = self.df['cat'].value_counts()['count'].to_list()
+        _lo_, _span_ = min(_counts_), max(_counts_) - min(_counts_)
+        _freq_ = [0] * 10
+        for _c_ in _counts_: _freq_[min(int((_c_ - _lo_) / _span_ * 10), 9)] += 1
+        self.assertEqual(len(_heights_), 10)
+        self.assertEqual([round(hh / max(_heights_), 3) for hh in _heights_], [round(f / max(_freq_), 3) for f in _freq_])
+        self.assertNotIn('fill-opacity="0.4"', self.p2s.histop(self.df, 'cat', wxh=(256, 600))._repr_svg_())
 
     def test_lazy_and_eager_both_render(self):
         t_lazy  = self.p2s.histop(self.df, 'cat', use_lazy_execution=True)
@@ -241,7 +309,7 @@ class TestHistopWxhValidation(unittest.TestCase):
             self.p2s.histop(self.df, 'cat', wxh=(256, 'x'))
 
     def test_wxh_int_int_ok(self):
-        self.p2s.histop(self.df, 'cat', wxh=(256, 128))
+        self.assertEqual(self.p2s.histop(self.df, 'cat', wxh=(256, 128)).wxh, (256, 128))
 
 
 class TestHistopSmSharedWarnings(unittest.TestCase):

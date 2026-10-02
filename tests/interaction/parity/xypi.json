@@ -26,6 +26,7 @@
     "mod_inner",
     "name",
     "palette",
+    "render_settings",
     "search_op_finished",
     "search_str",
     "select_shape",
@@ -243,6 +244,11 @@
           "drag_op_finished",
           false,
           2
+        ],
+        [
+          "mod_inner",
+          "str:written",
+          1
         ],
         [
           "shiftkey",

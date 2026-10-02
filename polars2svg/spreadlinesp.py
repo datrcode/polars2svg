@@ -474,11 +474,20 @@ class SpreadLinesP(ExportMixin):
         for _rel_ in self.relationships:
             for _field_ in _rel_[:2]:
                 if _field_ not in self.df.columns:
-                    raise ValueError(f'SpreadLinesP: field "{_field_}" not in DataFrame')
+                    raise ValueError(f'SpreadLinesP: field "{_field_}" not in DataFrame{self.p2s.columnSuggestion(_field_, self.df)}')
         if self._ts_field_ not in self.df.columns:
-            raise ValueError(f'SpreadLinesP: time field "{self._ts_field_}" not in DataFrame')
+            raise ValueError(f'SpreadLinesP: time field "{self._ts_field_}" not in DataFrame{self.p2s.columnSuggestion(self._ts_field_, self.df)}')
         if self._ts_enum_ is not None and not isinstance(self._ts_enum_, self.p2s.TimeLinearTypeP):
             raise ValueError(f'SpreadLinesP: time enum must be a TimeLinearTypeP, got {type(self._ts_enum_).__name__}')
+        # node_color's documented forms.  Anything else used to fall through to the
+        # by-name hash, so a misspelt field silently coloured every node by its name
+        # (PLANNING.md §5 C-graph-color-unvalidated).
+        _nc_ = self.node_color
+        if not (_nc_ is None or _nc_ == self.p2s.COLOR_BY_NODE_NAME or isinstance(_nc_, dict)
+                or isinstance(_nc_, self.p2s.HexColorString)
+                or (isinstance(_nc_, str) and _nc_ in self.df.columns)):
+            raise ValueError(f'SpreadLinesP: node_color={_nc_!r} is not None, p2s.COLOR_BY_NODE_NAME, a hex color, '
+                             f'a {{node: color}} dict, or a DataFrame column name')
 
     # -------------------------------------------------------------------------
     # Temporal binning helpers  (mirror timep's approach, tailored for bins)
@@ -521,10 +530,13 @@ class SpreadLinesP(ExportMixin):
             return p.LT_Y_m_dp          # Date columns: daily is the finest
         if len(_df_) == 0:
             return p.LT_Y_m_dp
+        # drop_nulls(): a null timestamp is not a time of day, and counting it as one made
+        # midnight-only data look sub-daily (PLANNING.md §5 C-spreadlinesp-null-granularity,
+        # the same bug timep had)
         _s_ = _df_.select([
-            pl.col(self._ts_field_).dt.hour()  .n_unique().alias('nh'),
-            pl.col(self._ts_field_).dt.minute().n_unique().alias('nm'),
-            pl.col(self._ts_field_).dt.second().n_unique().alias('ns'),
+            pl.col(self._ts_field_).dt.hour()  .drop_nulls().n_unique().alias('nh'),
+            pl.col(self._ts_field_).dt.minute().drop_nulls().n_unique().alias('nm'),
+            pl.col(self._ts_field_).dt.second().drop_nulls().n_unique().alias('ns'),
             pl.col(self._ts_field_).dt.hour()  .min()     .alias('h0'),
             pl.col(self._ts_field_).dt.minute().min()     .alias('m0'),
             pl.col(self._ts_field_).dt.second().min()     .alias('s0'),
@@ -660,6 +672,11 @@ class SpreadLinesP(ExportMixin):
             )
         else:
             _df_src_ = self.df
+        # A row with no time has no bin to be drawn in.  It used to reach the sort of the
+        # bin labels and crash it ('<' between None and str); it is now left out, and the
+        # picture is the one its deletion would give (PLANNING.md §5
+        # C-spreadlinesp-null-granularity).
+        _df_src_ = _df_src_.filter(pl.col(_ts_agg_col_).is_not_null())
 
         _agg_dfs_ = []
         for _rel_ in self.relationships:
@@ -1086,15 +1103,20 @@ class SpreadLinesP(ExportMixin):
         def _cloud_(n: int, y_cloud: float, ltriangle: bool, rtriangle: bool, nodes_in_cloud: list) -> None:
             nonlocal xmin, ymin, xmax, ymax, svg
             _cloud_co_ = self.p2s.colorTyped('axis', 'default')
+            # A highlighted member is emphasised through its pill, in a highlighted circle's
+            # terms: every member highlighted takes its ring and fill, some take the ring
+            # alone (PLANNING.md §5 C-spreadlinesp-cloud-highlight).  It used to show nothing.
+            _n_hl_ = sum(1 for _nd_ in nodes_in_cloud if str(_nd_) in self.highlight_nodes)
+            _sw_, _fo_ = ('1', '0.25') if _n_hl_ == 0 else ('2.50', '0.80' if _n_hl_ == len(nodes_in_cloud) else '0.25')
             svg.append(
                 f'<rect x="{x - 16:.1f}" y="{y_cloud - 8:.1f}" width="32" height="16"'
-                f' rx="8" fill="{_cloud_co_}" fill-opacity="0.25"'
-                f' stroke="{_cloud_co_}" stroke-width="1"/>'
+                f' rx="8" fill="{_cloud_co_}" fill-opacity="{_fo_}"'
+                f' stroke="{_cloud_co_}" stroke-width="{_sw_}"/>'
             )
             if dl is not None:
                 self.__roundedRectToDL__(dl, x - 16, y_cloud - 8, 32, 16, 8,
-                                         fill=_cloud_co_, fill_opacity=0.25,
-                                         stroke=_cloud_co_, stroke_w=1.0)
+                                         fill=_cloud_co_, fill_opacity=float(_fo_),
+                                         stroke=_cloud_co_, stroke_w=float(_sw_))
             if ltriangle: svg.append(_cloud_triangle_(x, y_cloud, 16, 6, -1))
             if rtriangle: svg.append(_cloud_triangle_(x, y_cloud, 16, 6,  1))
             _txt_co_ = self.p2s.colorTyped('label', 'defaultfg')
@@ -2065,7 +2087,9 @@ class SpreadLinesP(ExportMixin):
     # Small multiples / render_with
     # -------------------------------------------------------------------------
 
-    def renderSmallMultiples(self, df_all: Any, df_lu: dict, all_key: Any) -> dict:
+    def renderSmallMultiples(self, df_all: Any, df_lu: dict, all_key: Any,
+                             category_fields: list[str] | None = None) -> dict:
+        # category_fields: smallp's category column(s); only xyp uses them (line_split_by=).
         return {k: SpreadLinesP(df=v, template=self, p2s=self.p2s) for k, v in df_lu.items()}
 
     def render_with(self, df: pl.DataFrame, **overrides: Any) -> 'SpreadLinesP':

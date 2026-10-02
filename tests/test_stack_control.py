@@ -226,9 +226,14 @@ class TestStackControlClickRouting(_StackControlBase):
         self.assertEqual(mvc.stacks['default']['index'], 1)
 
     def test_click_without_mvc_is_noop(self):
+        '''A click on a frame, with no controller to tell: nothing to change, and nothing
+        changes -- not the frames, not the drawing.'''
         sc = self._make_sc()
+        self.assertIsNone(sc.mvc)
+        _frames_, _drawn_ = list(sc._frame_map_), sc.mod_inner
         _y_ = (sc._frame_map_[0][0] + sc._frame_map_[0][1]) // 2
-        self._click(sc, _y_)   # must not raise
+        self._click(sc, _y_)
+        self.assertEqual((sc._frame_map_, sc.mod_inner), (_frames_, _drawn_))
 
 
 class TestStackControlKeyOps(_StackControlBase):
@@ -319,8 +324,14 @@ class TestStackControlKeyOps(_StackControlBase):
         self.assertEqual(len(mvc.stacks['default']['dfs']), 3)   # untouched
 
     def test_key_op_without_mvc_is_noop(self):
+        '''The key is consumed -- reset, so an identical next press re-fires -- and nothing
+        else changes.'''
         sc = self._make_sc()
-        self._key(sc, 'collapse')   # must not raise
+        self.assertIsNone(sc.mvc)
+        _frames_, _drawn_ = list(sc._frame_map_), sc.mod_inner
+        self._key(sc, 'collapse')
+        self.assertEqual(sc.key_op_finished, '')
+        self.assertEqual((sc._frame_map_, sc.mod_inner), (_frames_, _drawn_))
 
     def test_help_overlay_is_hidden_by_default_and_driven_by_display(self):
         """The help chrome ships, the widget builds a node for it, and it is hidden by
@@ -469,7 +480,10 @@ class TestStackControlMinimumSize(_StackControlBase):
         component = self.p2s.xyp(_make_df(), 'x', 'y', wxh=(120, 32))
         ell_h    = _ELL_H_
         min_h    = 2 * 2 + headerHeight(_TXT_H_) + 32 + 2 * ell_h
-        self.p2s.stack_controli(component, wxh=(160, min_h))   # must not raise
+        # the minimum builds, at the size asked for; one pixel less does not
+        self.assertEqual(self.p2s.stack_controli(component, wxh=(160, min_h)).svg_h, min_h)
+        with self.assertRaises(ValueError):
+            self.p2s.stack_controli(component, wxh=(160, min_h - 1))
 
 
 class TestStackControlAlwaysRendersCurrent(_StackControlBase):

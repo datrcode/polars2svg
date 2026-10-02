@@ -145,13 +145,13 @@ class _NullSliceMixin:
 
     # ── substring search ──────────────────────────────────────────────────────
 
-    def test_substring_none_selects_null_slice(self):
-        result = self.pp.filterBySubstring('none')
+    def test_substring_null_selects_null_slice(self):
+        result = self.pp.filterBySubstring('null')
         self.assertEqual(len(result), 5)
         self.assertEqual(result['cat'].null_count(), 5)
 
-    def test_substring_none_remove_drops_null_slice(self):
-        result = self.pp.filterBySubstring('none', remove_bins=True)
+    def test_substring_null_remove_drops_null_slice(self):
+        result = self.pp.filterBySubstring('null', remove_bins=True)
         self.assertEqual(len(result), 5)
         self.assertEqual(result['cat'].null_count(), 0)
 

@@ -27,6 +27,8 @@ import unittest
 
 import polars as pl
 from polars2svg import Polars2SVG
+from label_fidelity_data import svg_text_contents
+from svg_test_utils import normalize_svg
 
 
 _DF_  = pl.DataFrame({'fm': ['a', 'b', 'c', 'd', 'b'],
@@ -108,8 +110,11 @@ class TestLegitimateValuesStillWork(_FlagConfusionBase):
         self.assertIn('Alpha', _svg_)
 
     def test_linkp_link_labels_dict(self):
-        self._linkp(link_labels={'a': 'Alpha'}, draw_link_labels=True,
-                    color='fm')._repr_svg_()
+        '''The one edge whose label value is 'a' is labelled 'Alpha'; an edge whose value
+        the dict does not name is not labelled at all, as documented.'''
+        self.assertEqual(svg_text_contents(self._linkp(draw_link_labels=True, color='fm')._repr_svg_()).count('a'), 1)
+        self.assertEqual(svg_text_contents(self._linkp(link_labels={'a': 'Alpha'}, draw_link_labels=True,
+                                                       color='fm')._repr_svg_()), ['Alpha'])
 
     def test_chordp_node_labels_dict(self):
         _svg_ = self._chordp(node_labels={'a': 'Alpha'}, draw_labels=True)._repr_svg_()
@@ -119,13 +124,15 @@ class TestLegitimateValuesStillWork(_FlagConfusionBase):
         for _comp_, _fn_, _param_, _flag_ in self._cases():
             if _param_ == 'label_only': continue
             with self.subTest(component=_comp_, param=_param_):
-                _fn_(**{_param_: None})._repr_svg_()
+                self.assertEqual(normalize_svg(_fn_(**{_param_: None})._repr_svg_()), normalize_svg(_fn_()._repr_svg_()))
 
     def test_label_only_accepts_its_documented_shapes(self):
-        for _value_ in ({'a', 'b'}, ['a', 'b'], 'a', set()):
+        # a set, a list or a single name labels just those nodes; an empty set filters nothing
+        for _value_, _want_ in (({'a', 'b'}, ['a', 'b']), (['a', 'b'], ['a', 'b']), ('a', ['a']),
+                                (set(), ['a', 'b', 'c', 'd'])):
             with self.subTest(value=_value_):
-                self._linkp(label_only=_value_, draw_node_labels=True)._repr_svg_()
-                self._chordp(label_only=_value_, draw_labels=True)._repr_svg_()
+                self.assertEqual(sorted(svg_text_contents(self._linkp(label_only=_value_, draw_node_labels=True)._repr_svg_())), _want_)
+                self.assertEqual(sorted(svg_text_contents(self._chordp(label_only=_value_, draw_labels=True)._repr_svg_())), _want_)
 
     def test_label_only_still_filters(self):
         _svg_ = self._linkp(label_only={'a'}, draw_node_labels=True)._repr_svg_()
@@ -143,9 +150,13 @@ class TestOneGuardNotFive(unittest.TestCase):
 
     def test_helper_passes_through_non_bools(self):
         _p2s_ = Polars2SVG()
+        # each value passes, and its bool twin does not -- so 0 and 1, which are ints like
+        # bools are, are not mistaken for them
         for _v_ in (None, {}, {'a': 'b'}, set(), ['a'], 'a', 0, 1):
             with self.subTest(value=_v_):
-                _p2s_.rejectBoolParam(_v_, 'X', 'p', 'a dict')
+                self.assertIsNone(_p2s_.rejectBoolParam(_v_, 'X', 'p', 'a dict'))
+                with self.assertRaises(TypeError):
+                    _p2s_.rejectBoolParam(bool(_v_), 'X', 'p', 'a dict')
 
     def test_helper_rejects_bools(self):
         _p2s_ = Polars2SVG()

@@ -86,7 +86,7 @@ import time
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 
 import panel as pn
 from playwright.sync_api import Locator, Page, expect
@@ -135,6 +135,26 @@ _DEEP_FIND_JS = """
         return find(document);
     };
 """
+
+
+def assert_eventually(predicate: Callable[[], bool], message: str | Callable[[], str],
+                      budget_s: float = 15.0) -> None:
+    """Poll Python-side state until ``predicate()`` holds; fail with ``message`` if it
+    never does.
+
+    The Python half of a round trip -- a param the JS writes, a controller attribute, a
+    shared stack -- has no locator to hand to ``expect()``, so this is the same bounded
+    poll against that surface.  ``message`` may be a callable, so a failure can report
+    the state as it stood at the deadline rather than when the test began.  Three test
+    files each carried their own copy of this loop under a name the blind-test scan
+    could not see (PLANNING.md V11 step 11b).
+    """
+    _deadline_ = time.monotonic() + budget_s
+    while time.monotonic() < _deadline_:
+        if predicate():
+            return
+        time.sleep(0.05)
+    raise AssertionError(message() if callable(message) else message)
 
 
 #: Ports this process has already handed to a server.  The OS hands the *most
@@ -801,7 +821,7 @@ class InteractivePage:
         _d_ = self.el('selectionlayer').get_attribute('d') or ''
         return _d_.strip().startswith('M -100 -100')
 
-    def expect_selected(self, n: int) -> None:
+    def assert_selected(self, n: int) -> None:
         """Wait for the component to report *and draw* a selection of n entities.
 
         Both halves are *waited* for, and the second one has to be.  ``__refreshView__``
@@ -833,13 +853,50 @@ class InteractivePage:
                 f'#infostr reports {n} selected but #selectionlayer draws {_marks_} mark(s) '
                 f'-- the handler ran and the render disagrees')
 
-    def expect_focused(self) -> None:
+    def selection_mark_centres(self) -> list[tuple[float, float]]:
+        """The centre of each mark in ``#selectionlayer``, which draws every selected
+        position as a 10px square from ``M sx-5 sy-5`` (``LinkP._NODE_PATH_OPS_``).
+        Empty for the no-selection fallback parked at (-100, -100)."""
+        if self.has_no_selection():
+            return []
+        _d_ = self.el('selectionlayer').get_attribute('d') or ''
+        return [(float(_x_) + 5.0, float(_y_) + 5.0)
+                for _x_, _y_ in re.findall(r'M\s*(-?[\d.]+)\s+(-?[\d.]+)', _d_)]
+
+    def assert_selection(self, nodes: Iterable[Any]) -> None:
+        """The selection is exactly ``nodes`` -- not merely that many of them.
+
+        :meth:`assert_selected` checks the count reported and drawn, which cannot tell
+        one pair of nodes from another: a subtract that behaved as a replace, or a band
+        that hit the wrong row, passes it.  This adds identity on both sides.  Each mark
+        in ``#selectionlayer`` must sit on one of ``nodes``, which is the drawing.  The
+        controller's ``selected_entities`` must be exactly ``nodes``, which is the state
+        every later operation reads.  Assumes the page's LINKPI is ``app.view(0)`` and
+        that no two of the nodes share a pixel, which every fixture using it pins.
+        """
+        _want_ = sorted(str(_n_) for _n_ in nodes)
+        self.assert_selected(len(_want_))
+        _marks_ = self.selection_mark_centres()
+        _drawn_ = sorted(_n_ for _n_ in _want_
+                         if any(abs(_mx_ - _x_) <= 1.5 and abs(_my_ - _y_) <= 1.5
+                                for _x_, _y_ in [self.node_screen_xy(_n_)]
+                                for _mx_, _my_ in _marks_))
+        assert _drawn_ == _want_, (
+            f'#selectionlayer marks {_marks_} sit on {_drawn_}, expected {_want_}')
+        _held_ = sorted(str(_e_) for _e_ in self.app.view().selected_entities)
+        assert _held_ == _want_, f'the controller holds {_held_}, expected {_want_}'
+
+    def assert_attribute(self, template_id: str, name: str, value: str) -> None:
+        """Wait for an element of this component to carry ``name="value"``."""
+        expect(self.el(template_id)).to_have_attribute(name, value, timeout=self.timeout_ms)
+
+    def assert_focused(self) -> None:
         expect(self.root).to_be_focused(timeout=self.timeout_ms)
 
-    def expect_info_contains(self, text: str) -> None:
+    def assert_info_contains(self, text: str) -> None:
         expect(self.el('infostr')).to_contain_text(text, timeout=self.timeout_ms)
 
-    def expect_menu_open(self, header_text: str) -> None:
+    def assert_menu_open(self, header_text: str) -> None:
         """Wait for the picker menu overlay to show a given header.
 
         ``#pickermenu`` is written entirely by JS (``menuRender``) and never crosses
@@ -876,7 +933,7 @@ class InteractivePage:
             raise AssertionError('no highlight rect -- the picker menu is not open')
         return round((int(_y_) - self.MENU_ROW_Y0) / self.MENU_ROW_H) - 1
 
-    def expect_menu_index(self, index: int) -> None:
+    def assert_menu_index(self, index: int) -> None:
         """Wait for a given row to be highlighted.
 
         Expressed as an attribute assertion so it auto-retries: the menu is redrawn
@@ -907,10 +964,10 @@ class InteractivePage:
     def panel_text(self) -> str:
         return self.el('configpanel').text_content() or ''
 
-    def expect_panel_open(self) -> None:
+    def assert_panel_open(self) -> None:
         expect(self.el('configpanel')).to_contain_text('settings:', timeout=self.timeout_ms)
 
-    def expect_panel_closed(self) -> None:
+    def assert_panel_closed(self) -> None:
         expect(self.el('configpanel')).to_be_empty(timeout=self.timeout_ms)
 
     def panel_row(self) -> int:
@@ -922,7 +979,7 @@ class InteractivePage:
             raise AssertionError('no cursor rect -- the configuration panel is not open')
         return round((int(_y_) - self.MENU_ROW_Y0) / self.MENU_ROW_H) - 1
 
-    def expect_panel_row(self, index: int) -> None:
+    def assert_panel_row(self, index: int) -> None:
         """Wait for a given row to be under the cursor.
 
         An attribute assertion so it auto-retries: the panel is redrawn by JS on every
@@ -962,7 +1019,7 @@ class InteractivePage:
                 return '#999' in (_t_.get_attribute('style') or '')
         raise AssertionError(f'no panel row labelled {label!r} (saw {self.panel_text()!r})')
 
-    def expect_panel_row_disabled(self, label: str, disabled: bool = True) -> None:
+    def assert_panel_row_disabled(self, label: str, disabled: bool = True) -> None:
         """Poll until a row's gating settles.
 
         Distinct from ``panel_row_is_disabled`` and not a convenience wrapper: the value
@@ -1021,7 +1078,7 @@ class InteractivePage:
             }
         }""", f'{template_id}{self.suffix}')
 
-    def expect_panel_value(self, label: str, value: str) -> None:
+    def assert_panel_value(self, label: str, value: str) -> None:
         """Poll until a row shows a value -- the panel commit is debounced ~300ms."""
         _deadline_ = time.monotonic() + self.timeout_ms / 1000.0
         _seen_ = None
@@ -1079,7 +1136,7 @@ class InteractivePage:
             time.sleep(0.05)
         return False
 
-    def expect_no_tooltip(self, settle_s: float = 1.5) -> None:
+    def assert_no_tooltip(self, settle_s: float = 1.5) -> None:
         """Assert none appears, and give the dwell time to have fired if it were going to.
 
         A plain "is it absent right now" passes trivially against a tooltip that simply
@@ -1094,7 +1151,7 @@ class InteractivePage:
     def menu_text(self) -> str:
         return self.el('pickermenu').text_content() or ''
 
-    def expect_menu_closed(self) -> None:
+    def assert_menu_closed(self) -> None:
         expect(self.el('pickermenu')).to_be_empty(timeout=self.timeout_ms)
 
     def mod_html(self) -> str:
@@ -1111,10 +1168,10 @@ class InteractivePage:
                                  f'[id="mod{self.suffix}"] rect, '
                                  f'[id="mod{self.suffix}"] path')
 
-    def expect_marks_to_change_from(self, count: int) -> None:
+    def assert_marks_change_from(self, count: int) -> None:
         expect(self.marks()).not_to_have_count(count, timeout=self.timeout_ms)
 
-    def expect_marks(self, count: int) -> None:
+    def assert_marks(self, count: int) -> None:
         expect(self.marks()).to_have_count(count, timeout=self.timeout_ms)
 
     def wait_for_mod_change(self, before: str) -> str:

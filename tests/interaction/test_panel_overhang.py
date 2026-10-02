@@ -18,19 +18,22 @@ raised above its siblings.  Each half of that has a test below that fails withou
 import unittest
 
 import pytest
+from playwright.sync_api import expect
 
 
 _KINDS_ = ['histopi', 'xypi', 'timepi', 'piepi', 'chordpi', 'linkpi']
 
 #: The first row's picker, which is where Enter on a freshly opened panel lands.
-_FIRST_ROW_PICKER_ = {'linkpi': 'link arrows:'}
+_FIRST_ROW_PICKER_ = {'linkpi': 'link arrows:',
+                      # no selection-shape row where there is no oval to choose
+                      'histopi': 'tooltip:', 'timepi': 'tooltip:', 'piepi': 'tooltip:'}
 
 
 def _open_panel(ip):
     ip.settle()
     ip.hover(10, 10)
     ip.press('a')
-    ip.expect_panel_open()
+    ip.assert_panel_open()
 
 
 @pytest.mark.parametrize('kind', _KINDS_)
@@ -41,8 +44,29 @@ def test_the_panel_and_its_picker_are_whole_at_the_default_size(default_size_gri
     _open_panel(_ip_)
     assert _ip_.overlay_is_on_top('configpanel') == [True] * 5
     _ip_.press('Enter')
-    _ip_.expect_menu_open(_FIRST_ROW_PICKER_.get(kind, 'selection shape:'))
+    _ip_.assert_menu_open(_FIRST_ROW_PICKER_.get(kind, 'selection shape:'))
     assert _ip_.overlay_is_on_top('pickermenu') == [True] * 5
+
+
+@pytest.mark.parametrize('kind', _KINDS_)
+def test_the_keyboard_help_is_whole_at_the_default_size(default_size_grid, kind):
+    """The 'h' help is the third overlay sized to its text (~790 px in the generic views,
+    more in linkpi), and it was clipped to the view like the panel was: on a 160 px piepi
+    most of every line was cut off.  It overhangs on the same terms now."""
+    _ip_ = default_size_grid[kind]
+    _ip_.settle()
+    _ip_.hover(10, 10)
+    _ip_.press('h')
+    expect(_ip_.el('keyboardhelp')).to_have_attribute('transform', 'translate(5 0)', timeout=_ip_.timeout_ms)
+    # Inside the view the help sits under #screen, the view's 5%-opacity mouse-capture
+    # layer, as it always has -- it reads through it.  The probe looks past that layer;
+    # what it is checking is the clip and the neighbour.
+    _screen_ = "(rootEl, pe) => { rootEl.querySelector('[id^=\"screen\"]').style.pointerEvents = pe; }"
+    _ip_.root.evaluate(_screen_, 'none')
+    try:
+        assert _ip_.overlay_is_on_top('keyboardhelp') == [True] * 5
+    finally:
+        _ip_.root.evaluate(_screen_, '')
 
 
 def test_a_view_that_loses_focus_stops_covering_its_neighbour(default_size_grid):
@@ -54,7 +78,7 @@ def test_a_view_that_loses_focus_stops_covering_its_neighbour(default_size_grid)
     assert _hp_.overlay_is_on_top('configpanel') == [True] * 5
 
     _xy_.hover(200, 100)
-    _hp_.expect_panel_open()                        # left open, not closed
+    _hp_.assert_panel_open()                        # left open, not closed
     # The panel spans x 7.5..294.5 and histopi is 128 wide: the left-hand points are
     # still histopi's own, the right-hand points and the centre are xypi's now.
     assert _hp_.overlay_is_on_top('configpanel') == [True, False, False, True, False]

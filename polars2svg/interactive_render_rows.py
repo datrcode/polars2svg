@@ -14,8 +14,8 @@
 # them into overrides -- and the ones more than one component carries (legend, colour
 # scale, opacity, count, on/off, bar style) have a shared builder below that reads its own
 # starting value.  Only a row that shares parameters needs code of its own: xyp's
-# distributions, placement and bins all land in the same two, and histop's order row
-# sets order= and descending= together.
+# distributions, per-axis placement and per-axis bins all land in the same two, and
+# histop's order row sets order= and descending= together.
 #
 # The rule that shapes every row set here: **an untouched panel changes nothing.**  Each
 # row's initial value is read off the template, and overrides() returns {} for as long
@@ -30,7 +30,7 @@
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 #: Mnemonic for a value the template was built with that the standard list does not
 #: carry -- linkpi's link-shape and spacing pickers use the same one.
@@ -64,8 +64,10 @@ RENDER_ROW_KEYS: dict[str, str] = {
     # settings only one view has
     'distributions':    'd',    # xypi -- and histopi's strip below is the same idea
     'distribution':     'd',
-    'placement':        'p',    # xypi
-    'bins':             'b',    # xypi
+    'x_placement':      'p',    # xypi; shift for the y axis's, as chordpi's second colour scale
+    'y_placement':      'P',
+    'x_bins':           'b',    # xypi
+    'y_bins':           'B',
     'aspect':           'e',    # xypi
     'x_order':          'x',    # xypi
     'y_order':          'y',    # xypi
@@ -133,7 +135,12 @@ def _param_row_(kind: str, label: str, param: str,
 
 class RenderRowSet:
     '''A component's render rows.  Subclasses fill self.rows: a ParamRow needs nothing
-    more, and a set with rows that share parameters implements _groupOverrides_().'''
+    more, and a set with rows that share parameters implements _groupOverrides_().
+
+    A set with a count row takes count_fields= (accepts_count_fields): the further fields
+    the row may switch to -- see count_row().'''
+
+    accepts_count_fields: bool = False
 
     def __init__(self) -> None:
         self.rows: list[RenderRow] = []
@@ -271,19 +278,42 @@ def _describe_spec_(spec: Any) -> str:
     return ', '.join(_fields_) + (f' ({", ".join(_enums_)})' if _enums_ else '')
 
 
-def count_row(template: Any, also: Gate = _always_) -> ParamRow:
-    '''count= as rows, or the field the view was built with -- only ever those two.  Every
-    numeric column is not on offer, because in netflow data a numeric column is as often
-    an identifier (a port) as a quantity.  Greyed out when the template counts rows, which
-    leaves nothing to switch to.'''
+#: Picker keys for count_fields= entries: digits, then letters -- never r / f, which are
+#: rows and the field the view was built with.
+_COUNT_FIELD_KEYS_ = '123456789' + ''.join(_c_ for _c_ in 'abcdeghijklmnopqstuvwxyz')
+
+
+def count_row(template: Any, also: Gate = _always_, fields: list | None = None) -> ParamRow:
+    '''count= as rows, the field the view was built with, and the fields count_fields=
+    names.  Every numeric column is not offered by default, because in netflow data a
+    numeric column is as often an identifier (a port) as a quantity -- and a column's type
+    cannot tell bytes from a port; the caller names the ones that are quantities.  Greyed
+    out when there is nothing but rows to choose.'''
     _p_ = template.p2s
-    if template.count is _p_.ROW_COUNTp:
-        return _param_row_('count', 'count', 'count', [('r', 'rows', _p_.ROW_COUNTp)], 'rows',
-                           lambda s: False)
-    _field_ = _describe_spec_(template.count)
-    if _field_ == 'rows': _field_ = 'rows (field)'
-    return _param_row_('count', 'count', 'count',
-                       [('r', 'rows', _p_.ROW_COUNTp), ('f', _field_, template.count)], _field_, also)
+    def _label_(spec: Any) -> str:
+        _l_ = _describe_spec_(spec)
+        return 'rows (field)' if _l_ == 'rows' else _l_
+    _choices_: list[tuple[str, str, Any]] = [('r', 'rows', _p_.ROW_COUNTp)]
+    _init_ = 'rows'
+    if template.count is not _p_.ROW_COUNTp:
+        _init_ = _label_(template.count)
+        _choices_.append(('f', _init_, template.count))
+    _keys_ = iter(_COUNT_FIELD_KEYS_)
+    for _spec_ in (fields or []):
+        if _label_(_spec_) in [_l_ for _, _l_, _ in _choices_]: continue   # already offered
+        _choices_.append((next(_keys_, AS_BUILT_MNEMONIC), _label_(_spec_), _spec_))
+    _live_ = len(_choices_) > 1
+    return _param_row_('count', 'count', 'count', _choices_, _init_, lambda s: _live_ and also(s))
+
+
+def _count_numeric_gate_(template: Any, count: ParamRow) -> Gate:
+    '''Live while the count row holds a numeric field (Histop / Timep.numericCountField()):
+    what a boxplot needs.  Follows whichever field the row has moved to.'''
+    def _gate_(s: dict[str, str]) -> bool:
+        _label_ = s.get('count', count.initial)
+        if _label_ not in count.values: return template.numericCountField() is not None   # as built
+        return template.numericCountField(count.values[_label_]) is not None
+    return _gate_
 
 
 def bar_style_row(template: Any, also: Gate = _always_) -> ParamRow:
@@ -322,8 +352,12 @@ _ORDER_CHOICES_ = [('s', 'sorted', None), ('r', 'reverse', 'reverse'),
 
 
 class XYpRenderRows(RenderRowSet):
-    '''xypi's render rows: distributions (which axes, placement, bins), aspect, dot
-    opacity, colour scale, legend, and the order of a categorical x / y axis.'''
+    '''xypi's render rows: distributions (which axes, and each axis's placement and bins),
+    aspect, dot opacity, colour scale, legend, and the order of a categorical x / y axis.
+
+    Placement and bins are a row per axis.  The axes are rarely alike -- time along a long
+    x against a number up a short y is the common case -- so one row setting both could
+    only ever suit one of them (user feedback 2026-09-27).'''
 
     def __init__(self, template: Any) -> None:
         super().__init__()
@@ -340,17 +374,15 @@ class XYpRenderRows(RenderRowSet):
         _shown_ = self._measure_['x'] if self._measure_['x'] is not None else self._measure_['y']
         self._dist_label_ = f'distributions ({self.__describe__(_shown_)})'
 
-        _place_init_ = self.__placementAsBuilt__()
-        _bins_init_  = self.__binsAsBuilt__()
-        def _dist_on_(s: dict[str, str]) -> bool:
-            return s.get('distributions', _dist_init_) != _DIST_OFF_
+        def _axis_on_(axis: str) -> Callable[[dict[str, str]], bool]:
+            _with_ = {'x': (_DIST_X_, _DIST_XY_), 'y': (_DIST_Y_, _DIST_XY_)}[axis]
+            return lambda s: s.get('distributions', _dist_init_) in _with_
 
-        _binnable_   = [_a_ for _a_ in ('x', 'y') if not template.axisIsPeriodicTime(_a_)]
+        _binnable_ = {_a_: not template.axisIsPeriodicTime(_a_) for _a_ in ('x', 'y')}
 
-        def _bins_live_(s: dict[str, str]) -> bool:
-            _d_ = s.get('distributions', _dist_init_)
-            _axes_ = {_DIST_X_: ['x'], _DIST_Y_: ['y'], _DIST_XY_: ['x', 'y']}.get(_d_, [])
-            return any(_a_ in _binnable_ for _a_ in _axes_)
+        def _bins_live_(axis: str) -> Callable[[dict[str, str]], bool]:
+            _on_ = _axis_on_(axis)
+            return lambda s: _binnable_[axis] and _on_(s)
 
         # ── the rest ──
         _numeric_     = template.axisIsNumeric('x') and template.axisIsNumeric('y')
@@ -361,10 +393,13 @@ class XYpRenderRows(RenderRowSet):
         self.rows = [
             RenderRow(_keys_['distributions'], 'distributions', self._dist_label_,
                       [list(_i_) for _i_ in _DIST_ITEMS_], _dist_init_, _always_),
-            RenderRow(_keys_['placement'], 'placement', 'placement',
-                      _with_as_built_(_PLACE_ITEMS_, _place_init_), _place_init_, _dist_on_),
-            RenderRow(_keys_['bins'], 'bins', 'bins',
-                      _with_as_built_(_BIN_ITEMS_, _bins_init_), _bins_init_, _bins_live_),
+            *[RenderRow(_keys_[f'{_a_}_placement'], f'{_a_}_placement', f'{_a_} placement',
+                        [list(_i_) for _i_ in _PLACE_ITEMS_], self.__placementAsBuilt__(_a_), _axis_on_(_a_))
+              for _a_ in ('x', 'y')],
+            *[RenderRow(_keys_[f'{_a_}_bins'], f'{_a_}_bins', f'{_a_} bins',
+                        _with_as_built_(_BIN_ITEMS_, self.__binsAsBuilt__(_a_)), self.__binsAsBuilt__(_a_),
+                        _bins_live_(_a_))
+              for _a_ in ('x', 'y')],
             _param_row_('aspect', 'aspect', 'aspect', _ASPECT_CHOICES_, _aspect_init_,
                         lambda s: _numeric_),
             opacity_row(template, label='dot opacity'),
@@ -384,28 +419,31 @@ class XYpRenderRows(RenderRowSet):
 
     # ── overrides ────────────────────────────────────────────────────────────
 
-    # The distributions group: which axes, their placement and their bins all land in
+    # The distributions group: which axes, and each axis's placement and bins, all land in
     # x_distributions / y_distributions.  After the ParamRows, because a bin multiple is a
     # multiple of the auto count THIS render would choose -- which depends on the plot
     # extent, which those rows change.
     def _groupOverrides_(self, settings: dict[str, str], others: dict[str, Any]) -> dict[str, Any]:
-        if not self._changed_(settings, 'distributions', 'placement', 'bins'): return {}
+        if not self._changed_(settings, 'distributions', 'x_placement', 'y_placement', 'x_bins', 'y_bins'): return {}
         return self.__distributionOverrides__(settings, others)
 
     def __distributionOverrides__(self, s: dict[str, str], others: dict[str, Any]) -> dict[str, Any]:
         _axes_ = {_DIST_OFF_: [], _DIST_X_: ['x'], _DIST_Y_: ['y'], _DIST_XY_: ['x', 'y']}[s['distributions']]
-        _mult_ = _BIN_MULTIPLIERS_.get(s['bins'])
+        _mult_ = {_a_: _BIN_MULTIPLIERS_.get(s[f'{_a_}_bins']) for _a_ in ('x', 'y')}
         _spec_: dict[str, list | None] = {
-            _a_: (self.__spec__(_a_, s['placement'], s['bins']) if _a_ in _axes_ else None)
+            _a_: (self.__spec__(_a_, s[f'{_a_}_placement'], s[f'{_a_}_bins']) if _a_ in _axes_ else None)
             for _a_ in ('x', 'y')}
-        if _mult_ is not None and _axes_:
-            # A probe render at auto: xyp records the count it chose in *_distributions_clean.
+        # Periodic time axes draw one bar per period unit, always, so a multiple means nothing.
+        _scaled_ = [_a_ for _a_ in _axes_ if _mult_[_a_] is not None and not self.t.axisIsPeriodicTime(_a_)]
+        if _scaled_:
+            # One probe render with every scaled axis at auto: xyp records the count it chose
+            # in *_distributions_clean, and the plot extent it chose it for includes the
+            # other axis's distribution as the real render will have it.
             _probe_ = self.t.render_with(self.t.df_orig, **others,
                                          x_distributions=_spec_['x'], y_distributions=_spec_['y'])
-            for _a_ in _axes_:
-                if self.t.axisIsPeriodicTime(_a_): continue   # one bar per period unit, always
+            for _a_ in _scaled_:
                 _auto_ = getattr(_probe_, f'{_a_}_distributions_clean')['bins'][0]
-                _spec_[_a_] = list(_spec_[_a_] or []) + [max(1, int(round(_auto_ * _mult_)))]
+                _spec_[_a_] = list(_spec_[_a_] or []) + [max(1, int(round(_auto_ * cast(float, _mult_[_a_]))))]
         return {'x_distributions': _spec_['x'], 'y_distributions': _spec_['y']}
 
     def __spec__(self, axis: str, placement: str, bins: str) -> list:
@@ -417,7 +455,6 @@ class XYpRenderRows(RenderRowSet):
         _out_ = list(_measure_) if _measure_ is not None else [_p_.ROW_COUNTp]
         if   placement == 'inside':  _out_.append(_p_.DISTRIBUTION_INSIDEp)
         elif placement == 'outside': _out_.append(_p_.DISTRIBUTION_OUTSIDEp)
-        elif placement != 'auto':    _out_.extend(_i_ for _i_ in _top_items_(self._raw_dist_[axis]) if _i_ in self._placement_enums_)
         if bins not in _BIN_MULTIPLIERS_:   # 'as built'
             _out_.extend(_i_ for _i_ in _top_items_(self._raw_dist_[axis]) if self.__isBins__(_i_))
         return _out_
@@ -443,16 +480,16 @@ class XYpRenderRows(RenderRowSet):
                    if isinstance(_i_, (str, tuple)) and not isinstance(_i_, self.p2s.HexColorString)]
         return ', '.join(str(_n_) for _n_ in _names_) if _names_ else 'rows'
 
-    def __placementAsBuilt__(self) -> str:
-        _set_ = [[_i_ for _i_ in _top_items_(self._raw_dist_[_a_]) if _i_ in self._placement_enums_]
-                 for _a_ in ('x', 'y') if self._raw_dist_[_a_] is not None]
-        if not any(_set_): return 'auto'
-        return 'as built'
+    def __placementAsBuilt__(self, axis: str) -> str:
+        '''inside / outside when the axis's spec names one, else auto (xyp resolves it).'''
+        _items_ = _top_items_(self._raw_dist_[axis])
+        if self.p2s.DISTRIBUTION_INSIDEp  in _items_: return 'inside'
+        if self.p2s.DISTRIBUTION_OUTSIDEp in _items_: return 'outside'
+        return 'auto'
 
-    def __binsAsBuilt__(self) -> str:
-        for _a_ in ('x', 'y'):
-            if any(isinstance(_i_, int) and not isinstance(_i_, bool) for _i_ in _top_items_(self._raw_dist_[_a_])):
-                return 'as built'
+    def __binsAsBuilt__(self, axis: str) -> str:
+        if any(isinstance(_i_, int) and not isinstance(_i_, bool) for _i_ in _top_items_(self._raw_dist_[axis])):
+            return 'as built'
         return 'auto'
 
 
@@ -480,20 +517,20 @@ class HistopRenderRows(RenderRowSet):
     Order is a group: it sets order= and descending= together, because the values'
     own order ascends and a count descends.'''
 
-    def __init__(self, template: Any) -> None:
+    accepts_count_fields = True
+
+    def __init__(self, template: Any, count_fields: list | None = None) -> None:
         super().__init__()
         self.t = template
         _p_    = template.p2s
-        _numeric_count_ = template.numericCountField() is not None
 
         def _boxplot_(s: dict[str, str]) -> bool:
             return s.get('style') in _BOXPLOTS_
 
-        def _boxplot_possible_(s: dict[str, str]) -> bool:
-            return _numeric_count_ and s.get('count') != 'rows'
-
         def _not_boxplot_(s: dict[str, str]) -> bool:
             return not _boxplot_(s)
+
+        _count_ = count_row(template, also=_not_boxplot_, fields=count_fields)
 
         self._orders_ = {'largest first':  (_p_.ROW_COUNTp, True),
                          'smallest first': (_p_.ROW_COUNTp, False),
@@ -502,8 +539,8 @@ class HistopRenderRows(RenderRowSet):
         _order_init_ = self.__orderAsBuilt__()
 
         self.rows = [
-            bar_style_row(template, also=_boxplot_possible_),
-            count_row(template, also=_not_boxplot_),
+            bar_style_row(template, also=_count_numeric_gate_(template, _count_)),
+            _count_,
             RenderRow(RENDER_ROW_KEYS['order'], 'order', 'order',
                       _with_as_built_(_HISTOP_ORDER_ITEMS_, _order_init_), _order_init_, _always_),
             on_off_row(template, 'draw_labels', 'labels'),
@@ -543,7 +580,9 @@ class PiepRenderRows(RenderRowSet):
     and only a spectrum has a magnitude / stretched scale -- a magnitude enum on a text
     field falls back to categorical, so swapping it would change nothing.'''
 
-    def __init__(self, template: Any) -> None:
+    accepts_count_fields = True
+
+    def __init__(self, template: Any, count_fields: list | None = None) -> None:
         super().__init__()
         _p_ = template.p2s
         _styles_ = [('p', 'pie', _p_.PIEp), ('d', 'donut', _p_.DONUTp), ('w', 'waffle', _p_.WAFFLEp)]
@@ -556,7 +595,7 @@ class PiepRenderRows(RenderRowSet):
 
         self.rows = [
             _param_row_('style', 'style', 'style', _styles_, _style_init_),
-            count_row(template),
+            count_row(template, fields=count_fields),
             _param_row_('order', 'slice order', 'descending',
                         [('l', 'largest first', True), ('s', 'smallest first', False)],
                         'largest first' if template.descending else 'smallest first'),
@@ -591,7 +630,9 @@ class ChordpRenderRows(RenderRowSet):
         (ChP.colorIsLegendable()).
     Order is left out: chordp orders only by its leaf walk or an explicit list.'''
 
-    def __init__(self, template: Any) -> None:
+    accepts_count_fields = True
+
+    def __init__(self, template: Any, count_fields: list | None = None) -> None:
         super().__init__()
         _shapes_ = [('l', 'line', 'line'), ('c', 'curve', 'curve'), ('b', 'bundled', 'bundled')]
         _shape_init_ = str(template.link_shape)
@@ -618,7 +659,7 @@ class ChordpRenderRows(RenderRowSet):
             _param_row_('label_style', 'label style', 'label_style',
                         [('r', 'radial', 'radial'), ('c', 'circular', 'circular')], str(template.label_style),
                         lambda s: s.get('draw_labels') == 'on'),
-            count_row(template, also=_vary_),
+            count_row(template, also=_vary_, fields=count_fields),
             legend_row(template, legendable=template.colorIsLegendable()),
             color_scale_row(template),
         ]
@@ -643,12 +684,23 @@ _TIME_LEVEL_KEYS_ = {
 }
 
 
+def time_level_label(template: Any, level: Any) -> str:
+    '''A time level as the granularity row offers it: timep's name for it, marked as a
+    point on the timeline or a position in a cycle.  'monthly' and 'month' were the only
+    difference between the two month levels, and the list mixes both kinds (user feedback
+    2026-09-27): monthly (timeline) runs Jan 2024, Feb 2024, ...; month (cycle) folds
+    every January into one bar.'''
+    _kind_ = 'cycle' if isinstance(level, template.p2s.TimePeriodicTypeP) else 'timeline'
+    return f'{template.timeLevelName(level)} ({_kind_})'
+
+
 class TimepRenderRows(RenderRowSet):
     '''timepi's render rows: time granularity, style, count, legend and colour scale.
 
     Granularity offers 'auto' -- the template's own resolution, frame by frame -- and the
     levels Timep.timeLevels() lists: the ones whose spine fits the plot on the widest frame,
-    so an explicit level is safe at every stack level.  An explicit level applies to every
+    so an explicit level is safe at every stack level.  Each is marked (timeline) or
+    (cycle) -- see time_level_label().  An explicit level applies to every
     level of the stack; 'auto' keeps resolving per frame.  On a periodic level the time-
     expand keys (e / u) do nothing: a cycle has no timeframe to widen.
 
@@ -656,30 +708,30 @@ class TimepRenderRows(RenderRowSet):
     through timep's own numericCountField(): a boxplot needs a numeric count field and
     draws no legend and no colour.'''
 
-    def __init__(self, template: Any) -> None:
+    accepts_count_fields = True
+
+    def __init__(self, template: Any, count_fields: list | None = None) -> None:
         super().__init__()
         _p_ = template.p2s
-        _numeric_count_ = template.numericCountField() is not None
 
         def _not_boxplot_(s: dict[str, str]) -> bool:
             return s.get('style') not in _BOXPLOTS_
 
-        def _boxplot_possible_(s: dict[str, str]) -> bool:
-            return _numeric_count_ and s.get('count') != 'rows'
+        _count_ = count_row(template, also=_not_boxplot_, fields=count_fields)
 
         _col_    = template._time_field_
         _levels_ = template.timeLevels()
         if   isinstance(template.time, _p_.TField): _built_ = template.time.transform
         elif isinstance(template.time, tuple):      _built_ = template.time[1]
         else:                                       _built_ = None
-        _choices_ = [('u', 'auto', _col_)] + [(_TIME_LEVEL_KEYS_[_e_.name], template.timeLevelName(_e_),
+        _choices_ = [('u', 'auto', _col_)] + [(_TIME_LEVEL_KEYS_[_e_.name], time_level_label(template, _e_),
                                                 _p_.tField(_col_, _e_)) for _e_ in _levels_]
         self.rows = [
             _param_row_('granularity', 'granularity', 'time', _choices_,
-                        'auto' if _built_ is None else template.timeLevelName(_built_),
+                        'auto' if _built_ is None else time_level_label(template, _built_),
                         lambda s: len(_levels_) > 0),
-            bar_style_row(template, also=_boxplot_possible_),
-            count_row(template, also=_not_boxplot_),
+            bar_style_row(template, also=_count_numeric_gate_(template, _count_)),
+            _count_,
             legend_row(template, also=_not_boxplot_),
             color_scale_row(template, also=_not_boxplot_),
         ]

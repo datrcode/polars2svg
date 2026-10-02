@@ -67,23 +67,37 @@ class TestCheckReservedColumnsHelper(unittest.TestCase):
         self.assertIn('__count__', str(ctx.exception))
         self.assertIn('Histop',    str(ctx.exception))
 
+    # `allowed` passes -- returns None, raises nothing -- and `near`, one step off it and
+    # still in the reserved "__name__" shape, does not: the allowance is exactly what it
+    # says, not the check switched off
+    def assertAllowedButNot(self, allowed, near):
+        self.assertIsNone(self.p2s.checkReservedColumns(_base_df(**{allowed: [0] * 6}), 'Test'))
+        with self.assertRaises(ValueError, msg=f'{near} slipped through beside {allowed}'):
+            self.p2s.checkReservedColumns(_base_df(**{near: [0] * 6}), 'Test')
+
     def test_allows_persisted_exact_names(self):
-        for name in ['__p2s_index__', '__bin__', '__color__', '__time_bin__', '__lc_cat__']:
-            df = _base_df(**{name: [0] * 6})
-            self.p2s.checkReservedColumns(df, 'Test')  # must not raise
+        for name, near in [('__p2s_index__', '__p2s_indexes__'), ('__bin__', '__bins__'),
+                           ('__color__', '__colour__'), ('__time_bin__', '__time_bins__'),
+                           ('__lc_cat__', '__nc_cat__')]:
+            with self.subTest(name=name):
+                self.assertAllowedButNot(name, near)
 
     def test_allows_persisted_pattern_names(self):
-        for name in ['__rel0_fm_wx__', '__rel12_to_sy__', '__fm0__', '__to3__']:
-            df = _base_df(**{name: [0] * 6})
-            self.p2s.checkReservedColumns(df, 'Test')  # must not raise
+        for name, near in [('__rel0_fm_wx__', '__rel0_fm_wz__'), ('__rel12_to_sy__', '__rel12_at_sy__'),
+                           ('__fm0__', '__fmx__'), ('__to3__', '__to3a__')]:
+            with self.subTest(name=name):
+                self.assertAllowedButNot(name, near)
 
     def test_allows_non_reserved_names(self):
         # Only the full '__name__' pattern is reserved
-        df = _base_df(**{'_x_': [0] * 6, '__leading': [0] * 6, 'trailing__': [0] * 6})
-        self.p2s.checkReservedColumns(df, 'Test')  # must not raise
+        for name in ['_x_', '__leading', 'trailing__']:
+            with self.subTest(name=name):
+                self.assertAllowedButNot(name, '__x__')
 
     def test_none_df_is_a_noop(self):
-        self.p2s.checkReservedColumns(None, 'Test')  # must not raise
+        self.assertIsNone(self.p2s.checkReservedColumns(None, 'Test'))
+        with self.assertRaises(ValueError):
+            self.p2s.checkReservedColumns(_base_df(__count__=[0] * 6), 'Test')
 
     def test_multiple_collisions_all_reported(self):
         df = _base_df(__count__=[0] * 6, __foo__=[0] * 6)

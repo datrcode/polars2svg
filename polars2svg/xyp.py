@@ -6,8 +6,10 @@ from   decimal import Decimal
 from   math    import cos, radians
 import datetime as dt
 from   datetime import timedelta, datetime, date
+from   zoneinfo import ZoneInfo
 import typing
 import random
+import math
 import time
 
 import polars2svg
@@ -109,10 +111,97 @@ def _axisRangeToDatetimes_(rng: Any) -> Any:
     return type(rng)(_one_(v) for v in rng)
 
 
+#
+# _dateAxisLabel_() - a range bound as a Date axis labels it.
+#
+# _axisRangeToDatetimes_() promotes every bound to a datetime, and __formatLabels__()
+# chooses its style from the labels' type: a datetime pair gets a span in the middle and
+# datetime-formatted ends, a date pair the column name and dates.  So passing any range
+# at all -- even one equal to the data's own extent -- switched a Date axis to datetime
+# labels.  A midnight bound goes back to its date; one with a time of day keeps it,
+# because on that axis the window really does start part way through the day.
+#
+def _dateAxisLabel_(v: Any) -> Any:
+    if isinstance(v, datetime) and (v.hour, v.minute, v.second, v.microsecond) == (0, 0, 0, 0): return v.date()
+    return v
+
+
 def _axisEpochSeconds_(v: Any) -> Any:
     if isinstance(v, datetime): return (v - datetime(1970, 1, 1)).total_seconds()
     if isinstance(v, date):     return (datetime(v.year, v.month, v.day) - datetime(1970, 1, 1)).total_seconds()
     return v
+
+
+#
+# Time-zone-aware datetimes -- xyp plots them as wall-clock time in the column's own zone.
+#
+# Everything downstream of the flatten is naive: __indexXandY_join__ subtracts a naive
+# epoch, and the labels, gridlines and range bounds are naive Python datetimes.  A
+# Datetime('us', 'UTC') column reached that subtraction as-is and polars refused to find
+# a supertype for aware and naive, so xyp could not plot a column parsed with %z at all.
+#
+# Stripping the zone at the flatten, rather than converting everything to UTC instants,
+# is what keeps the picture honest to the column: a column in America/New_York is labelled
+# in New York time, and one parsed with %z (which polars converts to UTC) in UTC -- to see
+# local time, convert_time_zone() before plotting.  The rows recordsAt() hands back are the
+# user's own, zone intact; only the plotted copy is naive.
+#
+# A range bound is read the same way: an aware bound is converted into the axis column's
+# zone first, so x_range=(datetime(..., tzinfo=utc), ...) on a New York column lands where
+# that instant is drawn.  On a naive column an aware bound keeps its own wall-clock time --
+# there is no zone to convert into.
+#
+def _wallClockExpr_(expr: pl.Expr, dtype: Any) -> pl.Expr:
+    '''`expr` as naive wall-clock time when `dtype` is a zone-aware Datetime, else as-is.'''
+    if isinstance(dtype, pl.Datetime) and dtype.time_zone is not None:
+        return expr.dt.replace_time_zone(None)
+    return expr
+
+
+def _axisRangeWallClock_(rng: Any, time_zone: str | None) -> Any:
+    '''An x_range=/y_range= pair with every aware bound as wall-clock time in `time_zone`.'''
+    if rng is None or not isinstance(rng, (tuple, list)): return rng
+    def _one_(v: Any) -> Any:
+        if not isinstance(v, datetime) or v.tzinfo is None: return v
+        if time_zone is not None: v = v.astimezone(ZoneInfo(time_zone))
+        return v.replace(tzinfo=None)
+    return type(rng)(_one_(v) for v in rng)
+
+
+#
+# _intBins_() / _intBinFractions_() - automatic distribution bins on an axis of whole numbers.
+#
+# _intBins_(lo, hi, n_auto) -> (first, per_bin, n_bins): the integers from ceil(lo) to
+# floor(hi), one per bin when there are no more of them than the pixel-derived n_auto, else
+# the fewest whole integers per bin that bring the count within it.  Every bin then holds the
+# same number of integers -- the last may hold fewer -- so none is empty for want of a
+# value and none is double for holding two.
+#
+# _intBinFractions_() places each bin on the axis as the dots are placed: the window lo..hi
+# is 0..1, and a bin of the integers a..b spans a-1/2 .. b+1/2, clipped to the window.
+#
+def _isWholeNumbered_(s: pl.Series) -> bool:
+    '''An integer column, or a float column whose non-null values are all whole numbers.'''
+    if s.dtype.is_integer(): return True
+    if not s.dtype.is_float(): return False
+    _v_ = s.drop_nulls()
+    return len(_v_) > 0 and bool((_v_ == _v_.floor()).all())
+
+
+def _intBins_(lo: float, hi: float, n_auto: int) -> tuple[int, int, int]:
+    _first_ = math.ceil(lo)
+    _slots_ = max(1, math.floor(hi) - _first_ + 1)
+    _per_   = 1 if _slots_ <= n_auto else math.ceil(_slots_ / n_auto)
+    return _first_, _per_, math.ceil(_slots_ / _per_)
+
+
+def _intBinFractions_(bins: tuple[int, int, int], lo: float, hi: float) -> tuple[list[float], list[float]]:
+    _first_, _per_, _n_ = bins
+    if hi <= lo: return [0.0] * _n_, [1.0] * _n_          # one value: the bar spans the axis
+    def _frac_(v: float) -> float: return min(1.0, max(0.0, (v - lo) / (hi - lo)))
+    _mins_ = [_frac_(_first_ + i * _per_ - 0.5)       for i in range(_n_)]
+    _maxs_ = [_frac_(_first_ + (i + 1) * _per_ - 0.5) for i in range(_n_)]
+    return _mins_, _maxs_
 
 
 #
@@ -191,10 +280,12 @@ class XYpKwargs(TypedDict, total=False):
     dot_size_supersample:          Any
     draw_border:                   bool
     draw_context:                  bool
+    draw_grid:                     bool
     insets:                        tuple
     legend:                        Any
     line:                          str | tuple | None
     line_order_by:                 tuple | None
+    line_split_by:                 str | list | tuple | None
     opacity:                       Any
     opacity_range:                 tuple
     sm_shared:                     set
@@ -228,6 +319,13 @@ class XYpKwargs(TypedDict, total=False):
 #: needs a categorical axis.
 _ORDER_STRINGS_ = ('reverse', 'count', 'spectral')
 
+#: The tail of every x_distributions= / y_distributions= error: what a spec may be.
+_DISTRIBUTION_SPEC_FORMS_ = (
+    'A spec is True (rows), an int n (rows in n bins), p2s.ROW_COUNTp, a column name, or a '
+    'list / tuple of: p2s.ROW_COUNTp or column name(s) (a ("c1", "c2") tuple measures the pair), '
+    'at most one int (bins), one float in (0, 1] (height), hex colours, p2s.SETp / p2s.SCALARp, '
+    'p2s.DISTRIBUTION_INSIDEp / DISTRIBUTION_OUTSIDEp, and one DISTRIBUTION_* scale.')
+
 
 class XYp(P2SBackgroundMixin, ExportMixin):
 
@@ -235,7 +333,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
 
     _VALID_KWARGS = frozenset({
         'template', 'df', 'x', 'y',
-        'color', 'dot_size', 'dot_size_supersample', 'opacity', 'line', 'line_order_by',
+        'color', 'dot_size', 'dot_size_supersample', 'opacity', 'line', 'line_order_by', 'line_split_by',
         'dot_size_range', 'opacity_range',
         'x_range', 'y_range', 'x_shared_label_range', 'y_shared_label_range',
         'color_magnitude_min', 'color_magnitude_max', 'color_stretched_global_values',
@@ -245,7 +343,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
         'spectral_by', 'spectral_weight', 'spectral_similarity', 'spectral_normalize',
         'background', 'background_label_color', 'background_opacity',
         'background_fill', 'background_stroke_w', 'background_stroke',
-        'draw_context', 'draw_border', 'insets', 'wxh', 'txt_h', 'sm_shared',
+        'draw_context', 'draw_grid', 'draw_border', 'insets', 'wxh', 'txt_h', 'sm_shared',
         'use_lazy_execution', 'legend', 'x_time_expand_perc', 'aspect',
     })
 
@@ -278,10 +376,12 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     dot_size_supersample:          int
     draw_border:                   bool
     draw_context:                  bool
+    draw_grid:                     bool
     insets:                        tuple
     legend:                        bool
     line:                          str | tuple | None
     line_order_by:                 tuple | None
+    line_split_by:                 str | list | tuple | None
     opacity:                       Any
     opacity_range:                 tuple
     sm_shared:                     set
@@ -319,6 +419,10 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     dot_size_clean:        list | None
     legend_info:           Any
     line_clean:            list | None
+    line_split_by_clean:   list[str]
+    _mark_copies_:         int
+    _dist_copies_:         dict[str, int]
+    _copies_:              int
     line_order_by_clean:   Any
     opacity_clean:         list | None
     template:              'XYp | None'
@@ -326,10 +430,12 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     x_clean:               Any
     x_distributions_clean: Any
     x_effective_range:     tuple | None
+    x_label_extent:        tuple | None
     y:                     Any
     y_clean:               Any
     y_distributions_clean: Any
     y_effective_range:     tuple | None
+    y_label_extent:        tuple | None
 
     #
     # __init__()
@@ -362,6 +468,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
             self.df_y_distribution = None
             if self.x_distributions is not None or \
                self.y_distributions is not None: self.gatherMetrics(self.__distributeElements__)
+            self.__dropDistributionCopies__()
             # Render Stage
             _randid_ = random.randint(0,2**32)  # nosec B311 - non-cryptographic SVG id scoping, see SECURITY.md
             self.gatherMetrics(self.__renderBackground__)
@@ -474,6 +581,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
             'opacity':               None,
             'line':                  None,
             'line_order_by':         None,
+            'line_split_by':         None,       # extra field(s) each line is split by; the colour stays the line's own
             'dot_size':              1,          # note: converted to a list later (saved as dot_size_orig)
             'dot_size_supersample':  1,          # int >= 1; only affects integer dot_size (raster) plots
             'x_distributions':       None,
@@ -491,6 +599,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
             'background_stroke_w':           1.0,       # None / number / dict
             'background_stroke':             'default', # None / 'default' / dict / '#rrggbb'
             'draw_context':          True,
+            'draw_grid':             True,       # the gridlines inside the plot; the axes are draw_context's
             'draw_border':           True,
             'insets':                (2, 2),
             'wxh':                   (256, 256),
@@ -759,6 +868,55 @@ class XYp(P2SBackgroundMixin, ExportMixin):
         return _fields_, _ints_, _floats_, _colors_, _enums_
 
     #
+    # __normalizeDistributionSpec__() - the two shorthands, spelled out.
+    #
+    #   True  -> p2s.ROW_COUNTp            (rows, automatic bins)
+    #   False -> None                      (no distribution)
+    #   n     -> [p2s.ROW_COUNTp, n]       (rows, n bins)
+    #
+    # Everything else must already be a spec: a column name, an enum, or a list / tuple of
+    # parts (__checkDistributionSpec__ says what the parts may be).  A bool is tested before
+    # the int, which it is a subclass of.
+    #
+    def __normalizeDistributionSpec__(self, axis: str, spec: Any) -> Any:
+        if spec is None or isinstance(spec, (str, list, tuple)) or self.__isEnum__(spec): return spec
+        if isinstance(spec, bool): return self.p2s.ROW_COUNTp if spec else None
+        if isinstance(spec, int):
+            if spec < 1: raise ValueError(f'XYp: {axis}_distributions={spec!r}: the bin count must be at least 1')
+            return [self.p2s.ROW_COUNTp, spec]
+        raise TypeError(f'XYp: {axis}_distributions={spec!r} is not a distribution spec.  '
+                        f'{_DISTRIBUTION_SPEC_FORMS_}')
+
+    #
+    # __checkDistributionSpec__() - reject a spec that parses but cannot mean anything.
+    #
+    # Called on __separateAndCleanParam__'s output, before the defaults are filled in, so
+    # every message names what the caller actually wrote.
+    #
+    def __checkDistributionSpec__(self, axis: str, spec: Any, fields: list, ints: list, floats: list, enums: set) -> None:
+        _p_    = self.p2s
+        _name_ = f'XYp: {axis}_distributions={spec!r}'
+        _named_ = [_f_ for _f_ in fields if len(_f_) > 1]   # a field tuple ends in its colour
+        if any(isinstance(_i_, bool) for _i_ in ints):
+            raise TypeError(f'{_name_}: True / False stand for a whole spec, not a part of one -- '
+                            f'give the bin count as an int')
+        if any(_i_ < 1 for _i_ in ints):
+            raise ValueError(f'{_name_}: the bin count must be at least 1')
+        if any(not (0.0 < _f_ <= 1.0) for _f_ in floats):
+            raise ValueError(f'{_name_}: the height is a fraction in (0, 1]')
+        _allowed_ = {_p_.ROW_COUNTp, _p_.SETp, _p_.SCALARp} | set(_p_.DistributionPlacementP) | set(_p_.DistributionScaleP)
+        _foreign_ = [_e_ for _e_ in enums if _e_ not in _allowed_]
+        if _foreign_:
+            raise ValueError(f'{_name_}: {", ".join(_e_.name for _e_ in _foreign_)} is not a distribution setting.  '
+                             f'{_DISTRIBUTION_SPEC_FORMS_}')
+        if _p_.ROW_COUNTp in enums and _named_:
+            raise ValueError(f'{_name_}: p2s.ROW_COUNTp and a column are ambiguous -- measure rows or '
+                             f'the column, not both')
+        if _p_.ROW_COUNTp not in enums and not _named_:
+            raise ValueError(f'{_name_}: nothing to measure -- add p2s.ROW_COUNTp or a column.  '
+                             f'{_DISTRIBUTION_SPEC_FORMS_}')
+
+    #
     # __distributionsParamSetDefaults__() -- set defaults for distributions / do some validation too
     #
     def __distributionsParamSetDefaults__(self, _fields_: list, _ints_: list, _floats_: list, _colors_: list, _enums_: set) -> tuple:
@@ -918,6 +1076,24 @@ class XYp(P2SBackgroundMixin, ExportMixin):
         return _enums_
 
     #
+    # __cleanLineSplitBy__() - line_split_by= as a list of column names.
+    #
+    # The fields a line is split by on top of its own line= fields, without those fields
+    # reaching the line's colour: __line__ (a line's identity) is the split fields plus the
+    # line fields, while __line_color_key__ (what a LINECOLOR_GROUPBY colour is hashed
+    # from) stays the line fields alone.  smallp passes its category field(s) here, so a
+    # panel holding several categories -- the remainder, the 'all' panel -- draws one line
+    # per category instead of chaining every category's points into one, and each line
+    # keeps the colour it has in the category's own panel.
+    #
+    def __cleanLineSplitBy__(self, spec: Any) -> list[str]:
+        if spec is None: return []
+        _fields_ = [spec] if isinstance(spec, str) else list(spec) if isinstance(spec, (list, tuple)) else None
+        if _fields_ is None or not all(isinstance(_f_, str) for _f_ in _fields_):
+            raise TypeError(f'XYp: line_split_by= takes a column name or a list of column names, not {spec!r}')
+        return _fields_
+
+    #
     # __cleanLineParam__()
     #
     def __cleanLineParam__(self, _param_: list | str | tuple) -> list:
@@ -970,11 +1146,13 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     def __validateDistributions__(self) -> None:
         if self.x_distributions is not None:
             _fields_, _ints_, _floats_, _colors_, _enums_ = self.__separateAndCleanParam__(self.x_distributions)
+            self.__checkDistributionSpec__('x', self.x_distributions, _fields_, _ints_, _floats_, _enums_)
             _fields_, _ints_, _floats_, _colors_, _enums_ = self.__distributionsParamSetDefaults__(_fields_, _ints_, _floats_, _colors_, _enums_)
             self.x_distributions_clean = {'fields': _fields_, 'bins': _ints_, 'h_percs': _floats_, 'colors': _colors_, 'enums': _enums_}
         else: self.x_distributions_clean = None
         if self.y_distributions is not None:
             _fields_, _ints_, _floats_, _colors_, _enums_ = self.__separateAndCleanParam__(self.y_distributions)
+            self.__checkDistributionSpec__('y', self.y_distributions, _fields_, _ints_, _floats_, _enums_)
             _fields_, _ints_, _floats_, _colors_, _enums_ = self.__distributionsParamSetDefaults__(_fields_, _ints_, _floats_, _colors_, _enums_)
             self.y_distributions_clean = {'fields': _fields_, 'bins': _ints_, 'h_percs': _floats_, 'colors': _colors_, 'enums': _enums_}
         else: self.y_distributions_clean = None
@@ -1090,8 +1268,8 @@ class XYp(P2SBackgroundMixin, ExportMixin):
                 _item_ = _list_[i]
                 if isinstance(_item_, tuple):
                     for j in range(len(_item_)):
-                        if _item_[j] not in self.df.columns: raise TypeError(f'XYp.__validateInput__():  dataframe does not contain column {_item_[j]} (Tuple Element){_hint_}')
-                elif _item_ not in self.df.columns: raise TypeError(f'XYp.__validateInput__():  dataframe does not contain column {_item_}{_hint_}')
+                        if _item_[j] not in self.df.columns: raise TypeError(f'XYp.__validateInput__():  dataframe does not contain column {_item_[j]} (Tuple Element){self.p2s.columnSuggestion(_item_[j], self.df)}{_hint_}')
+                elif _item_ not in self.df.columns: raise TypeError(f'XYp.__validateInput__():  dataframe does not contain column {_item_}{self.p2s.columnSuggestion(_item_, self.df)}{_hint_}')
             # Verify datatypes
             _first_ = self.__columnDataTypes__(_list_[0])
             for i in range(len(_list_)):
@@ -1104,8 +1282,10 @@ class XYp(P2SBackgroundMixin, ExportMixin):
                 _tuple_ = self.line_clean[i]
                 for j in range(len(_tuple_)):
                     if isinstance(_tuple_[j], str):
-                        if _tuple_[j] not in self.df.columns: raise ValueError(f'XYp.__validateInput__():  dataframe does not contain column {_tuple_[j]} (line tuple element)')
+                        if _tuple_[j] not in self.df.columns: raise ValueError(f'XYp.__validateInput__():  dataframe does not contain column {_tuple_[j]} (line tuple element){self.p2s.columnSuggestion(_tuple_[j], self.df)}')
                     else: break
+                for _field_ in self.line_split_by_clean:
+                    if _field_ not in self.df.columns: raise ValueError(f'XYp.__validateInput__():  dataframe does not contain column {_field_} (line_split_by){self.p2s.columnSuggestion(_field_, self.df)}')
                 if self.p2s.LINECOLOR_FIELD in _tuple_[-1]:
                     if self.color is None: raise ValueError(f'XYp.__validateInput__():  line color field "{self.p2s.LINECOLOR_FIELD}" requires a color field')
                 if self.p2s.LINEOPACITY_FIELD_MEAN in _tuple_[-1] or self.p2s.LINEOPACITY_FIELD_VARIABLE in _tuple_[-1]:
@@ -1114,8 +1294,8 @@ class XYp(P2SBackgroundMixin, ExportMixin):
                     if isinstance(self.dot_size_orig, int): raise ValueError(f'XYp.__validateInput__():  line width field "{self.p2s.LINEWIDTH_DOTSIZE_MEAN}" or "{self.p2s.LINEWIDTH_DOTSIZE_VARIABLE}" requires a dot_size field')
 
         # Distributions require a different methodology
-        for _pair_ in [(self.x_distributions, self.x_distributions_clean),
-                       (self.y_distributions, self.y_distributions_clean)]:
+        for _axis_, _pair_ in [('x', (self.x_distributions, self.x_distributions_clean)),
+                               ('y', (self.y_distributions, self.y_distributions_clean))]:
             if _pair_[0] is None: continue
             _distributions_, _distributions_clean_ = _pair_
             _fields_       = _distributions_clean_['fields']
@@ -1124,7 +1304,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
                 _tuple_dtypes_ = []
                 for j in range(len(_fields_[i])-1): # the last element is a color value
                     _field_ = _fields_[i][j]
-                    if _field_ not in self.df.columns: raise ValueError(f'XYp.__validateInput__():  dataframe does not contain column {_field_}')
+                    if _field_ not in self.df.columns: raise ValueError(f'XYp.__validateInput__():  dataframe does not contain column {_field_} ({_axis_}_distributions){self.p2s.columnSuggestion(_field_, self.df)}')
                     _tuple_dtypes_.append(self.df.dtypes[self.df.columns.index(_field_)])
                 _field_dtypes_ = tuple(_tuple_dtypes_)
                 if   i               == 0:              _first_dtypes_ = _field_dtypes_
@@ -1181,14 +1361,33 @@ class XYp(P2SBackgroundMixin, ExportMixin):
         else: return cast(pl.DataFrame, self.df).dtypes[cast(pl.DataFrame, self.df).columns.index(_obj_)]
 
     #
+    # __axisTimeZone__() - the zone of the first zone-aware Datetime column an x=/y= spec
+    # names, else None.  See _wallClockExpr_ for how xyp plots such a column.
+    #
+    def __axisTimeZone__(self, spec: Any) -> str | None:
+        if self.df is None: return None
+        if   isinstance(spec, str):           _cols_ = [spec]
+        elif isinstance(spec, (list, tuple)): _cols_ = [_c_ for _c_ in spec if isinstance(_c_, str)]
+        else:                                 return None
+        _schema_ = self.df.schema
+        for _c_ in _cols_:
+            _dtype_ = _schema_.get(_c_)
+            if isinstance(_dtype_, pl.Datetime) and _dtype_.time_zone is not None: return _dtype_.time_zone
+        return None
+
+    #
     # __validateInput__()
     #
     def __validateInput__(self) -> None:
         self.p2s.checkReservedColumns(self.df, 'XYp')
         # Before anything reads them: a date in a range must mean the same instant as the
         # equivalent datetime, to every consumer.  See _axisRangeToDatetimes_.
-        self.x_range = _axisRangeToDatetimes_(self.x_range)
-        self.y_range = _axisRangeToDatetimes_(self.y_range)
+        self.x_range = _axisRangeWallClock_(_axisRangeToDatetimes_(self.x_range), self.__axisTimeZone__(self.x))
+        self.y_range = _axisRangeWallClock_(_axisRangeToDatetimes_(self.y_range), self.__axisTimeZone__(self.y))
+        # Before anything reads them either, so a template -- and xypi's panel, which reads
+        # the template's spec -- only ever holds the spelled-out form.
+        self.x_distributions = self.__normalizeDistributionSpec__('x', self.x_distributions)
+        self.y_distributions = self.__normalizeDistributionSpec__('y', self.y_distributions)
         if self.x is None: raise ValueError('XYp.__validateInput__():  x must be specified')
         if self.y is None: raise ValueError('XYp.__validateInput__():  y must be specified')
 
@@ -1215,8 +1414,10 @@ class XYp(P2SBackgroundMixin, ExportMixin):
         self.opacity_clean,       self.opacity_is_lits,       self.opacity_enums       = None, False, set()
         self.line_order_by_clean, self.line_order_by_is_lits, self.line_order_by_enums = None, False, set()
         self.line_clean                                                                = None
-        # resolved by __resolveRanges__() at pixel-coordinate time; the window the render uses
+        # resolved by __resolveRanges__() at pixel-coordinate time; the window the render uses,
+        # and each axis's (min, max) label values before rows outside that window are dropped
         self.x_effective_range,   self.y_effective_range                       = None, None
+        self.x_label_extent,      self.y_label_extent                          = None, None
 
         #
         # Pull out any enums and ensure everything is a list
@@ -1230,6 +1431,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
         if self.opacity       is not None: self.opacity_clean,       self.opacity_is_lits,       self.opacity_enums       = self.__toListAndExtractEnums__(self.opacity,       'opacity')
         if self.line_order_by is not None: self.line_order_by_clean, self.line_order_by_is_lits, self.line_order_by_enums = self.__toListAndExtractEnums__(self.line_order_by, 'line_order_by')
         if self.line          is not None: self.line_clean                                                                = self.__cleanLineParam__(self.line)
+        self.line_split_by_clean = self.__cleanLineSplitBy__(self.line_split_by)
 
         #
         # Some combinations of enums aren't allowed -- check for them here
@@ -1269,7 +1471,8 @@ class XYp(P2SBackgroundMixin, ExportMixin):
             if self.spectral_weight is not None: _by_cols_ = _by_cols_ + [self.spectral_weight]
             _missing_ = [_c_ for _c_ in _by_cols_ if _c_ not in self.df.columns]
             if _missing_:
-                raise ValueError(f"XYp.__validateInput__(): spectral_by/spectral_weight column(s) not in dataframe: {_missing_}")
+                raise ValueError(f"XYp.__validateInput__(): spectral_by/spectral_weight column(s) not in dataframe: "
+                                 f"{'; '.join(repr(_c_) + self.p2s.columnSuggestion(_c_, self.df) for _c_ in _missing_)}")
             if self.spectral_similarity not in ('cosine', 'linear', 'correlation'):
                 raise ValueError(f"XYp.__validateInput__(): spectral_similarity must be 'cosine', 'linear', or "
                                  f"'correlation', got {self.spectral_similarity!r}")
@@ -1349,6 +1552,14 @@ class XYp(P2SBackgroundMixin, ExportMixin):
         y_distributions_len = 0 if self.y_distributions       is None else len(self.y_distributions_clean['fields'])
 
         max_len = max(x_len, y_len, color_len, dot_size_len, opacity_len, line_len, line_order_by_len, x_distributions_len, y_distributions_len)
+        # Copies of the frame the marks need, and the ones only a distribution needs.  Two
+        # distribution fields over one x / y make two flattened copies of every row: the
+        # distributions need both (each carries its own field), but the dots, lines and
+        # everything read off df_flat after the distributions are computed must see one,
+        # or every row counts twice.  See __dropDistributionCopies__.
+        self._mark_copies_ = max(1, x_len, y_len, color_len, dot_size_len, opacity_len, line_len, line_order_by_len)
+        self._dist_copies_ = {'x': x_distributions_len, 'y': y_distributions_len}
+        self._copies_      = max(1, max_len)
 
         self.x_clean             = self.__expandToMaxLen__(self.x_clean,             max_len)
         self.y_clean             = self.__expandToMaxLen__(self.y_clean,             max_len)
@@ -1413,9 +1624,24 @@ class XYp(P2SBackgroundMixin, ExportMixin):
                     for j in range(len(_tuple_)):
                         if isinstance(_tuple_[j], str): _cols_.extend([_tuple_[j], pl.lit('|')])
                         else: break
-                    _ops_.append(pl.concat_str(_cols_[:-1]).alias('__line__'))
+                    _key_ = pl.concat_str(_cols_[:-1])
+                    if self.line_split_by_clean:
+                        # A null line field still means no line; a null split field is a
+                        # category of its own.  See __cleanLineSplitBy__.
+                        _split_ = [pl.col(_f_).cast(pl.String).fill_null('') for _f_ in self.line_split_by_clean]
+                        _ops_.append(pl.when(_key_.is_null()).then(None)
+                                       .otherwise(pl.concat_str([*_split_, _key_], separator='|')).alias('__line__'))
+                        _ops_.append(_key_.alias('__line_color_key__'))
+                        _columns_forward_.append('__line_color_key__')
+                    else:
+                        _ops_.append(_key_.alias('__line__'))
                     _ops_.append(pl.lit(i).alias('__line_index__'))
                     _columns_forward_.extend(['__line__', '__line_index__'])
+
+                # Which copy a row is, when some copies exist only for a distribution
+                if self._copies_ > self._mark_copies_:
+                    _ops_.append(pl.lit(i).alias('__copy__'))
+                    _columns_forward_.append('__copy__')
 
                 # Distribution columns
                 for _triple_ in [('__xdists__', '__xdists_color__', self.x_distributions_clean),
@@ -1433,8 +1659,16 @@ class XYp(P2SBackgroundMixin, ExportMixin):
                 # Execute the operations & append to the flattened list
                 # NaN/±inf coordinates are treated like nulls (dropped) -- they cannot be positioned
                 _definitize_ = cs.float().replace({float('inf'): None, float('-inf'): None}).fill_nan(None)
-                if self.use_lazy_execution: _df_ = self.df.lazy().with_columns(*_ops_).select(_columns_forward_).with_columns(_definitize_).drop_nulls().collect()
-                else:                       _df_ = self.df.with_columns(*_ops_).select(_columns_forward_).with_columns(_definitize_).drop_nulls()
+                # A zone-aware datetime is plotted as wall-clock time in its own zone -- see
+                # _wallClockExpr_.  Every carried column, not just x and y, so no aware value
+                # survives the flatten to meet a naive one further down.
+                _naive_      = cs.datetime(time_zone='*').dt.replace_time_zone(None)
+                # Only a null x or y drops a row: a point is drawn iff it can be placed.  A null
+                # colour, size, opacity or distribution field used to drop it too -- its dot,
+                # its categorical slot and a share of the axis extents -- and is now handled
+                # where each is aggregated (PLANNING.md §5 C-xyp-null-aux-field-drops-row).
+                if self.use_lazy_execution: _df_ = self.df.lazy().with_columns(*_ops_).select(_columns_forward_).with_columns(_definitize_).with_columns(_naive_).drop_nulls(subset=['__x__', '__y__']).collect()
+                else:                       _df_ = self.df.with_columns(*_ops_).select(_columns_forward_).with_columns(_definitize_).with_columns(_naive_).drop_nulls(subset=['__x__', '__y__'])
                 _dfs_.append(_df_)
             # Produce the flattened frame
             self.df_flat = pl.concat(_dfs_)
@@ -1737,7 +1971,8 @@ class XYp(P2SBackgroundMixin, ExportMixin):
         _spec_  = self.legend_spec
         _title_ = _spec_['title'] if _spec_['title'] is not None else self.__legendDefaultTitle__(_mode_)
         if _kind_ == 'categorical':
-            _vc_ = self.p2s.legendCategoricalValueCounts(self.df_flat, '__color__')
+            # a null colour is no category -- its dot takes the default colour -- so no entry
+            _vc_ = self.p2s.legendCategoricalValueCounts(self.df_flat.filter(pl.col('__color__').is_not_null()), '__color__')
             self.legend_info = self.p2s.legendInfoCategorical(_spec_, _vc_, _title_)
         else:
             self.legend_info = self.p2s.legendInfoColorbar(_title_)
@@ -1938,6 +2173,18 @@ class XYp(P2SBackgroundMixin, ExportMixin):
         # The window the rest of the render works in
         self.x_effective_range = None if _xmin_ is None else (_xmin_, _xmin_ + _dx_)
         self.y_effective_range = None if _ymin_ is None else (_ymin_, _ymin_ + _dy_)
+        # ... and the label values at its edges, taken BEFORE step 4.  An unconstrained
+        # axis keeps the whole data extent even when the other axis's range drops rows,
+        # so a temporal or categorical axis has to be labelled from the unfiltered frame:
+        # read after the filter, a y_range that kept only 1995-2000 relabelled a
+        # 1980-2000 x axis as 1995-2000 while the dots stayed where 1980-2000 put them.
+        # Numeric axes are labelled from the effective range above and never read these.
+        def __labelExtent__(_axis_: str) -> tuple | None:
+            _i_        = self.df_flat[f'__{_axis_}i__']
+            _lo_, _hi_ = _i_.arg_min(), _i_.arg_max()           # None on an empty or all-null column
+            if _lo_ is None or _hi_ is None: return None
+            return self.df_flat[f'__{_axis_}__'][_lo_], self.df_flat[f'__{_axis_}__'][_hi_]
+        self.x_label_extent, self.y_label_extent = __labelExtent__('x'), __labelExtent__('y')
         # 4) filter -- only the constrained axes need one.  An unconstrained axis took
         #    its window from the data extent and aspect only ever widens, so nothing
         #    can fall outside it and its filter would be a no-op.
@@ -2087,6 +2334,18 @@ class XYp(P2SBackgroundMixin, ExportMixin):
         return _dy_ * (_yorigin_ - sy)/ _height_ + _ymin_
 
     #
+    # __dropDistributionCopies__() - once the distributions are computed, keep only the
+    # copies of the frame the marks use.  Everything after this -- dots, lines, the colour
+    # and size sums, recordsAt() and the filters -- reads df_flat, and a copy that exists
+    # only to carry a second distribution field would count each of its rows again.
+    # Everything before it is unaffected by the repeat: ranges, orders and pixel positions
+    # are the same for every copy, and 'count' / 'spectral' orders scale uniformly.
+    #
+    def __dropDistributionCopies__(self) -> None:
+        if self.df_flat is None or '__copy__' not in self.df_flat.columns: return
+        self.df_flat = self.df_flat.filter(pl.col('__copy__') < self._mark_copies_).drop('__copy__')
+
+    #
     # __distributeElements__()
     #
     def __distributeElements__(self) -> None:
@@ -2103,7 +2362,12 @@ class XYp(P2SBackgroundMixin, ExportMixin):
             _totals_max_field_  = f'__{_axis_}i_total_max__'         # the max to compare the total to
 
             if _clean_ is None: continue
-            if len(self.df_flat) == 0: continue # occurs when user-specified range does not include any of the data
+            # An axis with a field per copy reads every copy; one with a single field, or
+            # counting rows, reads the copies the marks use -- the rest repeat its rows.
+            _flat_ = self.df_flat
+            if '__copy__' in _flat_.columns and self._dist_copies_[_axis_] != self._copies_:
+                _flat_ = _flat_.filter(pl.col('__copy__') < self._mark_copies_)
+            if len(_flat_) == 0: continue # occurs when user-specified range does not include any of the data
 
             # Do the binning -- against the same window the dots were transformed with
             # (__resolveRanges__()).  The bars are emitted as 0..1 fractions and stretched
@@ -2113,7 +2377,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
             # a temporal axis.
             _eff_range_ = self.x_effective_range if _axis_ == 'x' else self.y_effective_range
             if _eff_range_ is not None: _min_, _max_ = _eff_range_
-            else:                       _min_, _max_ = self.df_flat[_field_].min(), self.df_flat[_field_].max()
+            else:                       _min_, _max_ = _flat_[_field_].min(), _flat_[_field_].max()
 
             # A periodic time transform (month-of-year, hour-of-day, day-of-week, ...) plots
             # as discrete integers, so -- like Timep's periodic bins (one bar per period unit,
@@ -2123,6 +2387,19 @@ class XYp(P2SBackgroundMixin, ExportMixin):
             _axis_clean_        = self.x_clean if _axis_ == 'x' else self.y_clean
             _axis_periodic_     = (self.__axisIsPeriodicTime__(_axis_clean_)
                                    and _min_ is not None and _max_ is not None)
+
+            # An axis of whole numbers -- an integer column, a float column holding only whole
+            # numbers (a survey count read from CSV), or a categorical axis, whose positions
+            # are category indices -- has the same problem at any count of values:
+            # a pixel-derived bin width that is not a whole number leaves some bins holding
+            # no integer at all and others holding two, so a smooth distribution draws as gaps
+            # and spikes (user feedback 2026-09-27, books_read in the millionaire-habits
+            # survey).  Autobin gives each bin a whole number of integers instead: one per
+            # bin when they fit, else the fewest per bin that do.  See _intBins_ below.
+            _axis_integer_      = (not _axis_periodic_ and _min_ is not None and _max_ is not None
+                                   and self.p2s.DISTRIBUTION_AUTOBINp in _clean_['enums']
+                                   and _isWholeNumbered_(_flat_[_field_]))
+            _int_bins_          = None
 
             # Determine the number of bins
             if self.p2s.DISTRIBUTION_AUTOBINp in _clean_['enums']:
@@ -2135,6 +2412,9 @@ class XYp(P2SBackgroundMixin, ExportMixin):
                         if    self.dot_size_orig > 3: _num_of_bins_ = _dim_//self.dot_size_orig
                         else: _num_of_bins_ = _dim_//6
                     else: _num_of_bins_   = _dim_//6
+                    if _axis_integer_:
+                        _int_bins_    = _intBins_(_min_, _max_, max(1, _num_of_bins_))
+                        _num_of_bins_ = _int_bins_[2]
                 _clean_['bins'] = [_num_of_bins_]
             else:
                 _num_of_bins_ = _clean_['bins'][0]
@@ -2142,7 +2422,11 @@ class XYp(P2SBackgroundMixin, ExportMixin):
             # Calculate bin width
             if   _max_ is None or _min_ is None:                                              bin_width = 1
             elif _axis_periodic_ and self.p2s.DISTRIBUTION_AUTOBINp in _clean_['enums']:      bin_width = 1  # integer-aligned periodic bins
+            elif _int_bins_ is not None:                                                      bin_width = _int_bins_[1]  # whole integers per bin
             else:                                                                             bin_width = (_max_ - _min_) / _num_of_bins_
+            # Integer bins are counted from the first whole number on the axis, not from the
+            # window's edge, so a bin holds exactly the integers it says it does.
+            _bin_origin_ = _int_bins_[0] if _int_bins_ is not None else _min_
 
             # Then apply the bin width as an operation
             _bin_ops_ = []
@@ -2154,32 +2438,37 @@ class XYp(P2SBackgroundMixin, ExportMixin):
             else:
                 _bin_ops_.append(pl.when(pl.col(_field_).is_null())
                                    .then(pl.lit(None))
-                                   .otherwise(((pl.col(_field_) - _min_) / bin_width).floor().clip(0, _num_of_bins_ - 1))
+                                   .otherwise(((pl.col(_field_) - _bin_origin_) / bin_width).floor().clip(0, _num_of_bins_ - 1))
                                    .cast(pl.Int64).alias(_bin_field_))
 
             # Do the group_by
-            if _color_field_ in self.df_flat.columns: _gb_str_ = [_bin_field_, _color_field_]
+            if _color_field_ in _flat_.columns: _gb_str_ = [_bin_field_, _color_field_]
             else:                                     _gb_str_ = [_bin_field_]
 
             # Do the aggregation
             _agg_ops_ = []
             if   self.p2s.ROW_COUNTp in _clean_['enums']: _agg_ops_.append(pl.len().alias(_totals_field_))
             elif self.p2s.SCALARp    in _clean_['enums']: _agg_ops_.append(pl.col(_value_field_).sum().alias(_totals_field_))
-            else:                                         _agg_ops_.append(pl.col(_value_field_).unique().len().alias(_totals_field_))
+            else:                                         _agg_ops_.append(pl.col(_value_field_).drop_nulls().unique().len().alias(_totals_field_))   # a null is no value
 
             # Select only the fields we need for the execution
             _required_fields_ = [_field_]
             if self.p2s.ROW_COUNTp not in _clean_['enums']: _required_fields_.append(_value_field_)
-            if _color_field_ in self.df_flat.columns: _required_fields_.append(_color_field_)
+            if _color_field_ in _flat_.columns: _required_fields_.append(_color_field_)
 
             # Execute the initial operation to perform the cut and sum the correct field / attribute
-            if self.use_lazy_execution: _df_ = self.df_flat.lazy().select(_required_fields_).with_columns(_bin_ops_).group_by(_gb_str_).agg(_agg_ops_).collect()
-            else:                       _df_ = self.df_flat       .select(_required_fields_).with_columns(_bin_ops_).group_by(_gb_str_).agg(_agg_ops_)
+            if self.use_lazy_execution: _df_ = _flat_.lazy().select(_required_fields_).with_columns(_bin_ops_).group_by(_gb_str_).agg(_agg_ops_).collect()
+            else:                       _df_ = _flat_       .select(_required_fields_).with_columns(_bin_ops_).group_by(_gb_str_).agg(_agg_ops_)
 
             # Create the labels ... an artifact of how this was originally done with the polars cut operation
             _labels_     = [i for i in range(_num_of_bins_)]
             _labels_min_ = [i / _num_of_bins_ for i in range(_num_of_bins_)]
             _labels_max_ = [(i + 1) / _num_of_bins_ for i in range(_num_of_bins_)]
+            if _int_bins_ is not None:
+                # Under its dots: a bin holding the integers a..b spans a-1/2 to b+1/2 of the
+                # axis, rather than an equal share of the plot -- the shares put the end bars
+                # half a bar off the values they count.
+                _labels_min_, _labels_max_ = _intBinFractions_(_int_bins_, _min_, _max_)
 
             # Create an all-bins dataframe that will be used to create entries for missing bins
             _all_bins_df_ = pl.DataFrame({_bin_field_:_labels_, _min_field_:_labels_min_, _max_field_:_labels_max_})
@@ -2189,7 +2478,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
             _df_ = _all_bins_df_.join(_df_, on=_gb_str_, how='left').with_columns(pl.col(_totals_field_).fill_null(0.0))
 
             # Assign a default color if none exists
-            if _color_field_ not in self.df_flat.columns:
+            if _color_field_ not in _flat_.columns:
                 _df_ = _df_.with_columns(pl.lit(self.p2s.colorTyped('distributions', 'default')).alias(_color_field_))
 
             # Create the minimum column
@@ -2227,7 +2516,10 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     # __humanReadableMinAndMax__()
     #
     def __humanReadableMinAndMax__(self, _min_: Any, _max_: Any, clean_axis: list) -> tuple:
-        if   self.__axisIsPeriodicTime__(clean_axis):
+        # An axis with no rows (an empty or all-NaN frame) has no extent: label nothing,
+        # rather than printing Python's 'None' at both ends
+        if   _min_ is None and _max_ is None: return '', ''
+        elif self.__axisIsPeriodicTime__(clean_axis):
             _tfield_ = clean_axis[0]
             if isinstance(_tfield_, tuple): _tfield_ = _tfield_[0]
             _column_, _enum_ = self.p2s.tFieldTuple(_tfield_)
@@ -2347,11 +2639,14 @@ class XYp(P2SBackgroundMixin, ExportMixin):
             # Draw the line
             _svg_.append(f'<line x1="{x1}" y1="{y1}" x2="{x2}" y2="{y2}" stroke="{_color_}" stroke-width="{_width_}" />')
             if dl is not None: dl.line(x1, y1, x2, y2, _color_, width=_width_)
-            # Draw the label
-            _rot_ = 90 if x_axis else None
-            _txt_ = self.p2s.svgText(f'{_label_}', x1, y1, color=self.p2s.colorTyped('axis', 'inner'), txt_h=self.txt_h*0.6, rotation=_rot_)
+            # Draw the label.  A y label sits on its gridline with its glyphs above it, so the
+            # top category's -- whose gridline is the plot's top edge -- rose off the canvas
+            # and showed 2px of its text.  Its baseline is kept one text height into the plot.
+            _rot_    = 90 if x_axis else None
+            _lx_, _ly_ = (x1, y1) if x_axis else (x1, max(y1, round((yo - yh) + self.txt_h*0.6, 1)))
+            _txt_ = self.p2s.svgText(f'{_label_}', _lx_, _ly_, color=self.p2s.colorTyped('axis', 'inner'), txt_h=self.txt_h*0.6, rotation=_rot_)
             _svg_.append(_txt_)
-            if dl is not None: dl.text(self.p2s, f'{_label_}', x1, y1, color=self.p2s.colorTyped('axis', 'inner'), txt_h=self.txt_h*0.6, rotation=_rot_, svg='')
+            if dl is not None: dl.text(self.p2s, f'{_label_}', _lx_, _ly_, color=self.p2s.colorTyped('axis', 'inner'), txt_h=self.txt_h*0.6, rotation=_rot_, svg='')
         # Get the column names
         if    x_axis: px_col, axis_col = '__xpx__', '__x__'
         else:         px_col, axis_col = '__ypx__', '__y__'
@@ -2476,15 +2771,29 @@ class XYp(P2SBackgroundMixin, ExportMixin):
         def __toScreen__(_world_: float) -> float | None:
             if abs(_max_world_ - _min_world_) < 1e-6: return None
             else:                                     return _dim_ * (_world_ - _min_world_) / (_max_world_ - _min_world_)
+        # The fallback's passes (below): 'probe' records every case's line spacing and lets
+        # only the 'take' spacing through; 'collect' gathers lines instead of drawing them
+        _mode_: dict = {'probe': None, 'take': None, 'collect': None, 'described': False, 'out_of': 0}
         # Distance between two world coordinates in pixels
         def __distanceBetweenLines__(_line1_: int, _line2_: float) -> float:
+            if _mode_['probe'] is not None:
+                _span_ = abs(_line2_ - _line1_)
+                _mode_['probe'].append(_span_)
+                return float(pixel_goal) if _span_ == _mode_['take'] else -1.0
             _s1_, _s2_ = __toScreen__(_line1_), __toScreen__(_line2_)
             if _s1_ is None or _s2_ is None: return 0.0   # degenerate range -- no room between lines
             return abs(_s1_ - _s2_)
         # Add a description
-        def __addDescription__(_desc_: Any, _num_: int, _out_of_: int) -> None: _svg_.append(f'<!-- xyp.__renderContext_periodicTime__(): {_desc_}|{_num_}|{_out_of_} -->')
+        def __addDescription__(_desc_: Any, _num_: int, _out_of_: int) -> None:
+            _mode_['out_of'] = _out_of_
+            if _mode_['collect'] is not None: return
+            _mode_['described'] = True
+            _svg_.append(f'<!-- xyp.__renderContext_periodicTime__(): {_desc_}|{_num_}|{_out_of_} -->')
         # Render a line in the correct orientation
         def __line__(_world_: int, _str_: str | None, _type_: str) -> None:
+            if _mode_['collect'] is not None:
+                _mode_['collect'].append((_world_, _str_, _type_))
+                return
             if _world_ < _min_world_ or _world_ > _max_world_: return
             if   _type_ == 'major':   _color_, _width_, _txt_h_ = self.p2s.colorTyped('axis', 'origin'), 0.4, round(self.txt_h*0.8,1)
             elif _type_ == 'minor':   _color_, _width_, _txt_h_ = self.p2s.colorTyped('axis', 'inner'),  0.4, round(self.txt_h*0.6,1)
@@ -2520,374 +2829,412 @@ class XYp(P2SBackgroundMixin, ExportMixin):
         #
         # Render
         #
-        if   _enum_ == self.p2s.PT_Qp:
-            if __distanceBetweenLines__(0, 1) >= pixel_goal:
-                __addDescription__(_enum_, 1, 1)
-                for i in range(1, 5): __line__(i, self.p2s.timePeriodicHumanReadable(i, _enum_), 'major')
-        elif _enum_ == self.p2s.PT_mp:
-            if __distanceBetweenLines__(0, 1) >= pixel_goal:
-                __addDescription__(_enum_, 1, 1)
-                for i in range(1,13): __line__(i, self.p2s.timePeriodicHumanReadable(i, _enum_), 'major')
-        elif _enum_ == self.p2s.PT_m_dp:
-            _month_lu_    = self.p2s.__monthLookup__()
-            _max_days_lu_ = self.p2s.__maxDaysInMonthLookup__()
-            if   __distanceBetweenLines__(0, 1)  >= pixel_goal:
-                __addDescription__(_enum_, 1, 3)
-                _day_i_       = 1
-                for _month_ in range(1,13):
-                    __line__(_day_i_, _month_lu_[_month_], 'major')
-                    for i in range(0, _max_days_lu_[_month_]):
-                        if    (i+1)     == 15: continue
-                        elif ((i+1)% 5) ==  0: __line__(_day_i_+i, None, 'tick')
-                        else:                  __line__(_day_i_+i, None, 'subtick')
-                    __line__(_day_i_+14, '15', 'minor')
-                    _day_i_ += _max_days_lu_[_month_]
-            elif __distanceBetweenLines__(1, 5)  >= pixel_goal:
-                __addDescription__(_enum_, 2, 3)
-                _day_i_       = 1
-                for _month_ in range(1,13):
-                    __line__(_day_i_, _month_lu_[_month_], 'major')
-                    __line__(_day_i_+ 4, None, 'tick')
-                    __line__(_day_i_+ 9, None, 'tick')
-                    __line__(_day_i_+14, '15', 'minor')
-                    __line__(_day_i_+19, None, 'tick')
-                    __line__(_day_i_+24, None, 'tick')
-                    _day_i_ += _max_days_lu_[_month_]
-            elif __distanceBetweenLines__(1, 15) >= pixel_goal:
-                __addDescription__(_enum_, 3, 3)
-                _day_i_       = 1
-                for _month_ in range(1,13):
-                    __line__(_day_i_, _month_lu_[_month_], 'major')
-                    __line__(_day_i_+14, '15', 'minor')
-                    _day_i_ += _max_days_lu_[_month_]
-        #
-        # Month Day Hour
-        #
-        elif _enum_ == self.p2s.PT_m_d_Hp:
-            _month_lu_    = self.p2s.__monthLookup__()
-            _max_days_lu_ = self.p2s.__maxDaysInMonthLookup__()
-            if   __distanceBetweenLines__(0, 24) >= pixel_goal:
-                __addDescription__(_enum_, 1, 3)
-                _day_i_       = 1
-                for _month_ in range(1,13):
-                    __line__(_day_i_*24, _month_lu_[_month_], 'major')
-                    for i in range(0, _max_days_lu_[_month_]):
-                        if (i+1)%5 == 0: __line__((_day_i_+i)*24, str(i+1), 'minor')
-                        else:            __line__((_day_i_+i)*24, None,     'tick')
-                    _day_i_ += _max_days_lu_[_month_]
-            elif __distanceBetweenLines__(0, 24*10) >= pixel_goal:
-                __addDescription__(_enum_, 2, 3)
-                _day_i_       = 1
-                for _month_ in range(1,13):
-                    __line__(_day_i_*24, _month_lu_[_month_], 'major')
-                    __line__((_day_i_+14)*24, '15', 'minor')
-                    _day_i_ += _max_days_lu_[_month_]
-            elif __distanceBetweenLines__(0, 24*30) >= pixel_goal:
-                __addDescription__(_enum_, 3, 3)
-                _day_i_       = 1
-                for _month_ in range(1,13):
-                    __line__(_day_i_*24, _month_lu_[_month_], 'minor')
-                    _day_i_ += _max_days_lu_[_month_]
-        #
-        # Day of Year
-        #
-        elif _enum_ == self.p2s.PT_DoYp:
-            if   __distanceBetweenLines__(0, 5) >= pixel_goal:
-                __addDescription__(_enum_, 1, 3)
-                for i in range(1, 367):
-                    if   i    == 1: __line__(1, str(1), 'major')
-                    elif i%50 == 0: __line__(i, str(i), 'major')
-                    elif i%25 == 0: __line__(i, str(i), 'tick')
-                    elif i%5  == 0: __line__(i, None,   'subtick')
-            elif __distanceBetweenLines__(0, 10) >= pixel_goal:
-                __addDescription__(_enum_, 2, 3)
-                for i in range(1,367):
-                    if i == 1 or i%100 == 0: __line__(i, str(i), 'major')
-                    elif i%50 == 0:          __line__(i, str(i), 'tick')
-                    elif i%10 == 0:          __line__(i, None,   'subtick')
-            else:
-                __addDescription__(_enum_, 3, 3)
-                for i in range(1, 367):
-                    if   i     == 1: __line__(1, str(1), 'minor')
-                    elif i%100 == 0: __line__(i, str(i), 'minor')
+        # The case chain, as a function: the fallback below runs it again to find and
+        # collect the coarsest case
+        def __chain__() -> None:
+            if   _enum_ == self.p2s.PT_Qp:
+                if __distanceBetweenLines__(0, 1) >= pixel_goal:
+                    __addDescription__(_enum_, 1, 1)
+                    for i in range(1, 5): __line__(i, self.p2s.timePeriodicHumanReadable(i, _enum_), 'major')
+            elif _enum_ == self.p2s.PT_mp:
+                if __distanceBetweenLines__(0, 1) >= pixel_goal:
+                    __addDescription__(_enum_, 1, 1)
+                    for i in range(1,13): __line__(i, self.p2s.timePeriodicHumanReadable(i, _enum_), 'major')
+            elif _enum_ == self.p2s.PT_m_dp:
+                _month_lu_    = self.p2s.__monthLookup__()
+                _max_days_lu_ = self.p2s.__maxDaysInMonthLookup__()
+                if   __distanceBetweenLines__(0, 1)  >= pixel_goal:
+                    __addDescription__(_enum_, 1, 3)
+                    _day_i_       = 1
+                    for _month_ in range(1,13):
+                        __line__(_day_i_, _month_lu_[_month_], 'major')
+                        for i in range(1, _max_days_lu_[_month_]):     # the 1st is the major line
+                            if    (i+1)     == 15: continue
+                            elif ((i+1)% 5) ==  0: __line__(_day_i_+i, None, 'tick')
+                            else:                  __line__(_day_i_+i, None, 'subtick')
+                        __line__(_day_i_+14, '15', 'minor')
+                        _day_i_ += _max_days_lu_[_month_]
+                elif __distanceBetweenLines__(1, 5)  >= pixel_goal:
+                    __addDescription__(_enum_, 2, 3)
+                    _day_i_       = 1
+                    for _month_ in range(1,13):
+                        __line__(_day_i_, _month_lu_[_month_], 'major')
+                        __line__(_day_i_+ 4, None, 'tick')
+                        __line__(_day_i_+ 9, None, 'tick')
+                        __line__(_day_i_+14, '15', 'minor')
+                        __line__(_day_i_+19, None, 'tick')
+                        __line__(_day_i_+24, None, 'tick')
+                        _day_i_ += _max_days_lu_[_month_]
+                elif __distanceBetweenLines__(1, 15) >= pixel_goal:
+                    __addDescription__(_enum_, 3, 3)
+                    _day_i_       = 1
+                    for _month_ in range(1,13):
+                        __line__(_day_i_, _month_lu_[_month_], 'major')
+                        __line__(_day_i_+14, '15', 'minor')
+                        _day_i_ += _max_days_lu_[_month_]
+            #
+            # Month Day Hour
+            #
+            elif _enum_ == self.p2s.PT_m_d_Hp:
+                _month_lu_    = self.p2s.__monthLookup__()
+                _max_days_lu_ = self.p2s.__maxDaysInMonthLookup__()
+                if   __distanceBetweenLines__(0, 24) >= pixel_goal:
+                    __addDescription__(_enum_, 1, 3)
+                    _day_i_       = 1
+                    for _month_ in range(1,13):
+                        __line__(_day_i_*24, _month_lu_[_month_], 'major')
+                        for i in range(1, _max_days_lu_[_month_]):     # the 1st is the major line
+                            if (i+1)%5 == 0: __line__((_day_i_+i)*24, str(i+1), 'minor')
+                            else:            __line__((_day_i_+i)*24, None,     'tick')
+                        _day_i_ += _max_days_lu_[_month_]
+                elif __distanceBetweenLines__(0, 24*10) >= pixel_goal:
+                    __addDescription__(_enum_, 2, 3)
+                    _day_i_       = 1
+                    for _month_ in range(1,13):
+                        __line__(_day_i_*24, _month_lu_[_month_], 'major')
+                        __line__((_day_i_+14)*24, '15', 'minor')
+                        _day_i_ += _max_days_lu_[_month_]
+                elif __distanceBetweenLines__(0, 24*30) >= pixel_goal:
+                    __addDescription__(_enum_, 3, 3)
+                    _day_i_       = 1
+                    for _month_ in range(1,13):
+                        __line__(_day_i_*24, _month_lu_[_month_], 'minor')
+                        _day_i_ += _max_days_lu_[_month_]
+            #
+            # Day of Year
+            #
+            elif _enum_ == self.p2s.PT_DoYp:
+                if   __distanceBetweenLines__(0, 5) >= pixel_goal:
+                    __addDescription__(_enum_, 1, 3)
+                    for i in range(1, 367):
+                        if   i    == 1: __line__(1, str(1), 'major')
+                        elif i%50 == 0: __line__(i, str(i), 'major')
+                        elif i%25 == 0: __line__(i, str(i), 'tick')
+                        elif i%5  == 0: __line__(i, None,   'subtick')
+                elif __distanceBetweenLines__(0, 10) >= pixel_goal:
+                    __addDescription__(_enum_, 2, 3)
+                    for i in range(1,367):
+                        if i == 1 or i%100 == 0: __line__(i, str(i), 'major')
+                        elif i%50 == 0:          __line__(i, str(i), 'tick')
+                        elif i%10 == 0:          __line__(i, None,   'subtick')
+                else:
+                    __addDescription__(_enum_, 3, 3)
+                    for i in range(1, 367):
+                        if   i     == 1: __line__(1, str(1), 'minor')
+                        elif i%100 == 0: __line__(i, str(i), 'minor')
 
-        #
-        # Day of Week
-        #
-        elif _enum_ == self.p2s.PT_DoWp:
-            if __distanceBetweenLines__(0, 1) >= pixel_goal:
-                __addDescription__(_enum_, 1, 1)
-                for i in range(1, 8):  __line__(i,       self.p2s.timePeriodicHumanReadable(i,       _enum_), 'major')
-        #
-        # Day of Week Hour
-        #
-        elif _enum_ == self.p2s.PT_DoW_Hp:
-            if   __distanceBetweenLines__(0,  1) >= pixel_goal:
-                __addDescription__(_enum_, 1, 3)
-                for _day_ in range(1,8):
-                    __line__(_day_*24,    self.p2s.timePeriodicHumanReadable(_day_*24, _enum_).split(' ')[0], 'major')
-                    for _hour_ in range(1,24):
-                        if   (_hour_%12) == 0: __line__(_day_*24 + _hour_, '12', 'minor')
-                        elif (_hour_% 6) == 0: __line__(_day_*24 + _hour_, None, 'tick')
-                        else:                  __line__(_day_*24 + _hour_, None, 'subtick')
-            elif __distanceBetweenLines__(0,  6) >= pixel_goal:
-                __addDescription__(_enum_, 2, 3)
-                for _day_ in range(1,8):
-                    __line__(_day_*24, self.p2s.timePeriodicHumanReadable(_day_*24, _enum_).split(' ')[0], 'major')
-                    __line__(_day_*24 +  6, None, 'tick')
-                    __line__(_day_*24 + 12, '12', 'minor')
-                    __line__(_day_*24 + 18, None, 'tick')
-            elif __distanceBetweenLines__(0, 12) >= pixel_goal:
-                __addDescription__(_enum_, 3, 3)
-                for _day_ in range(1,8):
-                    __line__(_day_*24, self.p2s.timePeriodicHumanReadable(_day_*24, _enum_).split(' ')[0], 'major')
-                    __line__(_day_*24 + 12, '12', 'minor')
-        #
-        # Day of Week Hour Minute
-        #
-        elif _enum_ == self.p2s.PT_DoW_H_Mp:
-            if   __distanceBetweenLines__(0, 5)     >= pixel_goal: # Every 5 minutes
-                __addDescription__(_enum_, 1, 3)
-                for _day_i_ in range(1, 8):
-                    __line__(_day_i_*24*60, self.p2s.timePeriodicHumanReadable(_day_i_*24*60, _enum_).split(' ')[0], 'major')
-                    for _hour_i_ in range(0,24):
-                        __line__(_day_i_*24*60 + _hour_i_*60, str(_hour_i_), 'minor')
-                        for _min_i_ in range(0,60,5):
-                            if   _min_i_    == 0: continue
-                            elif _min_i_%15 == 0: __line__(_day_i_*24*60 + _hour_i_*60 + _min_i_, str(_min_i_), 'tick')
-                            else:                 __line__(_day_i_*24*60 + _hour_i_*60 + _min_i_, None,         'subtick')
-            elif __distanceBetweenLines__(0, 60)    >= pixel_goal: # Every hour
-                __addDescription__(_enum_, 2, 3)
-                for _day_i_ in range(1, 8):
-                    __line__(_day_i_*24*60, self.p2s.timePeriodicHumanReadable(_day_i_*24*60, _enum_).split(' ')[0], 'major')
-                    for _hour_i_ in range(0,24):
-                        __line__(_day_i_*24*60 + _hour_i_*60, str(_hour_i_), 'minor')
-            elif __distanceBetweenLines__(0, 60*6)  >= pixel_goal: # Every 6 hours
-                __addDescription__(_enum_, 3, 3)
-                for _day_i_ in range(1, 8):
-                    __line__(_day_i_*24*60, self.p2s.timePeriodicHumanReadable(_day_i_*24*60, _enum_).split(' ')[0], 'major')
-                    for _hour_i_ in range(0, 24, 6):
-                        __line__(_day_i_*24*60 + _hour_i_*60, str(_hour_i_), 'minor')
-        #
-        # Day of Month
-        #
-        elif _enum_ == self.p2s.PT_dp:
-            if   __distanceBetweenLines__(0,1) >= pixel_goal:
-                __addDescription__(_enum_, 1, 2)
-                for i in range(1, 32): __line__(i,  str(i), 'major')
-            elif __distanceBetweenLines__(0,5) >= pixel_goal:
-                __addDescription__(_enum_, 2, 2)
-                __line__(1, '1', 'major')
-                for i in range(0, 32, 5): __line__(i, str(i), 'major')
-        #
-        # Day of Month Hour
-        #
-        elif _enum_ == self.p2s.PT_d_Hp:
-            if   __distanceBetweenLines__(0,1)     >= pixel_goal:
-                __addDescription__(_enum_, 1, 4)
-                for _day_i_ in range(1, 32):
-                    __line__(_day_i_*24, str(_day_i_), 'major')
+            #
+            # Day of Week
+            #
+            elif _enum_ == self.p2s.PT_DoWp:
+                if __distanceBetweenLines__(0, 1) >= pixel_goal:
+                    __addDescription__(_enum_, 1, 1)
+                    for i in range(1, 8):  __line__(i,       self.p2s.timePeriodicHumanReadable(i,       _enum_), 'major')
+            #
+            # Day of Week Hour
+            #
+            elif _enum_ == self.p2s.PT_DoW_Hp:
+                if   __distanceBetweenLines__(0,  1) >= pixel_goal:
+                    __addDescription__(_enum_, 1, 3)
+                    for _day_ in range(1,8):
+                        __line__(_day_*24,    self.p2s.timePeriodicHumanReadable(_day_*24, _enum_).split(' ')[0], 'major')
+                        for _hour_ in range(1,24):
+                            if   (_hour_%12) == 0: __line__(_day_*24 + _hour_, '12', 'minor')
+                            elif (_hour_% 6) == 0: __line__(_day_*24 + _hour_, None, 'tick')
+                            else:                  __line__(_day_*24 + _hour_, None, 'subtick')
+                elif __distanceBetweenLines__(0,  6) >= pixel_goal:
+                    __addDescription__(_enum_, 2, 3)
+                    for _day_ in range(1,8):
+                        __line__(_day_*24, self.p2s.timePeriodicHumanReadable(_day_*24, _enum_).split(' ')[0], 'major')
+                        __line__(_day_*24 +  6, None, 'tick')
+                        __line__(_day_*24 + 12, '12', 'minor')
+                        __line__(_day_*24 + 18, None, 'tick')
+                elif __distanceBetweenLines__(0, 12) >= pixel_goal:
+                    __addDescription__(_enum_, 3, 3)
+                    for _day_ in range(1,8):
+                        __line__(_day_*24, self.p2s.timePeriodicHumanReadable(_day_*24, _enum_).split(' ')[0], 'major')
+                        __line__(_day_*24 + 12, '12', 'minor')
+            #
+            # Day of Week Hour Minute
+            #
+            elif _enum_ == self.p2s.PT_DoW_H_Mp:
+                if   __distanceBetweenLines__(0, 5)     >= pixel_goal: # Every 5 minutes
+                    __addDescription__(_enum_, 1, 3)
+                    for _day_i_ in range(1, 8):
+                        __line__(_day_i_*24*60, self.p2s.timePeriodicHumanReadable(_day_i_*24*60, _enum_).split(' ')[0], 'major')
+                        for _hour_i_ in range(0,24):
+                            if _hour_i_ > 0: __line__(_day_i_*24*60 + _hour_i_*60, str(_hour_i_), 'minor')  # hour 0 is the day's own line and label
+                            for _min_i_ in range(0,60,5):
+                                if   _min_i_    == 0: continue
+                                elif _min_i_%15 == 0: __line__(_day_i_*24*60 + _hour_i_*60 + _min_i_, str(_min_i_), 'tick')
+                                else:                 __line__(_day_i_*24*60 + _hour_i_*60 + _min_i_, None,         'subtick')
+                elif __distanceBetweenLines__(0, 60)    >= pixel_goal: # Every hour
+                    __addDescription__(_enum_, 2, 3)
+                    for _day_i_ in range(1, 8):
+                        __line__(_day_i_*24*60, self.p2s.timePeriodicHumanReadable(_day_i_*24*60, _enum_).split(' ')[0], 'major')
+                        for _hour_i_ in range(1,24):
+                            __line__(_day_i_*24*60 + _hour_i_*60, str(_hour_i_), 'minor')
+                elif __distanceBetweenLines__(0, 60*6)  >= pixel_goal: # Every 6 hours
+                    __addDescription__(_enum_, 3, 3)
+                    for _day_i_ in range(1, 8):
+                        __line__(_day_i_*24*60, self.p2s.timePeriodicHumanReadable(_day_i_*24*60, _enum_).split(' ')[0], 'major')
+                        for _hour_i_ in range(6, 24, 6):
+                            __line__(_day_i_*24*60 + _hour_i_*60, str(_hour_i_), 'minor')
+            #
+            # Day of Month
+            #
+            elif _enum_ == self.p2s.PT_dp:
+                if   __distanceBetweenLines__(0,1) >= pixel_goal:
+                    __addDescription__(_enum_, 1, 2)
+                    for i in range(1, 32): __line__(i,  str(i), 'major')
+                elif __distanceBetweenLines__(0,5) >= pixel_goal:
+                    __addDescription__(_enum_, 2, 2)
+                    __line__(1, '1', 'major')
+                    for i in range(0, 32, 5): __line__(i, str(i), 'major')
+            #
+            # Day of Month Hour
+            #
+            elif _enum_ == self.p2s.PT_d_Hp:
+                if   __distanceBetweenLines__(0,1)     >= pixel_goal:
+                    __addDescription__(_enum_, 1, 4)
+                    for _day_i_ in range(1, 32):
+                        __line__(_day_i_*24, str(_day_i_), 'major')
+                        for _hour_i_ in range(24):
+                            if   _hour_i_    == 0: continue
+                            elif _hour_i_%12 == 0: __line__(_day_i_*24 + _hour_i_, '12', 'minor')
+                            elif _hour_i_% 6 == 0: __line__(_day_i_*24 + _hour_i_, None, 'tick')
+                            else:                  __line__(_day_i_*24 + _hour_i_, None, 'subtick')
+                elif __distanceBetweenLines__(0,12)    >= pixel_goal:
+                    __addDescription__(_enum_, 2, 4)
+                    for _day_i_ in range(1, 32):
+                        __line__(_day_i_*24, str(_day_i_), 'major')
+                elif __distanceBetweenLines__(0,24)    >= pixel_goal:
+                    __addDescription__(_enum_, 3, 4)
+                    for _day_i_ in range(1, 32):
+                        if _day_i_ == 1 or _day_i_%5 == 0: __line__(_day_i_*24, str(_day_i_), 'major')
+                        else:                              __line__(_day_i_*24, None,         'tick')
+                elif __distanceBetweenLines__(0,5*24)  >= pixel_goal:
+                    __addDescription__(_enum_, 4, 4)
+                    for _day_i_ in range(1, 32, 1):
+                        if   _day_i_    == 1: __line__(_day_i_*24, str(1),       'major')
+                        elif _day_i_%10 == 0: __line__(_day_i_*24, str(_day_i_), 'major')
+                        elif _day_i_%5  == 0: __line__(_day_i_*24, None,         'tick')
+                        else:                 __line__(_day_i_*24, None,         'subtick')
+            #
+            # Day of Month Hour Minute
+            #
+            elif _enum_ == self.p2s.PT_d_H_Mp:
+                if   __distanceBetweenLines__(0, 1)     >= pixel_goal:
+                    __addDescription__(_enum_, 1, 3)
+                    for _day_i_ in range(1, 32):
+                        __line__(_day_i_*24*60, str(_day_i_), 'major')
+                        for _hour_i_ in range(0, 24):
+                            if _hour_i_ > 0: __line__(_day_i_*24*60 + _hour_i_*60, str(_hour_i_), 'minor')  # hour 0 is the day's own line and label
+                            for _minute_i_ in range(1, 60):                                                    # ... and minute 0 is the hour's
+                                if _minute_i_%10 == 0: __line__(_day_i_*24*60 + _hour_i_*60 + _minute_i_, str(_minute_i_), 'tick')
+                                else:                  __line__(_day_i_*24*60 + _hour_i_*60 + _minute_i_, None,            'subtick')
+                elif __distanceBetweenLines__(0, 24)    >= pixel_goal:
+                    __addDescription__(_enum_, 2, 3)
+                    for _day_i_ in range(1, 32):
+                        __line__(_day_i_*24*60, str(_day_i_), 'major')
+                        for _hour_i_ in range(1, 24):
+                            if _hour_i_%6 == 0: __line__(_day_i_*24*60 + _hour_i_*60, str(_hour_i_), 'tick')
+                            else:               __line__(_day_i_*24*60 + _hour_i_*60, None,          'subtick')
+                elif __distanceBetweenLines__(0, 24*60) >= pixel_goal:
+                    __addDescription__(_enum_, 3, 3)
+                    for _day_i_ in range(1, 32):
+                        __line__(_day_i_*24*60, str(_day_i_), 'major')
+            #
+            # Hour
+            #
+            elif _enum_ == self.p2s.PT_Hp:
+                if   __distanceBetweenLines__(0,  0.5) >= pixel_goal:
+                    __addDescription__(_enum_, 1, 2)
+                    for i in range(0, 24): __line__(i, str(i), 'major')
+                else:
+                    __addDescription__(_enum_, 2, 2)
+                    for i in range(0, 24):
+                        if   i%3 == 0: __line__(i, str(i), 'major')
+                        else:          __line__(i, None,   'tick')
+            #
+            # Hour Minute
+            #
+            elif _enum_ == self.p2s.PT_H_Mp:
+                if   __distanceBetweenLines__(0, 5)     >= pixel_goal:
+                    __addDescription__(_enum_, 1, 5)
+                    for _hour_i_ in range(0, 24):
+                        __line__(_hour_i_*60,    str(_hour_i_), 'major')
+                        for _minute_i_ in range(1, 60):
+                            if   _minute_i_%15 == 0: __line__(_hour_i_*60+_minute_i_, str(_minute_i_), 'minor')
+                            elif _minute_i_%5  == 0: __line__(_hour_i_*60+_minute_i_, None,          'tick')
+                            else:                    __line__(_hour_i_*60+_minute_i_, None,          'subtick')
+                elif __distanceBetweenLines__(0, 20)   >= pixel_goal:
+                    __addDescription__(_enum_, 2, 5)
+                    for _hour_i_ in range(0, 24):
+                        __line__(_hour_i_*60,    str(_hour_i_), 'major')
+                        __line__(_hour_i_*60+15, None,          'tick')
+                        __line__(_hour_i_*60+30, str(30),       'minor')
+                        __line__(_hour_i_*60+45, None,          'tick')
+                elif __distanceBetweenLines__(0,   30) >= pixel_goal:
+                    __addDescription__(_enum_, 3, 5)
+                    for _hour_i_ in range(0, 24):
+                        if   _hour_i_%3 == 0: __line__(_hour_i_*60, str(_hour_i_), 'major')
+                        else:                 __line__(_hour_i_*60, None,          'tick')
+                        __line__(_hour_i_*60+30, None, 'subtick')
+                elif __distanceBetweenLines__(0,  40)  >= pixel_goal:
+                    __addDescription__(_enum_, 4, 5)
+                    for _hour_i_ in range(0, 24):
+                        if   _hour_i_%6 == 0: __line__(_hour_i_*60, str(_hour_i_), 'major')
+                        elif _hour_i_%3 == 0: __line__(_hour_i_*60, None,          'tick')
+                        else:                 __line__(_hour_i_*60, None,          'subtick')
+                else:
+                    __addDescription__(_enum_, 5, 5)
+                    for i in range(0, 24):
+                        if   i%6 == 0: __line__(60*i, str(i), 'major')
+                        else:          __line__(60*i, None,   'tick')
+            #
+            # Hour Minute Second
+            #
+            elif _enum_ == self.p2s.PT_H_M_Sp:
+                if   __distanceBetweenLines__(0,      5*60) >= pixel_goal:
+                    __addDescription__(_enum_, 1, 5)
                     for _hour_i_ in range(24):
-                        if   _hour_i_    == 0: continue
-                        elif _hour_i_%12 == 0: __line__(_day_i_*24 + _hour_i_, '12', 'minor')
-                        elif _hour_i_% 6 == 0: __line__(_day_i_*24 + _hour_i_, None, 'tick')
-                        else:                  __line__(_day_i_*24 + _hour_i_, None, 'subtick')
-            elif __distanceBetweenLines__(0,12)    >= pixel_goal:
-                __addDescription__(_enum_, 2, 4)
-                for _day_i_ in range(1, 32):
-                    __line__(_day_i_*24, str(_day_i_), 'major')
-            elif __distanceBetweenLines__(0,24)    >= pixel_goal:
-                __addDescription__(_enum_, 3, 4)
-                for _day_i_ in range(1, 32):
-                    if _day_i_ == 1 or _day_i_%5 == 0: __line__(_day_i_*24, str(_day_i_), 'major')
-                    else:                              __line__(_day_i_*24, None,         'tick')
-            elif __distanceBetweenLines__(0,5*24)  >= pixel_goal:
-                __addDescription__(_enum_, 4, 4)
-                for _day_i_ in range(1, 32, 1):
-                    if   _day_i_    == 1: __line__(_day_i_*24, str(1),       'major')
-                    elif _day_i_%10 == 0: __line__(_day_i_*24, str(_day_i_), 'major')
-                    elif _day_i_%5  == 0: __line__(_day_i_*24, None,         'tick')
-                    else:                 __line__(_day_i_*24, None,         'subtick')
+                        __line__(_hour_i_*3600, str(_hour_i_), 'major')
+                        for _minute_i_ in range(1, 60):
+                            if   _minute_i_%15 == 0: __line__(_hour_i_*3600+_minute_i_*60, str(_minute_i_), 'minor')
+                            elif _minute_i_%5  == 0: __line__(_hour_i_*3600+_minute_i_*60, None,            'tick')
+                            else:                    __line__(_hour_i_*3600+_minute_i_*60, None,            'subtick')
+                elif __distanceBetweenLines__(0,     15*60) >= pixel_goal:
+                    __addDescription__(_enum_, 2, 5)
+                    for _hour_i_ in range(24):
+                        __line__(_hour_i_*3600, str(_hour_i_), 'major')
+                        for _minute_i_ in range(1, 60):
+                            if   _minute_i_%15 == 0: __line__(_hour_i_*3600+_minute_i_*60, str(_minute_i_), 'minor')
+                            elif _minute_i_%5  == 0: __line__(_hour_i_*3600+_minute_i_*60, None,            'tick')
+                elif __distanceBetweenLines__(0,     30*60) >= pixel_goal:
+                    __addDescription__(_enum_, 3, 5)
+                    for _hour_i_ in range(24):
+                        if   _hour_i_%3  == 0: __line__(_hour_i_*3600, str(_hour_i_), 'major')
+                        else:                  __line__(_hour_i_*3600, str(_hour_i_), 'minor')
+                elif __distanceBetweenLines__(0,     45*60) >= pixel_goal:
+                    __addDescription__(_enum_, 4, 5)
+                    for _hour_i_ in range(24):
+                        if   _hour_i_%6  == 0: __line__(_hour_i_*3600, str(_hour_i_), 'major')
+                        elif _hour_i_%3 == 0:  __line__(_hour_i_*3600, str(_hour_i_), 'minor')
+                        else:                  __line__(_hour_i_*3600, None,          'tick')
+                elif __distanceBetweenLines__(0,     60*60) >= pixel_goal:
+                    __addDescription__(_enum_, 5, 5)
+                    for _hour_i_ in range(24):
+                        if   _hour_i_%12 == 0: __line__(_hour_i_*3600, str(_hour_i_), 'major')
+                        elif _hour_i_%3  == 0: __line__(_hour_i_*3600, None,          'tick')
+                        else:                  __line__(_hour_i_*3600, None,          'subtick')
+            #
+            # Minutes *OR* Seconds ... it's the same
+            #
+            elif _enum_ == self.p2s.PT_Mp or _enum_ == self.p2s.PT_Sp:
+                if   __distanceBetweenLines__(0,  0.5) >= pixel_goal:
+                    __addDescription__(_enum_, 1, 4)
+                    for i in range(0, 60):
+                        if   i%15 == 0: __line__(i, str(i), 'major')
+                        elif i%5  == 0: __line__(i, str(i), 'minor')
+                        else:           __line__(i, str(i), 'tick')
+                elif __distanceBetweenLines__(0,  1) >= pixel_goal:
+                    __addDescription__(_enum_, 2, 4)
+                    for i in range(0, 60):
+                        if   i%15 == 0: __line__(i, str(i), 'major')
+                        elif i%5  == 0: __line__(i, str(i), 'minor')
+                        else:           __line__(i, None,   'tick')
+                elif __distanceBetweenLines__(0, 2) >= pixel_goal:
+                    __addDescription__(_enum_, 3, 4)
+                    for i in range(0, 60):
+                        if   i%15 == 0: __line__(i, str(i), 'major')
+                        elif i%5  == 0: __line__(i, str(i), 'tick')
+                        else:           __line__(i, None,   'subtick')
+                elif __distanceBetweenLines__(0, 3) >= pixel_goal:
+                    __addDescription__(_enum_, 4, 4)
+                    for i in range(0, 60, 15):
+                        if   i%30 == 0: __line__(i, str(i), 'major')
+                        else:           __line__(i, str(i), 'tick')
+            #
+            # Minutes Seconds
+            #
+            elif _enum_ == self.p2s.PT_M_Sp:
+                if   __distanceBetweenLines__(0,  1)    >= pixel_goal:
+                    __addDescription__(_enum_, 1, 6)
+                    for _min_ in range(0, 60):
+                        __line__(_min_*60, str(_min_)+':00', 'major')
+                        for _sec_ in range(1, 60):
+                            if _sec_%15 == 0: __line__(_min_*60 + _sec_, str(_sec_), 'minor')
+                            else:             __line__(_min_*60 + _sec_, None,       'tick')
+                elif __distanceBetweenLines__(0,  5)    >= pixel_goal:
+                    __addDescription__(_enum_, 2, 6)
+                    for _min_ in range(0, 60):
+                        __line__(_min_*60, str(_min_), 'major')
+                        for _sec_ in range(0, 60, 5):
+                            if _sec_      == 0: continue
+                            elif _sec_%15 == 0: __line__(_min_*60 + _sec_, str(_sec_), 'minor')
+                            else:               __line__(_min_*60 + _sec_, None,       'tick')
+                elif __distanceBetweenLines__(0, 15)    >= pixel_goal:
+                    __addDescription__(_enum_, 3, 6)
+                    for _min_ in range(0, 60):
+                        __line__(_min_*60, str(_min_), 'major')
+                        for _sec_ in range(0, 60, 15):
+                            if _sec_      == 0: continue
+                            else:               __line__(_min_*60 + _sec_, None,       'tick')
+                elif __distanceBetweenLines__(0, 30)    >= pixel_goal:
+                    __addDescription__(_enum_, 4, 6)
+                    for _min_ in range(0, 60):
+                        __line__(_min_*60, str(_min_), 'major')
+                        __line__(_min_*60 + 30, '30', 'tick')
+                elif __distanceBetweenLines__(0, 60)    >= pixel_goal:
+                    __addDescription__(_enum_, 5, 6)
+                    for _min_ in range(0, 60):
+                        if _min_%5 == 0: __line__(_min_*60, str(_min_), 'major')
+                        else:            __line__(_min_*60, None,       'tick')
+                elif __distanceBetweenLines__(0, 60*5)  >= pixel_goal:
+                    __addDescription__(_enum_, 6, 6)
+                    for _min_ in range(0, 60, 5):
+                        if _min_%15 == 0: __line__(_min_*60, str(_min_), 'major')
+                        else:             __line__(_min_*60, None,       'tick')
+            #
+            # Else... raise an exception
+            #
+            else: raise ValueError(f'XYp.__renderContext_periodicTime__():  _enum_: {_enum_} is not valid')
+
+        __chain__()
         #
-        # Day of Month Hour Minute
+        # Fallback: no case fits -- the plot is too narrow for even the coarsest one to
+        # give its lines pixel_goal apart, and 14 of the 17 chains end without an else.
+        # These used to draw bare axes, silently (PLANNING.md §5
+        # C-xyp-periodic-no-fallback).  Take the coarsest case -- found by running the
+        # chain once to record every case's line spacing, then again with only the widest
+        # one allowed through, collecting its lines rather than drawing them -- and keep
+        # every k-th labelled major line, k chosen so kept labels sit pixel_goal apart.
+        # Counted from the start of the cycle, so a thinned month axis reads jan, apr,
+        # jul, oct.
         #
-        elif _enum_ == self.p2s.PT_d_H_Mp:
-            if   __distanceBetweenLines__(0, 1)     >= pixel_goal:
-                __addDescription__(_enum_, 1, 3)
-                for _day_i_ in range(1, 32):
-                    __line__(_day_i_*24*60, str(_day_i_), 'major')
-                    for _hour_i_ in range(0, 24):
-                        __line__(_day_i_*24*60 + _hour_i_*60, str(_hour_i_), 'minor')
-                        for _minute_i_ in range(0, 60):
-                            if _minute_i_%10 == 0: __line__(_day_i_*24*60 + _hour_i_*60 + _minute_i_, str(_minute_i_), 'tick')
-                            else:                  __line__(_day_i_*24*60 + _hour_i_*60 + _minute_i_, None,            'subtick')
-            elif __distanceBetweenLines__(0, 24)    >= pixel_goal:
-                __addDescription__(_enum_, 2, 3)
-                for _day_i_ in range(1, 32):
-                    __line__(_day_i_*24*60, str(_day_i_), 'major')
-                    for _hour_i_ in range(0, 24):
-                        if _hour_i_%6 == 0: __line__(_day_i_*24*60 + _hour_i_*60, str(_hour_i_), 'tick')
-                        else:               __line__(_day_i_*24*60 + _hour_i_*60, None,          'subtick')
-            elif __distanceBetweenLines__(0, 24*60) >= pixel_goal:
-                __addDescription__(_enum_, 3, 3)
-                for _day_i_ in range(1, 32):
-                    __line__(_day_i_*24*60, str(_day_i_), 'major')
-        #
-        # Hour
-        #
-        elif _enum_ == self.p2s.PT_Hp:
-            if   __distanceBetweenLines__(0,  0.5) >= pixel_goal:
-                __addDescription__(_enum_, 1, 2)
-                for i in range(0, 24): __line__(i, str(i), 'major')
-            else:
-                __addDescription__(_enum_, 2, 2)
-                for i in range(0, 24):
-                    if   i%3 == 0: __line__(i, str(i), 'major')
-                    else:          __line__(i, None,   'tick')
-        #
-        # Hour Minute
-        #
-        elif _enum_ == self.p2s.PT_H_Mp:
-            if   __distanceBetweenLines__(0, 5)     >= pixel_goal:
-                __addDescription__(_enum_, 1, 5)
-                for _hour_i_ in range(0, 24):
-                    __line__(_hour_i_*60,    str(_hour_i_), 'major')
-                    for _minute_i_ in range(1, 60):
-                        if   _minute_i_%15 == 0: __line__(_hour_i_*60+_minute_i_, str(30),       'minor')
-                        elif _minute_i_%5  == 0: __line__(_hour_i_*60+_minute_i_, None,          'tick')
-                        else:                    __line__(_hour_i_*60+_minute_i_, None,          'subtick')
-            elif __distanceBetweenLines__(0, 20)   >= pixel_goal:
-                __addDescription__(_enum_, 2, 5)
-                for _hour_i_ in range(0, 24):
-                    __line__(_hour_i_*60,    str(_hour_i_), 'major')
-                    __line__(_hour_i_*60+15, None,          'tick')
-                    __line__(_hour_i_*60+30, str(30),       'minor')
-                    __line__(_hour_i_*60+45, None,          'tick')
-            elif __distanceBetweenLines__(0,   30) >= pixel_goal:
-                __addDescription__(_enum_, 3, 5)
-                for _hour_i_ in range(0, 24):
-                    if   _hour_i_%3 == 0: __line__(_hour_i_*60, str(_hour_i_), 'major')
-                    else:                 __line__(_hour_i_*60, None,          'tick')
-                    __line__(_hour_i_*60+30, None, 'subtick')
-            elif __distanceBetweenLines__(0,  40)  >= pixel_goal:
-                __addDescription__(_enum_, 4, 5)
-                for _hour_i_ in range(0, 24):
-                    if   _hour_i_%6 == 0: __line__(_hour_i_*60, str(_hour_i_), 'major')
-                    elif _hour_i_%3 == 0: __line__(_hour_i_*60, None,          'tick')
-                    else:                 __line__(_hour_i_*60, None,          'subtick')
-            else:
-                __addDescription__(_enum_, 5, 5)
-                for i in range(0, 24):
-                    if   i%6 == 0: __line__(60*i, str(i), 'major')
-                    else:          __line__(60*i, None,   'tick')
-        #
-        # Hour Minute Second
-        #
-        elif _enum_ == self.p2s.PT_H_M_Sp:
-            if   __distanceBetweenLines__(0,      5*60) >= pixel_goal:
-                __addDescription__(_enum_, 1, 5)
-                for _hour_i_ in range(24):
-                    __line__(_hour_i_*3600, str(_hour_i_), 'major')
-                    for _minute_i_ in range(1, 60):
-                        if   _minute_i_%15 == 0: __line__(_hour_i_*3600+_minute_i_*60, str(_minute_i_), 'minor')
-                        elif _minute_i_%5  == 0: __line__(_hour_i_*3600+_minute_i_*60, None,            'tick')
-                        else:                    __line__(_hour_i_*3600+_minute_i_*60, None,            'subtick')
-            elif __distanceBetweenLines__(0,     15*60) >= pixel_goal:
-                __addDescription__(_enum_, 2, 5)
-                for _hour_i_ in range(24):
-                    __line__(_hour_i_*3600, str(_hour_i_), 'major')
-                    for _minute_i_ in range(1, 60):
-                        if   _minute_i_%15 == 0: __line__(_hour_i_*3600+_minute_i_*60, str(_minute_i_), 'minor')
-                        elif _minute_i_%5  == 0: __line__(_hour_i_*3600+_minute_i_*60, None,            'tick')
-            elif __distanceBetweenLines__(0,     30*60) >= pixel_goal:
-                __addDescription__(_enum_, 3, 5)
-                for _hour_i_ in range(24):
-                    if   _hour_i_%3  == 0: __line__(_hour_i_*3600, str(_hour_i_), 'major')
-                    else:                  __line__(_hour_i_*3600, str(_hour_i_), 'minor')
-            elif __distanceBetweenLines__(0,     45*60) >= pixel_goal:
-                __addDescription__(_enum_, 4, 5)
-                for _hour_i_ in range(24):
-                    if   _hour_i_%6  == 0: __line__(_hour_i_*3600, str(_hour_i_), 'major')
-                    elif _hour_i_%3 == 0:  __line__(_hour_i_*3600, str(_hour_i_), 'minor')
-                    else:                  __line__(_hour_i_*3600, None,          'tick')
-            elif __distanceBetweenLines__(0,     60*60) >= pixel_goal:
-                __addDescription__(_enum_, 5, 5)
-                for _hour_i_ in range(24):
-                    if _hour_i_%12 == 0: __line__(_hour_i_*3600, str(_hour_i_), 'major')
-                    if _hour_i_%3  == 0: __line__(_hour_i_*3600, None,          'tick')
-                    else:                __line__(_hour_i_*3600, None,          'subtick')
-        #
-        # Minutes *OR* Seconds ... it's the same
-        #
-        elif _enum_ == self.p2s.PT_Mp or _enum_ == self.p2s.PT_Sp:
-            if   __distanceBetweenLines__(0,  0.5) >= pixel_goal:
-                __addDescription__(_enum_, 1, 4)
-                for i in range(0, 60):
-                    if   i%15 == 0: __line__(i, str(i), 'major')
-                    elif i%5  == 0: __line__(i, str(i), 'minor')
-                    else:           __line__(i, str(i), 'tick')
-            elif __distanceBetweenLines__(0,  1) >= pixel_goal:
-                __addDescription__(_enum_, 2, 4)
-                for i in range(0, 60):
-                    if   i%15 == 0: __line__(i, str(i), 'major')
-                    elif i%5  == 0: __line__(i, str(i), 'minor')
-                    else:           __line__(i, None,   'tick')
-            elif __distanceBetweenLines__(0, 2) >= pixel_goal:
-                __addDescription__(_enum_, 3, 4)
-                for i in range(0, 60):
-                    if   i%15 == 0: __line__(i, str(i), 'major')
-                    elif i%5  == 0: __line__(i, str(i), 'tick')
-                    else:           __line__(i, None,   'subtick')
-            elif __distanceBetweenLines__(0, 3) >= pixel_goal:
-                __addDescription__(_enum_, 4, 4)
-                for i in range(0, 60, 15):
-                    if   i%30 == 0: __line__(i, str(i), 'major')
-                    else:           __line__(i, str(i), 'tick')
-        #
-        # Minutes Seconds
-        #
-        elif _enum_ == self.p2s.PT_M_Sp:
-            if   __distanceBetweenLines__(0,  1)    >= pixel_goal:
-                __addDescription__(_enum_, 1, 6)
-                for _min_ in range(0, 60):
-                    __line__(_min_*60, str(_min_)+':00', 'major')
-                    for _sec_ in range(1, 60):
-                        if _sec_%15 == 0: __line__(_min_*60 + _sec_, str(_sec_), 'minor')
-                        else:             __line__(_min_*60 + _sec_, None,       'tick')
-            elif __distanceBetweenLines__(0,  5)    >= pixel_goal:
-                __addDescription__(_enum_, 2, 6)
-                for _min_ in range(0, 60):
-                    __line__(_min_*60, str(_min_), 'major')
-                    for _sec_ in range(0, 60, 5):
-                        if _sec_      == 0: continue
-                        elif _sec_%15 == 0: __line__(_min_*60 + _sec_, str(_sec_), 'minor')
-                        else:               __line__(_min_*60 + _sec_, None,       'tick')
-            elif __distanceBetweenLines__(0, 15)    >= pixel_goal:
-                __addDescription__(_enum_, 3, 6)
-                for _min_ in range(0, 60):
-                    __line__(_min_*60, str(_min_), 'major')
-                    for _sec_ in range(0, 60, 15):
-                        if _sec_      == 0: continue
-                        else:               __line__(_min_*60 + _sec_, None,       'tick')
-            elif __distanceBetweenLines__(0, 30)    >= pixel_goal:
-                __addDescription__(_enum_, 4, 6)
-                for _min_ in range(0, 60):
-                    __line__(_min_*60, str(_min_), 'major')
-                    __line__(_min_*60 + 30, '30', 'tick')
-            elif __distanceBetweenLines__(0, 60)    >= pixel_goal:
-                __addDescription__(_enum_, 5, 6)
-                for _min_ in range(0, 60):
-                    if _min_%5 == 0: __line__(_min_*60, str(_min_), 'major')
-                    else:            __line__(_min_*60, None,       'tick')
-            elif __distanceBetweenLines__(0, 60*5)  >= pixel_goal:
-                __addDescription__(_enum_, 6, 6)
-                for _min_ in range(0, 60, 5):
-                    if _min_%15 == 0: __line__(_min_*60, str(_min_), 'major')
-                    else:             __line__(_min_*60, None,       'tick')
-        #
-        # Else... raise an exception
-        #
-        else: raise ValueError(f'XYp.__renderContext_periodicTime__():  _enum_: {_enum_} is not valid')
+        if not _mode_['described']:
+            _spans_: list = []
+            _mode_['probe'], _mode_['take'] = _spans_, None
+            __chain__()
+            if _spans_:
+                _lines_: list = []
+                _mode_['take'], _mode_['collect'] = max(_spans_), _lines_
+                __chain__()
+                _mode_['probe'] = _mode_['collect'] = None
+                # the case's labelled majors, so a thinned axis stays at one level (jan, apr,
+                # jul, oct -- not jan, 15, apr, 15); every labelled line when fewer than two
+                _labelled_ = sorted({(w, t, k) for w, t, k in _lines_ if t is not None}, key=lambda _l_: _l_[0])
+                if len([_ln_ for _ln_ in _labelled_ if _ln_[2] == 'major']) >= 2:
+                    _labelled_ = [_ln_ for _ln_ in _labelled_ if _ln_[2] == 'major']
+                _gaps_ = [__distanceBetweenLines__(a[0], b[0]) for a, b in zip(_labelled_, _labelled_[1:])]
+                _gaps_ = [g for g in _gaps_ if g > 0]
+                if _labelled_ and _gaps_:
+                    _k_    = max(1, math.ceil(pixel_goal / min(_gaps_)))
+                    _kept_ = [_ln_ for i, _ln_ in enumerate(_labelled_) if i % _k_ == 0 and _min_world_ <= _ln_[0] <= _max_world_]
+                    if _kept_:
+                        __addDescription__(_enum_, 0, _mode_['out_of'])
+                        for _w_, _t_, _kind_ in _kept_: __line__(_w_, _t_, _kind_)
 
         #
         # Join the lines to return the rendering
@@ -2949,8 +3296,16 @@ class XYp(P2SBackgroundMixin, ExportMixin):
         # Round that value to the closest time interval
         _rounder_        = _closest_tuple_[3]
         dt_start_rounded = _truncateToStep_(dt_start, _rounder_)
-        if isinstance(dt_start, date): dt_start = datetime.combine(dt_start, datetime.min.time())
-        if isinstance(dt_end,   date): dt_end   = datetime.combine(dt_end,   datetime.max.time())
+        # Only a pure date becomes a datetime here, and at midnight at both ends -- the
+        # instants a Date column plots at, and the ones _sec_total_ above was measured
+        # between.  datetime is a SUBCLASS of date, so `isinstance(x, date)` alone caught
+        # every datetime too: it moved the start back to midnight and the end on to
+        # 23:59:59.999999 while _sec_total_ kept the real span, so every gridline of an
+        # axis not starting at midnight was labelled with the wrong time (06:00 drawn
+        # where 12:00 is), and the loop ran on to the end of the last day, off the plot.
+        # Same trap as _axisEpochSeconds_ above.
+        if isinstance(dt_start, date) and not isinstance(dt_start, datetime): dt_start = datetime.combine(dt_start, datetime.min.time())
+        if isinstance(dt_end,   date) and not isinstance(dt_end,   datetime): dt_end   = datetime.combine(dt_end,   datetime.min.time())
         # Iterate through the time interval & construct the svg
         _dt_             = dt_start_rounded
         _display_format_ = _closest_tuple_[2]
@@ -2966,18 +3321,23 @@ class XYp(P2SBackgroundMixin, ExportMixin):
                     _x1_, _y1_ = plot_origin[0] + _v_, plot_origin[1]
                     _x2_, _y2_ = plot_origin[0] + _v_, plot_origin[1] - plot_wxh[1]
                     _svg_.append(f'<line x1="{_x1_}" y1="{_y1_}" x2="{_x2_}" y2="{_y2_}" stroke="{_inner_color_}" stroke-width="0.5" />')
-                    _svg_.append(self.p2s.svgText(_str_, _x1_, _y2_ + self.txt_h/2.0, txt_h=self.txt_h*0.8, color=_text_color_, rotation=90))
+                    # A rotated label's glyphs lie to the right of its gridline; one too close to
+                    # the canvas edge to fit is left off rather than drawn cut in half
+                    _fits_ = _x1_ + self.txt_h*0.6 <= self.wxh[0]
+                    if _fits_: _svg_.append(self.p2s.svgText(_str_, _x1_, _y2_ + self.txt_h/2.0, txt_h=self.txt_h*0.8, color=_text_color_, rotation=90))
                     if dl is not None:
                         dl.line(_x1_, _y1_, _x2_, _y2_, _inner_color_, width=0.5)
-                        dl.text(self.p2s, _str_, _x1_, _y2_ + self.txt_h/2.0, txt_h=self.txt_h*0.8, color=_text_color_, rotation=90, svg='')
+                        if _fits_: dl.text(self.p2s, _str_, _x1_, _y2_ + self.txt_h/2.0, txt_h=self.txt_h*0.8, color=_text_color_, rotation=90, svg='')
                 else:
                     _x1_, _y1_ = plot_origin[0],               plot_origin[1] - _v_
                     _x2_, _y2_ = plot_origin[0] + plot_wxh[0], plot_origin[1] - _v_
                     _svg_.append(f'<line x1="{_x1_}" y1="{_y1_}" x2="{_x2_}" y2="{_y2_}" stroke="{_inner_color_}" stroke-width="0.5" />')
-                    _svg_.append(self.p2s.svgText(_str_, _x1_ + self.txt_h/2.0, _y2_, txt_h=self.txt_h*0.8, color=_text_color_))
+                    # ... and a y label's glyphs rise above its gridline: same rule at the top edge
+                    _fits_ = _y2_ - self.txt_h*0.6 >= 0
+                    if _fits_: _svg_.append(self.p2s.svgText(_str_, _x1_ + self.txt_h/2.0, _y2_, txt_h=self.txt_h*0.8, color=_text_color_))
                     if dl is not None:
                         dl.line(_x1_, _y1_, _x2_, _y2_, _inner_color_, width=0.5)
-                        dl.text(self.p2s, _str_, _x1_ + self.txt_h/2.0, _y2_, txt_h=self.txt_h*0.8, color=_text_color_, svg='')
+                        if _fits_: dl.text(self.p2s, _str_, _x1_ + self.txt_h/2.0, _y2_, txt_h=self.txt_h*0.8, color=_text_color_, svg='')
             _dt_ += _time_delta_
         return _svg_
 
@@ -3002,9 +3362,11 @@ class XYp(P2SBackgroundMixin, ExportMixin):
                            ('y', _h_, w_context, self.y_clean)]:
                 _axis_, _dim_, _screen_dim_, _clean_ = _quad_
                 if _screen_dim_ == 0: continue # meaning that a guardrail kicked in
-                # Find the min value & pull the label -- reformat if necessary
-                if len(self.df_flat) > 0: _min_cell_label_ = self.df_flat[f'__{_axis_}__'][self.df_flat[f'__{_axis_}i__'].arg_min()]
-                else:                     _min_cell_label_ = None
+                # Find the min value & pull the label -- reformat if necessary.  From the
+                # frame before the range filter (__resolveRanges__()): the window this
+                # axis is drawn over does not shrink when the OTHER axis's range drops rows.
+                _extent_ = self.x_label_extent if _axis_ == 'x' else self.y_label_extent
+                _min_cell_label_ = None if _extent_ is None else _extent_[0]
                 if isinstance(_min_cell_label_, dict): _min_cell_label_ = '|'.join([str(_) for _ in list(_min_cell_label_.values())])
                 # A numeric axis labels its plot edges, and those are the resolved window
                 # (__resolveRanges__()) -- with aspect= that is wider than the data and
@@ -3022,9 +3384,10 @@ class XYp(P2SBackgroundMixin, ExportMixin):
                     _min_cell_label_ = self.y_range[0]
                 if   _axis_ == 'x' and self.x_shared_label_range is not None: _min_cell_label_ = self.x_shared_label_range[0]
                 elif _axis_ == 'y' and self.y_shared_label_range is not None: _min_cell_label_ = self.y_shared_label_range[0]
+                _date_axis_ = self.p2s.dateColumn(self.df_flat, f'__{_axis_}__')
+                if _date_axis_: _min_cell_label_ = _dateAxisLabel_(_min_cell_label_)
                 # Find the max value & pull the label -- reformat if necessary
-                if len(self.df_flat) > 0: _max_cell_label_ = self.df_flat[f'__{_axis_}__'][self.df_flat[f'__{_axis_}i__'].arg_max()]
-                else:                     _max_cell_label_ = None
+                _max_cell_label_ = None if _extent_ is None else _extent_[1]
                 if isinstance(_max_cell_label_, dict): _max_cell_label_ = '|'.join([str(_) for _ in list(_max_cell_label_.values())])
                 if   _eff_ is not None and _numeric_axis_:
                     _max_cell_label_ = _eff_[1]
@@ -3036,6 +3399,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
                     _max_cell_label_ = self.y_range[1]
                 if   _axis_ == 'x' and self.x_shared_label_range is not None: _max_cell_label_ = self.x_shared_label_range[1]
                 elif _axis_ == 'y' and self.y_shared_label_range is not None: _max_cell_label_ = self.y_shared_label_range[1]
+                if _date_axis_: _max_cell_label_ = _dateAxisLabel_(_max_cell_label_)
                 # Helper to further format the labels based on the width available
                 _label_left_, _label_center_, _label_right_ = self.__formatLabels__(_axis_, _min_cell_label_, _max_cell_label_, _dim_, _clean_)
                 l_len, _, r_len = self.p2s.textLength(_label_left_,  self.txt_h), self.p2s.textLength(_label_center_, self.txt_h), self.p2s.textLength(_label_right_,  self.txt_h)
@@ -3054,21 +3418,23 @@ class XYp(P2SBackgroundMixin, ExportMixin):
                 else: raise ValueError(f'XYp.__renderContext__(): Unrecognized axis {_axis_} (shouldn\'t be possible)')
             # Render the internal grid lines
             # -- helper functions
+            # (an unconstrained axis's extent is read from before the range filter -- see
+            # __resolveRanges__(); the frame after it can be narrower than the dots' window)
             def __min__(col: str) -> Any:
                 if col == 'x':
                     if self.x_range is not None: return self.x_range[0]
-                    return self.df_flat['__x__'].min()
+                    return None if self.x_label_extent is None else self.x_label_extent[0]
                 if col == 'y':
                     if self.y_range is not None: return self.y_range[0]
-                    return self.df_flat['__y__'].min()
+                    return None if self.y_label_extent is None else self.y_label_extent[0]
                 raise ValueError(f'XYp.__renderContext__().__min__(): Unrecognized axis {col} (shouldn\'t be possible)')
             def __max__(col: str) -> Any:
                 if col == 'x':
                     if self.x_range is not None: return self.x_range[1]
-                    return self.df_flat['__x__'].max()
+                    return None if self.x_label_extent is None else self.x_label_extent[1]
                 if col == 'y':
                     if self.y_range is not None: return self.y_range[1]
-                    return self.df_flat['__y__'].max()
+                    return None if self.y_label_extent is None else self.y_label_extent[1]
                 raise ValueError(f'XYp.__renderContext__().__max__(): Unrecognized axis {col} (shouldn\'t be possible)')
             # Numeric grid lines have to come from the same window the dots were
             # transformed with (__resolveRanges__()) rather than a fresh min/max of the
@@ -3080,34 +3446,39 @@ class XYp(P2SBackgroundMixin, ExportMixin):
                 _eff_ = self.x_effective_range if col == 'x' else self.y_effective_range
                 if _eff_ is not None: return _eff_
                 return (__min__(col), __max__(col))
-            # - x axis
-            if   self.p2s.dateColumn(self.df_flat, '__x__') or self.p2s.dateTimeColumn(self.df_flat, '__x__'):
-                _dt_context_ = self.__renderContext_linearTime__(__min__('x'), __max__('x'), xyo, (_w_, _h_), x_axis=True, dl=_dl_)
-                _svg_.extend(_dt_context_)
-            elif self.__axisIsPeriodicTime__(self.x_clean):
-                _periodic_context_ = self.__renderContext_periodicTime__(self.x_clean, __min__('x'), __max__('x'), xyo, (_w_, _h_), x_axis=True, dl=_dl_)
-                _svg_.extend(_periodic_context_)
-            elif self.p2s.numericColumn(self.df_flat, '__x__'):
-                _x_lo_, _x_hi_    = __numericRange__('x')
-                _numeric_context_ = self.__renderContext_numeric__(_x_lo_, _x_hi_, xyo, (_w_, _h_), x_axis=True, dl=_dl_)
-                _svg_.extend(_numeric_context_)
-            else:
-                _set_context_ = self.__renderContext_set__(xyo, (_w_, _h_), x_axis=True, dl=_dl_)
-                _svg_.extend(_set_context_)
-            # - y axis
-            if self.p2s.dateColumn(self.df_flat, '__y__') or self.p2s.dateTimeColumn(self.df_flat, '__y__'):
-                _dt_context_ = self.__renderContext_linearTime__(__min__('y'), __max__('y'), xyo, (_w_, _h_), x_axis=False, dl=_dl_)
-                _svg_.extend(_dt_context_)
-            elif self.__axisIsPeriodicTime__(self.y_clean):
-                _periodic_context_ = self.__renderContext_periodicTime__(self.y_clean, __min__('y'), __max__('y'), xyo, (_w_, _h_), x_axis=False, dl=_dl_)
-                _svg_.extend(_periodic_context_)
-            elif self.p2s.numericColumn(self.df_flat, '__y__'):
-                _y_lo_, _y_hi_    = __numericRange__('y')
-                _numeric_context_ = self.__renderContext_numeric__(_y_lo_, _y_hi_, xyo, (_w_, _h_), x_axis=False, dl=_dl_)
-                _svg_.extend(_numeric_context_)
-            else:
-                _set_context_ = self.__renderContext_set__(xyo, (_w_, _h_), x_axis=False, dl=_dl_)
-                _svg_.extend(_set_context_)
+            # The gridlines, and the small labels drawn along them.  draw_grid=False keeps
+            # the axes -- the outline, the end labels and the axis names above -- and drops
+            # the lines inside the plot, which draw_context could only drop with everything
+            # else (user feedback 2026-09-27).
+            if self.draw_grid:
+                # - x axis
+                if   self.p2s.dateColumn(self.df_flat, '__x__') or self.p2s.dateTimeColumn(self.df_flat, '__x__'):
+                    _dt_context_ = self.__renderContext_linearTime__(__min__('x'), __max__('x'), xyo, (_w_, _h_), x_axis=True, dl=_dl_)
+                    _svg_.extend(_dt_context_)
+                elif self.__axisIsPeriodicTime__(self.x_clean):
+                    _periodic_context_ = self.__renderContext_periodicTime__(self.x_clean, __min__('x'), __max__('x'), xyo, (_w_, _h_), x_axis=True, dl=_dl_)
+                    _svg_.extend(_periodic_context_)
+                elif self.p2s.numericColumn(self.df_flat, '__x__'):
+                    _x_lo_, _x_hi_    = __numericRange__('x')
+                    _numeric_context_ = self.__renderContext_numeric__(_x_lo_, _x_hi_, xyo, (_w_, _h_), x_axis=True, dl=_dl_)
+                    _svg_.extend(_numeric_context_)
+                else:
+                    _set_context_ = self.__renderContext_set__(xyo, (_w_, _h_), x_axis=True, dl=_dl_)
+                    _svg_.extend(_set_context_)
+                # - y axis
+                if self.p2s.dateColumn(self.df_flat, '__y__') or self.p2s.dateTimeColumn(self.df_flat, '__y__'):
+                    _dt_context_ = self.__renderContext_linearTime__(__min__('y'), __max__('y'), xyo, (_w_, _h_), x_axis=False, dl=_dl_)
+                    _svg_.extend(_dt_context_)
+                elif self.__axisIsPeriodicTime__(self.y_clean):
+                    _periodic_context_ = self.__renderContext_periodicTime__(self.y_clean, __min__('y'), __max__('y'), xyo, (_w_, _h_), x_axis=False, dl=_dl_)
+                    _svg_.extend(_periodic_context_)
+                elif self.p2s.numericColumn(self.df_flat, '__y__'):
+                    _y_lo_, _y_hi_    = __numericRange__('y')
+                    _numeric_context_ = self.__renderContext_numeric__(_y_lo_, _y_hi_, xyo, (_w_, _h_), x_axis=False, dl=_dl_)
+                    _svg_.extend(_numeric_context_)
+                else:
+                    _set_context_ = self.__renderContext_set__(xyo, (_w_, _h_), x_axis=False, dl=_dl_)
+                    _svg_.extend(_set_context_)
             # Render the plot outline (stroke-only rect -> 4 GPU line instances)
             _svg_.append(f'<rect x="{xyo[0]}" y="{xyo[1]-_h_}" width="{_w_}" height="{_h_}" stroke="{_axis_color_}" fill="none" stroke-width="0.25" />')
             _dl_.line(xyo[0],      xyo[1]-_h_, xyo[0]+_w_, xyo[1]-_h_, _axis_color_, width=0.25)
@@ -3319,6 +3690,18 @@ class XYp(P2SBackgroundMixin, ExportMixin):
                        dash=dash, dash_phase=_phase_, svg_col=None)
 
     #
+    # __lineColorKey__() / __lineGroupKeys__() - what a line's GROUPBY colour is hashed
+    # from, and the keys that group a frame into its lines with that column carried along.
+    # The colour key is the line fields alone, so line_split_by= splits a line without
+    # recolouring it (see __cleanLineSplitBy__).
+    #
+    def __lineColorKey__(self, df: pl.DataFrame) -> str:
+        return '__line_color_key__' if '__line_color_key__' in df.columns else '__line__'
+
+    def __lineGroupKeys__(self, df: pl.DataFrame) -> list[str]:
+        return ['__line__'] + (['__line_color_key__'] if '__line_color_key__' in df.columns else [])
+
+    #
     # __renderLines_simple__()
     # - everything is a constant
     # - columns needed in the input dataframe: '__line__', '__xpx__', '__ypx__'
@@ -3355,11 +3738,11 @@ class XYp(P2SBackgroundMixin, ExportMixin):
                                  _dash_array_: list, _width_: float | None) -> list:
         _df_lines_ = df.with_columns(
             self.__coordinateAdjustOps__()
-        ).group_by('__line__', maintain_order=True).agg([
+        ).group_by(self.__lineGroupKeys__(df), maintain_order=True).agg([
             pl.format('L {} {}', '__xpx__', '__ypx__').alias('points'),
         ]).with_columns(
             pl.col('points').list.join(' ').str.replace('L', 'M', literal=True, n=1).alias('path_d'),
-            self.p2s.colorizeColumnPolarsOperations('__line__').alias('__line_color__')
+            self.p2s.colorizeColumnPolarsOperations(self.__lineColorKey__(df)).alias('__line_color__')
         ).with_columns(
             pl.format(
                 '<path d="{}" stroke="{}"/>',
@@ -3369,7 +3752,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
         )
 
         self.__lineSegmentsToDL__(
-            df.with_columns(self.p2s.colorizeColumnPolarsOperations('__line__').alias('__line_color__')),
+            df.with_columns(self.p2s.colorizeColumnPolarsOperations(self.__lineColorKey__(df)).alias('__line_color__')),
             self._dl_lines_, color_col='__line_color__', width=_width_,
             opacity=self.__gpuOpacityFromEnums__(_enums_),
             dash=self.__gpuDashFromEnums__(_enums_, _dash_array_))
@@ -3397,7 +3780,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
         else: raise ValueError(f'XYp.__renderLines_complex__():  self.p2s.LINESTYLE_* is not specified ({_enums_=})')
 
         # Determine the line color
-        if   self.p2s.LINECOLOR_GROUPBY           in _enums_: df = df.with_columns(self.p2s.colorizeColumnPolarsOperations('__line__').alias('__line_color__'))
+        if   self.p2s.LINECOLOR_GROUPBY           in _enums_: df = df.with_columns(self.p2s.colorizeColumnPolarsOperations(self.__lineColorKey__(df)).alias('__line_color__'))
         elif self.p2s.LINECOLOR_FIELD             in _enums_: df = df.with_columns(pl.col('__hexcolor__').alias('__line_color__'))
         elif self.p2s.LINECOLOR_SPECIFIED         in _enums_: df = df.with_columns(pl.lit(_color_).alias('__line_color__'))
         else: raise ValueError(f'XYp.__renderLines_complex__():  self.p2s.LINECOLOR_* is not specified ({_enums_=})')
@@ -3563,6 +3946,8 @@ class XYp(P2SBackgroundMixin, ExportMixin):
                 self.p2s.LINEOPACITY_FIELD_MEAN, self.p2s.LINEOPACITY_FIELD_VARIABLE} & _all_seen_enums_) > 0:
             # Use the dot renderer to do the work
             df_dot_level = self.__renderDots__(line_rendering_mode=True)
+            # a row whose line field is null keeps its dot but belongs to no line
+            df_dot_level = df_dot_level.filter(pl.col('__line__').is_not_null())
             # Sort according to line order
             if '__line_order_by__' in df_dot_level: df_dot_level = df_dot_level.sort(['__line__', '__line_order_by__']) # <--- the other rendering path
             else:                                   df_dot_level = df_dot_level.sort(['__line__', '__xpx__']) # <--- this varies from the other rendering path
@@ -3577,6 +3962,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
             # Sort according to line order
             if '__line_order_by__' in self.df_flat.columns: df_sorted = self.df_flat.sort('__line_order_by__') # <--- the other rendering path
             else:                                           df_sorted = self.df_flat.sort('__xi__') # <--- this varies from the other rendering path
+            df_sorted = df_sorted.filter(pl.col('__line__').is_not_null())   # no line for a null line field
             # For each definitional group of lines, route to the appropriate renderer (no complex path available here)
             for k, k_df in df_sorted.group_by('__line_index__', maintain_order=True):
                 _enums_, _color_, _dash_array_, _width_ = self.line_clean[k[0]][-1:-5:-1]
@@ -3599,12 +3985,12 @@ class XYp(P2SBackgroundMixin, ExportMixin):
                               self.p2s.CMAGNITUDE_MAXp,      self.p2s.CSTRETCHED_MAXp,
                               self.p2s.CSET_MAGNITUDEp,      self.p2s.CSET_STRETCHEDp]:
             if   _color_mode_ in [self.p2s.CROW_MAGNITUDEp,    self.p2s.CROW_STRETCHEDp]:    _agg_ops_.append(pl.len()                          .alias('__color_sum__'))
-            elif _color_mode_ in [self.p2s.CMAGNITUDE_SUMp,    self.p2s.CSTRETCHED_SUMp]:    _agg_ops_.append(pl.col('__color__').sum()         .alias('__color_sum__'))
+            elif _color_mode_ in [self.p2s.CMAGNITUDE_SUMp,    self.p2s.CSTRETCHED_SUMp]:    _agg_ops_.append(pl.when(pl.col('__color__').is_not_null().any()).then(pl.col('__color__').sum()).alias('__color_sum__'))
             elif _color_mode_ in [self.p2s.CMAGNITUDE_MINp,    self.p2s.CSTRETCHED_MINp]:    _agg_ops_.append(pl.col('__color__').min()         .alias('__color_sum__'))
             elif _color_mode_ in [self.p2s.CMAGNITUDE_MEDIANp, self.p2s.CSTRETCHED_MEDIANp]: _agg_ops_.append(pl.col('__color__').median()      .alias('__color_sum__'))
             elif _color_mode_ in [self.p2s.CMAGNITUDE_MEANp,   self.p2s.CSTRETCHED_MEANp]:   _agg_ops_.append(pl.col('__color__').mean()        .alias('__color_sum__'))
             elif _color_mode_ in [self.p2s.CMAGNITUDE_MAXp,    self.p2s.CSTRETCHED_MAXp]:    _agg_ops_.append(pl.col('__color__').max()         .alias('__color_sum__'))
-            elif _color_mode_ in [self.p2s.CSET_MAGNITUDEp,    self.p2s.CSET_STRETCHEDp]:    _agg_ops_.append(pl.col('__color__').unique().len().alias('__color_sum__'))
+            elif _color_mode_ in [self.p2s.CSET_MAGNITUDEp,    self.p2s.CSET_STRETCHEDp]:    _agg_ops_.append(pl.when(pl.col('__color__').is_not_null().any()).then(pl.col('__color__').drop_nulls().unique().len()).alias('__color_sum__'))
             # Apply the spectrum
             if   _color_mode_ in [self.p2s.CROW_MAGNITUDEp,  self.p2s.CMAGNITUDE_SUMp, self.p2s.CMAGNITUDE_MINp, self.p2s.CMAGNITUDE_MEDIANp,
                                   self.p2s.CMAGNITUDE_MEANp, self.p2s.CMAGNITUDE_MAXp, self.p2s.CSET_MAGNITUDEp]:
@@ -3629,26 +4015,33 @@ class XYp(P2SBackgroundMixin, ExportMixin):
                                         default=0.0,
                                         return_dtype=pl.Float64).alias('__color_norm__'))
                 else:
-                    _norm_ops_.append(pl.when(pl.col('__color_sum__').n_unique() == 1)
-                                        .then(pl.lit(0.0))
-                                        .otherwise((pl.col("__color_sum__").rank('dense') - 1) / (pl.col("__color_sum__").n_unique() - 1)).alias("__color_norm__"))
+                    _norm_ops_.append(pl.when(pl.col('__color_sum__').drop_nulls().n_unique() <= 1)
+                                        .then(pl.when(pl.col('__color_sum__').is_null()).then(None).otherwise(pl.lit(0.0)))
+                                        .otherwise((pl.col("__color_sum__").rank('dense') - 1) / (pl.col("__color_sum__").drop_nulls().n_unique() - 1)).alias("__color_norm__"))
             # Do the final conversion parts
             _spectrum_ops_  .extend(self.p2s.colorSpectrumPolarsOperations('__color_norm__', '__r__', '__g__', '__b__'))
             _tohexcolor_ops_.append(self.p2s.hexColorFromRGBTriplesPolarsOperations('__r__', '__g__', '__b__').alias('__hexcolor__'))
-            _fill_nulls_    .append(pl.col('__hexcolor__').fill_null(_color_error_))
+            # a pixel whose colour values are all null has no value to place on the spectrum
+            _fill_nulls_    .append(pl.col('__hexcolor__').fill_null(_color_default_))
             _shape_template_.append('fill="{__hexcolor__}"')
         elif _color_mode_ == self.p2s.CSETp:
-            _agg_ops_  .append(pl.col('__color__').cast(pl.String).unique().alias('__color_set__'))
+            _agg_ops_  .append(pl.col('__color__').cast(pl.String).drop_nulls().unique().alias('__color_set__'))
+            # A pixel holding several categories is no category's: it takes the default
+            # colour, as the __hexcolor__ branch below gives one.  It used to be marked -1
+            # and hashed, which is the colour of a real category named "-1" (PLANNING.md §5
+            # C-xyp-cset-mixed-pixel).
             _norm_ops_ .append(pl.when(pl.col('__color_set__').list.len() == 1)
-                                 .then(pl.col('__color_set__').list.get(0))
-                                 .otherwise(pl.lit(-1)).alias('__set_element__'))
-            _tohexcolor_ops_.append(self.p2s.colorizeColumnPolarsOperations('__set_element__').alias('__hexcolor__'))
+                                 .then(pl.col('__color_set__').list.get(0, null_on_oob=True))
+                                 .otherwise(pl.lit(None, dtype=pl.String)).alias('__set_element__'))
+            _tohexcolor_ops_.append(pl.when(pl.col('__color_set__').list.len() == 1)
+                                      .then(self.p2s.colorizeColumnPolarsOperations('__set_element__'))
+                                      .otherwise(pl.lit(_color_default_)).alias('__hexcolor__'))
             _fill_nulls_    .append(pl.col('__hexcolor__').fill_null(_color_error_))
             _shape_template_.append('fill="{__hexcolor__}"')
         elif '__hexcolor__' in self.df_flat.columns:
-            _agg_ops_  .append(pl.col('__hexcolor__').unique().alias('__hexcolor_set__'))
+            _agg_ops_  .append(pl.col('__hexcolor__').drop_nulls().unique().alias('__hexcolor_set__'))
             _norm_ops_ .append(pl.when(pl.col('__hexcolor_set__').list.len() == 1)
-                                 .then(pl.col('__hexcolor_set__').list.get(0))
+                                 .then(pl.col('__hexcolor_set__').list.get(0, null_on_oob=True))
                                  .otherwise(pl.lit(_color_default_)).alias('__hexcolor__'))
             _fill_nulls_    .append(pl.col('__hexcolor__').fill_null(_color_error_))
             _shape_template_.append('fill="{__hexcolor__}"')
@@ -3658,7 +4051,14 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     # - populates the provided operation lists with dot-size and opacity pipeline ops
     # - mutates _agg_ops_, _norm_ops_, _shape_template_ in place
     #
-    def __buildSizeAndOpacityOps__(self, _agg_ops_: list, _norm_ops_: list, _shape_template_: list) -> None:
+    # - line_mode: the frame is grouped per (pixel, line), for a line's width / opacity.
+    #   Its values are still placed on the drawn DOTS' range -- the per-pixel values'
+    #   min..max -- so one number draws at one size whether as a dot or as a line; on its
+    #   own per-(pixel, line) range a line did not match the dots it joined (PLANNING.md §5
+    #   C-xyp-line-mean-scale)
+    #
+    def __buildSizeAndOpacityOps__(self, _agg_ops_: list, _norm_ops_: list, _shape_template_: list,
+                                   line_mode: bool = False) -> None:
         # PLANNING.md S1: the normalization below is a raw float ratio, so r= and
         # fill-opacity= serialize 13-16 fractional digits.  Rounded at the column (the last
         # element of each tuple) rather than on the finished string.  Radius is pixels, so 2
@@ -3668,24 +4068,33 @@ class XYp(P2SBackgroundMixin, ExportMixin):
                         (self.opacity,  '__opacity__',  '__opacity_sum__',  '__fill_opacity__', 'fill-opacity', self.opacity_range,  self.opacity_enums,  3)]:
             _var_, _flat_column_, _sum_column_, _final_column_, _svg_attribute_, _range_, _enums_, _digits_ = _tuple_
 
+            # The per-group value this attribute encodes: rows, distinct values, or a sum
+            # -- ignoring nulls, and null itself where every value is null
+            _any_ = pl.col(_flat_column_).is_not_null().any()
+            if self.p2s.ROW_COUNTp in _enums_:                   _sum_expr_ = pl.len()
+            elif _flat_column_ not in self.df_flat.columns:      _sum_expr_ = None
+            elif self.p2s.SETp in _enums_ or \
+                 not self.p2s.numericColumn(self.df_flat, _flat_column_): _sum_expr_ = pl.when(_any_).then(pl.col(_flat_column_).drop_nulls().unique().len())
+            else:                                                _sum_expr_ = pl.when(_any_).then(pl.col(_flat_column_).sum())
+            # a null value draws at xyp's default: dot size 1, fully opaque
+            _null_value_ = 1.0
+
             if _sum_column_ == '__dot_size_sum__' and self.dot_size_global_min is not None:
                 _norm_min_ = pl.lit(float(self.dot_size_global_min))
                 _norm_max_ = pl.lit(float(self.dot_size_global_max))
+            elif line_mode and _sum_expr_ is not None and len(self.df_flat) > 0:
+                _dots_     = self.df_flat.group_by(['__xpx__', '__ypx__']).agg(_sum_expr_.alias('__v__'))['__v__']
+                _norm_min_ = pl.lit(float(cast(float, _dots_.min())))
+                _norm_max_ = pl.lit(float(cast(float, _dots_.max())))
             else:
                 _norm_min_ = pl.col(_sum_column_).min()
                 _norm_max_ = pl.col(_sum_column_).max()
             _normalize_ = pl.when(_norm_min_ == _norm_max_) \
                             .then(pl.lit(_range_[0])) \
                             .otherwise(_range_[0] + (_range_[1]-_range_[0])*(pl.col(_sum_column_) - _norm_min_) /
-                                                                             (_norm_max_           - _norm_min_)).round(_digits_).alias(_final_column_)
-            if self.p2s.ROW_COUNTp in _enums_:
-                _agg_ops_.append(pl.len().alias(_sum_column_))
-                _norm_ops_.append(_normalize_)
-                _shape_template_.append(f'{_svg_attribute_}="{{{_final_column_}}}"')
-            elif _flat_column_ in self.df_flat.columns:
-                if self.p2s.SETp in _enums_ or \
-                   not self.p2s.numericColumn(self.df_flat, _flat_column_): _agg_ops_.append(pl.col(_flat_column_).unique().len().alias(_sum_column_))
-                else:                                                            _agg_ops_.append(pl.col(_flat_column_).sum()         .alias(_sum_column_))
+                                                                             (_norm_max_           - _norm_min_)).round(_digits_).fill_null(_null_value_).alias(_final_column_)
+            if _sum_expr_ is not None:
+                _agg_ops_.append(_sum_expr_.alias(_sum_column_))
                 _norm_ops_.append(_normalize_)
                 _shape_template_.append(f'{_svg_attribute_}="{{{_final_column_}}}"')
             elif _final_column_ in self.df_flat.columns:
@@ -3713,11 +4122,12 @@ class XYp(P2SBackgroundMixin, ExportMixin):
 
         self.__buildColorOps__(_color_mode_, _color_default_, _color_error_,
                                _agg_ops_, _norm_ops_, _spectrum_ops_, _tohexcolor_ops_, _fill_nulls_, _shape_template_)
-        self.__buildSizeAndOpacityOps__(_agg_ops_, _norm_ops_, _shape_template_)
+        self.__buildSizeAndOpacityOps__(_agg_ops_, _norm_ops_, _shape_template_, line_mode=line_rendering_mode)
 
         if line_rendering_mode:
             _groupby_ = ['__xpx__', '__ypx__', '__line__', '__line_index__']
-            if '__line_order_by__' in self.df_flat.columns: _groupby_.append('__line_order_by__')
+            if '__line_order_by__'  in self.df_flat.columns: _groupby_.append('__line_order_by__')
+            if '__line_color_key__' in self.df_flat.columns: _groupby_.append('__line_color_key__')   # constant per line
         else:
             _groupby_ = ['__xpx__', '__ypx__']
             #
@@ -3821,9 +4231,19 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     #
     # - return a lookup table w/ the original df_lu keys pointing to the rendered small multiples
     #
-    def renderSmallMultiples(self, df_all: pl.DataFrame, df_lu: dict, all_key: str | None) -> dict:
-        _kwargs_shared_ = {}   # kwargs for ALL instances (including all_key)
+    def renderSmallMultiples(self, df_all: pl.DataFrame, df_lu: dict, all_key: str | None,
+                             category_fields: list[str] | None = None) -> dict:
+        _kwargs_shared_: dict[str, Any] = {}   # kwargs for ALL instances (including all_key)
         _kwargs_subset_: dict = {}   # kwargs for non-all instances only (SM_COUNT / SM_COLOR)
+
+        # A panel holding several categories -- the remainder, the 'all' panel -- would chain
+        # every category's points into one line per line= value.  Split each line by the
+        # category as well; in a single-category panel that changes nothing.  The line's
+        # colour is untouched, so it matches the category's own panel.
+        if self.line is not None and category_fields:
+            _split_ = list(self.line_split_by_clean)
+            _split_ += [_f_ for _f_ in category_fields if _f_ not in _split_]
+            _kwargs_shared_['line_split_by'] = _split_
 
         # SM_X / SM_Y: compute global axis ranges from a reference instance built on df_all.
         if (self.p2s.SM_X in self.sm_shared or self.p2s.SM_Y in self.sm_shared):
@@ -4070,15 +4490,18 @@ class XYp(P2SBackgroundMixin, ExportMixin):
         if '__p2s_index__' in top_df.columns: top_df = top_df.drop('__p2s_index__')
         _cur_ = self.df
         if _cur_ is not None and '__p2s_index__' in _cur_.columns: _cur_ = _cur_.drop('__p2s_index__')
+        # The timeframe is read off the plotted (wall-clock) axis, so compare it with the
+        # column as plotted -- a zone-aware column would refuse the naive bounds.
+        _t_ = _wallClockExpr_(pl.col(_col_), top_df.schema[_col_])
 
         if mode == 'unfilter':
-            _new_ = top_df.filter((pl.col(_col_) >= _t0_) & (pl.col(_col_) <= _t1_))
+            _new_ = top_df.filter((_t_ >= _t0_) & (_t_ <= _t1_))
             if _cur_ is not None and len(_new_) <= len(_cur_): return None
             return _new_
 
         _delta_  = (_t1_ - _t0_) * float(self.x_time_expand_perc)
-        _before_ = (pl.col(_col_) >= (_t0_ - _delta_)) & (pl.col(_col_) <  _t0_)
-        _after_  = (pl.col(_col_) >   _t1_)            & (pl.col(_col_) <= (_t1_ + _delta_))
+        _before_ = (_t_ >= (_t0_ - _delta_)) & (_t_ <  _t0_)
+        _after_  = (_t_ >   _t1_)            & (_t_ <= (_t1_ + _delta_))
         if   mode == 'expand_before': _chunk_ = top_df.filter(_before_)
         elif mode == 'expand_after':  _chunk_ = top_df.filter(_after_)
         elif mode == 'expand_both':   _chunk_ = top_df.filter(_before_ | _after_)

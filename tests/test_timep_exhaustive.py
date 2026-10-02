@@ -9,6 +9,8 @@ without raising an exception, in both linear and periodic modes.
 import unittest
 import polars as pl
 from polars2svg import Polars2SVG
+from timep_dataframes import TimepAssertions, perTimeBin
+from histop_dataframes import spectrumColors
 
 
 _DF_ = pl.DataFrame({
@@ -24,7 +26,7 @@ _COUNTS_ = [None, 'value', 'category', 'numeric']
 _COLORS_ = [None, 'value', 'category', 'numeric']
 
 
-class TestTimepExhaustive(unittest.TestCase):
+class TestTimepExhaustive(TimepAssertions, unittest.TestCase):
     """All count × color combinations must not raise, in both linear and periodic modes."""
 
     @classmethod
@@ -68,23 +70,30 @@ class TestTimepExhaustive(unittest.TestCase):
         if failures:
             self.fail(f'{len(failures)} periodic combination(s) raised:\n' + '\n'.join(failures))
 
+    # Every column is the count metric per bin (rows, or the count column's sum), coloured
+    # by the spectrum of the colour column's per-bin sum -- also when the two are one column
+    def assertComboShows(self, count, color) -> None:
+        _t_ = self.p2s.timep(_DF_, 'ts', color=color, **({} if count is None else {'count': count}))
+        self.assertColumnColors(_t_, _DF_, 'ts', spectrumColors(self.p2s, perTimeBin(_t_, _DF_, 'ts', pl.col(color).sum())),
+                                pl.len() if count is None else pl.col(count).sum())
+
     # ── spot-check: a previously-failing combination ─────────────────────────
 
     def test_color_numeric_linear(self):
         """color='value' (int, spectrum mode) in linear timep — was ColumnNotFoundError."""
-        self._run_combo('ts', None, 'value')
+        self.assertComboShows(None, 'value')
 
     def test_color_numeric_float_linear(self):
         """color='numeric' (float, spectrum mode) in linear timep — was ColumnNotFoundError."""
-        self._run_combo('ts', None, 'numeric')
+        self.assertComboShows(None, 'numeric')
 
     def test_color_numeric_with_count_linear(self):
         """color='numeric', count='value' in linear timep — spectrum + separate count."""
-        self._run_combo('ts', 'value', 'numeric')
+        self.assertComboShows('value', 'numeric')
 
     def test_color_same_as_count_linear(self):
         """color='value', count='value' — color consumed by count — was ColumnNotFoundError."""
-        self._run_combo('ts', 'value', 'value')
+        self.assertComboShows('value', 'value')
 
 
 if __name__ == '__main__':

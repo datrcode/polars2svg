@@ -34,7 +34,7 @@ def test_hovering_gives_the_svg_keyboard_focus(linkpi_page):
     tests by construction -- they call the handler directly.
     """
     linkpi_page.hover(200, 150)
-    linkpi_page.expect_focused()
+    linkpi_page.assert_focused()
 
 
 def test_keydown_reaches_the_interaction_root(linkpi_page):
@@ -52,19 +52,19 @@ def test_z_selects_every_node_of_the_same_colour(linkpi_page):
 
     Nodes 1/2/3 share one colour and 4/5 the other, on a graph with **integer** ids
     -- the case where ``color_nodes_final`` (keyed by the stringified name) and
-    ``pos`` (keyed by the original id) have to agree.  ``expect_selected`` asserts
+    ``pos`` (keyed by the original id) have to agree.  ``assert_selected`` asserts
     the rendered selection, not the controller's opinion of it, so the
     handler-fires-and-does-nothing failure shows up as a plain mismatch.
     """
     linkpi_page.hover_node(1)
     linkpi_page.press('z')
-    linkpi_page.expect_selected(3)
+    linkpi_page.assert_selection([1, 2, 3])
 
 
 def test_z_over_the_other_colour_group_selects_that_group(linkpi_page):
     linkpi_page.hover_node(4)
     linkpi_page.press('z')
-    linkpi_page.expect_selected(2)
+    linkpi_page.assert_selection([4, 5])
 
 
 def test_z_over_empty_space_clears_the_selection(linkpi_page):
@@ -75,11 +75,11 @@ def test_z_over_empty_space_clears_the_selection(linkpi_page):
     """
     linkpi_page.hover_node(1)
     linkpi_page.press('z')
-    linkpi_page.expect_selected(3)
+    linkpi_page.assert_selection([1, 2, 3])
 
     linkpi_page.hover(2, 2)          # canvas corner: no node there
     linkpi_page.press('z')
-    linkpi_page.expect_selected(0)
+    linkpi_page.assert_selection([])
 
 
 # ── preventDefault: PLANNING.md 2.1 item 1, first execution ever ──────────────
@@ -105,7 +105,7 @@ def test_ctrl_s_suppresses_save_page_and_still_reaches_the_handler(linkpi_page):
     # second half of this assertion exists to catch.
     linkpi_page.hover_node(1)
     linkpi_page.press('z')
-    linkpi_page.expect_selected(3)                # node 1's colour group on this fixture
+    linkpi_page.assert_selected(3)                # node 1's colour group on this fixture
     linkpi_page.hover_node(1)
     linkpi_page.clear_keydowns()
     linkpi_page.press('s', ctrl=True)
@@ -163,7 +163,7 @@ def test_a_configuration_panel_row_changes_the_rendered_svg(linkpi_page):
     linkpi_page.hover(200, 150)
     _before_ = linkpi_page.mod_html()
     linkpi_page.press('a')                        # opens on the 'arrows' row
-    linkpi_page.expect_panel_open()
+    linkpi_page.assert_panel_open()
     linkpi_page.press(' ')                        # off -> on
     _after_ = linkpi_page.wait_for_mod_change(_before_)
     assert _after_ != _before_
@@ -192,7 +192,7 @@ def test_the_panel_is_where_the_background_state_reads(linkpi_page):
     """It left info_str when it became a panel row -- so the panel must show it."""
     linkpi_page.hover(200, 150)
     linkpi_page.press('a')
-    linkpi_page.expect_panel_open()
+    linkpi_page.assert_panel_open()
     assert 'background' in linkpi_page.panel_values(), linkpi_page.panel_text()
     assert linkpi_page.panel_values()['background'] == 'off'
 

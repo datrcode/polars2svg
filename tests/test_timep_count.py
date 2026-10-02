@@ -2,48 +2,59 @@ import re
 import unittest
 import polars as pl
 from polars2svg import Polars2SVG
-from timep_dataframes import makeTimeDf
+from timep_dataframes import makeTimeDf, TimepAssertions, perTimeBin
+from svg_test_utils import normalize_svg
 
 
-class TestTimepCount(unittest.TestCase):
+class TestTimepCount(TimepAssertions, unittest.TestCase):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.p2s = Polars2SVG()
-        self.df  = makeTimeDf(n=200, year=(2020, 2024), month=(1, 12))
+        self.df  = makeTimeDf(n=200, year=(2020, 2024), month=(1, 12), seed=7)
 
-    def _both_modes(self, **extra):
-        '''Run once with auto-linear and once with a periodic enum.'''
-        self.p2s.timep(self.df, 'ts',                   **extra)
-        self.p2s.timep(self.df, ('ts', self.p2s.PT_mp), **extra)
+    # In both modes -- the auto linear level and the month-of-year cycle -- every column is
+    # its bin's count= metric, `expr`, computed here by polars.  A metric must differ from
+    # the row counts somewhere, or the test could not tell count= from its default.
+    def assertBothModesShow(self, expr: pl.Expr, **extra) -> None:
+        for _time_ in ('ts', ('ts', self.p2s.PT_mp)):
+            with self.subTest(time=str(_time_)):
+                _t_ = self.p2s.timep(self.df, _time_, **extra)
+                if 'count' in extra:
+                    self.assertNotEqual(perTimeBin(_t_, self.df, 'ts', expr), perTimeBin(_t_, self.df, 'ts', pl.len()),
+                                        'the metric is the row count here')
+                self.assertColumnsShow(_t_, self.df, 'ts', expr)
 
     # ── count variants ────────────────────────────────────────────────────────
 
     def test_count_default_row_count(self):
         '''Default count (omitted) → ROW_COUNTp.'''
-        self._both_modes()
+        self.assertBothModesShow(pl.len())
 
     def test_count_explicit_row_count(self):
-        self._both_modes(count=self.p2s.ROW_COUNTp)
+        for _time_ in ('ts', ('ts', self.p2s.PT_mp)):
+            with self.subTest(time=str(_time_)):
+                self.assertEqual(normalize_svg(self.p2s.timep(self.df, _time_, count=self.p2s.ROW_COUNTp).svg),
+                                 normalize_svg(self.p2s.timep(self.df, _time_).svg))
 
     def test_count_numeric_int_field(self):
         '''Numeric (Int32) field → sum per bin.'''
-        self._both_modes(count='value')
+        self.assertBothModesShow(pl.col('value').sum(), count='value')
 
     def test_count_numeric_float_field(self):
         '''Float field → sum per bin.'''
-        self._both_modes(count='numeric')
+        self.assertBothModesShow(pl.col('numeric').sum(), count='numeric')
 
     def test_count_categorical_field_nunique(self):
         '''Non-numeric (Utf8) field → n_unique per bin.'''
-        self._both_modes(count='category')
+        self.assertBothModesShow(pl.col('category').n_unique(), count='category')
 
     def test_count_set_tuple_single_field(self):
         '''(field, SETp) → n_unique per bin, explicit set semantics.'''
-        self._both_modes(count=('category', self.p2s.SETp))
+        self.assertBothModesShow(pl.col('category').n_unique(), count=('category', self.p2s.SETp))
 
     def test_count_multi_field_struct_nunique(self):
         '''(field1, field2) → struct n_unique per bin.'''
-        self._both_modes(count=('category', 'value'))
+        self.assertBothModesShow(pl.struct('category', 'value').n_unique(), count=('category', 'value'))
 
     # ── count_range and count_range_shared ────────────────────────────────────
 

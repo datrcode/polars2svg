@@ -32,8 +32,9 @@
 //   getValue          optional (kind) -> value; the read side, for a view whose kinds do
 //                     not each have a param (the generic views' render rows share one
 //                     dict).  Absent, a kind's value is model[params[kind]].
-//   root              optional; the view's root <svg>.  Given, the two overlays may
-//                     overhang the view while it has focus (see "the overhang" below).
+//   root              optional; the view's root <svg>.  Given, the overlays (panel, picker,
+//                     keyboard help) may overhang the view while it has focus (see "the
+//                     overhang" below).
 //
 
 function p2sConfigPanel(ctx) {
@@ -57,16 +58,16 @@ function p2sConfigPanel(ctx) {
   // keyboard help at translate(-1000), the idle drag band and LINKPI's layout marks at
   // (-10,-10) -- and unclipped those would show beside the view, or over whatever sits
   // 1000 px to its left.  (stack_control met the same thing and hides its help with
-  // `display`.)  So the clip becomes the view PLUS the two overlays' boxes, and
-  // everything else stays clipped exactly as before.
+  // `display`.)  So the clip becomes the view PLUS the overlays' boxes -- panel, picker
+  // and, while shown, the keyboard help -- and everything else stays clipped as before.
   //
   const root = ctx.root || null;
-  const drawn = { panel: null, menu: null };          // [x, y, w, h] while drawn
+  const drawn = { panel: null, menu: null, help: null };   // [x, y, w, h] while drawn
 
   function overhangApply(event) {
       if (root === null) { return; }
       var _host_  = root.getRootNode().host || null;
-      var _boxes_ = [drawn.panel, drawn.menu].filter(function(b) { return b !== null; });
+      var _boxes_ = [drawn.panel, drawn.menu, drawn.help].filter(function(b) { return b !== null; });
       if (_boxes_.length === 0 || root.getRootNode().activeElement !== root) {
           root.style.overflow = '';
           root.style.clipPath = '';
@@ -89,6 +90,19 @@ function p2sConfigPanel(ctx) {
   if (root !== null) {
       root.addEventListener('focus', overhangApply);
       root.addEventListener('blur',  overhangApply);
+  }
+
+  // The keyboard help is the third overlay sized to its text, not to the view -- ~790 px
+  // of it in the generic views, so on a 256 px piepi most of every line was clipped.  It
+  // joins the overhang on the same terms: while shown (parked at x < 0 otherwise) and
+  // while the view has focus.  Its box is read off the help's own <rect>, which
+  // _keyboardHelpSvg_() sizes to the longest line.
+  function helpOverhang(node, x) {
+      var _r_ = (node !== null) ? node.querySelector('rect') : null;
+      drawn.help = (x >= 0 && _r_ !== null)
+          ? [x, 0, parseFloat(_r_.getAttribute('width')), parseFloat(_r_.getAttribute('height'))]
+          : null;
+      overhangApply();
   }
 
   // ── the picker menu ────────────────────────────────────────────────────────
@@ -305,6 +319,7 @@ function p2sConfigPanel(ctx) {
 
   function panelStep(delta) {
       var _rows_ = panelRows();
+      state.panel_by_key = false;
       if (_rows_.length === 0) { return; }
       var _i_ = state.panel_row;
       for (var _n_ = 0; _n_ < _rows_.length; _n_++) {
@@ -353,8 +368,9 @@ function p2sConfigPanel(ctx) {
 
   function panelOpen(from_end) {
       var _rows_ = panelRows();
-      state.panel_open = true;
-      state.panel_row  = (from_end && _rows_.length > 0) ? _rows_.length - 1 : 0;
+      state.panel_open   = true;
+      state.panel_by_key = false;
+      state.panel_row    = (from_end && _rows_.length > 0) ? _rows_.length - 1 : 0;
       if (_rows_.length > 0 && !_rows_[state.panel_row][3]) { panelStep(from_end ? -1 : 1); }
       else                                                  { panelRender(); }
   }
@@ -389,11 +405,22 @@ function p2sConfigPanel(ctx) {
       }
       else if (event.key === 'a' || event.key === 'ArrowDown' || event.key === 'j') { panelStep(1);  }
       else if (event.key === 'A' || event.key === 'ArrowUp'   || event.key === 'k') { panelStep(-1); }
+      // A row's key jumps to the row; pressed again, it cycles the row's value, as `space`
+      // does.  "Again" means the cursor is on the row BECAUSE of that key: opening the
+      // panel on 'arrows' and pressing its key only jumps, since the user has not asked
+      // that row for anything yet -- a first keystroke that flipped a setting would be a
+      // surprise, and two presses always means "cycle" however the cursor got there.
+      // Moving the cursor any other way (a / A / arrows / j / k) resets it; space and
+      // Enter do not, since the cursor stays where the key put it.
       else if (event.key.length === 1) {
           for (var _i_ = 0; _i_ < _prows_.length; _i_++) {
               if (_prows_[_i_][0] === event.key && _prows_[_i_][3]) {
-                  state.panel_row = _i_;
-                  panelRender();
+                  if (_i_ === state.panel_row && state.panel_by_key) { panelCycle(1); }
+                  else {
+                      state.panel_row    = _i_;
+                      state.panel_by_key = true;
+                      panelRender();
+                  }
                   break;
               }
           }
@@ -406,5 +433,6 @@ function p2sConfigPanel(ctx) {
       menuClose: menuClose, menuArmTimer: menuArmTimer, menuKeyDown: menuKeyDown,
       panelOpen: panelOpen, panelClose: panelClose, panelRender: panelRender,
       panelKeyDown: panelKeyDown, panelCommitPending: panelCommitPending,
+      helpOverhang: helpOverhang,
   };
 }

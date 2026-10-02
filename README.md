@@ -245,6 +245,12 @@ the primary size knob for **histop** (bar length) and **timep** (bar height); it
 nudges the derived node order in **chordp**; and for **linkp**/**chordp** it only
 drives geometry once you opt into `node_size='vary'` / `link_size='vary'`.
 
+**Negative counts.** A bar in histop or timep grows from zero, so a bin whose
+`count=` sums below zero is drawn as zero — an empty slot, not a bar running the
+other way. In a stacked bar each colour's segment is clamped on its own, so a
+negative segment draws as nothing and the rest of the bar is unaffected. Either
+way a warning names the component, the count field and the bins, once per case.
+
 ### `color=` — "what color is this element?"
 
 Independent of `count=`. A bare field infers its meaning from the column dtype

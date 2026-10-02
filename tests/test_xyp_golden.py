@@ -103,6 +103,22 @@ class Testxyp_golden(unittest.TestCase):
         assert_image_matches_golden(_xyp_.svg, 'lines')
 
     # ------------------------------------------------------------------
+    # The axes without the gridlines: time along x, a number up y, lines --
+    # the view the draw_grid= request came from
+    # ------------------------------------------------------------------
+    def test_no_grid(self):
+        import datetime as dt
+        df = pl.DataFrame({
+            'when':   [dt.datetime(2026, 1, 1) + dt.timedelta(days=7 * i) for i in range(12)] * 2,
+            'value':  [2, 3, 1, 4, 2, 5, 3, 4, 6, 5, 7, 6] + [1, 1, 2, 2, 3, 2, 3, 4, 3, 4, 5, 4],
+            'series': ['a'] * 12 + ['b'] * 12,
+        })
+        _xyp_ = self.p2s.xyp(df, 'when', 'value', color='series', line=('series',),
+                              draw_grid=False, wxh=(256, 160))
+        assert_svg_matches_golden(_xyp_.svg, 'xyp_no_grid')
+        assert_image_matches_golden(_xyp_.svg, 'xyp_no_grid')
+
+    # ------------------------------------------------------------------
     # No context (axis labels / grid suppressed)
     # ------------------------------------------------------------------
     def test_no_context(self):

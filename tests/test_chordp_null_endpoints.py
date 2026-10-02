@@ -103,15 +103,17 @@ class TestChordPNullEndpointPartition(unittest.TestCase):
         cls.ch  = cls.p2s.chordp(df=_DF_NULL_, relationships=_RELS_, wxh=(256, 256))
         cls.w, cls.h = cls.ch.wxh
 
-    def _assert_partitions(self, keep, remove):
-        self.assertEqual(len(keep) + len(remove), len(_DF_NULL_),
+    # select and remove cover the frame exactly once: every row lands in one half, none
+    # in both.  Rows are told apart by 'val', which is unique in _DF_NULL_.
+    def assertPartitions(self, keep, remove):
+        self.assertEqual(sorted(keep['val'].to_list() + remove['val'].to_list()), sorted(_DF_NULL_['val'].to_list()),
                          'select and remove must cover the frame exactly once')
 
     # ── whole-canvas selection ────────────────────────────────────────────────
 
     def test_rectangle_over_everything_partitions(self):
         _box_ = (0, 0, self.w, self.h)
-        self._assert_partitions(self.ch.filterByRectangle(_box_),
+        self.assertPartitions(self.ch.filterByRectangle(_box_),
                                 self.ch.filterByRectangle(_box_, remove_records=True))
 
     def test_rectangle_over_everything_selects_only_real_edges(self):
@@ -125,7 +127,7 @@ class TestChordPNullEndpointPartition(unittest.TestCase):
 
     def test_oval_over_everything_partitions(self):
         _oval_ = (self.w / 2, self.h / 2, self.w, self.h)
-        self._assert_partitions(self.ch.filterByOval(_oval_),
+        self.assertPartitions(self.ch.filterByOval(_oval_),
                                 self.ch.filterByOval(_oval_, remove_records=True))
 
     def test_oval_over_everything_keeps_null_endpoint_rows(self):
@@ -140,7 +142,7 @@ class TestChordPNullEndpointPartition(unittest.TestCase):
         _bx_, _by_ = _arc_midpoint(self.ch, 'b')
         _box_ = (min(_ax_, _bx_) - 5, min(_ay_, _by_) - 5,
                  max(_ax_, _bx_) + 5, max(_ay_, _by_) + 5)
-        self._assert_partitions(self.ch.filterByRectangle(_box_),
+        self.assertPartitions(self.ch.filterByRectangle(_box_),
                                 self.ch.filterByRectangle(_box_, remove_records=True))
 
     def test_selecting_node_a_never_selects_a_null_endpoint_row(self):
@@ -154,7 +156,7 @@ class TestChordPNullEndpointPartition(unittest.TestCase):
 
     def test_empty_selection_partitions(self):
         _box_ = (0, 0, 1, 1)   # the corner: no arc there
-        self._assert_partitions(self.ch.filterByRectangle(_box_),
+        self.assertPartitions(self.ch.filterByRectangle(_box_),
                                 self.ch.filterByRectangle(_box_, remove_records=True))
 
     def test_empty_selection_removes_nothing(self):
@@ -188,24 +190,25 @@ class TestChordPNullEndpointDegenerate(unittest.TestCase):
     def setUp(self):
         self.p2s = Polars2SVG()
 
-    def _partition_check(self, df, expect_drawn_nodes):
+    def assertDrawsAndPartitions(self, df, expect_drawn_nodes):
         """expect_drawn_nodes is what ends up on the ring (df_node), which follows the
         surviving edges -- a node whose every edge lost an endpoint has no chord and so
-        no arc, even though its name is still in nodes_all."""
+        no arc, even though its name is still in nodes_all.  A whole-canvas select and
+        remove then cover the frame exactly once ('val' is unique in each frame here)."""
         ch = self.p2s.chordp(df=df, relationships=_RELS_, wxh=(256, 256))
         self.assertEqual(sorted(str(n) for n in ch.df_node['__nm__'].to_list()),
                          sorted(str(n) for n in expect_drawn_nodes))
         w, h = ch.wxh
         keep   = ch.filterByRectangle((0, 0, w, h))
         remove = ch.filterByRectangle((0, 0, w, h), remove_records=True)
-        self.assertEqual(len(keep) + len(remove), len(df))
+        self.assertEqual(sorted(keep['val'].to_list() + remove['val'].to_list()), sorted(df['val'].to_list()))
         return ch, keep, remove
 
     def test_every_from_endpoint_null(self):
         """No edge keeps both endpoints, so nothing is drawn -- and nothing is lost."""
         _df_ = pl.DataFrame({'fm': [None, None, None], 'to': ['a', 'b', 'c'], 'val': [1, 2, 3]},
                             schema={'fm': pl.String, 'to': pl.String, 'val': pl.Int64})
-        _ch_, _keep_, _remove_ = self._partition_check(_df_, [])
+        _ch_, _keep_, _remove_ = self.assertDrawsAndPartitions(_df_, [])
         self.assertEqual(len(_keep_), 0)
         self.assertEqual(len(_remove_), 3)
         self.assertEqual(len(_ch_.df_edge_weights), 0)
@@ -213,17 +216,21 @@ class TestChordPNullEndpointDegenerate(unittest.TestCase):
     def test_every_row_missing_an_endpoint(self):
         _df_ = pl.DataFrame({'fm': [None, None], 'to': [None, None], 'val': [1, 2]},
                             schema={'fm': pl.String, 'to': pl.String, 'val': pl.Int64})
-        self._partition_check(_df_, [])
+        _ch_, _keep_, _remove_ = self.assertDrawsAndPartitions(_df_, [])
+        self.assertEqual(len(_keep_), 0)
+        self.assertEqual(_remove_['val'].to_list(), [1, 2])
+        self.assertEqual(len(_ch_.df_edge_weights), 0)
+        self.assertNotIn('<path', _ch_.svg)
 
     def test_one_surviving_edge(self):
         _df_ = pl.DataFrame({'fm': ['a', None], 'to': ['b', None], 'val': [1, 2]})
-        _ch_, _keep_, _remove_ = self._partition_check(_df_, ['a', 'b'])
+        _ch_, _keep_, _remove_ = self.assertDrawsAndPartitions(_df_, ['a', 'b'])
         self.assertEqual(_keep_['val'].to_list(), [1])
         self.assertEqual(_remove_['val'].to_list(), [2])
 
     def test_numeric_node_ids_with_a_null(self):
         _df_ = pl.DataFrame({'fm': [1, 2, None], 'to': [2, 1, 1], 'val': [1, 2, 3]})
-        _ch_, _keep_, _remove_ = self._partition_check(_df_, [1, 2])
+        _ch_, _keep_, _remove_ = self.assertDrawsAndPartitions(_df_, [1, 2])
         self.assertEqual(sorted(_keep_['val'].to_list()), [1, 2])
         self.assertEqual(_remove_['val'].to_list(), [3])
 

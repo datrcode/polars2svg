@@ -40,6 +40,39 @@ def _bar_fills(svg_str):
     return sorted(fills)
 
 
+class TestLinkPTwoScales(unittest.TestCase):
+    """Links and nodes each on a colour scale: the scale state -- the legend's domain and
+    the range smallp shares under SM_COLOR -- belongs to the links, which the legend
+    describes.  It used to span both, so a legend titled 'rows' ran 1-32 because the 32
+    was a node sum (PLANNING.md §5 C-linkp-two-scales).  Each channel is compared with a
+    render that has only that channel."""
+
+    # the links carry 1-3 rows each, so their range is not degenerate
+    _FRAME_ = pl.concat([_DF_, _DF_.head(2), _DF_.head(1)])
+
+    def setUp(self):
+        self.p2s = Polars2SVG()
+
+    def _lp(self, **extra):
+        return self.p2s.linkp(df=self._FRAME_, relationships=_REL_, pos=_POS_, wxh=(256, 192), **extra)
+
+    def test_the_link_scale_owns_the_legend_and_the_shared_range(self):
+        _both_  = self._lp(color=self.p2s.CROW_MAGNITUDEp, node_color=('cat_n', self.p2s.CMAGNITUDE_SUMp), legend=True)
+        _links_ = self._lp(color=self.p2s.CROW_MAGNITUDEp, legend=True)
+        _both_._repr_svg_(); _links_._repr_svg_()
+        self.assertEqual((_links_.legend_info.vmin, _links_.legend_info.vmax), (1.0, 3.0))
+        self.assertEqual((_both_.legend_info.title, _both_.legend_info.vmin, _both_.legend_info.vmax),
+                         (_links_.legend_info.title, _links_.legend_info.vmin, _links_.legend_info.vmax))
+        self.assertEqual((_both_._color_stat_min_, _both_._color_stat_max_),
+                         (_links_._color_stat_min_, _links_._color_stat_max_))
+
+    def test_the_nodes_still_spread_over_their_own_range(self):
+        _both_  = self._lp(color=self.p2s.CROW_MAGNITUDEp, node_color=('cat_n', self.p2s.CMAGNITUDE_SUMp))
+        _nodes_ = self._lp(node_color=('cat_n', self.p2s.CMAGNITUDE_SUMp))
+        self.assertGreater(len(set(_node_fills(_nodes_._repr_svg_()))), 2)
+        self.assertEqual(_node_fills(_both_._repr_svg_()), _node_fills(_nodes_._repr_svg_()))
+
+
 class TestLinkPNodeColorConsistency(unittest.TestCase):
 
     def __init__(self, *args, **kwargs):

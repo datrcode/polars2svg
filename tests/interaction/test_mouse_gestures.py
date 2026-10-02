@@ -23,6 +23,8 @@ needed.
 """
 import unittest
 
+from interaction_harness import assert_eventually
+
 
 CORNER = (2, 2)          # bare canvas on the quad fixture, clear of every node
 
@@ -132,7 +134,7 @@ def test_the_band_turns_blue_for_a_shift_ctrl_drag(quad_page):
 
 def test_a_full_canvas_drag_selects_every_node(quad_page):
     _box(quad_page, *CORNER, 398, 298)
-    quad_page.expect_selected(4)
+    quad_page.assert_selection(['nw', 'ne', 'sw', 'se'])
 
 
 def test_a_band_selects_exactly_the_nodes_it_covers(quad_page):
@@ -141,14 +143,14 @@ def test_a_band_selects_exactly_the_nodes_it_covers(quad_page):
     _c_ = _coords(quad_page)
     _mid_y_ = (_c_['nw'][1] + _c_['sw'][1]) // 2
     _box(quad_page, *CORNER, 398, _mid_y_)
-    quad_page.expect_selected(2)
+    quad_page.assert_selection(['nw', 'ne'])
 
 
 def test_a_band_down_one_side_selects_that_column(quad_page):
     _c_ = _coords(quad_page)
     _mid_x_ = (_c_['nw'][0] + _c_['ne'][0]) // 2
     _box(quad_page, *CORNER, _mid_x_, 298)
-    quad_page.expect_selected(2)
+    quad_page.assert_selection(['nw', 'sw'])
 
 
 def test_a_band_released_over_the_status_line_still_selects(quad_page):
@@ -175,17 +177,17 @@ def test_a_band_released_over_the_status_line_still_selects(quad_page):
         'the status line is too short for this test to cover the case it is named for')
 
     _box(quad_page, *CORNER, _mid_x_, 298)
-    quad_page.expect_selected(2)
+    quad_page.assert_selection(['nw', 'sw'])
 
 
 def test_a_band_over_empty_space_clears_the_selection(quad_page):
     """Select something first: with nothing selected an empty band changes nothing,
     so #infostr never refreshes off its default and there is no '0 Selected' to see."""
     _box(quad_page, *CORNER, 398, 298)
-    quad_page.expect_selected(4)
+    quad_page.assert_selection(['nw', 'ne', 'sw', 'se'])
 
     _box(quad_page, *CORNER, 40, 40)
-    quad_page.expect_selected(0)
+    quad_page.assert_selection([])
 
 
 def test_the_band_is_anchored_at_the_press_not_the_path(quad_page):
@@ -202,39 +204,100 @@ def test_the_band_is_anchored_at_the_press_not_the_path(quad_page):
     quad_page.mouse_move_to(398, 298)          # sweep across everything...
     quad_page.mouse_move_to(398, _mid_y_)      # ...and settle above the southern row
     quad_page.mouse_up()
-    quad_page.expect_selected(2)
+    quad_page.assert_selection(['nw', 'ne'])
 
 
 # ── the band's modifier set-operations ───────────────────────────────────────
 
+# Each second band is chosen so its operation and a plain replace disagree.  They used
+# not to be: ctrl-adding the whole canvas, shift-removing the north row from everything
+# and intersecting everything with it each came to what a replace draws, so a modifier
+# the drag ignored passed all three.
+
 def test_ctrl_drag_adds_to_the_selection(quad_page):
+    """North row, plus the south row: a replace would leave the south alone."""
     _c_ = _coords(quad_page)
     _mid_y_ = (_c_['nw'][1] + _c_['sw'][1]) // 2
     _box(quad_page, *CORNER, 398, _mid_y_)
-    quad_page.expect_selected(2)
+    quad_page.assert_selection(['nw', 'ne'])
 
-    _box(quad_page, *CORNER, 398, 298, ctrl=True)
-    quad_page.expect_selected(4)
+    _box(quad_page, CORNER[0], _mid_y_, 398, 298, ctrl=True)
+    quad_page.assert_selection(['nw', 'ne', 'sw', 'se'])
 
 
 def test_shift_drag_removes_from_the_selection(quad_page):
+    """Everything, less the north row: a replace would leave the north row."""
     _c_ = _coords(quad_page)
     _mid_y_ = (_c_['nw'][1] + _c_['sw'][1]) // 2
     _box(quad_page, *CORNER, 398, 298)
-    quad_page.expect_selected(4)
+    quad_page.assert_selection(['nw', 'ne', 'sw', 'se'])
 
     _box(quad_page, *CORNER, 398, _mid_y_, shift=True)
-    quad_page.expect_selected(2)
+    quad_page.assert_selection(['sw', 'se'])
+
+
+def test_a_modifier_released_with_the_button_still_counts_and_then_clears(quad_page):
+    """Letting go of shift the moment the button comes up is the ordinary way to do it.
+
+    applyDragOp reads shiftkey when it gets through the lock, and the keyup used to
+    have cleared it by then, so the subtract arrived as a replace -- intermittently, on
+    how quickly the key came up (PLANNING.md §5 C-linkpi-drag-modifier-race).  The
+    release is deferred until the drag is done; this checks both that the operation
+    saw it and that it is then applied, so shift is not left stuck on.
+    """
+    _c_ = _coords(quad_page)
+    _mid_y_ = (_c_['nw'][1] + _c_['sw'][1]) // 2
+    _box(quad_page, *CORNER, 398, 298)
+    quad_page.assert_selection(['nw', 'ne', 'sw', 'se'])
+
+    _box(quad_page, *CORNER, 398, _mid_y_, shift=True)       # released straight after
+    quad_page.assert_selection(['sw', 'se'])
+    _view_ = quad_page.app.view()
+    assert_eventually(lambda: _view_.shiftkey is False and _view_.ctrlkey is False,
+                      lambda: f'the modifiers stayed set after the drag: '
+                              f'shift={_view_.shiftkey} ctrl={_view_.ctrlkey}')
+
+
+def test_a_shift_click_on_a_selected_node_deselects_it(quad_page):
+    """A press on a selected node is a move (#selectionlayer); with shift and no motion,
+    applyMoveOp takes that node out instead.  Shift released with the button, as a
+    user does -- it used to be cleared before applyMoveOp read it, and the click
+    deselected nothing (PLANNING.md §5 C-interactive-modifier-release-race)."""
+    _c_ = _coords(quad_page)
+    _box(quad_page, *CORNER, 398, 298)
+    quad_page.assert_selection(['nw', 'ne', 'sw', 'se'])
+
+    with quad_page.holding(shift=True):
+        quad_page.mouse_down(*_c_['nw'])
+        quad_page.mouse_up()
+    quad_page.assert_selection(['ne', 'sw', 'se'])
+
+
+def test_a_ctrl_click_on_an_unselected_node_adds_it(quad_page):
+    """A press on an unselected node (#allentitieslayer) selects it; ctrl adds it to the
+    selection rather than replacing it.  Same race, same release."""
+    _c_ = _coords(quad_page)
+    _mid_y_ = (_c_['nw'][1] + _c_['sw'][1]) // 2
+    _box(quad_page, *CORNER, 398, _mid_y_)
+    quad_page.assert_selection(['nw', 'ne'])
+
+    with quad_page.holding(ctrl=True):
+        quad_page.mouse_down(*_c_['sw'])
+        quad_page.mouse_up()
+    quad_page.assert_selection(['nw', 'ne', 'sw'])
 
 
 def test_shift_ctrl_drag_intersects(quad_page):
+    """North row, intersected with the west column: nw alone.  A replace would give
+    the west column, an add three nodes."""
     _c_ = _coords(quad_page)
+    _mid_x_ = (_c_['nw'][0] + _c_['ne'][0]) // 2
     _mid_y_ = (_c_['nw'][1] + _c_['sw'][1]) // 2
-    _box(quad_page, *CORNER, 398, 298)
-    quad_page.expect_selected(4)
+    _box(quad_page, *CORNER, 398, _mid_y_)
+    quad_page.assert_selection(['nw', 'ne'])
 
-    _box(quad_page, *CORNER, 398, _mid_y_, shift=True, ctrl=True)
-    quad_page.expect_selected(2)
+    _box(quad_page, *CORNER, _mid_x_, 298, shift=True, ctrl=True)
+    quad_page.assert_selection(['nw'])
 
 
 # ── moving nodes ─────────────────────────────────────────────────────────────
@@ -247,7 +310,7 @@ def test_dragging_a_selected_node_moves_the_whole_selection(quad_page):
     _c_ = _coords(quad_page)
     _mid_y_ = (_c_['nw'][1] + _c_['sw'][1]) // 2
     _box(quad_page, *CORNER, 398, _mid_y_)
-    quad_page.expect_selected(2)
+    quad_page.assert_selected(2)
 
     _before_ = quad_page.node_positions()
     _sx_, _sy_ = _c_['nw']
@@ -286,7 +349,7 @@ def test_a_drag_released_off_canvas_is_abandoned(quad_page):
     _c_ = _coords(quad_page)
     _mid_y_ = (_c_['nw'][1] + _c_['sw'][1]) // 2
     _box(quad_page, *CORNER, 398, _mid_y_)
-    quad_page.expect_selected(2)
+    quad_page.assert_selected(2)
 
     _before_ = quad_page.node_positions()
     _sx_, _sy_ = _c_['ne']
@@ -308,7 +371,7 @@ def _select_north_row(ip):
     _c_ = _coords(ip)
     _mid_y_ = (_c_['nw'][1] + _c_['sw'][1]) // 2
     _box(ip, *CORNER, 398, _mid_y_)
-    ip.expect_selected(2)
+    ip.assert_selected(2)
     return _c_
 
 
@@ -363,7 +426,7 @@ def test_releasing_g_before_dragging_selects_instead_of_laying_out(quad_page):
     assert quad_page.node_positions() == _before_, (
         'a tapped g laid the selection out -- the gesture now survives the keyup, and '
         'the on-screen help needs to go back to promising press-then-drag')
-    quad_page.expect_selected(0)                # ...it was a selection instead
+    quad_page.assert_selected(0)                # ...it was a selection instead
 
 
 def test_the_layout_arm_does_not_survive_the_gesture(quad_page):

@@ -19,6 +19,8 @@ import unittest
 import pytest
 from playwright.sync_api import expect
 
+from interaction_harness import assert_eventually
+
 
 # ── SMALLPI ──────────────────────────────────────────────────────────────────
 
@@ -56,7 +58,7 @@ def test_smallpi_selection_box_tracks_the_drag_and_clears_on_release(smallpi_pag
     finally:
         _ip_.mouse_up()
 
-    _wait_for(lambda: _box_.get_attribute('display') == 'none',
+    assert_eventually(lambda: _box_.get_attribute('display') == 'none',
               'the band outlived the drag that drew it')
 
 
@@ -90,11 +92,11 @@ def test_smallpi_r_toggles_the_brush_flag(smallpi_page):
 
     smallpi_page.hover(100, 100)
     smallpi_page.press('r')
-    _wait_for(lambda: _view_.brush_on is True, 'r did not switch the brush on')
+    assert_eventually(lambda: _view_.brush_on is True, 'r did not switch the brush on')
 
     smallpi_page.hover(100, 100)
     smallpi_page.press('r')
-    _wait_for(lambda: _view_.brush_on is False, 'r did not switch the brush off')
+    assert_eventually(lambda: _view_.brush_on is False, 'r did not switch the brush off')
 
 
 def test_smallpi_only_announces_the_brush_going_off(smallpi_page):
@@ -106,12 +108,12 @@ def test_smallpi_only_announces_the_brush_going_off(smallpi_page):
 
     smallpi_page.hover(100, 100)
     smallpi_page.press('r')                      # on
-    _wait_for(lambda: _view_.brush_on is True, 'the brush never came on')
+    assert_eventually(lambda: _view_.brush_on is True, 'the brush never came on')
     assert 'brush_off' not in _seen_, 'switching the brush on announced brush_off'
 
     smallpi_page.hover(100, 100)
     smallpi_page.press('r')                      # off
-    _wait_for(lambda: 'brush_off' in _seen_,
+    assert_eventually(lambda: 'brush_off' in _seen_,
               f'switching the brush off announced nothing (saw {_seen_})')
 
 
@@ -128,7 +130,7 @@ def test_smallpi_q_reaches_python_as_itself(smallpi_page, key):
     _seen_ = _record_param(smallpi_page.app.view(), 'key_op_finished')
     smallpi_page.hover(100, 100)
     smallpi_page.press(key)
-    _wait_for(lambda: key in _seen_,
+    assert_eventually(lambda: key in _seen_,
               f'{key!r} never arrived as key_op_finished (saw {_seen_})')
 
 
@@ -150,7 +152,7 @@ def test_slpi_bindings_reach_python_as_themselves(slpi_page, key):
     _seen_ = _record_param(slpi_page.app.view(), 'key_op_finished')
     slpi_page.hover(300, 150)
     slpi_page.press(key)
-    _wait_for(lambda: key in _seen_,
+    assert_eventually(lambda: key in _seen_,
               f'{key!r} never arrived as key_op_finished (saw {_seen_})')
 
 
@@ -183,7 +185,7 @@ def test_slpi_drag_rect_tracks_the_drag_and_clears_on_release(slpi_page):
     finally:
         _ip_.mouse_up()
 
-    _wait_for(lambda: _slpi_band(_ip_)['width'] == '0',
+    assert_eventually(lambda: _slpi_band(_ip_)['width'] == '0',
               'the band outlived the drag that drew it')
 
 
@@ -229,9 +231,16 @@ def test_slpi_drag_rect_stroke_encodes_the_set_operation(slpi_page, shift, ctrl,
 # ── the stack control ────────────────────────────────────────────────────────
 
 def test_stack_control_renders_beside_its_component(stack_control_page):
+    """Both drawn, at their own sizes, side by side in one row: the control starts where
+    the plot ends and overlaps it nowhere."""
     _xy_, _ct_ = stack_control_page
     expect(_xy_.root).to_be_visible()
     expect(_ct_.root).to_be_visible()
+    _p_, _c_ = _xy_.root.bounding_box(), _ct_.root.bounding_box()
+    assert (round(_p_['width']), round(_p_['height'])) == (256, 256), _p_
+    assert (round(_c_['width']), round(_c_['height'])) == (160, 340), _c_
+    assert _c_['x'] >= _p_['x'] + _p_['width'] - 0.5, f'the control overlaps the plot: {_p_} {_c_}'
+    assert abs(_c_['y'] - _p_['y']) < 1.0, f'the two are not on one row: {_p_} {_c_}'
 
 
 def test_stack_control_h_toggles_the_help_overlay(stack_control_page):
@@ -241,11 +250,13 @@ def test_stack_control_h_toggles_the_help_overlay(stack_control_page):
     _ct_.press('h')
 
     _sc_ = _stack_control_view(_ct_)
-    _wait_for(lambda: _sc_.help_display == 'inline', 'h did not open the help overlay')
+    assert_eventually(lambda: _sc_.help_display == 'inline', 'h did not open the help overlay')
+    _ct_.assert_attribute('keyboardhelp', 'display', 'inline')
 
     _ct_.hover(80, 170)
     _ct_.press('h')
-    _wait_for(lambda: _sc_.help_display == 'none', 'h did not close the help overlay')
+    assert_eventually(lambda: _sc_.help_display == 'none', 'h did not close the help overlay')
+    _ct_.assert_attribute('keyboardhelp', 'display', 'none')
 
 
 @pytest.mark.parametrize('key,ctrl,shift', [('h', False, False),
@@ -287,7 +298,7 @@ def test_stack_control_c_collapses_the_stack(stack_control_page):
 
     _ct_.hover(80, 170)
     _ct_.press('c')
-    _wait_for(lambda: len(_mvc_.stacks['default']['dfs']) <= 2,
+    assert_eventually(lambda: len(_mvc_.stacks['default']['dfs']) <= 2,
               'c did not collapse the stack')
 
 
@@ -312,21 +323,6 @@ def _record_param(view, name):
     view.param.watch(lambda _ev_: _seen_.append(_ev_.new), name)
     return _seen_
 
-
-def _wait_for(predicate, message, budget_s=15.0):
-    """Bounded poll on Python-side state.
-
-    These components put their results on params and shared stacks rather than into
-    the SVG, so there is no locator to hand to expect(); this is the same bounded-poll
-    idea against a different surface.
-    """
-    import time
-    _deadline_ = time.monotonic() + budget_s
-    while time.monotonic() < _deadline_:
-        if predicate():
-            return
-        time.sleep(0.05)
-    raise AssertionError(message)
 
 
 if __name__ == '__main__':

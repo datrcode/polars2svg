@@ -4,6 +4,7 @@ import polars as pl
 
 from polars2svg import Polars2SVG
 from label_fidelity_data import FIDELITY_LABELS, svg_text_contents
+from polars2svg.p2s_text_mixin import svgEscape
 
 # Plots are sized generously so the column-name context label never hits cropText() --
 # the longest fidelity string (a full IPv6 address, ~39 chars) fits with room to spare.
@@ -68,7 +69,12 @@ class TestContextLabelFidelity(unittest.TestCase):
         for _case_, _render_ in self._cases().items():
             for _col_ in ('a & b', 'x < y', 'p > q', '<tag>', 'a"quoted"b'):
                 with self.subTest(case=_case_, column=_col_):
-                    svg_text_contents(_render_(_col_))  # parses or raises
+                    _svg_ = _render_(_col_)
+                    # parses, and reads back as the name itself...
+                    self.assertIn(_col_, svg_text_contents(_svg_))
+                    # ...because the markup carries it escaped exactly once
+                    self.assertIn(svgEscape(_col_), _svg_)
+                    self.assertNotIn('&amp;amp;', _svg_)
 
 
 if __name__ == '__main__':

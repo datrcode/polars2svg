@@ -9,6 +9,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`histopi`, `timepi`, `piepi`, `chordpi`: `count_fields=` names more fields for the
+  count row.** On its own, the settings panel's count row offers only rows and the field
+  the view was built with. A column's type can't tell a quantity (bytes) from an
+  identifier (a port), so the row doesn't guess.
+  - `count_fields=['bytes', 'pkts']` adds those fields to the row and its picker. It takes
+    a single name, or `count=` specs such as `('user', p2s.SETp)`.
+  - A view built on rows becomes switchable as soon as it has a field to switch to.
+  - The boxplot style follows the chosen field: it's on offer only while that field is
+    numeric.
+  - A name that isn't a column fails at construction, with a suggestion.
+  - `xypi`, which has no count row, refuses the keyword rather than ignore it.
+
+- **`xyp`: `draw_grid=` hides the gridlines and keeps the axes.** `draw_context=False`
+  could only drop the axes and the gridlines together.
+  - `draw_grid=False` drops the lines inside the plot and the small labels drawn along
+    them.
+  - The plot outline, the two end labels and the axis name stay on each axis, and the
+    plot's size and position don't change.
+  - Default `True`. It has no effect with `draw_context=False`, since there are no
+    gridlines to keep.
+  - New golden `xyp_no_grid`, also in the golden-images notebook.
+
+- **Interactive views: pressing a settings-panel row's key again cycles its value.**
+  - The first press jumps to the row, as before. A second press moves the row to its
+    next value, the same as `space`.
+  - "Again" means the cursor is on the row because of that key. The panel opens on its
+    first row, and that row's key pressed once only selects it.
+  - Moving the cursor any other way (`a` / `shift-a` / the arrow keys / `j` / `k`)
+    resets this; `space` and `Enter` do not.
+  - This works in every view with the panel, including linkpi, and the `h` help says
+    so.
+
+- **`xyp`: `x_distributions=` / `y_distributions=` take `True` and a bare int.**
+  - `True` means `p2s.ROW_COUNTp`: rows, with automatic bins.
+  - `10` means `[p2s.ROW_COUNTp, 10]`: rows in 10 bins.
+  - `False` means no distribution, the same as `None`.
+  - Every existing form is unchanged.
+
+- **`xyp`: `line_split_by=` splits lines by more fields without recolouring them.** Each
+  line is split by the extra field(s) as well as its `line=` fields. Its colour still
+  comes from the `line=` fields alone.
+  - For example, `line='series', line_split_by='country'` draws one line per country and
+    series, each in its series' colour.
+  - It takes a column name or a list of them.
+  - A null in a split field forms its own line.
+
+- **`chordp`: `p2s.COLOR_BY_SRC_NODE` / `p2s.COLOR_BY_DST_NODE`.** `color=` with either
+  one gives each link its source's (destination's) node colour, beside
+  `node_color=p2s.COLOR_BY_NODE_NAME`. A string in `color=` now always names a column.
+
 - **`timep.timeLevels()`: the time levels an interactive view can offer.** It lists
   the linear levels whose spine fits the plot, then the periodic levels whose cycle fits.
   - The room check is two pixels per bar, the budget the auto resolution already uses.
@@ -485,6 +535,93 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`xyp`: automatic distribution bins on whole-number axes no longer leave gaps.** The
+  automatic bin count is taken from the plot's pixel width. On an axis of whole numbers that
+  gave bins a fractional number of integers wide, so some held none and others two, and a
+  smooth distribution drew as a comb of spikes. `books_read_per_year` in the
+  millionaire-habits survey put 27 values into 82 bins, 55 of them empty.
+  - Every bin now holds a whole number of integers: one per bin when they fit, otherwise the
+    fewest per bin that do.
+  - Each bar is drawn under the values it counts: a bin of the integers a..b spans a−½ to
+    b+½ of the axis, so the two end bars are half bars.
+  - This applies to integer columns, float columns holding only whole numbers (a count
+    read from CSV), and categorical axes (one bar per category when they fit).
+  - Explicit bin counts and fractional data are unchanged. Periodic time axes keep their
+    existing one-bar-per-unit bins.
+  - The `distributions` golden was regenerated; its data is whole numbers.
+
+- **`xyp`: the axis end labels are the axis label colour, not blue and red.** The min
+  label was blue and the max red in both palettes. That suggests a low/high meaning the
+  labels don't carry, so both now take the axis label colour (`#404040` light, `#c1c1c1`
+  dark). The `('axis', 'min')` / `('axis', 'max')` colour slots remain, so
+  `setColorOverrides()` can still pick the ends out.
+  - 21 SVG goldens (and their PNGs) were regenerated: xyp, legend, smallp and the dark
+    palette.
+  - Every changed line differs from the old one only in that colour.
+
+- **`histopi`, `timepi`, `piepi`: the selection-shape choice is gone.** Rectangle versus
+  oval matters only where marks spread freely in two dimensions. These three views select
+  bars and slices, which a rectangle already does. They lose:
+  - the settings panel's `selection shape` row, so the panel opens on `tooltip`;
+  - the `F` picker and its help line;
+  - the oval drag: a drag is always a rectangle.
+
+  `xypi`, `chordpi` and `linkpi` keep all of it. A new per-view `has_select_shape` param
+  says which views are which. The `histopi` and `timepi` interaction parity goldens were
+  re-recorded for this and nothing else: every diff is in `#keyboardhelp` (one line fewer,
+  the panel line no longer names selection shape), plus the new param in the watch list.
+
+- **`timepi`: each granularity is marked `(timeline)` or `(cycle)`.** The only
+  difference between the two month levels was `monthly` versus `month`. The row and its
+  picker now read, for example, `monthly (timeline)` and `month (cycle)`: the first runs
+  Jan 2024, Feb 2024, …, the second folds every January into one bar. The label under
+  the plot is unchanged.
+
+- **`xypi`: distribution placement and bins are now set separately for x and y.** The
+  single `placement` and `bins` rows each became two:
+  - `x placement` (`p`) and `y placement` (`P`);
+  - `x bins` (`b`) and `y bins` (`B`).
+
+  A long time axis and a short numeric axis rarely want the same settings. Each row is
+  live only while its axis has a distribution, and a bins row also needs the axis to be
+  binnable (not periodic time). A placement the template named now shows as `inside` or
+  `outside`, not `as built`.
+
+- **Every "column not found" error now suggests the column you probably meant.**
+  - `smallp(df, tmpl, 'country')` on a frame with `country_name` used to say "Unknown
+    argument type: <class 'str'>". It now says `category_by='country' names a column the
+    DataFrame does not have: 'country' -- did you mean 'country_name' or 'country_code'?`
+  - The xyp, histop, piep, timep, linkp, chordp and spreadlinesp messages end the same
+    way.
+  - Suggestions rank the same name in another case first, then a column the name is part
+    of, then close spellings (at most three). When nothing is close, a frame of a dozen
+    columns or fewer is listed instead. Internal `__name__` columns are never suggested.
+  - smallp now checks `category_by=` and `order=` given by keyword up front, instead of
+    failing inside polars.
+
+- **`xyp`: a distribution spec that cannot mean anything is rejected, with a message that
+  names the parameter.** Before, these failed with an unrelated error (`'int' object is
+  not iterable`, a `ZeroDivisionError`, polars not finding the internal column
+  `__xdists__`) or were silently accepted. Each message ends with what a spec may hold.
+  Now rejected:
+  - a spec with nothing to measure (`[10]`, a bare colour or placement);
+  - `p2s.ROW_COUNTp` together with a column, which is ambiguous (the column used to be
+    ignored);
+  - a bin count below 1, or a bool as the bin count;
+  - a height outside (0, 1];
+  - a setting that is not a distribution setting.
+
+  The docstring now also says that a top-level tuple is the same as a list. It used to
+  claim a tuple meant one multi-field measure, which is spelled `[('c1', 'c2')]`.
+
+- **`chordp`: `color='src'` / `color='dst'` are deprecated** in favour of
+  `p2s.COLOR_BY_SRC_NODE` / `p2s.COLOR_BY_DST_NODE`. They still work, drawing the same
+  thing, when the frame has no column of that name, and warn once. A column named `src` or
+  `dst` is the field, as before.
+- **Graph components: an enum a colour parameter does not accept is refused by name**
+  (`node_color=p2s.COLOR_BY_SRC_NODE is not a constant node_color accepts`), rather than
+  as an "unsupported type".
+
 - **`linkpi`: picking a background producer no longer runs it — `b` does.** The
   producer picker used to run whatever you committed, which made it the only picker that
   acted instead of selecting. It now works like shift-w / `w` and shift-g / `g`: **shift-b
@@ -532,6 +669,260 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   argument: with the tooltip off, a hover issues no round trip at all.
 
 ### Fixed
+
+- **`histop`: a null bin with `color=` set draws its bar, and reads `(null)`.**
+  - A coloured (stacked) histop dropped the null bin's segments, leaving an empty row
+    where the bar should be. Bins were matched with polars' default, under which a null
+    never equals a null. The stacked-bar joins now match nulls; timep's vertical stack
+    gets the same fix.
+  - A null bin, slice or legend entry is now labelled `(null)`, as linkp labels a null
+    node. It read `None`, which is also how a real text value `"None"` reads. The
+    millionaire-habits survey's `tax_planning_behavior` has both (26,833 `"None"`, 11,447
+    null), and drew two bars labelled `None`.
+  - A `/` search for the null bin is now `/null`.
+- **Interactive views: the `h` keyboard help lines up and is no longer cut off.**
+  - SVG drops a text line's leading spaces, so in xypi, histopi, timepi, chordpi and
+    piepi every indented `..` row rendered one character left of the rows above it.
+    linkpi already avoided this; all six views now share one help builder that keeps
+    every space.
+  - The indented rows' labels are now padded by code, not by hand. `in the panel ...`
+    had been one character wider than the rows under it.
+  - xypi's `shift-e` / `ctrl-e` time keys are now indented rows instead of widening the
+    key column.
+  - The help (~790px) was clipped to the view, so on a 160px piepi most of every line was
+    lost. It now extends past the view's edge while the view has focus, the same way the
+    settings panel does.
+  - The help text is now escaped (linkpi's says `&intersect`).
+- **`histop`: the bars no longer touch the distribution strip, and a drag selects only
+  drawn bars.**
+  - The bars were allowed to end exactly on the strip's top edge. When bins were cut off,
+    the "+N more" indicator under the last bar landed on the strip.
+  - The bars now stop 3px above the strip, and the indicator clears it too.
+  - Separately, `recordsAt()`, `filterByRectangle()` and `filterByOval()` checked which
+    bars fit against the whole canvas height, not the space above a bottom legend. A
+    drag over the bars could then select bins that were never drawn.
+  - The render and all three hit tests now share one rule. Across 1,200 sizes and legend
+    placements, 214 renders had touched the strip and 353 drags had reached undrawn bins.
+- **`xyp`: two or more distribution fields counted every row once per field.** With
+  `x_distributions=['a', 'b']` over a single x and y, xyp copied every row once per field.
+  The distributions need those copies, but everything else read them as well:
+  - dots: a row-count colour of 2 read as 4, and dot-size sums doubled;
+  - lines: each line was drawn twice;
+  - hit-testing: `recordsAt()` and the drag filters returned each record twice, so
+    brushing and tooltips saw duplicates;
+  - the other axis: `y_distributions=p2s.ROW_COUNTp` (or one field) counted each row
+    twice.
+
+  The extra copies are now dropped once the distributions are computed. Each field's bars
+  are unchanged, and two x columns still make two sets of dots.
+- **`smallp`: xyp lines in the Remainder and "All" panels ran across categories.** A
+  panel that holds several categories chained every category's points into one line per
+  `line=` value. The line zig-zagged between categories and read as a filled area. smallp
+  now passes its category field(s) to the panels as `line_split_by=`, so a mixed panel
+  draws one line per category in the colours the categories' own panels use.
+  - Single-category panels are unchanged.
+  - A list or dict `category_by` names no column, so its mixed panels still merge.
+- **`xyp`: a time-zone-aware datetime column raised `SchemaError`.** Any column with a
+  zone could not be plotted at all, including one parsed with `%z`. It is now drawn as
+  wall-clock time in its own zone, so a `UTC` column is labelled in UTC and an
+  `America/New_York` column in New York time. To see another zone, `convert_time_zone()`
+  the column before plotting. Also fixed:
+  - `x_range=` / `y_range=` accept aware bounds; each is converted into the axis
+    column's zone.
+  - The interactive time keys (`u` / `e`) work on an aware column.
+  - `recordsAt()` still returns the rows with their zone intact.
+- **`smallp`: an xyp's shared colour or size scale (`sm_shared={SM_COLOR}` /
+  `{SM_COUNT}`) was stretched by a hidden render of the whole frame.** Where categories
+  overlap on a pixel, the scale ran up to their combined value, which no panel draws, so
+  every panel read paler (or its dots smaller) than it should. smallp also rendered its
+  template once more on the whole frame for nothing; it now renders only its panels.
+- **`spreadlinesp`: a highlighted node packed into a cloud showed nothing**, so a
+  selection arriving from a linked view vanished in a dense bin. The cloud's pill now
+  takes a highlighted circle's emphasis: the wider ring when some of its members are
+  highlighted, the ring and the near-opaque fill when all are.
+- **`histop` / `timep`: a negative `count=` is drawn as zero, and says so.** A bin
+  whose count sums below zero is clamped to zero, with a one-time warning naming the
+  component, the count field and the bins. It used to draw as zero silently, and only
+  for simple bars. In a stacked bar a negative segment ran the bar past the end of its
+  axis (histop) or knocked the stack off its baseline (timep); each segment is now
+  clamped on its own. A negative bin now sorts as zero under the default `order=`.
+- **`histop` / `timep`: a stacked bar whose segments summed to zero wrote `NaN` into
+  the SVG.**
+- **`histop` / `timep`: a stacked bar could end in two "misc" segments.** One was the
+  `'(other)'` pool, the other an unlabelled block, in the default colour, of the segments
+  too thin to draw. They are now one segment, in `'(other)'`'s colour, at the end of the
+  bar.
+- **`histop` / `timep`: a colour value could be named in the legend and drawn nowhere.**
+  Values were pooled into `'(other)'` against the canvas size, not the plot. A value
+  just wide enough for the canvas was then too thin for a plot narrowed by a legend or
+  axis labels. Pooling is now checked against the plot the bars are drawn on.
+- **`histop` / `timep`: stacked-bar segments were written at full float precision**
+  (`x="45.698630136986296"`). They are now written to 0.1 px like simple bars, and
+  adjacent segments still meet exactly. **This changes the SVG text of every stacked
+  bar, not its appearance.**
+- **`xyp`: a null in the colour, size, opacity, distribution or line field removed the
+  whole row.** A row with a perfectly good x and y lost its dot, its category on a
+  categorical axis, and its share of the axis extents. Now only a null x or y drops a
+  row:
+  - a null colour draws in the default colour;
+  - a null size or opacity draws at xyp's default (radius 1, opaque);
+  - a null in a distribution field adds nothing;
+  - a null line field keeps the dot but joins no line.
+
+  **This changes renders whose extra fields have nulls.** A categorical legend no longer
+  crashes when the colour field holds a null, which that change would otherwise have
+  exposed.
+
+- **`xyp`: a periodic time axis on a narrow plot drew no labels at all.** When even the
+  coarsest labelling did not fit -- a whole cycle at 128 px left 9 of the 17 periodic
+  types with bare axes -- nothing was drawn. The axis now keeps every k-th of that
+  labelling's main labels, spaced to fit: a year of months at 64 px reads jan, apr, jul,
+  oct.
+
+- **`xyp`: a line whose width or opacity follows the mean of a field did not match the
+  dots it joins.** It was scaled against its own range of values, and the dots against
+  theirs, so one value drew at one size as a dot and another as a line. The line now uses
+  the dots' range.
+
+- **`xyp`: under `color=(field, p2s.CSETp)`, a pixel holding several categories took the
+  colour of a category named "-1".** It now takes the default colour.
+
+- **`xyp`: some periodic axes drew a gridline twice.** At 00:00 and 12:00 on the widest
+  `PT_H_M_Sp` zoom, and on every month's first day at the closest `PT_m_dp` and
+  `PT_m_d_Hp` zoom, a tick sat on top of the major line and showed as a stub.
+
+- **`spreadlinesp`: a null timestamp crashed the render.** One row with no time raised
+  `TypeError` while the time bins were sorted. That row is now left out, so the picture
+  is the one deleting it would give. Nulls also no longer count as a time of day when
+  choosing the level, so midnight-only data stays daily.
+
+- **`timep`: a time-of-day level on a `Date` column failed with polars' own error.** For
+  example, `('d', p2s.PT_Hp)` failed with "`hour` operation not supported for dtype
+  `date`", and `('d', p2s.LT_Y_m_d_Hp)` with a `date_range` error. It now raises
+  `InvalidSpecError` naming the level and the column. This covers all 17 levels that
+  read an hour, minute or second.
+
+- **`timep`: a level too fine for the plot drew a blank chart, silently.** For example,
+  `PT_H_M_Sp` at 512 px lays 86,400 bars under a pixel wide each. It now warns, naming
+  the level, the number of bars and the plot width.
+
+- **`timep`: a linear boxplot's swarm was never capped.** `swarm_max_pts` was applied per
+  distinct timestamp rather than per bin, so a monthly bin could draw 183 dots against a
+  cap of 50. It now caps each bin, as histop and periodic timep always did.
+
+- **`linkp`: with a colour scale on both the links and the nodes, the legend's range took
+  in the node values.** For example, a legend of link row counts titled "rows" ran from
+  1 to 32 because 32 was a node's sum, and a `smallp` sharing colours (`SM_COLOR`) spread
+  the links over the same wrong range. The scale now belongs to the links, which the
+  legend describes. The nodes still spread over their own range.
+
+- **`linkp`, `chordp`, `spreadlinesp`: a misspelt colour field is now an error.** Before:
+  - in `linkp` and `chordp`, a `color=` naming no column drew everything in the default
+    colour;
+  - in `spreadlinesp`, a `node_color=` naming no column coloured every node by its name;
+  - in `linkp` and `chordp`, a misspelt field inside a tuple spec such as
+    `('categroy', p2s.CSETp)` failed inside polars with an error naming neither the
+    parameter nor the spec.
+
+  Each now raises a `ValueError` that names both. `chordp` still accepts `color='src'`
+  and `'dst'` when no column has that name.
+
+- **Interactive views: a modifier released as the mouse button came up was often
+  lost.** Letting go of the key at that moment is the natural way to do it, but each
+  operation was read from the modifier keys after a round trip to Python, and the
+  release had already cleared them by then. So:
+  - in `linkpi`, a ctrl-, shift- or ctrl-shift-drag replaced the selection instead of
+    adding, subtracting or intersecting;
+  - in `linkpi`, a shift-click on a selected node did not deselect it, and a ctrl- or
+    shift-click on an unselected node did not add or remove it;
+  - in every other interactive view (`xypi`, `histopi`, `timepi`, `piepi`, `chordpi`,
+    …), a shift-drag kept the records in the box instead of removing them.
+
+  The release now waits until the operation has been applied. The drag band's colour
+  was right throughout, so it named an operation that then did not happen.
+
+- **`chordp`: a `node_color=` that depends on the data drew every node the default
+  colour.** This covered all of them:
+  - a text or numeric field;
+  - `(field, p2s.CSETp)`;
+  - the `CMAGNITUDE_*` and `CSTRETCHED_*` statistics;
+  - `CSET_MAGNITUDEp` and `CSET_STRETCHEDp`;
+  - `CROW_MAGNITUDEp` and `CROW_STRETCHEDp`.
+
+  A legend still drew those categories or that colour scale, so it described colours
+  the ring did not show. In `chordpi`, the node-colour-scale setting changed nothing.
+  Each node is now coloured from its rows, as `linkp` colours it: every row that names
+  the node at either end.
+  - **Text field or `CSETp`:** a node whose rows hold one category takes that
+    category's colour.
+  - **Statistic:** a node's colour comes from the statistic over its rows.
+
+  If the links also carry a colour scale, the legend's range stays theirs.
+
+- **`chordp`: `color='src'` and `color='dst'` did nothing.** Each link now takes its
+  source's (or destination's) node colour, as documented. A frame with a column named
+  `src` or `dst` still colours by that column, as before. The `chordp` docstring also
+  said `node_color=None` colours nodes by name. It draws them in the default data colour,
+  and the docstring now says so.
+
+- **`xyp`: a datetime axis that did not start at midnight labelled its gridlines with the
+  wrong times.** Every gridline was placed as if the axis started at midnight. On an axis
+  running 06:00 to 18:00, "06:00" was drawn where 12:00 is. On a 09:30 to 11:00 axis,
+  every label was shifted 9½ hours, off the plot, so the axis showed no times at all. The
+  gridlines also ran on to the end of the last day, past the plot. A check meant for
+  `Date` columns caught datetimes too, because `datetime` is a subclass of `date`. Axes
+  whose data started at exactly midnight were unaffected, which is why this went unseen.
+
+- **`xyp`: axis labels were cut off at the canvas edge.** On a categorical y axis the top
+  category's label was drawn with its text above the canvas, so only its bottom 2 px
+  showed. It now sits one text height inside the plot. And a time label whose gridline
+  is too close to the canvas edge for its text is now left off, rather than drawn cut in
+  half: for example "2026" on a 96 px wide years axis.
+
+- **`histop`: bins with equal counts came out in a different order on every render.**
+  Bars were sorted by count alone, and bins that tied were left in the order polars'
+  unordered, multithreaded `group_by` produced. Three bins of two rows each came out in
+  all six possible orders over thirty identical calls, so re-running a cell or
+  re-rendering a `histopi` view reshuffled them. Ties now sort by the bin's own value,
+  A to Z, with a missing value last. That is the same order `order=p2s.LABELp` uses.
+
+- **`timep`: a null timestamp changed the time granularity.** The check for how finely
+  the data resolves time counts distinct hours, minutes and seconds, and it counted a
+  null as one more. So midnight-only data with a single null row looked sub-daily and
+  was drawn in hourly bins, with 192 gridlines where there should have been two daily
+  bars. `timeLevels()` counted bars the same way and offered a yearly level for two days
+  of data, the null making the "second bar". A null timestamp now draws, and offers,
+  exactly what deleting its row does.
+
+- **`xyp`: an empty or all-NaN plot printed "None" at both ends of both axes.** An axis
+  with no rows now leaves its end labels blank.
+
+- **`xyp`: an axis with no range was labelled from the rows the other axis's range
+  kept.** Rows outside a range are dropped, but the axis without one still spans all the
+  data, and its dots are placed on that span. Its labels and grid lines were read from
+  the rows that survived instead. So on data where `value` rises through a year,
+  `y_range=(150, 199)` kept September to December and relabelled a January-to-December x
+  axis as September to December, while the dots stayed where January to December put
+  them. It affected date, datetime, periodic (t-field) and categorical axes. Numeric
+  axes were already labelled from the drawn window.
+
+- **`xyp`: passing any range switched a `Date` axis to datetime labels.** This happened
+  even with a range equal to the data's own extent. The ends showed datetimes and the
+  middle showed the span ("20y") instead of the column name. A midnight bound on a
+  `Date` axis is now labelled as a date. A bound with a time of day keeps it, because
+  the window really does start part way through that day.
+
+- **`xyp`: periodic time axes drew wrong and overlapping labels.**
+  - On `PT_H_Mp`, at its finest zoom, every quarter hour was labelled "30", so 10:15 and
+    10:45 both read as 10:30.
+  - On `PT_DoW_H_Mp`, hour 0's label was printed over the weekday name.
+  - On `PT_d_H_Mp`, hour 0's label was printed over the day number. At its finest zoom,
+    minute 0's label was also printed over every hour's.
+
+  The same code draws a periodic y axis, so it is fixed too. The tests for these axes
+  used to reach each label case at random and assert nothing. They now render every case
+  of every periodic enum and check each label against the calendar time at the pixel
+  where it is drawn.
 
 - **The settings panel and its pickers were cut off on small views.** Both are drawn
   inside the view's root `<svg>`, which clips to the view, and both are sized to their

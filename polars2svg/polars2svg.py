@@ -2,6 +2,7 @@ import polars as pl
 import polars.selectors as cs
 import logging
 import copy
+import difflib
 
 from collections.abc import Mapping
 from typing import Any, Unpack, TYPE_CHECKING
@@ -434,6 +435,8 @@ class Polars2SVG(P2SColorsMixin,
     SELECT_HORIZONTALp:                  _enums_.SelectShapeP
     SELECT_VERTICALp:                    _enums_.SelectShapeP
     COLOR_BY_NODE_NAME:                  _enums_.NodeColorP
+    COLOR_BY_SRC_NODE:                   _enums_.NodeColorP
+    COLOR_BY_DST_NODE:                   _enums_.NodeColorP
     PIEp:                                _enums_.PieStyleP
     DONUTp:                              _enums_.PieStyleP
     WAFFLEp:                             _enums_.PieStyleP
@@ -869,6 +872,14 @@ class Polars2SVG(P2SColorsMixin,
                       = ('field', 'sub-field-name', ...)
                       = ['field', 'field2', ...]
 
+        A line can also be split by more fields without those fields changing its color --
+        one line per (country, series) that keeps each series' color, for example.  smallp
+        sets this to its category field(s), so a panel holding several categories draws one
+        line per category:
+
+        line_split_by = 'field'
+                      = ['field', 'field2', ...]
+
         Line width may be specified using the following enumerations:
 
         LINEWIDTH_DOTSIZE_MEAN           # line width will be the size field used for dots
@@ -901,16 +912,25 @@ class Polars2SVG(P2SColorsMixin,
 
         distributions are specified as follows:
 
-        x_distributions|y_distributions = polars2svg.ROW_COUNTp
-                                        = (field-name, sub-field-name, ...)
-                                        = ['field', 'field2', ...]
-                                        = [(field-name, sub-field-name, ...), (field-name2, sub-field-name2, ...), ...]
+        x_distributions|y_distributions = True                         # rows, bins chosen automatically
+                                        = n                            # rows in n bins
+                                        = polars2svg.ROW_COUNTp        # rows
+                                        = 'field'                      # one field
+                                        = [part, part, ...]            # a list of the parts below
+                                        = (part, part, ...)            # the same as the list
+                                        = False | None                 # no distribution
 
-        a single integer may be supplied within the list (or the tuple for a single field) that controls the number of bins
-        - by default, if no integer is supplied, then the number of bins will be calculated automatically
+        what to measure -- p2s.ROW_COUNTp or field(s), not both:
+        - polars2svg.ROW_COUNTp            # rows per bin
+        - 'field'                          # a numeric field is summed, any other counts its distinct values
+                                           # (force either with polars2svg.SCALARp / polars2svg.SETp)
+        - 'field1', 'field2', ...          # one outline per field, each in its own color
+        - ('field1', 'field2')             # inside the list: the distinct (field1, field2) pairs
 
-        a single floating point value may be supplied within the list (or the tuple for a single field) that controls the
-        height of the rendering as a percentage of the chart size
+        a single integer controls the number of bins
+        - by default the number of bins is calculated from the plot size (one bar per value on a periodic time axis)
+
+        a single floating point value in (0, 1] controls the height of the rendering as a fraction of the space available
 
         hex colors may be included at either the list-level or within each tuple to force a specific color
 
@@ -931,6 +951,8 @@ class Polars2SVG(P2SColorsMixin,
         wxh            = (width, height)
         insets         = (x-inset, y-inset)   # if the plot is too small, the insets won't be drawn
         draw_context   = True (default) | False  # if the plot is too small, the context won't be drawn
+        draw_grid      = True (default) | False  # the gridlines inside the plot (and their small labels);
+                                                 # False keeps the axes -- outline, end labels, names
         draw_border    = True (default) | False  # draw a rectangular border around the SVG
         txt_h          = label text height
         x_range        = (min, max)           # clip the x axis to this window (default: the data extent)
@@ -1477,7 +1499,7 @@ class Polars2SVG(P2SColorsMixin,
 
         Example::
 
-            p2s.chordp(df, [('src', 'dst')], color='src', node_size='vary')
+            p2s.chordp(df, [('src', 'dst')], color=p2s.COLOR_BY_SRC_NODE, node_size='vary')
 
         relationships  = [('from_field', 'to_field')]
                        = [(('f0','f1'), ('f2','f3'))]      # tuple fields are concatenated with '|'
@@ -1495,14 +1517,16 @@ class Polars2SVG(P2SColorsMixin,
 
         color          = None                              # default data color for all links
                        = '#rrggbb'                         # fixed hex constant for all links
-                       = 'src'                             # each link inherits its source node's color
-                       = 'dst'                             # each link inherits its destination node's color
+                       = p2s.COLOR_BY_SRC_NODE             # each link inherits its source node's color
+                       = p2s.COLOR_BY_DST_NODE             # each link inherits its destination node's color
+                                                           #   (the bare strings 'src' / 'dst' still work when no
+                                                           #   column has that name, but are deprecated)
                        = 'field'                           # string field → CSETp; numeric → CMAGNITUDE_SUMp
                        = ('field', p2s.CSETp)              # same spec forms as node_color below
                        = p2s.CROW_MAGNITUDEp               # color by raw row count per edge → spectrum
                        = p2s.CROW_STRETCHEDp               # color by raw row count rank → spectrum
 
-        node_color     = None                              # nodes colored by hash of node name (default)
+        node_color     = None                              # every node the default data color (default)
                        = '#rrggbb'                         # fixed hex constant for all nodes
                        = p2s.COLOR_BY_NODE_NAME            # hash each node's own name to a distinct color
                        = 'field'                           # string field → CSETp (hash); numeric field → CMAGNITUDE_SUMp
@@ -1956,6 +1980,42 @@ class Polars2SVG(P2SColorsMixin,
                 f'pass it explicitly as {param_name}=... )')
 
     #
+    # columnSuggestion() - a suffix for a "column not found" error: the columns the name
+    # was most likely meant to be.
+    #
+    # smallp(df, tmpl, 'country') on a frame whose column is 'country_name' said only
+    # "Unknown argument type: <class 'str'>", and the other components' "field not found"
+    # left the reader to go and list the columns themselves.  Candidates are ranked: the
+    # same name in another case first, then a column the name is part of (or that is part
+    # of the name, for names of three letters or more), then anything difflib finds close.
+    # With nothing close, a frame of a dozen columns or fewer is simply listed.  Internal
+    # '__name__' columns are never offered.  '' when there is nothing useful to say, so a
+    # caller can always append it.
+    #
+    def columnSuggestion(self, name: Any, columns: pl.DataFrame | list | None) -> str:
+        if isinstance(name, self.TField): name = name.column
+        if not isinstance(name, str) or columns is None: return ''
+        _all_  = columns.columns if isinstance(columns, pl.DataFrame) else list(columns)
+        _cols_ = [_c_ for _c_ in _all_ if isinstance(_c_, str) and _c_ != name
+                  and not (_c_.startswith('__') and _c_.endswith('__'))]
+        if not _cols_: return ''
+        _low_ = name.lower()
+        def _score_(col: str) -> float:
+            _cl_    = col.lower()
+            _ratio_ = difflib.SequenceMatcher(None, _low_, _cl_).ratio()
+            if _cl_ == _low_:                                          return 3.0
+            if len(_low_) >= 3 and len(_cl_) >= 3 and (_low_ in _cl_ or _cl_ in _low_): return 2.0 + _ratio_
+            return _ratio_ if _ratio_ >= 0.6 else 0.0
+        _ranked_ = sorted((_c_ for _c_ in _cols_ if _score_(_c_) > 0.0), key=lambda _c_: -_score_(_c_))[:3]
+        if _ranked_:
+            _names_ = [repr(_c_) for _c_ in _ranked_]
+            _said_  = _names_[0] if len(_names_) == 1 else ', '.join(_names_[:-1]) + ' or ' + _names_[-1]
+            return f' -- did you mean {_said_}?'
+        if len(_cols_) <= 12:
+            return f' -- the columns are {", ".join(repr(_c_) for _c_ in _cols_)}'
+        return ''
+
+    #
     # placeholderSVG() - the fallback canvas a component paints before (or in place
     # of) a real render: a background-filled rect plus a centered diagnostic message.
     #
@@ -2068,7 +2128,13 @@ class Polars2SVG(P2SColorsMixin,
     # separator for any text drawn to the user. A single-field value never contains
     # the separator, so this is a no-op there.
     #
+    # A null key reads '(null)', the label linkp already gives a null node.  It read
+    # 'None', which is also what a real text value "None" reads -- and data has both: the
+    # millionaire-habits survey answers tax_planning_behavior with "None" (26,833 rows)
+    # and leaves it empty (11,447), which drew two bars both labelled None.
+    #
     def formatMultiFieldValue(self, value: Any) -> str:
+        if value is None: return '(null)'
         return str(value).replace(self.MULTI_FIELD_SEP, '|')
 
     #

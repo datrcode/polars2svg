@@ -1,29 +1,40 @@
 import datetime as dt
+import logging
 import unittest
 
 import polars as pl
 
-from polars2svg import Polars2SVG
-from timep_dataframes import makeTimeDf, makeDateDf
+from polars2svg import Polars2SVG, InvalidSpecError
+from svg_test_utils import capture_log_warnings
+from timep_dataframes import makeTimeDf, makeDateDf, TimepAssertions
 
 
-class TestTimepTimeFields(unittest.TestCase):
+class TestTimepTimeFields(TimepAssertions, unittest.TestCase):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.p2s = Polars2SVG()
+
+    # The view draws at `level` (or its own auto level when None), and every column is
+    # that level's bin's row count, in its slot on the spine
+    def assertDrawsAtLevel(self, df: pl.DataFrame, col: str, level=None) -> None:
+        _t_ = self.p2s.timep(df, col if level is None else (col, level), wxh=(512, 128))
+        if level is not None: self.assertEqual(_t_._time_enum_, level)
+        self.assertColumnsShow(_t_, df, col, pl.len())
 
     # ── LINEAR enums ─────────────────────────────────────────────────────────
 
     def test_linear_auto_resolve_various_spreads(self):
         '''Auto-resolution adapts to data spread at a fixed widget width.'''
-        df_years  = makeTimeDf(n=50, year=(2000, 2025))
-        df_months = makeTimeDf(n=50, year=2023,  month=(1, 12))
-        df_days   = makeTimeDf(n=50, year=2023,  month=6,    day=(1, 30))
-        df_hours  = makeTimeDf(n=50, year=2023,  month=6,    day=15,   hour=(0, 23))
-        df_mins   = makeTimeDf(n=50, year=2023,  month=6,    day=15,   hour=(12, 13), minute=(0, 59))
-        df_secs   = makeTimeDf(n=50, year=2023,  month=6,    day=15,   hour=12,  minute=(0, 4), second=(0, 59))
-        for df in [df_years, df_months, df_days, df_hours, df_mins, df_secs]:
-            self.p2s.timep(df, 'ts', wxh=(512, 128))
+        df_years  = makeTimeDf(n=50, year=(2000, 2025), seed=1)
+        df_months = makeTimeDf(n=50, year=2023,  month=(1, 12), seed=2)
+        df_days   = makeTimeDf(n=50, year=2023,  month=6,    day=(1, 30), seed=3)
+        df_hours  = makeTimeDf(n=50, year=2023,  month=6,    day=15,   hour=(0, 23), seed=4)
+        df_mins   = makeTimeDf(n=50, year=2023,  month=6,    day=15,   hour=(12, 13), minute=(0, 59), seed=5)
+        df_secs   = makeTimeDf(n=50, year=2023,  month=6,    day=15,   hour=12,  minute=(0, 4), second=(0, 59), seed=6)
+        for _name_, df in (('years', df_years), ('months', df_months), ('days', df_days),
+                           ('hours', df_hours), ('minutes', df_mins), ('seconds', df_secs)):
+            with self.subTest(spread=_name_):
+                self.assertDrawsAtLevel(df, 'ts')
 
     def test_all_linear_enums_datetime(self):
         '''Force every TimeLinearTypeP on datetime data matched to that granularity.
@@ -45,13 +56,13 @@ class TestTimepTimeFields(unittest.TestCase):
             (p.LT_Y_m_d_H_M_15Sp, dict(year=2023,         month=6,        day=15,        hour=12,       minute=(0, 4),  second=(0, 59))),
             (p.LT_Y_m_d_H_M_Sp,   dict(year=2023,         month=6,        day=15,        hour=12,       minute=(0, 4),  second=(0, 59))),
         ]
-        for _enum_, _kw_ in _cases_:
-            df = makeTimeDf(n=50, **_kw_)
-            self.p2s.timep(df, ('ts', _enum_), wxh=(512, 128))
+        for _i_, (_enum_, _kw_) in enumerate(_cases_):
+            with self.subTest(level=_enum_.name):
+                self.assertDrawsAtLevel(makeTimeDf(n=50, seed=_i_, **_kw_), 'ts', _enum_)
 
     def test_coarse_linear_enums_on_date_column(self):
         '''Date (pl.Date) columns support linear enums up to LT_Y_m_dp.'''
-        df = makeDateDf(n=100, year=(2020, 2025), month=(1, 12))
+        df = makeDateDf(n=100, year=(2020, 2025), month=(1, 12), seed=11)
         _coarse_ = [
             self.p2s.LT_Yp,
             self.p2s.LT_Y_Qp,
@@ -59,7 +70,8 @@ class TestTimepTimeFields(unittest.TestCase):
             self.p2s.LT_Y_m_dp,
         ]
         for _enum_ in _coarse_:
-            self.p2s.timep(df, ('dt', _enum_), wxh=(512, 128))
+            with self.subTest(level=_enum_.name):
+                self.assertDrawsAtLevel(df, 'dt', _enum_)
 
     def test_granularity_auto_coarsens_for_narrow_widget(self):
         '''Narrower widget forces coarser auto-selected granularity.'''
@@ -80,19 +92,18 @@ class TestTimepTimeFields(unittest.TestCase):
     # ── PERIODIC enums ────────────────────────────────────────────────────────
 
     def test_all_periodic_enums_datetime(self):
-        '''All TimePeriodicTypeP enums render without exception on datetime data.'''
+        '''Every TimePeriodicTypeP draws each cycle unit's rows in its slot -- even the
+        ones whose cycle outgrows the plot, like PT_H_M_Sp's 86,400 (PLANNING.md §5
+        C-timep-subpixel-levels).'''
         df = makeTimeDf(n=100, year=(2020, 2025), month=(1, 12), day=(1, 28),
-                        hour=(0, 23), minute=(0, 59), second=(0, 59))
+                        hour=(0, 23), minute=(0, 59), second=(0, 59), seed=12)
         for _enum_ in self.p2s.TimePeriodicTypeP:
-            self.p2s.timep(df, ('ts', _enum_), wxh=(512, 128))
+            with self.subTest(level=_enum_.name):
+                self.assertDrawsAtLevel(df, 'ts', _enum_)
 
     def test_periodic_enums_date_column_day_and_coarser(self):
-        '''Periodic enums that only need date components work on pl.Date columns.
-
-        BUG: enums that extract hour/minute/second (PT_m_d_Hp, PT_DoW_Hp,
-        PT_DoW_H_Mp, PT_d_Hp, PT_d_H_Mp, PT_H_Mp, PT_H_M_Sp, PT_M_Sp,
-        PT_Sp) raise InvalidOperationError because .dt.hour() is not supported
-        on pl.Date.  Only the date-compatible subset is tested here.
+        '''Periodic enums that only need date components work on pl.Date columns.  The
+        ones that read a time of day are refused -- the next test.
         '''
         _date_compatible_ = [
             self.p2s.PT_Qp,    # quarter: month only
@@ -102,9 +113,52 @@ class TestTimepTimeFields(unittest.TestCase):
             self.p2s.PT_DoWp,  # day of week
             self.p2s.PT_dp,    # day of month
         ]
-        df = makeDateDf(n=100, year=(2020, 2025), month=(1, 12))
+        df = makeDateDf(n=100, year=(2020, 2025), month=(1, 12), seed=13)
         for _enum_ in _date_compatible_:
-            self.p2s.timep(df, ('dt', _enum_), wxh=(512, 128))
+            with self.subTest(level=_enum_.name):
+                self.assertDrawsAtLevel(df, 'dt', _enum_)
+
+    # Every level that reads a time of day, measured 2026-09-29: on a Date column each one
+    # failed inside polars, the periodic ones with "`hour` operation not supported for
+    # dtype `date`" and the linear with date_range's "interval must consist of full days"
+    # (PLANNING.md §5 C-timep-date-subday-levels, which listed ten and missed PT_Mp).
+    _SUBDAY_PERIODIC_ = ('PT_m_d_Hp', 'PT_DoW_Hp', 'PT_DoW_H_Mp', 'PT_d_Hp', 'PT_d_H_Mp', 'PT_Hp',
+                         'PT_H_Mp', 'PT_H_M_Sp', 'PT_Mp', 'PT_M_Sp', 'PT_Sp')
+    _SUBDAY_LINEAR_   = ('LT_Y_m_d_4Hp', 'LT_Y_m_d_Hp', 'LT_Y_m_d_H_15Mp', 'LT_Y_m_d_H_Mp',
+                         'LT_Y_m_d_H_M_15Sp', 'LT_Y_m_d_H_M_Sp')
+
+    def test_a_time_of_day_level_on_a_date_column_is_refused_by_name(self):
+        '''Refused before any polars call, naming the level and the column -- and every
+        other level still draws, so the rule is not simply "refuse Date columns".'''
+        df = makeDateDf(n=100, year=(2020, 2025), month=(1, 12), seed=13)
+        for _enum_ in list(self.p2s.TimePeriodicTypeP) + list(self.p2s.TimeLinearTypeP):
+            with self.subTest(level=_enum_.name):
+                if _enum_.name in self._SUBDAY_PERIODIC_ + self._SUBDAY_LINEAR_:
+                    with self.assertRaises(InvalidSpecError) as _ctx_:
+                        self.p2s.timep(df, self.p2s.tField('dt', _enum_))
+                    self.assertIn(_enum_.name, str(_ctx_.exception))
+                    self.assertIn('"dt" is a Date column', str(_ctx_.exception))
+                else:
+                    self.assertTrue(self.p2s.timep(df, self.p2s.tField('dt', _enum_))._repr_svg_().startswith('<svg'))
+        self.assertEqual(len(self._SUBDAY_PERIODIC_) + len(self._SUBDAY_LINEAR_), 17)
+
+    def test_a_level_under_a_pixel_a_bar_warns(self):
+        '''86,400 one-second slots across a 512px plot draw width-0.0 bars -- a blank chart.
+        It warns, naming the level; a level that fits says nothing (PLANNING.md §5
+        C-timep-subpixel-levels).'''
+        df = makeTimeDf(n=100, year=(2020, 2025), month=(1, 12))
+        _p2s_ = Polars2SVG()
+        # "once" is once per process, so a test that asserts on a warning clears the
+        # filter's memory first -- as test_count_inert_warning.py does
+        for _f_ in logging.getLogger('polars2svg_logger').filters:
+            if type(_f_).__name__ == 'OnceFilter': _f_.seen_messages.clear()
+        _recs_ = capture_log_warnings(lambda: _p2s_.timep(df, ('ts', _p2s_.PT_H_M_Sp), wxh=(512, 128))._repr_svg_())
+        _msgs_ = [r.getMessage() for r in _recs_ if 'under a pixel' in r.getMessage()]
+        self.assertEqual(len(_msgs_), 1, _msgs_)
+        self.assertIn('PT_H_M_Sp', _msgs_[0])
+        self.assertIn('86,400 bars', _msgs_[0])
+        _recs_ = capture_log_warnings(lambda: _p2s_.timep(df, ('ts', _p2s_.PT_Hp), wxh=(512, 128))._repr_svg_())
+        self.assertEqual([r for r in _recs_ if 'under a pixel' in r.getMessage()], [])
 
     def test_periodic_enum_repr_svg(self):
         df = makeTimeDf(n=100, year=(2020, 2025), month=(1, 12))

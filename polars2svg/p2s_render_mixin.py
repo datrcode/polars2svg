@@ -4,6 +4,9 @@ import polars as pl
 from .exceptions import InvalidSpecError
 from .p2s_enums import CountSpec, FieldTypeP, ResolvedColorSpec, RowCountP
 
+# The label a stacked component pools its thin colours under, and the colour a bar's misc takes
+OTHER_LABEL = '(other)'
+
 class P2SRenderMixin:
     # ---------------------------------------------------------------------
     # Host-class attributes this mixin reads off `self`.
@@ -22,6 +25,7 @@ class P2SRenderMixin:
     MULTI_FIELD_SEP:                Any
     ROW_COUNTp:                     RowCountP
     SCALARp:                        FieldTypeP
+    color:                          Any
     colorTyped:                     Any
     colorizeColumnPolarsOperations: Any
     numericColumn:                  Any
@@ -101,6 +105,30 @@ class P2SRenderMixin:
         return df_gb.sort(['__sum__', color], descending=True)[color].to_list()
 
     #
+    # __miscMask__() - the segments a stacked bar folds into its one "misc" segment: those
+    # too thin to draw (under remainder_threshold px), and the '(other)' a component
+    # already pooled its thin colours into.  Drawn in '(other)'s colour, so a bar reads as
+    # one misc; it used to carry an '(other)' in its colour and a second, unlabelled
+    # remainder in the default data colour (PLANNING.md §5 C-histop-two-remainders).
+    #
+    def __miscMask__(self, color: Any, size_col: str, remainder_threshold: float) -> pl.Expr:
+        return (pl.col(size_col) < remainder_threshold) | (pl.col(color).cast(pl.String) == OTHER_LABEL).fill_null(False)
+
+    #
+    # __roundSegments__() - segment edges to 0.1 px, at the column (PLANNING.md S1), each
+    # size then the difference of its rounded edges -- so rounding opens no gap and no
+    # overlap between neighbours.  start_col is the segment's left (or top) edge.  They used
+    # to be written at full float precision (§5 C-stacked-bar-precision).
+    #
+    # Both edges are given as expressions over the same cumulative sum, so a segment's far
+    # edge and its neighbour's near edge are the same float and round alike; start + size
+    # can differ from it in the last bit and round the other way at a .x5.
+    @staticmethod
+    def __roundSegments__(df: pl.DataFrame, start_col: str, size_col: str, near: pl.Expr, far: pl.Expr) -> pl.DataFrame:
+        _start_, _end_ = near.round(1), far.round(1)
+        return df.with_columns(_start_.alias(start_col), (_end_ - _start_).abs().round(1).alias(size_col))
+
+    #
     # colorizeBar() - colorize a bar for a barchart using polars operations
     # xywh convention: (x, y_bottom, bar_width, bar_height) - bars extend upward from y_bottom
     #
@@ -112,11 +140,11 @@ class P2SRenderMixin:
         _color_data_ = self.colorTyped('data', 'default')
         # Easiest case first - bar extends upward from _y_ (bottom baseline)
         if   color is None and orientation == 'horizontal':
-            _s_ = f'<rect x="{xywh[0]}" y="{xywh[1]}" width="{bar_h}" height="{bar_w}" fill="{_color_data_}" stroke="none" />'
+            _s_ = f'<rect x="{xywh[0]}" y="{xywh[1]}" width="{round(bar_h, 1)}" height="{bar_w}" fill="{_color_data_}" stroke="none" />'
             if dl is not None: return dl.rect(xywh[0], xywh[1], bar_h, bar_w, _color_data_, svg=_s_)
             return _s_
         elif color is None and orientation == 'vertical':
-            _s_ = f'<rect x="{xywh[0]}" y="{xywh[1] - bar_h}" width="{bar_w}" height="{bar_h}" fill="{_color_data_}" stroke="none" />'
+            _s_ = f'<rect x="{xywh[0]}" y="{round(xywh[1] - bar_h, 1)}" width="{bar_w}" height="{round(xywh[1], 1) - round(xywh[1] - bar_h, 1):.1f}" fill="{_color_data_}" stroke="none" />'
             if dl is not None: return dl.rect(xywh[0], xywh[1] - bar_h, bar_w, bar_h, _color_data_, svg=_s_)
             return _s_
         # Concatenate the color fields if necessary & set the color field to the concatenation
@@ -205,15 +233,24 @@ class P2SRenderMixin:
         # Determine the percentage covered & the bar height
         df_gb = df_gb.with_columns((pl.col('__sum__')/pl.col('__sum__').sum()).alias('__perc__')) \
                     .with_columns((pl.col('__perc__') * bar_h).alias('__h_in_px__'))
-        # Split into what needs to be aggregated based on bar height
-        df_above = df_gb.filter(pl.col('__h_in_px__') >= remainder_threshold).with_columns(self.colorizeColumnPolarsOperations(color).alias('__hexcolor__'))
-        df_below = df_gb.filter(pl.col('__h_in_px__') <  remainder_threshold)
-        if len(df_below) > 0: df_below = df_below.select(pl.selectors.numeric()).sum().with_columns(pl.lit(_color_data_).alias('__hexcolor__'))
+        # Split off the misc: every segment too thin to draw, together with an '(other)' the
+        # component already pooled -- one segment, in '(other)'s colour, last (see
+        # __miscMask__)
+        _misc_   = self.__miscMask__(color, '__h_in_px__', remainder_threshold)
+        df_above = df_gb.filter(~_misc_).with_columns(self.colorizeColumnPolarsOperations(color).alias('__hexcolor__'))
+        df_below = df_gb.filter(_misc_)
+        if len(df_below) > 0: df_below = df_below.select(pl.selectors.numeric()).sum().with_columns(pl.lit(self.color(OTHER_LABEL)).alias('__hexcolor__'))
         # Put it back together
         df       = pl.concat([df_above, df_below], how='diagonal') if len(df_below) > 0 else df_above
         # Stack segments from bottom (_y_) upward: y = _y_ - cumsum_inclusive
         if orientation == 'horizontal': df = df.with_columns(pl.col('__h_in_px__').cum_sum().shift(1).fill_null(0.0).alias('__px__')).with_columns(pl.col('__px__') + _x_)
         else:                           df = df.with_columns((_y_ - pl.col('__h_in_px__').cum_sum()).alias('__px__'))
+        if orientation == 'horizontal':
+            df = self.__roundSegments__(df, '__px__', '__h_in_px__', _x_ + pl.col('__h_in_px__').cum_sum().shift(1).fill_null(0.0),
+                                        _x_ + pl.col('__h_in_px__').cum_sum())
+        else:
+            df = self.__roundSegments__(df, '__px__', '__h_in_px__', _y_ - pl.col('__h_in_px__').cum_sum(),
+                                        _y_ - pl.col('__h_in_px__').cum_sum().shift(1).fill_null(0.0))
         # Render
         if orientation == 'horizontal': _op_     = self.polarsConcatString(f'<rect x="{{__px__}}" y="{_y_}" width="{{__h_in_px__}}" height="{bar_w}" fill="{{__hexcolor__}}" stroke="none" />')
         else:                           _op_     = self.polarsConcatString(f'<rect x="{_x_}" y="{{__px__}}" width="{bar_w}" height="{{__h_in_px__}}" fill="{{__hexcolor__}}" stroke="none" />')
@@ -240,7 +277,6 @@ class P2SRenderMixin:
                                 plot_h: int, count_min: int, count_max: float, color: Any,
                                 color_order: list | None = None, remainder_threshold: float = 3.0,
                                 hexcolor_col: str | None = None, dl: Any = None) -> str:
-        _color_data_ = self.colorTyped('data', 'default')
         _span_        = max(float(count_max) - float(count_min), 1e-9)
         _count_min_f_ = float(count_min)
 
@@ -267,37 +303,45 @@ class P2SRenderMixin:
                    .alias('__bar_h__')
                ) \
                .with_columns(
-                   (pl.col('__count__').cast(pl.Float64) / pl.col('__bin_total__') * pl.col('__bar_h__'))
+                   # a bar of nothing (every segment zero, e.g. clamped negatives) is 0/0 -- NaN in the SVG
+                   pl.when(pl.col('__bin_total__') > 0)
+                     .then(pl.col('__count__').cast(pl.Float64) / pl.col('__bin_total__') * pl.col('__bar_h__'))
+                     .otherwise(0.0)
                    .alias('__h_in_px__')
                )
 
         # 3. Split above/below remainder threshold; assign segment colors
+        # each bar's misc -- its segments too thin to draw, with its '(other)' -- is one
+        # segment in '(other)'s colour, last (see __miscMask__)
+        _misc_ = self.__miscMask__(color, '__h_in_px__', remainder_threshold)
         if hexcolor_col is not None:
-            df_above = df.filter(pl.col('__h_in_px__') >= remainder_threshold) \
+            df_above = df.filter(~_misc_) \
                          .with_columns(pl.col(hexcolor_col).alias('__hexcolor__'))
         else:
-            df_above = df.filter(pl.col('__h_in_px__') >= remainder_threshold) \
+            df_above = df.filter(~_misc_) \
                          .with_columns(pl.col(color).cast(pl.String).alias(color)) \
                          .with_columns(self.colorizeColumnPolarsOperations(color).alias('__hexcolor__'))
-        df_below = df.filter(pl.col('__h_in_px__') <  remainder_threshold)
+        df_below = df.filter(_misc_)
         if len(df_below) > 0:
             df_below = df_below.group_by(bin_col).agg([
                 pl.col('__h_in_px__').sum(),
                 pl.lit(_n_colors_ + 1).cast(pl.Int64).alias('__rank__'),
-                pl.lit(_color_data_).alias('__hexcolor__'),
-            ])
+                pl.lit(self.color(OTHER_LABEL)).alias('__hexcolor__'),
+            ]).filter(pl.col('__h_in_px__') > 0)     # a misc of nothing, e.g. a clamped negative count
             df = pl.concat([df_above, df_below], how='diagonal')
         else:
             df = df_above
 
         # 4. Sort so cum_sum within each bin follows rank order, then join x positions
         df = df.sort([bin_col, '__rank__']) \
-               .join(x_lookup, on=bin_col, how='left')
+               .join(x_lookup, on=bin_col, how='left', nulls_equal=True)   # a null bin has a position too
 
         # 5. Cumulative y position within each bin (over() respects current sort order)
         df = df.with_columns(
             (y_bottom - pl.col('__h_in_px__').cum_sum().over(bin_col)).alias('__py__')
         )
+        df = self.__roundSegments__(df, '__py__', '__h_in_px__', y_bottom - pl.col('__h_in_px__').cum_sum().over(bin_col),
+                                    y_bottom - pl.col('__h_in_px__').cum_sum().shift(1).fill_null(0.0).over(bin_col))
 
         # 6. Render all segments
         _op_ = self.polarsConcatString(
@@ -326,7 +370,6 @@ class P2SRenderMixin:
                                   plot_w: int, count_min: int, count_max: float, color: str,
                                   color_order: list | None = None, remainder_threshold: float = 3.0,
                                   hexcolor_col: str | None = None, dl: Any = None) -> str:
-        _color_data_ = self.colorTyped('data', 'default')
         _span_        = max(float(count_max) - float(count_min), 1e-9)
         _count_min_f_ = float(count_min)
 
@@ -353,37 +396,45 @@ class P2SRenderMixin:
                    .alias('__bar_w__')
                ) \
                .with_columns(
-                   (pl.col('__count__').cast(pl.Float64) / pl.col('__bin_total__') * pl.col('__bar_w__'))
+                   # a bar of nothing (every segment zero, e.g. clamped negatives) is 0/0 -- NaN in the SVG
+                   pl.when(pl.col('__bin_total__') > 0)
+                     .then(pl.col('__count__').cast(pl.Float64) / pl.col('__bin_total__') * pl.col('__bar_w__'))
+                     .otherwise(0.0)
                    .alias('__w_in_px__')
                )
 
         # 3. Split above/below remainder threshold; assign segment colors
+        # each bar's misc -- its segments too thin to draw, with its '(other)' -- is one
+        # segment in '(other)'s colour, last (see __miscMask__)
+        _misc_ = self.__miscMask__(color, '__w_in_px__', remainder_threshold)
         if hexcolor_col is not None:
-            df_above = df.filter(pl.col('__w_in_px__') >= remainder_threshold) \
+            df_above = df.filter(~_misc_) \
                          .with_columns(pl.col(hexcolor_col).alias('__hexcolor__'))
         else:
-            df_above = df.filter(pl.col('__w_in_px__') >= remainder_threshold) \
+            df_above = df.filter(~_misc_) \
                          .with_columns(pl.col(color).cast(pl.String).alias(color)) \
                          .with_columns(self.colorizeColumnPolarsOperations(color).alias('__hexcolor__'))
-        df_below = df.filter(pl.col('__w_in_px__') <  remainder_threshold)
+        df_below = df.filter(_misc_)
         if len(df_below) > 0:
             df_below = df_below.group_by(bin_col).agg([
                 pl.col('__w_in_px__').sum(),
                 pl.lit(_n_colors_ + 1).cast(pl.Int64).alias('__rank__'),
-                pl.lit(_color_data_).alias('__hexcolor__'),
-            ])
+                pl.lit(self.color(OTHER_LABEL)).alias('__hexcolor__'),
+            ]).filter(pl.col('__w_in_px__') > 0)     # a misc of nothing, e.g. a clamped negative count
             df = pl.concat([df_above, df_below], how='diagonal')
         else:
             df = df_above
 
         # 4. Sort so cum_sum within each bin follows rank order, then join y positions
         df = df.sort([bin_col, '__rank__']) \
-               .join(y_lookup, on=bin_col, how='left')
+               .join(y_lookup, on=bin_col, how='left', nulls_equal=True)   # a null bin has a position too
 
         # 5. Cumulative x position within each bin (stacks left-to-right)
         df = df.with_columns(
             (x_left + pl.col('__w_in_px__').cum_sum().over(bin_col) - pl.col('__w_in_px__')).alias('__px__')
         )
+        df = self.__roundSegments__(df, '__px__', '__w_in_px__', x_left + pl.col('__w_in_px__').cum_sum().shift(1).fill_null(0.0).over(bin_col),
+                                    x_left + pl.col('__w_in_px__').cum_sum().over(bin_col))
 
         # 6. Render all segments
         _op_ = self.polarsConcatString(

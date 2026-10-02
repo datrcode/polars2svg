@@ -568,5 +568,57 @@ class TestSmallpChordShared(unittest.TestCase):
         self.assertIs(rlu['x']._bundled_skeleton_, rlu['y']._bundled_skeleton_)
 
 
+class TestSmallpRendersOnlyItsPanels(unittest.TestCase):
+    '''smallp used to hand its template a '__remainder__' slot with no frame even when it
+    had no remainder.  A template given df=None renders its own whole frame, so every
+    smallp paid for one hidden full render -- and xyp's SM_COUNT / SM_COLOR pass counted
+    it into the shared scale, which then spanned a value no panel draws (PLANNING.md §5
+    C-smallp-remainder-render).  Through p2s.smallp, not renderSmallMultiples(), since
+    the slot came from smallp.'''
+
+    @classmethod
+    def setUpClass(cls):
+        cls.p2s = Polars2SVG()
+
+    def test_only_the_placed_slots_are_rendered(self):
+        _df_ = pl.DataFrame({'x': [1.0, 2.0, 3.0, 4.0, 5.0, 6.0], 'y': [2.0, 1.0, 4.0, 3.0, 6.0, 5.0],
+                             'cat': ['a', 'a', 'b', 'b', 'c', 'c']})
+        for _name_, _tmpl_ in (('xyp',    self.p2s.xyp(df=_df_, x='x', y='y', wxh=(96, 96))),
+                               ('histop', self.p2s.histop(_df_, 'x', wxh=(96, 96)))):
+            for _kw_, _slots_ in ((dict(wxh=(400, 140)),                   {('a',), ('b',), ('c',)}),
+                                  (dict(wxh=(210, 140)),                   {('a',), '__remainder__'}),
+                                  (dict(wxh=(400, 140), include_all=True), {'__all__', ('a',), ('b',), ('c',)})):
+                with self.subTest(template=_name_, **{k: str(v) for k, v in _kw_.items()}):
+                    sm = self.p2s.smallp(_df_, sm_template=_tmpl_, category_by='cat', **_kw_)
+                    self.assertEqual(set(sm.category_to_xy), _slots_)
+                    self.assertEqual(set(sm._render_lu_), _slots_)
+                    self.assertTrue(all(sm._render_lu_[k].df is not None for k in sm.category_to_xy))
+
+    def test_the_shared_color_scale_spans_the_panels(self):
+        '''lo peaks at 5 rows on a pixel, hi at 10 on the same pixel.  The whole frame puts
+        15 there, which no panel draws; HEAD's shared range ran to 15.'''
+        lo = pl.DataFrame({'x': [10.0] + [30.0] * 5,  'y': [10.0] + [30.0] * 5,  'cat': ['lo'] * 6})
+        hi = pl.DataFrame({'x': [10.0] + [30.0] * 10, 'y': [10.0] + [30.0] * 10, 'cat': ['hi'] * 11})
+        df = pl.concat([lo, hi])
+        tmpl = self.p2s.xyp(df=df, x='x', y='y', dot_size=2.0, wxh=(128, 128),
+                            color=self.p2s.CROW_MAGNITUDEp, sm_shared={self.p2s.SM_COLOR})
+        sm = self.p2s.smallp(df, sm_template=tmpl, category_by='cat', wxh=(300, 160))
+        self.assertEqual({(r.color_magnitude_min, r.color_magnitude_max) for r in sm._render_lu_.values()}, {(1.0, 10.0)})
+        # and it is what is drawn: hi's 10 is the top of the ramp, lo's 5 is 4/9 of the way
+        _norm_ = {k[0]: dict(r.df_pixels.select('__color_sum__', '__color_norm__').iter_rows())
+                  for k, r in sm._render_lu_.items()}
+        self.assertAlmostEqual(_norm_['hi'][10], 1.0)
+        self.assertAlmostEqual(_norm_['lo'][5], 4 / 9, places=4)
+
+    def test_the_shared_size_scale_spans_the_panels(self):
+        '''dot_size='val': lo has 5 on pixel (10, 10), hi 7 on the same pixel, and hi's
+        largest is 9.  The whole frame puts 12 there; HEAD's shared range ran to 12.'''
+        df = pl.DataFrame({'x': [10.0, 20.0, 10.0, 20.0], 'y': [10.0, 20.0, 10.0, 40.0],
+                           'val': [5.0, 3.0, 7.0, 9.0], 'cat': ['lo', 'lo', 'hi', 'hi']})
+        tmpl = self.p2s.xyp(df=df, x='x', y='y', dot_size='val', wxh=(128, 128), sm_shared={self.p2s.SM_COUNT})
+        sm = self.p2s.smallp(df, sm_template=tmpl, category_by='cat', wxh=(300, 160))
+        self.assertEqual({(r.dot_size_global_min, r.dot_size_global_max) for r in sm._render_lu_.values()}, {(3.0, 9.0)})
+
+
 if __name__ == '__main__':
     unittest.main()

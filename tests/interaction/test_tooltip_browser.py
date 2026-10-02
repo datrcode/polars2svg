@@ -32,13 +32,13 @@ def _set_mode(ip, mode):
     """
     ip.hover(*ip.blank_canvas_xy())
     ip.press('a')
-    ip.expect_panel_open()
+    ip.assert_panel_open()
     ip.press('i')                       # the tooltip row's mnemonic, wherever it sits
     _deadline_ = time.monotonic() + 10.0
     while time.monotonic() < _deadline_:
         if ip.panel_values().get('tooltip') == mode:
             ip.press('Escape')
-            ip.expect_panel_closed()
+            ip.assert_panel_closed()
             return
         ip.press(' ')
         time.sleep(0.05)
@@ -56,7 +56,7 @@ def test_the_panel_opens_on_a_generic_component(xypi_page):
     """
     xypi_page.hover(*xypi_page.blank_canvas_xy())   # focus
     xypi_page.press('a')
-    xypi_page.expect_panel_open()
+    xypi_page.assert_panel_open()
     assert 'tooltip' in xypi_page.panel_values()
 
 
@@ -65,14 +65,14 @@ def test_every_generic_kind_gets_the_row(request, fixture_name):
     _ip_ = request.getfixturevalue(fixture_name)
     _ip_.hover(*_ip_.blank_canvas_xy())
     _ip_.press('a')
-    _ip_.expect_panel_open()
+    _ip_.assert_panel_open()
     assert 'tooltip' in _ip_.panel_values(), _ip_.panel_text()
 
 
 def test_the_row_starts_off(xypi_page):
     xypi_page.hover(*xypi_page.blank_canvas_xy())
     xypi_page.press('a')
-    xypi_page.expect_panel_value('tooltip', 'off')
+    xypi_page.assert_panel_value('tooltip', 'off')
 
 
 def test_without_an_icon_the_row_cycles_two_states(xypi_page):
@@ -81,24 +81,24 @@ def test_without_an_icon_the_row_cycles_two_states(xypi_page):
     xypi_page.hover(*xypi_page.blank_canvas_xy())
     xypi_page.press('a')
     xypi_page.press('i')                   # the tooltip row's mnemonic
-    xypi_page.expect_panel_value('tooltip', 'off')
+    xypi_page.assert_panel_value('tooltip', 'off')
     xypi_page.press(' ')
-    xypi_page.expect_panel_value('tooltip', 'text')
+    xypi_page.assert_panel_value('tooltip', 'text')
     xypi_page.press(' ')
-    xypi_page.expect_panel_value('tooltip', 'off')
+    xypi_page.assert_panel_value('tooltip', 'off')
 
 
 def test_with_an_icon_the_row_cycles_three_states(tooltip_page):
     tooltip_page.hover(*tooltip_page.blank_canvas_xy())
     tooltip_page.press('a')
     tooltip_page.press('i')                   # the tooltip row's mnemonic
-    tooltip_page.expect_panel_value('tooltip', 'off')
+    tooltip_page.assert_panel_value('tooltip', 'off')
     tooltip_page.press(' ')
-    tooltip_page.expect_panel_value('tooltip', 'text')
+    tooltip_page.assert_panel_value('tooltip', 'text')
     tooltip_page.press(' ')
-    tooltip_page.expect_panel_value('tooltip', 'icon')
+    tooltip_page.assert_panel_value('tooltip', 'icon')
     tooltip_page.press(' ')
-    tooltip_page.expect_panel_value('tooltip', 'off')
+    tooltip_page.assert_panel_value('tooltip', 'off')
 
 
 def test_enter_opens_the_rows_own_picker(tooltip_page):
@@ -107,7 +107,7 @@ def test_enter_opens_the_rows_own_picker(tooltip_page):
     tooltip_page.press('a')
     tooltip_page.press('i')
     tooltip_page.press('Enter')
-    tooltip_page.expect_menu_open('tooltip:')
+    tooltip_page.assert_menu_open('tooltip:')
     _txt_ = tooltip_page.menu_text()
     for _state_ in ('off', 'text', 'icon'):
         assert _state_ in _txt_, _txt_
@@ -121,7 +121,7 @@ def test_hovering_with_the_row_off_draws_nothing(xypi_page):
     at mount.  A tooltip appearing here would mean the default leaked."""
     _x_, _y_ = xypi_page.first_mark_xy()
     xypi_page.hover(_x_, _y_)
-    xypi_page.expect_no_tooltip()
+    xypi_page.assert_no_tooltip()
 
 
 # ── text mode ───────────────────────────────────────────────────────────────
@@ -182,7 +182,7 @@ def test_a_drag_suppresses_it(xypi_page):
     xypi_page.mouse_down(_x_, _y_)
     try:
         xypi_page.mouse_move_to(_x_ + 40, _y_ + 40)
-        xypi_page.expect_no_tooltip()
+        xypi_page.assert_no_tooltip()
     finally:
         xypi_page.mouse_up()
 

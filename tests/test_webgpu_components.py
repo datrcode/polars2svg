@@ -462,9 +462,15 @@ class TestLinkpiView(unittest.TestCase):
         self.assertIsInstance(v.gpu_payload, dict)
         self.assertIsNot(v.gpu_payload, before)                 # fresh payload, not the cached one
 
-    def test_use_webgpu_never_leaks_to_reactivehtml(self):
-        from polars2svg.interactive_controller import linkpi
-        linkpi(self._linkp_(), use_webgpu=True)                 # constructs without param error
+    def test_use_webgpu_builds_the_gpu_view(self):
+        '''The flag picks the class, and the class carries it.  (This test began as
+        "never leaks to ReactiveHTML": the flag was once forwarded to a base class that
+        did not declare it.  Since W1 it is a declared param of the view.)'''
+        from polars2svg.interactive_controller import linkpi, LINKPI, LINKPI_GPU
+        _gpu_, _svg_ = linkpi(self._linkp_(), use_webgpu=True), linkpi(self._linkp_())
+        self.assertIs(type(_gpu_), LINKPI_GPU)
+        self.assertIs(type(_svg_), LINKPI)
+        self.assertEqual((_gpu_.use_webgpu, _svg_.use_webgpu), (True, False))
 
 
 class TestSpreadlinepiView(unittest.TestCase):

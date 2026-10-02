@@ -60,7 +60,14 @@ class TestGlobalConfig(unittest.TestCase):
             self.p2s.reset_defaults('bogus')
 
     def test_reset_nonexistent_component_is_safe(self):
-        self.p2s.reset_defaults('timep')  # no timep defaults set — should not raise
+        '''Resetting a component that has no defaults is a no-op: the other component's
+        defaults and the global ones are untouched.'''
+        self.p2s.set_defaults(txt_h=16)
+        self.p2s.set_defaults('histop', wxh=(200, 400))
+        _before_ = self.p2s.get_defaults()
+        self.assertNotIn('timep', _before_)
+        self.assertIsNone(self.p2s.reset_defaults('timep'))
+        self.assertEqual(self.p2s.get_defaults(), _before_)
 
     # ------------------------------------------------------------------
     # _apply_defaults / priority

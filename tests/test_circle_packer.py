@@ -2,7 +2,7 @@ import random
 import unittest
 from math import sqrt
 
-from polars2svg import Polars2SVG
+from polars2svg import Polars2SVG, Polars2SVGError
 from polars2svg.circle_packer import CirclePacker
 
 _P2S_ = Polars2SVG()
@@ -35,8 +35,25 @@ class TestCirclePackerCorrectness(unittest.TestCase):
             self.assertEqual(len(c), 3)
 
     def test_validate_chains_pass_after_pack(self):
+        '''The front is one closed loop through packed circles, and every forward link is
+        undone by the backward chain -- walked here, independently of the validator,
+        which passes and then catches a link broken on purpose.'''
         cp = _pack([(0, 0, 1)] * 6)
-        cp.__validateChains__()  # must not raise
+        self.assertIsNone(cp.__validateChains__())
+        _start_ = next(iter(cp.fwd))
+        _at_, _seen_ = _start_, []
+        for _ in range(len(cp.fwd)):
+            _seen_.append(_at_)
+            self.assertEqual(cp.bck[cp.fwd[_at_]], _at_)
+            _at_ = cp.fwd[_at_]
+        self.assertEqual(_at_, _start_, 'the front does not close')
+        self.assertEqual(sorted(_seen_), sorted(cp.fwd), 'the front is not one loop')
+        self.assertGreaterEqual(len(_seen_), 3)
+        self.assertLessEqual(set(_seen_), set(range(len(cp.packedCircles()))))
+        _k_ = cp.fwd[_start_]
+        cp.bck[_k_] = cp.fwd[_k_]                          # point one link the wrong way
+        with self.assertRaises(Polars2SVGError):
+            cp.__validateChains__()
 
     def test_two_circles(self):
         cp = _pack([(0, 0, 1), (0, 0, 2)])

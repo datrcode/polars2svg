@@ -48,43 +48,81 @@ class Testp2s_render(unittest.TestCase):
         return h_chart * (_count_bar_ / count_max)
 
 
+    # The segments colorizeBar drew: [(x, y, w, h, fill)]
+    def _segments_(self, fragment: str) -> list:
+        return [(float(x), float(y), float(w), float(h), fill) for x, y, w, h, fill in
+                re.findall(r'<rect x="([-\d.e]+)" y="([-\d.e]+)" width="([-\d.e]+)" '
+                           r'height="([-\d.e]+)" fill="(#[0-9a-f]{6})"', fragment)]
+
+    # The colours a bar may use: the default data colour when it has no colour at all;
+    # otherwise its colour field's own, and '(other)'s for its misc -- the segments too
+    # thin to draw on their own (PLANNING.md §5 C-histop-two-remainders)
+    def _allowed_fills_(self, df: pl.DataFrame, color) -> set:
+        if color is None: return {self.p2s.colorTyped('data', 'default')}
+        _fills_ = {self.p2s.color('(other)')}
+        if not isinstance(color, str):
+            _strs_ = [c for c in color if isinstance(c, str)]
+            df, color = df.with_columns(pl.concat_str(_strs_, separator=self.p2s.MULTI_FIELD_SEP).alias('__c__')), '__c__'
+        return _fills_ | set(df.select(self.p2s.colorizeColumnPolarsOperations(color))[:, 0].to_list())
+
+    # A bar is exactly tiled by its segments: they run end to end from the base, their
+    # lengths add up to the bar's, each is the bar's full thickness, and each is one of
+    # the colour field's colours.  Returns the fills from the base outwards.
+    def assertTiles(self, fragment: str, xywh: tuple, orientation: str, fills: set) -> list:
+        x0, y0, thick, length = xywh
+        # every coordinate is written to 0.1 px at most (PLANNING.md S1, §5 C-stacked-bar-precision)
+        for _v_ in re.findall(r'(?:x|y|width|height)="([-\d.e]+)"', fragment):
+            self.assertLessEqual(len(_v_.split('.')[1]) if '.' in _v_ else 0, 1, f'{_v_} is written unrounded')
+        _segs_ = self._segments_(fragment)
+        if length == 0:
+            self.assertEqual(sum(w if orientation == 'horizontal' else h for _, _, w, h, _ in _segs_), 0.0)
+            return []
+        self.assertGreater(len(_segs_), 0, 'a bar with length drew nothing')
+        if orientation == 'horizontal':
+            _segs_.sort(key=lambda r: r[0])
+            _at_ = x0
+            for x, y, w, h, _ in _segs_:
+                self.assertEqual((y, h), (y0, thick))
+                self.assertAlmostEqual(x, _at_, places=6)
+                _at_ = x + w
+            self.assertAlmostEqual(_at_, x0 + length, delta=0.05)     # edges are written to 0.1 px
+        else:
+            _segs_.sort(key=lambda r: -r[1])
+            _at_ = y0
+            for x, y, w, h, _ in _segs_:
+                self.assertEqual((x, w), (x0, thick))
+                self.assertAlmostEqual(y + h, _at_, places=6)
+                _at_ = y
+            self.assertAlmostEqual(_at_, y0 - length, delta=0.05)
+        for *_, fill in _segs_:
+            self.assertIn(fill, fills)
+        return [fill for *_, fill in _segs_]
+
     def test_basic_bar(self):
-        _svg_ = ['<svg x="0" y="0" width="780" height="1280">',
-                '<rect x="0" y="0" width="780" height="1280" fill="white"/>',]
-        _x_         = 5    # base of the bar
-        _y_         = 1    # base of the bar
-        _h_chart_   = 502  # height of the chart
-        _count_max_ = 24   # for the dataframe, maximum count
-        _w_bar_     = 16   # width of the bar
-        # Combinations of count and color
+        '''Every count and colour combination: the bar is as long as the reference says
+        (barHeight) and its segments tile it exactly.'''
+        _h_chart_, _count_max_, _w_bar_ = 502, 24, 16
         for _color_ in self._color_options_:
             for _count_ in self._count_options_:
-                _h_bar_ = self.barHeight(_count_, _h_chart_, _count_max_)
-                _svg_.append(self.p2s.colorizeBar(self._df_, (_x_, _y_, _w_bar_, _h_bar_), _count_, _color_))
-                _svg_.append(f'<rect x="{_x_}" y="{_y_}" width="{_h_bar_}" height="{_w_bar_}" fill="none" stroke="black" stroke-width="0.5" />')
-                _svg_.append(self.p2s.svgText(f'count = "{_count_} | color = "{_color_}"', _x_ + 256, _y_ + 11, txt_h=11))
-                _y_ += (_w_bar_+2)
-        _svg_.append('</svg>')
+                with self.subTest(color=_color_, count=_count_):
+                    _xywh_ = (5, 1, _w_bar_, self.barHeight(_count_, _h_chart_, _count_max_))
+                    self.assertTiles(self.p2s.colorizeBar(self._df_, _xywh_, _count_, _color_), _xywh_,
+                                     'horizontal', self._allowed_fills_(self._df_, _color_))
 
     def test_vertical_bar(self):
-        _svg_ = ['<svg x="0" y="0" width="1280" height="780">',
-                '<rect x="0" y="0" width="1280" height="780" fill="white"/>',]
-        _x_         = 1       # base of the bar
-        _y_         = 780 - 5 # base of the bar
-        _h_chart_   = 502     # height of the chart
-        _count_max_ = 24      # for the dataframe, maximum count
-        _w_bar_     = 12      # width of the bar
-        # Combinations of count and color
+        '''The same, standing up: segments stack from the base (y) upwards.'''
+        _h_chart_, _count_max_, _w_bar_ = 502, 24, 12
         for _color_ in self._color_options_:
             for _count_ in self._count_options_:
-                _h_bar_ = self.barHeight(_count_, _h_chart_, _count_max_)
-                _svg_.append(self.p2s.colorizeBar(self._df_, (_x_, _y_, _w_bar_, _h_bar_), _count_, _color_, orientation='vertical'))
-                _svg_.append(f'<rect x="{_x_}" y="{_y_-_h_bar_}" width="{_w_bar_}" height="{_h_bar_}" fill="none" stroke="black" stroke-width="0.5" />')
-                _svg_.append(self.p2s.svgText(f'count = "{_count_} | color = "{_color_}"', _x_ + _w_bar_ - 2, _y_ - 256, txt_h=11, rotation=270))
-                _x_ += (_w_bar_+4)
-        _svg_.append('</svg>')
+                with self.subTest(color=_color_, count=_count_):
+                    _xywh_ = (1, 780 - 5, _w_bar_, self.barHeight(_count_, _h_chart_, _count_max_))
+                    self.assertTiles(self.p2s.colorizeBar(self._df_, _xywh_, _count_, _color_, orientation='vertical'),
+                                     _xywh_, 'vertical', self._allowed_fills_(self._df_, _color_))
 
     def test_ordering(self):
+        '''With a colour_order from colorizeOrder, every bar stacks its colours in that
+        order from the base, whatever its own proportions -- so the colours line up
+        across bars.'''
         _lu_ = {'i':[], 'num':[], 'x':[]}
         for i in range(32):
             _num_, _x_ = abs(i-16.0)*0.12, 'red'
@@ -94,21 +132,25 @@ class Testp2s_render(unittest.TestCase):
             _num_, _x_ = (1 + i%4)*0.3, 'green'
             _lu_['i'].append(i), _lu_['num'].append(_num_), _lu_['x'].append(_x_)
         df = pl.DataFrame(_lu_)
-        _svg_ = ['<svg x="0" y="0" width="600" height="400">',
-                '<rect x="0" y="0" width="600" height="400" fill="white"/>',]
-        _x_           = 1       # base of the bar
-        _y_           = 400 - 5 # base of the bar
         _h_chart_     = 384     # height of the chart
         _count_max_   = df.group_by('i').agg(pl.col('num').sum())['num'].max()
-        _w_bar_       = 12      # width of the bar
         _color_order_ = self.p2s.colorizeOrder(df, 'num', 'x')
+        self.assertEqual(_color_order_, ['blue', 'red', 'green'])
+        _rank_ = {self.p2s.color(c): n for n, c in enumerate(_color_order_)}
+        _rest_ = self.p2s.color('(other)')                     # the misc: segments too thin to draw alone
+        _x_ = 1
         for i in range(33):
-            _df_    = df.filter(pl.col('i') == i)
-            _h_bar_ = _h_chart_ * _df_['num'].sum() / _count_max_
-            _svg_.append(self.p2s.colorizeBar(_df_, (_x_, _y_, _w_bar_, _h_bar_), 'num', 'x', orientation='vertical', color_order=_color_order_))
-            _x_ += (_w_bar_+2)
-        _svg_.append('</svg>')
-
+            with self.subTest(bar=i):
+                _df_    = df.filter(pl.col('i') == i)
+                _xywh_  = (_x_, 400 - 5, 12, _h_chart_ * _df_['num'].sum() / _count_max_)
+                _fills_ = self.assertTiles(self.p2s.colorizeBar(_df_, _xywh_, 'num', 'x', orientation='vertical',
+                                                                color_order=_color_order_),
+                                           _xywh_, 'vertical', set(_rank_) | {_rest_})
+                _ranks_ = [_rank_[f] for f in _fills_ if f != _rest_]
+                self.assertEqual(_ranks_, sorted(set(_ranks_)))
+                # a colour with no weight in this bar draws nothing
+                self.assertLessEqual({_color_order_[r] for r in _ranks_}, set(_df_.filter(pl.col('num') > 0)['x']))
+            _x_ += 14
 
     # ── colorizeAllBarsVertical vs per-bar colorizeBar ─────────────────────
 

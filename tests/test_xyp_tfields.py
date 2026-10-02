@@ -2,6 +2,7 @@ import unittest
 import polars as pl
 from polars2svg import Polars2SVG
 from random_dataframe import randomDataFrame
+from svg_test_utils import XypSweepAssertions
 from datetime import date
 from pathlib import Path
 
@@ -11,21 +12,22 @@ try:
 except ImportError:
     _KAGGLEHUB_AVAILABLE = False
 
-class Testxyp_tfields(unittest.TestCase):
+class Testxyp_tfields(XypSweepAssertions, unittest.TestCase):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.p2s = Polars2SVG()
 
     def test_exhaustive(self):
-        df = randomDataFrame(10)
+        # Every linear x, periodic y and periodic colour: each render passes the sweep checks,
+        # and lazy == eager on the diagonal (y level == colour level) to bound the cost --
+        # 170 pairs rather than 2,890.  (It used to assert nothing -- PLANNING.md V11.)
+        df = randomDataFrame(10, seed=500)
         for _x_enum_ in self.p2s.TimeLinearTypeP:
             for _y_enum_ in self.p2s.TimePeriodicTypeP:
                 for _c_enum_ in self.p2s.TimePeriodicTypeP:
-                    self.p2s.xyp(df,
-                                              self.p2s.tField('i', _x_enum_),
-                                              self.p2s.tField('i', _y_enum_),
-                                              color=(self.p2s.tField('i', _c_enum_), self.p2s.CSETp),
-                                              dot_size=3)
+                    self.assertCleanXyp(df, self.p2s.tField('i', _x_enum_), self.p2s.tField('i', _y_enum_),
+                                        lazy=_y_enum_ == _c_enum_,
+                                        color=(self.p2s.tField('i', _c_enum_), self.p2s.CSETp), dot_size=3)
 
     @unittest.skipUnless(_KAGGLEHUB_AVAILABLE, "kagglehub not importable (broken upstream dependency)")
     def test_example_globalTemperatures(self):

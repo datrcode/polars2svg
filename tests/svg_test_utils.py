@@ -1,4 +1,5 @@
 import re
+import polars as pl
 import os
 import io
 import logging
@@ -305,3 +306,108 @@ def assert_image_matches_golden(svg, name, tolerance=None, drift_tolerance=None)
         f'If instead the rasterizer was just upgraded, every golden will report this '
         f'at once -- regenerate them all, or set P2S_PNG_GOLDEN_DRIFT to triage.'
     )
+
+
+class SmallpAssertions:
+    '''Assertions over a rendered smallp, for a unittest.TestCase to mix in (PLANNING.md V11).'''
+
+    #
+    # assertPanelsAreTemplateOn() -- one panel per category, each holding exactly that
+    # category's rows (all of them for include_all's '__all__'), each byte-identical to the
+    # template drawn on those rows alone, and each embedded in the composite where
+    # category_to_xy places it.  Returns {category value: panel component}.  An unused
+    # '__remainder__' slot has no rows and no place, and is skipped.
+    #
+    def assertPanelsAreTemplateOn(self, result, df, split: str, template) -> dict:
+        _panels_ = {k: v for k, v in result._render_lu_.items()
+                    if not (k == '__remainder__' and result.category_to_df.get(k) is None)}
+        _want_keys_ = set(df[split].unique().to_list()) | ({'__all__'} if result.include_all else set())
+        self.assertEqual({k if isinstance(k, str) else k[0] for k in _panels_}, _want_keys_, 'one panel per category')
+        _out_ = {}
+        for _k_, _panel_ in _panels_.items():
+            _rows_ = result.category_to_df.get(_k_)
+            _rows_ = df if _rows_ is None else _rows_.select(df.columns)
+            _want_ = df if _k_ == '__all__' else df.filter(pl.col(split) == _k_[0])
+            self.assertTrue(_rows_.sort(df.columns).equals(_want_.sort(df.columns)), f'panel {_k_} does not hold its rows')
+            self.assertEqual(normalize_svg(_panel_._repr_svg_()), normalize_svg(template.render_with(_rows_)._repr_svg_()),
+                             f'panel {_k_} is not the template drawn on its rows')
+            _x_, _y_ = result.category_to_xy[_k_]
+            self.assertIn(f'<g transform="translate({_x_},{_y_})">{_panel_._repr_svg_()}', result._repr_svg_(),
+                          f'panel {_k_} is not where category_to_xy puts it')
+            _out_[_k_ if isinstance(_k_, str) else _k_[0]] = _panel_
+        return _out_
+
+
+class XypSweepAssertions:
+    '''The checks every render in an xyp sweep must pass, for a unittest.TestCase to mix in
+    (PLANNING.md V11): the sweeps render hundreds of column x spec combinations over small
+    random frames, and used to assert nothing about any of them.'''
+
+    _DOT_GROUP_ = re.compile(r'<g class="(rect|circle)-group-\d+"[^>]*>(.*?)</g>', re.S)
+
+    # For the longest sweeps: True on every n-th call, so lazy == eager is checked on an even
+    # sample without doubling the sweep's cost (every other check still runs on every render)
+    def everyNth(self, n: int) -> bool:
+        self._nth_ = getattr(self, '_nth_', -1) + 1
+        return self._nth_ % n == 0
+
+    # (x, y) of each dot: a circle's centre, a square's corner
+    def xypDots(self, svg: str) -> list:
+        _m_ = self._DOT_GROUP_.search(svg)
+        if _m_ is None: return []
+        _pat_ = r'<circle cx="([-\d.]+)" cy="([-\d.]+)"' if _m_.group(1) == 'circle' else r'<rect x="([-\d.]+)" y="([-\d.]+)"'
+        return [(float(x), float(y)) for x, y in re.findall(_pat_, _m_.group(2))]
+
+    #
+    # assertCleanXyp() -- the render passes the output contract at the size it was asked
+    # for; every dot is inside the plot; there are dots exactly when rows survive; and
+    # (unless lazy=False) lazy and eager execution draw the identical picture.  Returns the
+    # eager render.
+    #
+    def assertCleanXyp(self, df, x, y, lazy: bool = True, **kwargs):
+        from polars2svg import checkOutputContract
+        _xyp_ = self.p2s.xyp(df, x, y, use_lazy_execution=False, **kwargs)
+        _svg_ = _xyp_.svg
+        self.assertEqual(checkOutputContract(_svg_), [], 'the render breaks the output contract')
+        self.assertIn(f'width="{_xyp_.wxh[0]}" height="{_xyp_.wxh[1]}"', _svg_)
+        _x0_, _y0_ = _xyp_.plot_origin
+        _pw_, _ph_ = _xyp_.plot_size
+        _dots_ = self.xypDots(_svg_)
+        # A square is inside when all of it is (its corner plus the CSS size); a circle when
+        # its centre is -- a circle at an extreme value is centred on the edge and the clip
+        # path trims it, by design
+        _sq_ = re.search(r'\.rect-group-\d+ rect \{ width: ([\d.]+)px;', _svg_)
+        _size_ = float(_sq_.group(1)) if _sq_ else 0.0
+        for _dx_, _dy_ in _dots_:
+            self.assertTrue(_x0_ - 0.01 <= _dx_ and _dx_ + _size_ <= _x0_ + _pw_ + 0.01 and
+                            _y0_ - _ph_ - 0.01 <= _dy_ and _dy_ + _size_ <= _y0_ + 0.01,
+                            f'a dot at ({_dx_}, {_dy_}), {_size_}px, is outside the plot')
+        if _xyp_.dot_size_orig is not None:
+            self.assertEqual(len(_dots_) > 0, len(_xyp_.df_flat) > 0, 'dots drawn without rows, or rows without dots')
+        if lazy:
+            self.assertEqual(normalize_svg(self.p2s.xyp(df, x, y, use_lazy_execution=True, **kwargs).svg), normalize_svg(_svg_),
+                             'lazy and eager execution drew different pictures')
+        return _xyp_
+
+
+# ── duration labels ───────────────────────────────────────────────────────────
+#
+# humanReadableTimeDelta() and humanReadablePeriodicTimeDelta() write durations as
+# unit tokens -- '11y', '1y 3mo', '4d 2h', '1.9s', '2q' -- largest unit first.  A year
+# is 365.25 days, a month 30, a quarter three of those: the lengths the formatters
+# themselves assume.  Every rounding rule they apply drops less than 1/11 of the value
+# (a unit of at least eleven, or at most 5m59s of at least 66m), which is the tolerance
+# DURATION_TOLERANCE records.
+DURATION_UNITS     = {'y': 365.25 * 86400, 'q': 90 * 86400, 'mo': 30 * 86400,
+                      'd': 86400, 'h': 3600, 'm': 60, 's': 1}
+DURATION_TOLERANCE = 1 / 11
+
+
+def durationSeconds(label: str) -> float | None:
+    '''The seconds a duration label says, or None if it is not a run of unit tokens,
+    largest unit first.'''
+    _toks_ = re.findall(r'(\d+(?:\.\d+)?)(y|q|mo|d|h|m|s)', label)
+    if not _toks_ or ' '.join(n + u for n, u in _toks_) != label: return None
+    _order_ = [list(DURATION_UNITS).index(u) for _, u in _toks_]
+    if _order_ != sorted(set(_order_)): return None
+    return sum(float(n) * DURATION_UNITS[u] for n, u in _toks_)

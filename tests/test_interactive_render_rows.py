@@ -21,7 +21,7 @@ from polars2svg import Polars2SVG
 from polars2svg.interactive_render_rows import (AS_BUILT_MNEMONIC, RENDER_ROW_KEYS,
                                                 RESERVED_ROW_KEYS, ChordpRenderRows,
                                                 HistopRenderRows, PiepRenderRows, TimepRenderRows,
-                                                XYpRenderRows)
+                                                XYpRenderRows, time_level_label)
 from svg_test_utils import normalize_svg
 
 try:
@@ -86,12 +86,18 @@ class TestGating(_RowsCase):
         _s_ = dict(rows.initial_settings(), **settings)
         return {_r_.kind: _r_.enabled(_s_) for _r_ in rows.rows}
 
-    def test_placement_and_bins_follow_the_distributions_row(self):
+    def test_each_axis_placement_and_bins_follow_the_distributions_row(self):
         _, _rows_ = self._rows()
-        self.assertFalse(self._enabled(_rows_)['placement'])
-        self.assertFalse(self._enabled(_rows_)['bins'])
-        self.assertTrue(self._enabled(_rows_, distributions='x')['placement'])
-        self.assertTrue(self._enabled(_rows_, distributions='x')['bins'])
+        for _kind_ in ('x_placement', 'y_placement', 'x_bins', 'y_bins'):
+            self.assertFalse(self._enabled(_rows_)[_kind_])
+        _x_ = self._enabled(_rows_, distributions='x')
+        self.assertTrue(_x_['x_placement'] and _x_['x_bins'])
+        self.assertFalse(_x_['y_placement'] or _x_['y_bins'])
+        _y_ = self._enabled(_rows_, distributions='y')
+        self.assertTrue(_y_['y_placement'] and _y_['y_bins'])
+        self.assertFalse(_y_['x_placement'] or _y_['x_bins'])
+        self.assertTrue(all(self._enabled(_rows_, distributions='x+y')[_k_]
+                            for _k_ in ('x_placement', 'y_placement', 'x_bins', 'y_bins')))
 
     def test_aspect_needs_two_numeric_axes(self):
         self.assertTrue(self._enabled(self._rows()[1])['aspect'])
@@ -118,8 +124,9 @@ class TestGating(_RowsCase):
         _df_ = _df_.with_columns(pl.lit(1.0).alias('v'))
         _t_  = self.p2s.xyp(_df_, self.p2s.tField('ts', self.p2s.PT_DoWp), 'v', dot_size=3.0)
         _rows_ = XYpRenderRows(_t_)
-        self.assertFalse(self._enabled(_rows_, distributions='x')['bins'])
-        self.assertTrue(self._enabled(_rows_, distributions='x+y')['bins'], 'y is still binnable')
+        self.assertFalse(self._enabled(_rows_, distributions='x+y')['x_bins'])
+        self.assertTrue(self._enabled(_rows_, distributions='x+y')['y_bins'], 'y is still binnable')
+        self.assertTrue(self._enabled(_rows_, distributions='x')['x_placement'], 'placement is not binning')
 
 
 # ── the overrides ────────────────────────────────────────────────────────────
@@ -153,11 +160,21 @@ class TestOverrides(_RowsCase):
         _ov_ = _rows_.overrides(dict(_rows_.initial_settings(), distributions='off'))
         self.assertEqual(_ov_, {'x_distributions': None, 'y_distributions': None})
 
-    def test_placement_is_applied_to_every_distributed_axis(self):
+    def test_each_axis_takes_its_own_placement(self):
         _t_, _rows_ = self._rows()
-        _xy_ = self._render(_t_, _rows_, distributions='x+y', placement='outside')
-        for _clean_ in (_xy_.x_distributions_clean, _xy_.y_distributions_clean):
-            self.assertIn(self.p2s.DISTRIBUTION_OUTSIDEp, _clean_['enums'])
+        _xy_ = self._render(_t_, _rows_, distributions='x+y', x_placement='inside', y_placement='outside')
+        self.assertIn(self.p2s.DISTRIBUTION_INSIDEp,  _xy_.x_distributions_clean['enums'])
+        self.assertIn(self.p2s.DISTRIBUTION_OUTSIDEp, _xy_.y_distributions_clean['enums'])
+        _xy_ = self._render(_t_, _rows_, distributions='x+y', x_placement='outside', y_placement='inside')
+        self.assertIn(self.p2s.DISTRIBUTION_OUTSIDEp, _xy_.x_distributions_clean['enums'])
+        self.assertIn(self.p2s.DISTRIBUTION_INSIDEp,  _xy_.y_distributions_clean['enums'])
+
+    def test_a_placement_the_template_named_is_its_initial_value(self):
+        _, _rows_ = self._rows(x_distributions=['bytes', self.p2s.DISTRIBUTION_INSIDEp],
+                               y_distributions=[self.p2s.ROW_COUNTp, self.p2s.DISTRIBUTION_OUTSIDEp])
+        _init_ = _rows_.initial_settings()
+        self.assertEqual((_init_['x_placement'], _init_['y_placement']), ('inside', 'outside'))
+        self.assertEqual(_rows_.overrides(_init_), {})
 
     def test_as_built_placement_and_bins_survive_a_change_elsewhere_in_the_group(self):
         _, _rows_ = self._rows(x_distributions=('bytes', self.p2s.DISTRIBUTION_OUTSIDEp, 16))
@@ -169,8 +186,20 @@ class TestOverrides(_RowsCase):
         _auto_ = self._render(_t_, _rows_, distributions='x').x_distributions_clean['bins'][0]
         for _label_, _m_ in (('auto x2', 2.0), ('auto /2', 0.5), ('auto /4', 0.25)):
             with self.subTest(bins=_label_):
-                _xy_ = self._render(_t_, _rows_, distributions='x', bins=_label_)
+                _xy_ = self._render(_t_, _rows_, distributions='x', x_bins=_label_)
                 self.assertEqual(_xy_.x_distributions_clean['bins'][0], max(1, round(_auto_ * _m_)))
+
+    # The reason the rows split: time along a long x, a number up a short y.
+    def test_each_axis_takes_its_own_bin_multiple(self):
+        _t_, _rows_ = self._rows()
+        _auto_ = self._render(_t_, _rows_, distributions='x+y')
+        _ax_, _ay_ = _auto_.x_distributions_clean['bins'][0], _auto_.y_distributions_clean['bins'][0]
+        _xy_ = self._render(_t_, _rows_, distributions='x+y', x_bins='auto x4', y_bins='auto /2')
+        self.assertEqual(_xy_.x_distributions_clean['bins'][0], max(1, round(_ax_ * 4.0)))
+        self.assertEqual(_xy_.y_distributions_clean['bins'][0], max(1, round(_ay_ * 0.5)))
+        _xy_ = self._render(_t_, _rows_, distributions='x+y', y_bins='auto x2')
+        self.assertEqual(_xy_.x_distributions_clean['bins'][0], _ax_, 'x stays at auto')
+        self.assertEqual(_xy_.y_distributions_clean['bins'][0], max(1, round(_ay_ * 2.0)))
 
     def test_the_color_scale_swaps_magnitude_and_stretched(self):
         _, _rows_ = self._rows(color=self.p2s.CROW_STRETCHEDp)
@@ -178,7 +207,128 @@ class TestOverrides(_RowsCase):
                          {'color': self.p2s.CROW_MAGNITUDEp})
 
 
+# ── count_fields= ────────────────────────────────────────────────────────────
+
+class TestCountFields(unittest.TestCase):
+    """User feedback 2026-09-27 asked why the count row offers only rows and the field the
+    view was built with.  A column's type cannot tell a quantity from an identifier (bytes
+    and a port are both integers), so the caller names the quantities: count_fields=."""
+
+    def setUp(self):
+        self.p2s = Polars2SVG()
+        self.df  = pl.DataFrame({'svc':   ['a', 'b', 'c', 'b', 'a', 'c'],
+                                 'dpt':   [22, 80, 443, 80, 22, 443],
+                                 'bytes': [10, 200, 30, 40, 5, 60],
+                                 'pkts':  [1, 2, 3, 4, 5, 6],
+                                 'user':  ['u1', 'u2', 'u1', 'u3', 'u2', 'u1']})
+
+    def _count_(self, rows):
+        return next(_r_ for _r_ in rows.rows if _r_.kind == 'count')
+
+    def test_the_row_offers_rows_the_built_field_and_the_named_fields(self):
+        _rows_ = HistopRenderRows(self.p2s.histop(self.df, 'svc', count='bytes'), count_fields=['pkts', 'bytes', 'user'])
+        self.assertEqual([_l_ for _, _l_ in self._count_(_rows_).items], ['rows', 'bytes', 'pkts', 'user'])
+        self.assertEqual(self._count_(_rows_).initial, 'bytes')
+
+    def test_a_view_built_on_rows_is_live_once_it_has_fields(self):
+        _t_ = self.p2s.histop(self.df, 'svc')
+        _s_ = lambda r: dict(r.initial_settings())  # noqa: E731
+        self.assertFalse(self._count_(HistopRenderRows(_t_)).enabled(_s_(HistopRenderRows(_t_))))
+        _rows_ = HistopRenderRows(_t_, count_fields=['bytes'])
+        self.assertTrue(self._count_(_rows_).enabled(_s_(_rows_)))
+        self.assertEqual(_rows_.overrides(dict(_s_(_rows_), count='bytes')), {'count': 'bytes'})
+
+    # A boxplot needs a numeric count: the style row follows whichever field is chosen.
+    def test_the_boxplot_follows_the_chosen_field(self):
+        for _cls_, _t_ in ((HistopRenderRows, self.p2s.histop(self.df, 'svc')),
+                           (TimepRenderRows,  self.p2s.timep(self.df.with_columns(
+                               ts=pl.datetime_range(pl.datetime(2026, 1, 1), pl.datetime(2026, 1, 6), '1d', eager=True)), 'ts'))):
+            with self.subTest(rows=_cls_.__name__):
+                _rows_  = _cls_(_t_, count_fields=['bytes', 'user'])
+                _style_ = next(_r_ for _r_ in _rows_.rows if _r_.kind == 'style')
+                _s_     = _rows_.initial_settings()
+                self.assertFalse(_style_.enabled(dict(_s_, count='rows')))
+                self.assertTrue(_style_.enabled(dict(_s_, count='bytes')))
+                self.assertFalse(_style_.enabled(dict(_s_, count='user')), 'a distinct count is not numeric')
+
+    def test_every_row_set_with_a_count_row_takes_it(self):
+        self.assertTrue(all(_c_.accepts_count_fields for _c_ in (HistopRenderRows, TimepRenderRows,
+                                                                PiepRenderRows, ChordpRenderRows)))
+        self.assertFalse(XYpRenderRows.accepts_count_fields)
+        _rows_ = PiepRenderRows(self.p2s.piep(self.df, 'svc'), count_fields=['bytes'])
+        self.assertEqual([_l_ for _, _l_ in self._count_(_rows_).items], ['rows', 'bytes'])
+
+
+@unittest.skipUnless(_PANEL_AVAILABLE_, 'panel not installed')
+class TestCountFieldsOnTheView(TestCountFields):
+
+    def test_the_view_switches_to_a_named_field(self):
+        _v_ = self.p2s.histopi(self.p2s.histop(self.df, 'svc'), count_fields=['bytes'])
+        _before_ = _v_.mod_inner
+        _v_.render_settings = dict(_v_.render_settings, count='bytes')
+        _settle()
+        self.assertEqual(_v_._overrides_, {'count': 'bytes'})
+        self.assertNotEqual(_v_.mod_inner, _before_)
+
+    def test_a_name_that_is_not_a_column_fails_with_a_suggestion(self):
+        with self.assertRaisesRegex(ValueError, r"'byts', which is not a column -- did you mean 'bytes'"):
+            self.p2s.histopi(self.p2s.histop(self.df, 'svc'), count_fields=['byts'])
+        with self.assertRaisesRegex(TypeError, 'column names or count= specs'):
+            self.p2s.histopi(self.p2s.histop(self.df, 'svc'), count_fields=[3])
+
+    def test_a_view_without_a_count_row_refuses_it(self):
+        with self.assertRaisesRegex(TypeError, 'count_fields= is for a view with a count row'):
+            self.p2s.xypi(self.p2s.xyp(self.df, 'bytes', 'pkts'), count_fields=['bytes'])
+
+    def test_a_single_name_and_a_spec_are_accepted(self):
+        _v_ = self.p2s.piepi(self.p2s.piep(self.df, 'svc'), count_fields='bytes')
+        self.assertIn(['1', 'bytes'], _v_.menu_items['count'])
+        _v_ = self.p2s.histopi(self.p2s.histop(self.df, 'svc'), count_fields=[('user', self.p2s.SETp)])
+        self.assertEqual(len(_v_.menu_items['count']), 2)
+
+
 # ── the view ─────────────────────────────────────────────────────────────────
+
+@unittest.skipUnless(_PANEL_AVAILABLE_, 'panel not installed')
+class TestSelectionShapeOnlyWhereItMeansSomething(_RowsCase):
+    """User feedback 2026-09-27: rectangle vs oval only matters where marks spread freely
+    in two dimensions.  xypi and chordpi keep it; histopi, timepi and piepi select bars
+    and slices, which a rectangle already does, so they lose the row, the picker, the 'F'
+    key and its help line -- and a drag there is always a rectangle."""
+
+    def _views_(self):
+        _df_ = self.df.with_columns(ts=pl.datetime_range(pl.datetime(2026, 1, 1), pl.datetime(2026, 1, 8), '1d', eager=True),
+                                    to=pl.col('pet').str.reverse())
+        return {
+            'xypi':    (self.p2s.xypi(self.p2s.xyp(_df_, 'a', 'b')), True),
+            'chordpi': (self.p2s.chordpi(self.p2s.chordp(_df_, [('pet', 'to')])), True),
+            'histopi': (self.p2s.histopi(self.p2s.histop(_df_, 'pet')), False),
+            'timepi':  (self.p2s.timepi(self.p2s.timep(_df_, 'ts')), False),
+            'piepi':   (self.p2s.piepi(self.p2s.piep(_df_, 'pet')), False),
+        }
+
+    def test_the_row_the_picker_and_the_help(self):
+        for _name_, (_v_, _has_) in self._views_().items():
+            with self.subTest(view=_name_):
+                _kinds_ = [_r_[1] for _r_ in _v_.config_panel_rows]
+                self.assertEqual('select_shape' in _kinds_, _has_)
+                self.assertEqual('select_shape' in _v_.menu_items, _has_)
+                self.assertEqual(_kinds_[0], 'select_shape' if _has_ else 'tooltip')
+                self.assertEqual('F . |' in type(_v_)._keyboard_commands_, _has_)
+                self.assertEqual('selection shape' in type(_v_)._keyboard_commands_, _has_)
+                self.assertEqual(_v_.has_select_shape, _has_)
+
+    def test_a_drag_without_the_row_is_a_rectangle(self):
+        _v_, _ = self._views_()['histopi']
+        _v_.select_shape = 'oval'            # not reachable from the view; forced here
+        _calls_ = []
+        _v_._plot_.filterByOval      = lambda *a, **k: _calls_.append('oval') or self.df.clear()
+        _v_._plot_.filterByRectangle = lambda *a, **k: _calls_.append('rect') or self.df.clear()
+        _v_.drag_x0, _v_.drag_y0, _v_.drag_x1, _v_.drag_y1 = 0, 0, 50, 50
+        _v_.drag_op_finished = True
+        _settle()
+        self.assertEqual(_calls_, ['rect'])
+
 
 @unittest.skipUnless(_PANEL_AVAILABLE_, 'panel not installed')
 class TestXYPIRenderRows(_RowsCase):
@@ -190,7 +340,8 @@ class TestXYPIRenderRows(_RowsCase):
         _, _v_ = self._view(x='pet')
         _kinds_ = [_r_[1] for _r_ in _v_.config_panel_rows]
         self.assertEqual(_kinds_[:2], ['select_shape', 'tooltip'])
-        self.assertEqual(_kinds_[2:], ['distributions', 'placement', 'bins', 'aspect', 'opacity',
+        self.assertEqual(_kinds_[2:], ['distributions', 'x_placement', 'y_placement', 'x_bins', 'y_bins',
+                                       'aspect', 'opacity',
                                        'color_scale', 'legend', 'x_order', 'y_order'])
 
     def test_a_row_change_re_renders(self):
@@ -204,10 +355,11 @@ class TestXYPIRenderRows(_RowsCase):
     def test_the_gating_follows_the_settings(self):
         _, _v_ = self._view()
         _on_ = lambda: {_r_[1]: _r_[3] for _r_ in _v_.config_panel_rows}  # noqa: E731
-        self.assertFalse(_on_()['placement'])
+        self.assertFalse(_on_()['x_placement'])
         _v_.render_settings = dict(_v_.render_settings, distributions='x')
         _settle()
-        self.assertTrue(_on_()['placement'])
+        self.assertTrue(_on_()['x_placement'])
+        self.assertFalse(_on_()['y_placement'])
 
     def test_a_refused_setting_snaps_back_and_leaves_the_view(self):
         _, _v_ = self._view(x='pet')          # a categorical x: aspect= raises
@@ -513,26 +665,26 @@ class TestTimepRows(unittest.TestCase):
     def test_granularity_offers_auto_and_exactly_the_levels_timep_lists(self):
         _t_   = self.p2s.timep(self.df, 'ts')
         _row_ = self._granularity(TimepRenderRows(_t_))
-        self.assertEqual([_l_ for _, _l_ in _row_.items], ['auto'] + [_t_.timeLevelName(_e_) for _e_ in _t_.timeLevels()])
+        self.assertEqual([_l_ for _, _l_ in _row_.items], ['auto'] + [time_level_label(_t_, _e_) for _e_ in _t_.timeLevels()])
         self.assertEqual(_row_.initial, 'auto')
 
     def test_auto_sets_nothing_and_a_level_sets_a_t_field(self):
         _rows_ = TimepRenderRows(self.p2s.timep(self.df, 'ts'))
         _ov_ = lambda label: _rows_.overrides(dict(_rows_.initial_settings(), granularity=label))  # noqa: E731
         self.assertEqual(_ov_('auto'), {})
-        self.assertEqual(_ov_('day of week'), {'time': self.p2s.tField('ts', self.p2s.PT_DoWp)})
+        self.assertEqual(_ov_('day of week (cycle)'), {'time': self.p2s.tField('ts', self.p2s.PT_DoWp)})
 
     def test_a_view_built_on_a_level_starts_there_and_auto_hands_back_to_timep(self):
         _rows_ = TimepRenderRows(self.p2s.timep(self.df, self.p2s.tField('ts', self.p2s.PT_Hp)))
-        self.assertEqual(self._granularity(_rows_).initial, 'hour')
+        self.assertEqual(self._granularity(_rows_).initial, 'hour (cycle)')
         self.assertEqual(_rows_.overrides(dict(_rows_.initial_settings(), granularity='auto')), {'time': 'ts'})
 
     def test_a_level_the_list_does_not_carry_is_offered_as_built(self):
         """Hourly data resolves no finer than the hour, so 'by minute' is not a level the
         row offers -- but a view built on it shows it, as built."""
         _row_ = self._granularity(TimepRenderRows(self.p2s.timep(self.df, self.p2s.tField('ts', self.p2s.LT_Y_m_d_H_Mp))))
-        self.assertEqual(_row_.initial, 'by minute')
-        self.assertIn([AS_BUILT_MNEMONIC, 'by minute'], _row_.items)
+        self.assertEqual(_row_.initial, 'by minute (timeline)')
+        self.assertIn([AS_BUILT_MNEMONIC, 'by minute (timeline)'], _row_.items)
 
     def test_the_row_is_greyed_when_there_is_nothing_but_auto(self):
         _rows_ = TimepRenderRows(self.p2s.timep(pl.DataFrame({'ts': [datetime.datetime(2026, 1, 1)] * 3}), 'ts'))
@@ -543,13 +695,26 @@ class TestTimepRows(unittest.TestCase):
         _keys_ = lambda t: {_l_: _m_ for _m_, _l_ in self._granularity(TimepRenderRows(t)).items}  # noqa: E731
         _narrow_ = _keys_(self.p2s.timep(self.df, 'ts', wxh=(128, 256)))
         _wide_   = _keys_(self.p2s.timep(self.df, 'ts'))
-        self.assertEqual(_narrow_['hour'], 'H')
-        self.assertEqual(_wide_['hour'], 'H')
-        self.assertNotIn('hourly', _narrow_)                   # 72 bars do not fit 128 px
-        self.assertEqual(_wide_['hourly'], 'h')
+        self.assertEqual(_narrow_['hour (cycle)'], 'H')
+        self.assertEqual(_wide_['hour (cycle)'], 'H')
+        self.assertNotIn('hourly (timeline)', _narrow_)        # 72 bars do not fit 128 px
+        self.assertEqual(_wide_['hourly (timeline)'], 'h')
+
+    def test_each_level_says_whether_it_is_a_timeline_or_a_cycle(self):
+        """User feedback 2026-09-27: 'monthly' and 'month' were the only difference
+        between a timeline level and a cycle.  Every level offered is marked, and the
+        mark follows the level's kind."""
+        _t_ = self.p2s.timep(self.df, 'ts')
+        for _e_ in _t_.timeLevels():
+            with self.subTest(level=_e_.name):
+                _kind_ = 'cycle' if isinstance(_e_, self.p2s.TimePeriodicTypeP) else 'timeline'
+                self.assertEqual(time_level_label(_t_, _e_), f'{_t_.timeLevelName(_e_)} ({_kind_})')
+        _kinds_ = {_l_.rsplit(' (', 1)[-1] for _, _l_ in self._granularity(TimepRenderRows(_t_)).items if _l_ != 'auto'}
+        self.assertEqual(_kinds_, {'timeline)', 'cycle)'}, 'this frame offers both kinds')
 
     def test_the_axis_and_the_picker_name_a_level_alike(self):
-        """One table: the label under the axis is what the picker called the level."""
+        """One table: the label under the axis is what the picker calls the level, before
+        the picker's (timeline) / (cycle) mark."""
         _t_ = self.p2s.timep(self.df, self.p2s.tField('ts', self.p2s.PT_m_dp))
         self.assertEqual(_t_.timeLevelName(self.p2s.PT_m_dp), 'month / day')
         self.assertIn('>month / day<', _t_._repr_svg_())
@@ -569,7 +734,7 @@ class TestTimePIRenderRows(unittest.TestCase):
         return _v_
 
     def test_an_explicit_level_applies_at_every_stack_level(self):
-        _v_   = self._view_on_('day of week')
+        _v_   = self._view_on_('day of week (cycle)')
         _sub_ = self.df.filter(pl.col('bytes') < 30)
         asyncio.run(_v_.display(_sub_, [self.df, _sub_], 1))
         self.assertEqual(_v_._plot_.time, self.p2s.tField('ts', self.p2s.PT_DoWp))
@@ -577,7 +742,7 @@ class TestTimePIRenderRows(unittest.TestCase):
     def test_the_tooltip_keeps_the_time_field_on_a_level(self):
         """The tooltip names the columns the marks encode; a t-field's own value
         ('ts|DoWp') is no column, and used to drop the time field out of it."""
-        _v_ = self._view_on_('hour')
+        _v_ = self._view_on_('hour (cycle)')
         self.assertIn('ts', _v_._tooltipFields_(self.df))
         self.assertIn('bytes', _v_._tooltipFields_(self.df))
 
@@ -840,7 +1005,11 @@ class TestEveryRowSetOnItsView(unittest.TestCase):
             _v_ = getattr(_p2s_, _view_)(_t_)
             with self.subTest(case=_name_):
                 self.assertIs(type(_v_)._render_rows_cls_, _cls_)
-                self.assertEqual([_r_[:3] for _r_ in _v_.config_panel_rows[2:]],
+                # the base rows first: selection shape (where the view offers an oval) and tooltip
+                _base_ = 2 if _v_.has_select_shape else 1
+                self.assertEqual([_r_[1] for _r_ in _v_.config_panel_rows[:_base_]],
+                                 ['select_shape', 'tooltip'][-_base_:])
+                self.assertEqual([_r_[:3] for _r_ in _v_.config_panel_rows[_base_:]],
                                  [[_r_.mnemonic, _r_.kind, _r_.label] for _r_ in _cls_(_t_).rows])
                 self.assertEqual(_v_._overrides_, {})
                 self.assertEqual(normalize_svg(_v_.mod_inner), normalize_svg(_t_._repr_svg_()))

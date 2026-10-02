@@ -31,13 +31,13 @@ def _brush_circle(ip):
 
 def test_r_turns_the_brush_on(brush_ready_page):
     brush_ready_page.press('r')
-    expect_r(brush_ready_page, RADII[1])
+    assert_brush_radius(brush_ready_page, RADII[1])
     assert NAMES[1] in brush_ready_page.el('brushmodelabel').text_content()
 
 
 def test_r_again_turns_the_brush_off(brush_ready_page):
     brush_ready_page.press('r')
-    expect_r(brush_ready_page, RADII[1])
+    assert_brush_radius(brush_ready_page, RADII[1])
 
     brush_ready_page.press('r')
     assert _brush_circle(brush_ready_page).count() == 0, 'the brush cursor outlived the toggle'
@@ -48,15 +48,15 @@ def test_r_again_turns_the_brush_off(brush_ready_page):
 
 def test_shift_r_starts_the_brush_at_the_small_radius(brush_ready_page):
     brush_ready_page.press('R')
-    expect_r(brush_ready_page, RADII[1])
+    assert_brush_radius(brush_ready_page, RADII[1])
 
 
 def test_shift_r_cycles_to_the_large_radius(brush_ready_page):
     brush_ready_page.press('R')
-    expect_r(brush_ready_page, RADII[1])
+    assert_brush_radius(brush_ready_page, RADII[1])
 
     brush_ready_page.press('R')
-    expect_r(brush_ready_page, RADII[2])
+    assert_brush_radius(brush_ready_page, RADII[2])
     assert NAMES[2] in brush_ready_page.el('brushmodelabel').text_content()
 
 
@@ -64,7 +64,7 @@ def test_the_radius_cycle_wraps_and_never_returns_to_off(brush_ready_page):
     """The cycle is [1, 2] -- shift-R must not be a third way to switch the brush off."""
     for _ in range(3):
         brush_ready_page.press('R')
-    expect_r(brush_ready_page, RADII[1])          # 0 -> 1 -> 2 -> 1
+    assert_brush_radius(brush_ready_page, RADII[1])          # 0 -> 1 -> 2 -> 1
     assert _brush_circle(brush_ready_page).count() == 1
 
 
@@ -72,7 +72,7 @@ def test_the_radius_cycle_wraps_and_never_returns_to_off(brush_ready_page):
 
 def test_the_cursor_tracks_the_pointer(brush_ready_page):
     brush_ready_page.press('r')
-    expect_r(brush_ready_page, RADII[1])
+    assert_brush_radius(brush_ready_page, RADII[1])
 
     brush_ready_page.hover(120, 90)
     _c_ = _brush_circle(brush_ready_page)
@@ -85,7 +85,7 @@ def test_the_cursor_tracks_the_pointer(brush_ready_page):
 def test_leaving_the_component_clears_the_cursor(brush_ready_page):
     """myOnMouseOut wipes the indicator, so the brush circle cannot be left stranded."""
     brush_ready_page.press('r')
-    expect_r(brush_ready_page, RADII[1])
+    assert_brush_radius(brush_ready_page, RADII[1])
 
     _box_ = brush_ready_page.root.bounding_box()
     brush_ready_page.page.mouse.move(_box_['x'] + _box_['width'] + 80,
@@ -96,7 +96,7 @@ def test_leaving_the_component_clears_the_cursor(brush_ready_page):
 def test_brushing_selects_nothing_by_itself(brush_ready_page):
     """The brush broadcasts to peers; it must not hijack the local selection."""
     brush_ready_page.press('r')
-    expect_r(brush_ready_page, RADII[1])
+    assert_brush_radius(brush_ready_page, RADII[1])
     brush_ready_page.hover_node(1)
 
     assert '0 Selected' in brush_ready_page.info_text() or \
@@ -104,7 +104,7 @@ def test_brushing_selects_nothing_by_itself(brush_ready_page):
            'brushing changed the local selection'
 
 
-def expect_r(ip, radius):
+def assert_brush_radius(ip, radius):
     from playwright.sync_api import expect
     expect(_brush_circle(ip)).to_have_attribute('r', radius, timeout=ip.timeout_ms)
 

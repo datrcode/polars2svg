@@ -327,8 +327,23 @@
           2
         ],
         [
+          "info_str",
+          "0 Selected | grid | spring nx",
+          1
+        ],
+        [
           "last_key",
           "Shift",
+          1
+        ],
+        [
+          "selection_labels",
+          "dict:written",
+          1
+        ],
+        [
+          "selectionpath",
+          "str:written",
           1
         ],
         [
@@ -396,7 +411,7 @@
         "infostr": {
           "tag": "text",
           "kids": 0,
-          "text": "1 Selected | grid | spring nx"
+          "text": "0 Selected | grid | spring nx"
         },
         "allentitieslayer": {
           "tag": "path",
@@ -410,8 +425,8 @@
         },
         "selectedlabels": {
           "tag": "g",
-          "kids": 2,
-          "text": "1"
+          "kids": 0,
+          "text": ""
         },
         "searchtext": {
           "tag": "text",
@@ -459,8 +474,23 @@
           2
         ],
         [
+          "info_str",
+          "1 Selected | grid | spring nx",
+          1
+        ],
+        [
           "last_key",
           "Control",
+          1
+        ],
+        [
+          "selection_labels",
+          "dict:written",
+          1
+        ],
+        [
+          "selectionpath",
+          "str:written",
           1
         ]
       ],

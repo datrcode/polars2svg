@@ -9,6 +9,11 @@ from polars2svg.export import ExportMixin
 from polars2svg.p2s_bin_component_mixin import P2SBinComponentMixin
 from polars2svg.p2s_enums import BarStyleP, SelectShapeP
 
+#: Space between the bars (or the more-rows indicator under them) and the distribution strip.
+_STRIP_GAP_ = 3
+#: Height of the more-rows indicator drawn under the last bar when bins are cut off.
+_MORE_ROWS_H_ = 2
+
 class HistopKwargs(TypedDict, total=False):
     """Keyword arguments accepted by ``p2s.histop()`` / ``Histop(...)``.
 
@@ -145,6 +150,7 @@ class Histop(P2SBinComponentMixin, ExportMixin):
             self.gatherMetrics(self.__addColumnsToDataFrame__)
             self.gatherMetrics(self.__computeAggregates__)
             self.gatherMetrics(self.__constructGeometry__)
+            self.gatherMetrics(self.__poolForThePlot__)
             self.gatherMetrics(self.__computeDistribution__)
             self.gatherMetrics(self.__renderSVG__, rand_id)
         self.t_end     = time.time()
@@ -282,21 +288,21 @@ class Histop(P2SBinComponentMixin, ExportMixin):
 
         for _f_ in self._bin_cols_:
             if _f_ not in self.df.columns:
-                raise ValueError(f'Histop.__validateInput__(): bin_by field "{_f_}" not found')
+                raise ValueError(f'Histop.__validateInput__(): bin_by field "{_f_}" not found{self.p2s.columnSuggestion(_f_, self.df)}')
 
         # Validate count
         if self.count != self.p2s.ROW_COUNTp:
             if isinstance(self.count, str) and not self.p2s.columnInDataFrame(self.count, self.df):
-                raise ValueError(f'Histop.__validateInput__(): count field "{self.count}" not found')
+                raise ValueError(f'Histop.__validateInput__(): count field "{self.count}" not found{self.p2s.columnSuggestion(self.count, self.df)}')
             elif isinstance(self.count, tuple):
                 for _f_ in self.count:
                     if isinstance(_f_, str) and not self.p2s.columnInDataFrame(_f_, self.df):
-                        raise ValueError(f'Histop.__validateInput__(): count field "{_f_}" not found')
+                        raise ValueError(f'Histop.__validateInput__(): count field "{_f_}" not found{self.p2s.columnSuggestion(_f_, self.df)}')
 
         # Validate color
         if self.color is not None:
             if isinstance(self.color, str) and not self.p2s.columnInDataFrame(self.color, self.df):
-                raise ValueError(f'Histop.__validateInput__(): color field "{self.color}" not found')
+                raise ValueError(f'Histop.__validateInput__(): color field "{self.color}" not found{self.p2s.columnSuggestion(self.color, self.df)}')
             elif isinstance(self.color, tuple):
                 for _f_ in self.color:
                     if isinstance(_f_, str) and not self.p2s.columnInDataFrame(_f_, self.df):
@@ -494,6 +500,7 @@ class Histop(P2SBinComponentMixin, ExportMixin):
 
         self._agg_type_      = 'simple'
         self.df_swarm        = None
+        self._df_agg_unpooled_: pl.DataFrame | None = None
         self._numeric_field_ = None
 
         # ── BOXPLOT ───────────────────────────────────────────────────────
@@ -542,34 +549,17 @@ class Histop(P2SBinComponentMixin, ExportMixin):
                 self.df_agg = self.df.group_by([self._bin_col_, self._color_field_]) \
                                      .agg(self.__countAggExpr__()) \
                                      .sort([self._bin_col_, self._color_field_])
+            self.df_agg     = self.__clampNegativeCounts__(self.df_agg, self._bin_col_)
             self._agg_type_ = 'stacked'
 
-            # Reduce color cardinality: collapse values whose estimated pixel width
-            # is below remainder_threshold into an '(other)' bucket.  Mirrors the
-            # logic in timep.__computeAggregates2__ (linear lines 415-441, periodic 515-537).
-            _est_plot_w_  = float(self.wxh[0])
-            _max_bt_      = float(cast('float | None', self.df_agg.group_by(self._bin_col_)
-                                              .agg(pl.col('__count__').sum().alias('__bt__'))
-                                              ['__bt__'].max()) or 1.0)
-            _color_stats_ = (self.df_agg.group_by(self._color_field_)
-                                         .agg(pl.col('__count__').max().alias('__max_in_bin__'))
-                                         .with_columns(
-                                             (pl.col('__max_in_bin__') / _max_bt_ * _est_plot_w_)
-                                             .alias('__est_px__')))
-            _visible_     = set(_color_stats_.filter(pl.col('__est_px__') >= self.remainder_threshold)
-                                             [self._color_field_].to_list())
-            if len(_visible_) < len(_color_stats_):
-                _visible_str_ = {str(v) for v in _visible_}
-                self.df_agg   = (self.df_agg
-                    .with_columns(pl.col(self._color_field_).cast(pl.String))
-                    .with_columns(
-                        pl.when(pl.col(self._color_field_).is_in(_visible_str_))
-                          .then(pl.col(self._color_field_))
-                          .otherwise(pl.lit('(other)'))
-                          .alias(self._color_field_))
-                    .group_by([self._bin_col_, self._color_field_])
-                    .agg(pl.col('__count__').sum())
-                    .sort([self._bin_col_, self._color_field_]))
+            # Reduce color cardinality: pool the values too thin to draw into '(other)'.
+            # Estimated against the canvas here, before the plot exists; pooled again
+            # against the plot once it does (__poolForThePlot__).
+            self._df_agg_unpooled_ = self.df_agg
+            _max_bt_ = float(cast('float | None', self.df_agg.group_by(self._bin_col_)
+                                          .agg(pl.col('__count__').sum().alias('__bt__'))
+                                          ['__bt__'].max()) or 1.0)
+            self.df_agg = self.__poolThinColors__(self.df_agg, self._bin_col_, float(self.wxh[0]) / _max_bt_)
 
         # ── SIMPLE ────────────────────────────────────────────────────────
         if self._agg_type_ == 'simple':
@@ -585,6 +575,7 @@ class Histop(P2SBinComponentMixin, ExportMixin):
                 self.df_agg = self.df.lazy().drop(_drop_).group_by(self._bin_col_).agg(_agg_exprs_).collect()
             else:
                 self.df_agg = self.df.drop(_drop_).group_by(self._bin_col_).agg(_agg_exprs_)
+            self.df_agg = self.__clampNegativeCounts__(self.df_agg, self._bin_col_)
             if self._color_is_crow_:
                 self.df_agg = self.df_agg.with_columns(
                     pl.col('__row_count__').cast(pl.Float64).alias('__color_stat__')
@@ -611,7 +602,13 @@ class Histop(P2SBinComponentMixin, ExportMixin):
                 _order_df_ = self.df_agg.select([self._bin_col_, pl.col('__count__').alias('__order_metric__')])
             else:
                 _order_df_ = self.df.group_by(self._bin_col_).agg(self.__orderAggExpr__())
-            self._sorted_bins_ = _order_df_.sort('__order_metric__', descending=self.descending)[self._bin_col_].to_list()
+            # Ties are broken by the bin's own value, A to Z, missing last.  Sorting on the
+            # metric alone left tied bins in group_by's order, which is unordered and
+            # multithreaded: three bins of two rows each came out in all six orders over
+            # thirty identical calls, so a re-run or a histopi re-render reshuffled them.
+            self._sorted_bins_ = (_order_df_.sort(['__order_metric__', self._bin_col_],
+                                                  descending=[self.descending, False], nulls_last=True)
+                                  [self._bin_col_].to_list())
 
         # ── COUNT RANGE ───────────────────────────────────────────────────
         if self.count_range_shared is not None:
@@ -695,6 +692,20 @@ class Histop(P2SBinComponentMixin, ExportMixin):
         elif _pos_ == 'top':    self._legend_region_ = (0, 0, self.wxh[0], _t_)
         else:                   self._legend_region_ = (0, self.wxh[1] - _b_, self.wxh[0], _b_)
 
+    #
+    # __poolForThePlot__() - pool the stacked colours again, now against the plot's real width
+    # and count scale.  The plot is never wider than the canvas the first pass assumed, so
+    # this only pools more; if it does, the legend and geometry are rebuilt around it.
+    #
+    def __poolForThePlot__(self) -> None:
+        if self._agg_type_ != 'stacked' or self._df_agg_unpooled_ is None: return
+        _span_ = max(float(self._count_max_) - float(self._count_min_), 1e-9)
+        _new_  = self.__poolThinColors__(self._df_agg_unpooled_, self._bin_col_, float(self._plot_w_) / _span_)
+        _cf_   = self._color_field_
+        if set(_new_[_cf_].cast(pl.String).to_list()) == set(self.df_agg[_cf_].cast(pl.String).to_list()): return
+        self.df_agg = _new_
+        self.__constructGeometry__()
+
     def __constructGeometry__(self) -> None:
         w, h         = self.wxh
         # Legend strip (if any) comes out of wxh first -- the plot region shrinks,
@@ -727,6 +738,33 @@ class Histop(P2SBinComponentMixin, ExportMixin):
         else:
             self._dist_h_        = _raw_strip_h_ + y_ins
             self._dist_strip_y0_ = _candidate_strip_y0_
+
+    #
+    # __visibleBinCount__() - how many bins, in display order, have a bar on the canvas.
+    #
+    # The one culling rule, shared by the render and by every hit test.  The hit tests
+    # used to carry their own copy, measured against the whole canvas height rather than
+    # _avail_y1_, so with a bottom legend they counted bars that were never drawn -- and a
+    # drag over the legend or the strip selected them.
+    #
+    # The bars stop _STRIP_GAP_ px above the distribution strip.  They used to be allowed
+    # to end exactly on its top edge, and when bins were cut off the "more rows" indicator
+    # -- 2px, one v_gap below the last bar -- was drawn over the strip.  So when the bars do
+    # not all fit, the indicator has to clear the strip as well.
+    #
+    def __visibleBinCount__(self) -> int:
+        _y_v_ = self.v_gap // 2 if self.v_gap > 0 else 0
+        def _fit_(limit: float) -> int:
+            _n_ = 0
+            for _i_ in range(len(self._sorted_bins_)):
+                if self._plot_y0_ + _i_ * self._slot_h_ + _y_v_ + self.bar_h > limit: break
+                _n_ = _i_ + 1
+            return _n_
+        if self._dist_h_ == 0: return _fit_(self._avail_y1_)
+        _limit_ = self._dist_strip_y0_ - _STRIP_GAP_
+        _n_     = _fit_(_limit_)
+        if _n_ < len(self._sorted_bins_): _n_ = _fit_(_limit_ - self.v_gap - _MORE_ROWS_H_)
+        return _n_
 
     def __computeDistribution__(self) -> None:
         self._dist_stacked_: dict     = {}
@@ -784,14 +822,7 @@ class Histop(P2SBinComponentMixin, ExportMixin):
         _y_v_    = self.v_gap // 2 if self.v_gap > 0 else 0
 
         # Cull bins whose bar bottom would fall outside the available bar area
-        # (_avail_y1_ excludes any bottom legend strip)
-        _effective_h_ = self._avail_y1_ - self._dist_h_
-        _n_visible_ = 0
-        for _i_ in range(_n_bins_):
-            if self._plot_y0_ + _i_ * self._slot_h_ + _y_v_ + self.bar_h <= _effective_h_:
-                _n_visible_ = _i_ + 1
-            else:
-                break
+        _n_visible_ = self.__visibleBinCount__()
         _visible_bins_ = self._sorted_bins_[:_n_visible_]
 
         # ── RIGHT-SIDE LABEL SIZING DECISIONS ────────────────────────────
@@ -931,7 +962,9 @@ class Histop(P2SBinComponentMixin, ExportMixin):
                         )
                     )
                     _hexcol_ = '__seg_hex__'
-                _df_visible_ = _df_render_.filter(pl.col(self._bin_col_).is_in(_visible_bins_))
+                # nulls_equal: the null bin is one of the visible bins, and without it
+                # the stacked (coloured) bar of a null bin was never drawn.
+                _df_visible_ = _df_render_.filter(pl.col(self._bin_col_).is_in(_visible_bins_, nulls_equal=True))
                 self.p2s.colorizeAllBarsHorizontal(
                     _df_visible_, self._bin_col_, _y_lookup_,
                     self._plot_x0_, self.bar_h,
@@ -1020,9 +1053,9 @@ class Histop(P2SBinComponentMixin, ExportMixin):
         if _n_more_ > 0 and _n_visible_ > 0:
             _more_color_ = self.p2s.colorTyped('indicator', 'more_rows')
             _more_y_ = self._plot_y0_ + _n_visible_ * self._slot_h_ + _y_v_
-            _dl_.rect(self._plot_x0_, _more_y_, self._plot_w_, 2, _more_color_,
+            _dl_.rect(self._plot_x0_, _more_y_, self._plot_w_, _MORE_ROWS_H_, _more_color_,
                       svg=f'<rect x="{self._plot_x0_:.1f}" y="{_more_y_:.1f}" '
-                          f'width="{self._plot_w_:.1f}" height="2" '
+                          f'width="{self._plot_w_:.1f}" height="{_MORE_ROWS_H_}" '
                           f'fill="{_more_color_}" stroke="none" />')
             if self.draw_context:
                 if _show_col_lbl_:
@@ -1169,7 +1202,9 @@ class Histop(P2SBinComponentMixin, ExportMixin):
                       svg=f'<rect x="{_bx_:.1f}" y="{_by_:.1f}" width="{_bw_:.1f}" height="{_bh_:.1f}" '
                           f'fill="{fill_color}" fill-opacity="0.4" stroke="{line_color}" stroke-width="0.3" />')
 
-    def renderSmallMultiples(self, df_all: pl.DataFrame, df_lu: dict, all_key: str) -> dict:
+    def renderSmallMultiples(self, df_all: pl.DataFrame, df_lu: dict, all_key: str,
+                             category_fields: list[str] | None = None) -> dict:
+        # category_fields: smallp's category column(s); only xyp uses them (line_split_by=).
         _kwargs_: dict[str, Any] = {}
         _needs_ref_ = self.p2s.SM_COUNT in self.sm_shared or self.p2s.SM_COLOR in self.sm_shared
         if _needs_ref_:
@@ -1220,15 +1255,8 @@ class Histop(P2SBinComponentMixin, ExportMixin):
 
         # Replicate render-time culling to identify which bins were actually drawn.
         # Bins beyond _n_visible_ exist in self.df but were never rendered.
-        _, h          = self.wxh
-        _effective_h_ = h - self._dist_h_
         _y_v_         = self.v_gap // 2 if self.v_gap > 0 else 0
-        _n_visible_   = 0
-        for _i_ in range(len(self._sorted_bins_)):
-            if self._plot_y0_ + _i_ * self._slot_h_ + _y_v_ + self.bar_h <= _effective_h_:
-                _n_visible_ = _i_ + 1
-            else:
-                break
+        _n_visible_   = self.__visibleBinCount__()
         _visible_bins_ = self._sorted_bins_[:_n_visible_]
 
         # Per-bin bar pixel bounds
@@ -1292,15 +1320,8 @@ class Histop(P2SBinComponentMixin, ExportMixin):
             return ((_qx_ - _cx_) / _rx_) ** 2 + ((_qy_ - _cy_) / _ry_) ** 2 <= 1.0
 
         # Replicate render-time culling to identify which bins were actually drawn.
-        _, h          = self.wxh
-        _effective_h_ = h - self._dist_h_
         _y_v_         = self.v_gap // 2 if self.v_gap > 0 else 0
-        _n_visible_   = 0
-        for _i_ in range(len(self._sorted_bins_)):
-            if self._plot_y0_ + _i_ * self._slot_h_ + _y_v_ + self.bar_h <= _effective_h_:
-                _n_visible_ = _i_ + 1
-            else:
-                break
+        _n_visible_   = self.__visibleBinCount__()
         _visible_bins_ = self._sorted_bins_[:_n_visible_]
 
         _span_ = max(float(self._count_max_) - float(self._count_min_), 1e-9)
@@ -1348,8 +1369,8 @@ class Histop(P2SBinComponentMixin, ExportMixin):
         _sub_ = substring.lower()
         # Match against the display form ('|'-joined) so a user's 'A|x' still matches a
         # multi-field bin whose internal key uses the non-printable MULTI_FIELD_SEP.
-        # A null bin is matched on its rendered label ('None'), the same text the
-        # user reads off the bar, so '/none' selects it like any other bin.
+        # A null bin is matched on its rendered label ('(null)'), the same text the
+        # user reads off the bar, so '/null' selects it like any other bin.
         _matching_bins_ = [b for b in self._sorted_bins_
                            if _sub_ in self.p2s.formatMultiFieldValue(b).lower()]
         return self.__recordsForBins__(_matching_bins_, remove=remove_bins)
@@ -1375,15 +1396,7 @@ class Histop(P2SBinComponentMixin, ExportMixin):
         _x_, _y_ = xy
 
         # Replicate render-time culling to know which bins were actually drawn
-        _, h          = self.wxh
-        _effective_h_ = h - self._dist_h_
-        _y_v_         = self.v_gap // 2 if self.v_gap > 0 else 0
-        _n_visible_   = 0
-        for _i_ in range(len(self._sorted_bins_)):
-            if self._plot_y0_ + _i_ * self._slot_h_ + _y_v_ + self.bar_h <= _effective_h_:
-                _n_visible_ = _i_ + 1
-            else:
-                break
+        _n_visible_   = self.__visibleBinCount__()
 
         # Helper: return a correctly-schemed empty DataFrame
         def _empty_() -> pl.DataFrame:

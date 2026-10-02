@@ -239,11 +239,15 @@ class TestInteractionController(unittest.TestCase):
         self.assertEqual(v2.selection_calls[0], entities)
 
     def test_selectionUpdate_skips_views_without_receiveSelection(self):
+        # A peer without receiveSelection is skipped -- and only skipped: the peer
+        # after it still gets the selection.
         v1 = self._registered_view()
         class NoSelView: pass
-        v_no = NoSelView()
-        self.mvc.link(v1, [v_no], on='selection')
-        asyncio.run(self.mvc.selectionUpdate(v1, {'x'}))  # must not raise
+        v_no, v2 = NoSelView(), MockView()
+        self.mvc.link(v1, [v_no, v2], on='selection')
+        asyncio.run(self.mvc.selectionUpdate(v1, {'x'}))
+        self.assertEqual(v2.selection_calls, [{'x'}])
+        self.assertEqual(v1.selection_calls, [])
 
     def test_selectionClear_sends_empty_set(self):
         v1 = self._registered_view()
@@ -2445,10 +2449,20 @@ class TestLINKPICopyToClipboard(_UnfilteredLoggerMixin, unittest.TestCase):
 
     def test_no_error_when_nothing_selected(self):
         # The clipboard path is only entered when there's a selection; with
-        # none, ctrl-C should be a no-op regardless of pyperclip availability.
+        # none, ctrl-C should be a no-op regardless of pyperclip availability:
+        # nothing copied, nothing selected, and no fall-through to plain 'c' (zoom).
+        from unittest.mock import patch
+        from polars2svg import interactive_controller as ic
         ctrl = self._make_ctrl()
         ctrl.selected_entities = set()
-        self._press_ctrl_c(ctrl)  # should not raise
+        _window_ = ctrl.dfs_layout[ctrl.df_level].view_window
+        _copied_ = []
+        with patch.object(ic.pyperclip, 'copy', _copied_.append):
+            self._press_ctrl_c(ctrl)
+        self.assertEqual(_copied_, [])
+        self.assertEqual(ctrl.selected_entities, set())
+        self.assertEqual(ctrl.dfs_layout[ctrl.df_level].view_window, _window_)
+        self.assertEqual(ctrl.key_op_finished, '')
 
     def test_copies_the_selection(self):
         from unittest.mock import patch

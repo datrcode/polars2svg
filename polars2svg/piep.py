@@ -297,16 +297,16 @@ class Piep(ExportMixin):
 
         for _f_ in self._bin_cols_:
             if _f_ not in self.df.columns:
-                raise ValueError(f'Piep.__validateInput__(): bin_by field "{_f_}" not found')
+                raise ValueError(f'Piep.__validateInput__(): bin_by field "{_f_}" not found{self.p2s.columnSuggestion(_f_, self.df)}')
 
         # Validate count
         if self.count != self.p2s.ROW_COUNTp:
             if isinstance(self.count, str) and not self.p2s.columnInDataFrame(self.count, self.df):
-                raise ValueError(f'Piep.__validateInput__(): count field "{self.count}" not found')
+                raise ValueError(f'Piep.__validateInput__(): count field "{self.count}" not found{self.p2s.columnSuggestion(self.count, self.df)}')
             elif isinstance(self.count, tuple):
                 for _f_ in self.count:
                     if isinstance(_f_, str) and not self.p2s.columnInDataFrame(_f_, self.df):
-                        raise ValueError(f'Piep.__validateInput__(): count field "{_f_}" not found')
+                        raise ValueError(f'Piep.__validateInput__(): count field "{_f_}" not found{self.p2s.columnSuggestion(_f_, self.df)}')
 
         # Resolve + validate color (mirrors xyp's color model)
         self.__resolveColor__()
@@ -1167,7 +1167,9 @@ class Piep(ExportMixin):
     #                                each slice's share (implies a shared order)
     #   SM_COUNT                  : share the spectrum/count normalization range
     #
-    def renderSmallMultiples(self, df_all: Any, df_lu: dict, all_key: Any) -> dict:
+    def renderSmallMultiples(self, df_all: Any, df_lu: dict, all_key: Any,
+                             category_fields: list[str] | None = None) -> dict:
+        # category_fields: smallp's category column(s); only xyp uses them (line_split_by=).
         _kwargs_: dict[str, Any] = {'sm_shared': self.sm_shared}
         _want_order_   = (self.p2s.SM_SLICE_ORDERp in self.sm_shared or
                           self.p2s.SM_COLOR        in self.sm_shared)

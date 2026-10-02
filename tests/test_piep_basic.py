@@ -1,9 +1,30 @@
 import unittest
 import re
+from math import atan2, degrees
 import polars as pl
 from polars2svg import Polars2SVG
 from piep_dataframes import makePieDf, makeKnownPieDf
-from svg_test_utils import assert_valid_svg, assert_timing_metrics_populated, capture_log_warnings
+from svg_test_utils import assert_valid_svg, assert_timing_metrics_populated, capture_log_warnings, normalize_svg
+
+
+# Each slice's (start, span) in degrees, read back off the SVG.  A slice is
+# <path d="M cx cy L x0 y0 A r r 0 large 1 x1 y1 Z"> (the sweep runs clockwise, which
+# is increasing angle on screen); a lone slice is a <circle>.
+_SLICE_ = re.compile(r'<path d="M ([-\d.]+) ([-\d.]+) L ([-\d.]+) ([-\d.]+) '
+                     r'A [-\d.]+ [-\d.]+ 0 ([01]) 1 ([-\d.]+) ([-\d.]+) Z"')
+
+
+def pieSlices(svg: str) -> list:
+    if not _SLICE_.search(svg):
+        return [(-90.0, 360.0)] if re.search(r'<g stroke[^>]*><circle ', svg) else []
+    _out_ = []
+    for _m_ in _SLICE_.finditer(svg):
+        cx, cy, x0, y0, _large_, x1, y1 = (float(v) for v in _m_.groups())
+        _a0_  = degrees(atan2(y0 - cy, x0 - cx))
+        _span_ = (degrees(atan2(y1 - cy, x1 - cx)) - _a0_) % 360.0
+        assert (_span_ > 180.0) == (_large_ == 1.0), f'large-arc flag disagrees with a {_span_:.2f} degree slice'
+        _out_.append((_a0_, _span_))
+    return _out_
 
 
 class TestPiepBasic(unittest.TestCase):
@@ -14,19 +35,47 @@ class TestPiepBasic(unittest.TestCase):
     def setUp(self):
         self.df = makePieDf(n=200)
 
+    # The pie shows `want` ({bin: value}): one slice per bin, largest first from 12
+    # o'clock, each slice's count its value -- and in the SVG each slice's angle is its
+    # share of the circle, with every slice starting where the last one ended
+    def assertPieShows(self, t, want: dict) -> None:
+        self.assertEqual(len(set(want.values())), len(want), 'two bins tie, so the order is not the test\'s to know')
+        _order_ = sorted(want, key=lambda b: -want[b])
+        self.assertEqual([(s['bin'], s['count']) for s in t._slices_], [(b, float(want[b])) for b in _order_])
+        _slices_, _total_ = pieSlices(t._repr_svg_()), sum(want.values())
+        self.assertEqual(len(_slices_), len(want))
+        _at_ = -90.0
+        for _b_, (_a0_, _span_) in zip(_order_, _slices_):
+            self.assertAlmostEqual((_a0_ - _at_ + 180.0) % 360.0 - 180.0, 0.0, delta=0.05, msg=f'slice {_b_!r} is not where the last one ended')
+            self.assertAlmostEqual(_span_, 360.0 * want[_b_] / _total_, delta=0.05, msg=f'slice {_b_!r}')
+            _at_ = _a0_ + _span_
+
+    def perBin(self, df: pl.DataFrame, by, expr: pl.Expr = pl.len()) -> dict:
+        return dict(df.group_by(by).agg(expr.alias('m')).iter_rows())
+
     # ── bin_by specification ──────────────────────────────────────────────────
 
     def test_bin_by_positional_string(self):
-        self.p2s.piep(self.df, 'cat')
+        self.assertPieShows(self.p2s.piep(self.df, 'cat'), self.perBin(self.df, 'cat'))
 
     def test_bin_by_keyword(self):
-        self.p2s.piep(self.df, bin_by='cat')
+        self.assertEqual(normalize_svg(self.p2s.piep(self.df, bin_by='cat').svg),
+                         normalize_svg(self.p2s.piep(self.df, 'cat').svg))
 
     def test_df_as_keyword_arg(self):
-        self.p2s.piep(df=self.df, bin_by='cat')
+        self.assertEqual(normalize_svg(self.p2s.piep(df=self.df, bin_by='cat').svg),
+                         normalize_svg(self.p2s.piep(self.df, 'cat').svg))
 
     def test_bin_by_tuple_two_fields(self):
-        self.p2s.piep(self.df, ('cat', 'group'))
+        '''Each (cat, group) pair is its own slice, named by the two values joined.'''
+        _pairs_ = self.perBin(self.df.with_columns(pl.concat_str('cat', 'group', separator=self.p2s.MULTI_FIELD_SEP).alias('pair')), 'pair')
+        self.assertEqual(len(_pairs_), 12)
+        # 15 and 16 rows each come up more than once: tied slices, so check the multiset
+        _t_ = self.p2s.piep(self.df, ('cat', 'group'))
+        self.assertEqual(sorted((s['bin'], s['count']) for s in _t_._slices_), sorted((b, float(n)) for b, n in _pairs_.items()))
+        self.assertEqual([s['count'] for s in _t_._slices_], sorted((float(n) for n in _pairs_.values()), reverse=True))
+        self.assertEqual(sorted(round(_span_, 1) for _, _span_ in pieSlices(_t_.svg)),
+                         sorted(round(360.0 * n / len(self.df), 1) for n in _pairs_.values()))
 
     # ── styles ────────────────────────────────────────────────────────────────
 
@@ -102,7 +151,13 @@ class TestPiepBasic(unittest.TestCase):
         self.assertGreater(len(t._slices_), 0)
 
     def test_count_set_field(self):
-        self.p2s.piep(self.df, 'cat', count=('group', self.p2s.SETp))
+        '''(field, SETp): each slice is the number of distinct values in its bin.  Here that
+        runs C, B, A -- the reverse of the row counts.'''
+        df = pl.DataFrame({'cat':   ['A'] * 5 + ['B'] * 3 + ['C'] * 4,
+                           'group': ['x'] * 5 + ['x', 'y', 'x'] + ['x', 'y', 'z', 'w']})
+        _want_ = self.perBin(df, 'cat', pl.col('group').n_unique())
+        self.assertNotEqual(sorted(_want_, key=_want_.get), sorted(self.perBin(df, 'cat'), key=self.perBin(df, 'cat').get))
+        self.assertPieShows(self.p2s.piep(df, 'cat', count=('group', self.p2s.SETp)), _want_)
 
     def test_count_field_not_found_raises(self):
         with self.assertRaises(ValueError):
@@ -254,7 +309,8 @@ class TestPiepBasic(unittest.TestCase):
         assert_valid_svg(self, self.p2s.piep(df, 'cat', style=self.p2s.DONUTp)._repr_svg_())
 
     def test_single_row(self):
-        self.p2s.piep(self.df.head(1), 'cat')
+        '''One row is one slice: the whole circle.'''
+        self.assertPieShows(self.p2s.piep(self.df.head(1), 'cat'), {self.df['cat'][0]: 1})
 
     def test_empty_df_returns_blank_svg(self):
         t = self.p2s.piep(self.df.clear(), 'cat')
@@ -284,8 +340,16 @@ class TestPiepBasic(unittest.TestCase):
     # ── render options ────────────────────────────────────────────────────────
 
     def test_various_wxh(self):
+        '''Any size draws the same slices, on a circle that fits the canvas.'''
         for w, h in [(80, 80), (160, 160), (300, 240)]:
-            self.p2s.piep(self.df, 'cat', wxh=(w, h))
+            with self.subTest(wxh=(w, h)):
+                t = self.p2s.piep(self.df, 'cat', wxh=(w, h))
+                self.assertIn('<svg id="piep_', t.svg)
+                self.assertRegex(t.svg, f'^<svg [^>]*width="{w}" height="{h}"')
+                self.assertTrue(0 <= t.cx - t.r and t.cx + t.r <= w and 0 <= t.cy - t.r and t.cy + t.r <= h,
+                                f'circle ({t.cx}, {t.cy}) r={t.r} leaves the {w}x{h} canvas')
+                self.assertGreater(t.r, min(w, h) / 4)
+                self.assertPieShows(t, self.perBin(self.df, 'cat'))
 
     def test_draw_context_false_no_text(self):
         t = self.p2s.piep(self.df, 'cat', draw_context=False, draw_labels=False)

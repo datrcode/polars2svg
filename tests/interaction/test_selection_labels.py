@@ -14,7 +14,7 @@ The feature's contract has two halves and only a browser can check both at once:
 Waiting is on the labels themselves, never on ``#infostr``: ``__refreshView__``
 writes ``info_str`` first and ``selection_labels`` last, so a test that waits on the
 count and then reads the overlay is racing the two params (the hazard documented on
-``InteractivePage.expect_selected``).
+``InteractivePage.assert_selected``).
 """
 import unittest
 
@@ -79,7 +79,7 @@ def _label_texts(ip):
     return _out_
 
 
-def _expect_labels(ip, n):
+def assert_labels(ip, n):
     expect(ip.within('selectedlabels', 'text')).to_have_count(n, timeout=ip.timeout_ms)
 
 
@@ -87,18 +87,19 @@ def _expect_labels(ip, n):
 
 def test_selecting_every_node_labels_every_node(labels_page):
     _select_all(labels_page)
-    _expect_labels(labels_page, 4)
+    labels_page.assert_selection(['nw', 'ne', 'sw', 'se'])
+    assert_labels(labels_page, 4)
 
 
 def test_labels_are_the_complete_text(labels_page):
     _select_all(labels_page)
-    _expect_labels(labels_page, 4)
+    assert_labels(labels_page, 4)
     assert sorted(_label_texts(labels_page)) == sorted(_LABELS_.values())
 
 
 def test_a_long_label_is_not_cropped(labels_page):
     _select_all(labels_page)
-    _expect_labels(labels_page, 4)
+    assert_labels(labels_page, 4)
     _texts_ = _label_texts(labels_page)
     assert _LONG_ in _texts_
     assert not any('…' in _t_ for _t_ in _texts_)
@@ -106,7 +107,7 @@ def test_a_long_label_is_not_cropped(labels_page):
 
 def test_a_long_label_wraps_onto_several_lines(labels_page):
     _select_all(labels_page)
-    _expect_labels(labels_page, 4)
+    assert_labels(labels_page, 4)
     _long_el_ = labels_page.within('selectedlabels', 'text').filter(
         has_text='deliberately').first
     assert _long_el_.locator('tspan').count() > 1
@@ -116,7 +117,7 @@ def test_wrapped_lines_are_centred_on_one_x(labels_page):
     """Every line shares the text element's x, and the anchor is middle -- which is
     what puts the block centred under the node rather than left-aligned from it."""
     _select_all(labels_page)
-    _expect_labels(labels_page, 4)
+    assert_labels(labels_page, 4)
     _long_el_ = labels_page.within('selectedlabels', 'text').filter(
         has_text='deliberately').first
     assert _long_el_.get_attribute('text-anchor') == 'middle'
@@ -129,7 +130,7 @@ def test_a_label_sits_below_its_node(labels_page):
     _coords_ = {_r_['__first__']: (int(_r_['__sx__']), int(_r_['__sy__']))
                 for _r_ in labels_page.plot.df_node.iter_rows(named=True)}
     _select_all(labels_page)
-    _expect_labels(labels_page, 4)
+    assert_labels(labels_page, 4)
     _el_ = labels_page.within('selectedlabels', 'text').filter(has_text='northwest').first
     _nx_, _ny_ = _coords_['nw']
     assert abs(float(_el_.get_attribute('x')) - _nx_) <= 1
@@ -152,14 +153,14 @@ def test_selecting_does_not_change_the_graph_drawing(labels_page):
     labels_page.settle()
     _before_ = labels_page.mod_html()
     _select_all(labels_page)
-    _expect_labels(labels_page, 4)
+    assert_labels(labels_page, 4)
     assert labels_page.mod_html() == _before_
 
 
 def test_the_labels_are_drawn_outside_the_graph(labels_page):
     """Same claim from the other side: the label text is in the overlay, not #mod."""
     _select_all(labels_page)
-    _expect_labels(labels_page, 4)
+    assert_labels(labels_page, 4)
     assert 'northwest' not in labels_page.mod_html()
 
 
@@ -167,9 +168,10 @@ def test_the_labels_are_drawn_outside_the_graph(labels_page):
 
 def test_deselecting_clears_the_overlay(labels_page):
     _select_all(labels_page)
-    _expect_labels(labels_page, 4)
+    assert_labels(labels_page, 4)
     labels_page.drag(*CORNER, CORNER[0] + 4, CORNER[1] + 4)   # empty band -> no selection
-    _expect_labels(labels_page, 0)
+    labels_page.assert_selection([])
+    assert_labels(labels_page, 0)
 
 
 def test_a_narrower_band_labels_only_what_it_covers(labels_page):
@@ -177,23 +179,34 @@ def test_a_narrower_band_labels_only_what_it_covers(labels_page):
                 for _r_ in labels_page.plot.df_node.iter_rows(named=True)}
     _x_, _y_ = _coords_['nw']
     labels_page.drag(_x_ - 20, _y_ - 20, _x_ + 20, _y_ + 20)
-    _expect_labels(labels_page, 1)
+    assert_labels(labels_page, 1)
     assert _label_texts(labels_page) == ['northwest']
 
 
 def test_over_the_cap_nothing_is_labeled(labels_page):
     labels_page.app.view().max_selection_labels = 2
     _select_all(labels_page)
-    labels_page.expect_info_contains('labels capped')
-    _expect_labels(labels_page, 0)
+    labels_page.assert_info_contains('labels capped')
+    assert_labels(labels_page, 0)
 
 
 def test_labels_survive_a_rerender(labels_page):
-    """The render script re-runs on every refresh; the overlay must be redrawn."""
+    """A refresh that redraws the graph must leave the overlay in place.
+
+    'd' recolours the nodes by community: a Python round trip that rewrites #mod, and
+    the wait on #mod is the proof it happened.  This used to press 'h', but since the
+    JSComponent port (PLANNING.md W1) that slides the help overlay in JS alone and
+    reaches no refresh, so four labels afterwards showed only that nothing had touched
+    them."""
     _select_all(labels_page)
-    _expect_labels(labels_page, 4)
-    labels_page.press('h')           # toggles the help overlay -> a refresh
-    _expect_labels(labels_page, 4)
+    assert_labels(labels_page, 4)
+    _before_ = labels_page.mod_html()
+    labels_page.hover(200, 150)
+    labels_page.press('d')
+    labels_page.wait_for_mod_change(_before_)
+    labels_page.assert_selection(['nw', 'ne', 'sw', 'se'])
+    assert_labels(labels_page, 4)
+    assert sorted(_label_texts(labels_page)) == sorted(_LABELS_.values())
 
 
 # ── the labels follow a drag of the selection ────────────────────────────────
@@ -204,7 +217,7 @@ def test_labels_track_a_drag_of_the_selection(labels_page):
     _coords_ = {_r_['__first__']: (int(_r_['__sx__']), int(_r_['__sy__']))
                 for _r_ in labels_page.plot.df_node.iter_rows(named=True)}
     _select_all(labels_page)
-    _expect_labels(labels_page, 4)
+    assert_labels(labels_page, 4)
     assert labels_page.el('selectedlabels').get_attribute('transform') in (None, '')
 
     _x_, _y_ = _coords_['nw']
@@ -223,11 +236,11 @@ def test_the_translate_is_cleared_when_new_geometry_arrives(labels_page):
     _coords_ = {_r_['__first__']: (int(_r_['__sx__']), int(_r_['__sy__']))
                 for _r_ in labels_page.plot.df_node.iter_rows(named=True)}
     _select_all(labels_page)
-    _expect_labels(labels_page, 4)
+    assert_labels(labels_page, 4)
     _x_, _y_ = _coords_['nw']
     labels_page.drag(_x_, _y_, _x_ + 30, _y_ + 20)
     labels_page.wait_until_idle()
-    _expect_labels(labels_page, 4)
+    assert_labels(labels_page, 4)
     assert labels_page.el('selectedlabels').get_attribute('transform') in (None, '')
 
 
@@ -237,7 +250,7 @@ def test_the_overlay_does_not_intercept_the_mouse(labels_page):
     """Labels sit above the graph; if they took pointer events, a band started on a
     label would silently do nothing and node picking would break under them."""
     _select_all(labels_page)
-    _expect_labels(labels_page, 4)
+    assert_labels(labels_page, 4)
     assert labels_page.el('selectedlabels').get_attribute('pointer-events') == 'none'
 
 

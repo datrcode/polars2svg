@@ -1,10 +1,16 @@
 import polars as pl
-import random
+import random as _random_
 import string
 
 __name__ = 'random_dataframe'
 
-def randomDataFrame(n=None, na_probability=0.01):
+#
+# seed=None draws from the module-global `random`, as every caller always has; an int
+# draws from a private generator, so the frame is the same on every run and nothing
+# else's random state moves (PLANNING.md V11).
+#
+def randomDataFrame(n=None, na_probability=0.01, seed=None):
+    random = _random_ if seed is None else _random_.Random(seed)   # the module, or a private generator
     _lu_ = {'a':[],'b':[],'c':[],'d':[],'e':[],'f':[],'g':[],'h':[],'i':[],'j':[],'k':[],}
     def randomString(length):
         letters = string.ascii_lowercase + string.ascii_uppercase + string.digits

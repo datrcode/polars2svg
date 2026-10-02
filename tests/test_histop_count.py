@@ -2,43 +2,55 @@ import re
 import unittest
 import polars as pl
 from polars2svg import Polars2SVG
-from histop_dataframes import makeHistoDf
+from histop_dataframes import makeHistoDf, makeStatisticHistoDf, HistopAssertions, orderedBins
+from svg_test_utils import normalize_svg
 
 
-class TestHistopCount(unittest.TestCase):
+class TestHistopCount(HistopAssertions, unittest.TestCase):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.p2s = Polars2SVG()
         self.df  = makeHistoDf(n=200)
 
+    # Each bar is its bin's count= metric -- `expr`, computed here by polars -- and the bars
+    # run largest first.  The metric must differ from the row counts, or the test could
+    # not tell count= from its default.
+    def assertCountIs(self, df: pl.DataFrame, count, expr: pl.Expr) -> None:
+        _want_ = dict(df.group_by('cat').agg(expr.alias('m')).iter_rows())
+        if count is not None:
+            self.assertNotEqual(_want_, dict(df.group_by('cat').len().iter_rows()), 'the metric is the row count here')
+        _h_ = self.p2s.histop(df, 'cat', **({} if count is None else {'count': count}))
+        self.assertBarsShow(_h_, _want_, orderedBins(_want_))
+
     # ── count variants ────────────────────────────────────────────────────────
 
     def test_count_default_row_count(self):
         '''Default count (omitted) → ROW_COUNTp: bars show number of rows per bin.'''
-        self.p2s.histop(self.df, 'cat')
+        self.assertCountIs(self.df, None, pl.len())
 
     def test_count_explicit_row_count(self):
-        self.p2s.histop(self.df, 'cat', count=self.p2s.ROW_COUNTp)
+        self.assertEqual(normalize_svg(self.p2s.histop(self.df, 'cat', count=self.p2s.ROW_COUNTp).svg),
+                         normalize_svg(self.p2s.histop(self.df, 'cat').svg))
 
     def test_count_numeric_int_field(self):
         '''Numeric (Int32) field → sum per bin.'''
-        self.p2s.histop(self.df, 'cat', count='value')
+        self.assertCountIs(self.df, 'value', pl.col('value').sum())
 
     def test_count_numeric_float_field(self):
         '''Float64 field → sum per bin.'''
-        self.p2s.histop(self.df, 'cat', count='score')
+        self.assertCountIs(self.df, 'score', pl.col('score').sum())
 
     def test_count_categorical_field_nunique(self):
         '''Non-numeric (Utf8) field → n_unique per bin.'''
-        self.p2s.histop(self.df, 'cat', count='group')
+        self.assertCountIs(makeStatisticHistoDf(), 'group', pl.col('group').n_unique())
 
     def test_count_set_tuple(self):
         '''(field, SETp) → treat field as categorical (n_unique).'''
-        self.p2s.histop(self.df, 'cat', count=('value', self.p2s.SETp))
+        self.assertCountIs(makeStatisticHistoDf(), ('value', self.p2s.SETp), pl.col('value').n_unique())
 
     def test_count_multi_field_struct(self):
         '''(field1, field2) → struct n_unique per bin.'''
-        self.p2s.histop(self.df, 'cat', count=('group', 'value'))
+        self.assertCountIs(self.df, ('group', 'value'), pl.struct('group', 'value').n_unique())
 
     # ── agg_type is 'simple' for all non-color count variants ────────────────
 

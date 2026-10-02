@@ -78,7 +78,7 @@ def _open(ip, key, **mods):
                               for k, m, h in ENTRY_POINTS])
 def test_entry_point_opens_the_right_menu(linkpi_page, key, mods, header):
     _open(linkpi_page, key, **mods)
-    linkpi_page.expect_menu_open(header)
+    linkpi_page.assert_menu_open(header)
 
 
 def _open_via_panel(ip, mnemonic):
@@ -86,7 +86,7 @@ def _open_via_panel(ip, mnemonic):
     ip.settle()
     ip.hover(200, 150)
     ip.press('a')
-    ip.expect_panel_open()
+    ip.assert_panel_open()
     ip.press(mnemonic)
     ip.press('Enter')
 
@@ -101,7 +101,7 @@ def test_a_panel_row_opens_its_picker(timing_page, mnemonic, header):
     deliberately unreachable by the cursor.
     """
     _open_via_panel(timing_page, mnemonic)
-    timing_page.expect_menu_open(header)
+    timing_page.assert_menu_open(header)
 
 
 def test_a_picker_opened_from_the_panel_does_not_cover_it(timing_page):
@@ -111,7 +111,7 @@ def test_a_picker_opened_from_the_panel_does_not_cover_it(timing_page):
     landed on top of it would defeat the one thing it is for.
     """
     _open_via_panel(timing_page, 'h')
-    timing_page.expect_menu_open('link shape:')
+    timing_page.assert_menu_open('link shape:')
     assert timing_page.panel_is_open(), 'the panel closed when its picker opened'
     _panel_ = timing_page.root.locator(
         f'[id="configpanel{timing_page.suffix}"] rect').first.bounding_box()
@@ -126,22 +126,22 @@ def test_committing_in_that_picker_lands_on_the_row(timing_page):
     """One source of truth: `space` on a row and Enter in its picker write the same param,
     so whichever you use the row shows the result."""
     _open_via_panel(timing_page, 'h')
-    timing_page.expect_menu_open('link shape:')
+    timing_page.assert_menu_open('link shape:')
     timing_page.press('2')                        # mnemonic for 'curve', unguarded
-    timing_page.expect_menu_closed()
-    timing_page.expect_panel_value('link shape', 'curve')
+    timing_page.assert_menu_closed()
+    timing_page.assert_panel_value('link shape', 'curve')
 
 
 def test_the_community_picker_selects_and_the_row_shows_it(linkpi_page):
     """shift-d only SELECTS the algorithm ('d' runs it), and the panel row reads the
     same param -- the background producer's contract, on the community key."""
     _open(linkpi_page, 'D')
-    linkpi_page.expect_menu_open('community detection:')
+    linkpi_page.assert_menu_open('community detection:')
     linkpi_page.press('c')                        # mnemonic for 'connected components'
-    linkpi_page.expect_menu_closed()
+    linkpi_page.assert_menu_closed()
     linkpi_page.press('a')
-    linkpi_page.expect_panel_open()
-    linkpi_page.expect_panel_value('community detection', 'connected components')
+    linkpi_page.assert_panel_open()
+    linkpi_page.assert_panel_value('community detection', 'connected components')
 
 
 def test_menu_opens_on_the_current_value_not_the_first_item(linkpi_page):
@@ -153,8 +153,8 @@ def test_menu_opens_on_the_current_value_not_the_first_item(linkpi_page):
     picker the right starting value.
     """
     _open_via_panel(linkpi_page, 'o')
-    linkpi_page.expect_menu_open('link opacity:')
-    linkpi_page.expect_menu_index(9)
+    linkpi_page.assert_menu_open('link opacity:')
+    linkpi_page.assert_menu_index(9)
 
 
 # ── cycling ──────────────────────────────────────────────────────────────────
@@ -162,28 +162,28 @@ def test_menu_opens_on_the_current_value_not_the_first_item(linkpi_page):
 @pytest.mark.parametrize('key', ['ArrowDown', 'j'])
 def test_cycles_forward(linkpi_page, key):
     _open(linkpi_page, 'G')                       # layout mode, opens on 'grid' (index 0)
-    linkpi_page.expect_menu_index(0)
+    linkpi_page.assert_menu_index(0)
     linkpi_page.press(key)
-    linkpi_page.expect_menu_index(1)
+    linkpi_page.assert_menu_index(1)
 
 
 @pytest.mark.parametrize('key', ['ArrowUp', 'k'])
 def test_cycles_backward_and_wraps(linkpi_page, key):
     """From index 0 a backward step wraps to the last of the seven layout modes."""
     _open(linkpi_page, 'G')
-    linkpi_page.expect_menu_index(0)
+    linkpi_page.assert_menu_index(0)
     linkpi_page.press(key)
-    linkpi_page.expect_menu_index(6)
+    linkpi_page.assert_menu_index(6)
 
 
 def test_repeating_the_open_key_cycles_forward(linkpi_page):
     """shift-G again steps down -- the 'press it repeatedly' idiom."""
     _open(linkpi_page, 'G')
-    linkpi_page.expect_menu_index(0)
+    linkpi_page.assert_menu_index(0)
     linkpi_page.press('G')
-    linkpi_page.expect_menu_index(1)
+    linkpi_page.assert_menu_index(1)
     linkpi_page.press('G')
-    linkpi_page.expect_menu_index(2)
+    linkpi_page.assert_menu_index(2)
 
 
 @pytest.mark.parametrize('key,header', [('G', 'layout mode:'), ('W', 'layout operation:')])
@@ -204,15 +204,15 @@ def test_ctrl_with_the_open_key_is_inert(linkpi_page, key, header):
     test_interactive_controller.py catches a reserved chord being re-added.
     """
     _open(linkpi_page, key)
-    linkpi_page.expect_menu_open(header)
+    linkpi_page.assert_menu_open(header)
     linkpi_page.press(key)
-    linkpi_page.expect_menu_index(1)
+    linkpi_page.assert_menu_index(1)
 
     with linkpi_page.holding(ctrl=True):
         linkpi_page.press(key)
 
-    linkpi_page.expect_menu_open(header)          # still open ...
-    linkpi_page.expect_menu_index(1)              # ... and did not move
+    linkpi_page.assert_menu_open(header)          # still open ...
+    linkpi_page.assert_menu_index(1)              # ... and did not move
 
 
 # ── committing ───────────────────────────────────────────────────────────────
@@ -221,43 +221,43 @@ def test_mnemonic_commits_an_unguarded_item_immediately(linkpi_page):
     """One keystroke selects *and* commits, for items cheap enough to allow it."""
     _open(linkpi_page, 'G')
     linkpi_page.press('c')                        # mnemonic for 'circle'
-    linkpi_page.expect_menu_closed()
-    linkpi_page.expect_info_contains('| circle |')
+    linkpi_page.assert_menu_closed()
+    linkpi_page.assert_info_contains('| circle |')
 
 
 def test_enter_commits_the_highlighted_item(linkpi_page):
     _open(linkpi_page, 'G')
     linkpi_page.press('ArrowDown')                # grid -> circle
-    linkpi_page.expect_menu_index(1)
+    linkpi_page.assert_menu_index(1)
     linkpi_page.press('Enter')
-    linkpi_page.expect_menu_closed()
-    linkpi_page.expect_info_contains('| circle |')
+    linkpi_page.assert_menu_closed()
+    linkpi_page.assert_info_contains('| circle |')
 
 
 def test_escape_closes_without_committing(linkpi_page):
     """Commit something first, so 'unchanged' is distinguishable from 'never set'."""
     _open(linkpi_page, 'G')
     linkpi_page.press('c')
-    linkpi_page.expect_info_contains('| circle |')
+    linkpi_page.assert_info_contains('| circle |')
 
     _open(linkpi_page, 'G')
     linkpi_page.press('ArrowDown')
     linkpi_page.press('Escape')
-    linkpi_page.expect_menu_closed()
-    linkpi_page.expect_info_contains('| circle |')
+    linkpi_page.assert_menu_closed()
+    linkpi_page.assert_info_contains('| circle |')
 
 
 def test_mouse_leaving_the_component_commits(linkpi_page):
     """myOnMouseOut calls menuCommit -- walking away accepts the highlighted item."""
     _open(linkpi_page, 'G')
     linkpi_page.press('ArrowDown')
-    linkpi_page.expect_menu_index(1)
+    linkpi_page.assert_menu_index(1)
 
     _box_ = linkpi_page.root.bounding_box()       # leave the component for real:
     linkpi_page.page.mouse.move(                  # (5, 5) is *inside* a 400x300 plot
         _box_['x'] + _box_['width'] + 80, _box_['y'] + _box_['height'] + 80)
-    linkpi_page.expect_menu_closed()
-    linkpi_page.expect_info_contains('| circle |')
+    linkpi_page.assert_menu_closed()
+    linkpi_page.assert_info_contains('| circle |')
 
 
 def test_inactivity_timeout_commits_an_unguarded_item(linkpi_page):
@@ -268,11 +268,11 @@ def test_inactivity_timeout_commits_an_unguarded_item(linkpi_page):
     """
     _open(linkpi_page, 'G')
     linkpi_page.press('ArrowDown')
-    linkpi_page.expect_menu_index(1)
+    linkpi_page.assert_menu_index(1)
 
     time.sleep(3.0)                               # > the 2.5s menu timer
-    linkpi_page.expect_menu_closed()
-    linkpi_page.expect_info_contains('| circle |')
+    linkpi_page.assert_menu_closed()
+    linkpi_page.assert_info_contains('| circle |')
 
 
 # ── the guard: expensive items may not be committed by accident ──────────────
@@ -284,10 +284,10 @@ def test_guarded_mnemonic_selects_but_does_not_commit(linkpi_page):
     highlight, but only an explicit Enter may commit it.
     """
     _open_via_panel(linkpi_page, 'h')             # link shape: line / curve / flowmap
-    linkpi_page.expect_menu_open('link shape:')
+    linkpi_page.assert_menu_open('link shape:')
     linkpi_page.press('3')                        # mnemonic for the guarded 'flowmap'
 
-    linkpi_page.expect_menu_index(2)
+    linkpi_page.assert_menu_index(2)
     assert linkpi_page.menu_is_open(), (
         'a guarded mnemonic committed on its own -- the two-keystroke force-layout '
         'hazard is back')
@@ -297,10 +297,10 @@ def test_guarded_item_times_out_closed_rather_than_committed(linkpi_page):
     """Walking away from a guarded item must not start it (menuArmTimer's branch)."""
     _open_via_panel(linkpi_page, 'h')
     linkpi_page.press('3')
-    linkpi_page.expect_menu_index(2)
+    linkpi_page.assert_menu_index(2)
 
     time.sleep(3.0)
-    linkpi_page.expect_menu_closed()
+    linkpi_page.assert_menu_closed()
     assert linkpi_page.panel_values()['link shape'] != 'flowmap', (
         'the timeout committed a guarded item')
 
@@ -312,7 +312,7 @@ def test_the_panel_has_no_walk_away_commit_of_its_own(linkpi_page):
     linkpi_page.settle()
     linkpi_page.hover(200, 150)
     linkpi_page.press('a')
-    linkpi_page.expect_panel_open()
+    linkpi_page.assert_panel_open()
     time.sleep(3.0)                               # > the 2.5s picker timer
     assert linkpi_page.panel_is_open(), 'the panel closed itself after 2.5s'
 
@@ -326,10 +326,10 @@ def test_the_open_menu_swallows_ordinary_bindings(linkpi_page):
     all, or a mnemonic keystroke would fire an unrelated operation behind the overlay.
     """
     _open(linkpi_page, 'G')
-    linkpi_page.expect_menu_open('layout mode:')
+    linkpi_page.assert_menu_open('layout mode:')
 
     linkpi_page.press('z')
-    linkpi_page.expect_menu_closed()              # 'z' is not a mode mnemonic... see below
+    linkpi_page.assert_menu_closed()              # 'z' is not a mode mnemonic... see below
     assert '0 Selected' in linkpi_page.info_text() or 'Selected' not in linkpi_page.info_text(), (
         "'z' reached the selection handler while the picker menu was open")
 
@@ -342,7 +342,7 @@ def test_the_open_menu_suppresses_browser_defaults(linkpi_page):
     test_prevent_default.py.
     """
     _open(linkpi_page, 'G')
-    linkpi_page.expect_menu_open('layout mode:')
+    linkpi_page.assert_menu_open('layout mode:')
     linkpi_page.clear_keydowns()
     linkpi_page.press('ArrowDown')
     assert linkpi_page.last_keydown()['defaultPrevented'] is True
@@ -375,7 +375,7 @@ def test_a_menu_opened_immediately_after_load_survives(linkpi_page):
     """
     linkpi_page.hover(200, 150)
     linkpi_page.press('G')
-    linkpi_page.expect_menu_open('layout mode:')
+    linkpi_page.assert_menu_open('layout mode:')
 
     linkpi_page.root.evaluate("(rootEl) => { rootEl.__u5_mark__ = true; }")
     _opened_at_ = time.monotonic()
@@ -410,16 +410,16 @@ def test_a_menu_survives_an_info_str_write(linkpi_page):
     the point is a *server*-side param write arriving while a menu is open.
     """
     _open(linkpi_page, 'W')
-    linkpi_page.expect_menu_open('layout operation:')
-    linkpi_page.expect_menu_index(0)
+    linkpi_page.assert_menu_open('layout operation:')
+    linkpi_page.assert_menu_index(0)
     linkpi_page.press('ArrowDown')
-    linkpi_page.expect_menu_index(1)
+    linkpi_page.assert_menu_index(1)
 
     linkpi_page.app.view().info_str = '0 Selected | no labels | grid | poke | no background'
 
     time.sleep(1.0)
     assert linkpi_page.menu_is_open(), 'a Python-side info_str write destroyed the open menu'
-    linkpi_page.expect_menu_index(1)              # and did not reset the highlight
+    linkpi_page.assert_menu_index(1)              # and did not reset the highlight
 
 
 def test_the_info_line_shows_the_real_status_at_load(linkpi_page):

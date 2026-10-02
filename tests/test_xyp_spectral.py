@@ -56,21 +56,37 @@ class Testxyp_spectral(unittest.TestCase):
         self.assertEqual(len(_x_order(xyp)), 3)
 
     def test_spectral_by_and_weight(self):
-        df = pl.DataFrame({'pet': ['cat', 'cat', 'dog', 'dog', 'fish', 'fish'],
-                           'col': ['gray', 'black', 'gray', 'black', 'blue', 'green'],
-                           'w':   [3, 1, 2, 2, 5, 5],
+        # Alphabetically bee sits between ant and cat; by their colours ant and cat are
+        # alike and bee is not.  spectral_by= must be what moves bee to the end -- the
+        # old data here (cat, dog, fish) was already in that order alphabetically, so it
+        # could not have shown the option doing anything.
+        df = pl.DataFrame({'pet': ['ant', 'ant', 'bee', 'bee', 'cat', 'cat'],
+                           'col': ['gray', 'black', 'blue', 'green', 'gray', 'black'],
+                           'w':   [3, 1, 5, 5, 2, 2],
                            'qty': [1, 2, 3, 4, 5, 6]})
-        # ordering pets by their color distribution, weighted by w -- just needs to run
-        self.p2s.xyp(df=df, x='pet', y='qty', x_order='spectral',
-                     spectral_by='col', spectral_weight='w', dot_size=5)
+        _order_ = lambda **kw: list(_x_order(self.p2s.xyp(df=df, x='pet', y='qty', x_order='spectral', dot_size=5, **kw)))  # noqa: E731
+        self.assertEqual(_order_(), ['ant', 'bee', 'cat'])
+        for _kw_ in ({'spectral_by': 'col'}, {'spectral_by': 'col', 'spectral_weight': 'w'}):
+            with self.subTest(**_kw_):
+                _got_ = _order_(**_kw_)
+                self.assertTrue(_one_run(_got_, lambda k: k in ('ant', 'cat')), f'ant and cat not together: {_got_}')
+                self.assertEqual({tuple(_order_(**_kw_)) for _ in range(3)}, {tuple(_got_)}, 'the order moved between identical calls')
 
     def test_similarity_variants(self):
+        # Every similarity, normalised or not, keeps the two clusters in two blocks --
+        # and gives the same order in both execution modes and on every call
         df = self._two_cluster_df()
         for sim in ['cosine', 'linear', 'correlation']:
             for norm in [True, False]:
-                self.p2s.xyp(df=df, x=('xc', self.p2s.SETp), y=('yc', self.p2s.SETp),
-                             x_order='spectral', spectral_similarity=sim,
-                             spectral_normalize=norm, dot_size=5)
+                with self.subTest(similarity=sim, normalize=norm):
+                    _orders_ = {tuple(_x_order(self.p2s.xyp(df=df, x=('xc', self.p2s.SETp), y=('yc', self.p2s.SETp),
+                                                            x_order='spectral', spectral_similarity=sim,
+                                                            spectral_normalize=norm, dot_size=5, use_lazy_execution=_lazy_)))
+                                for _lazy_ in (True, False) for _ in range(2)}
+                    self.assertEqual(len(_orders_), 1, f'the order varied: {_orders_}')
+                    _order_ = list(next(iter(_orders_)))
+                    self.assertEqual(len(_order_), 6)
+                    self.assertTrue(_contiguous_by(_order_, lambda k: k[0].startswith('a')), f'clusters not contiguous: {_order_}')
 
     def test_both_axes_spectral(self):
         df = self._two_cluster_df()

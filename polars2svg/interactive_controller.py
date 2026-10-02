@@ -35,7 +35,7 @@ from panel.custom import JSComponent, ReactiveESM
 from panel.reactive import ReactiveHTML
 
 from .p2s_esm import esm
-from .p2s_text_mixin import unitize
+from .p2s_text_mixin import svgEscape, unitize
 from .interactive_render_rows import (ChordpRenderRows, HistopRenderRows, PiepRenderRows,
                                       RenderRowSet, TimepRenderRows, XYpRenderRows)
 from shapely.geometry import Polygon
@@ -860,43 +860,69 @@ def _resolve_set_op(shiftkey, ctrlkey):
 # the help SVG is substituted into that class's template.
 # ─────────────────────────────────────────────────────────────────────────────
 
+#: Width of a help sub-row's label column in the five generic views: ' .. | <label> ...... | text'.
+_HELP_SUB_W_ = 15
+
+
+def _helpSubRow_(label: str, text: str, width: int = _HELP_SUB_W_) -> str:
+    """One indented help row, its label dot-padded to `width` so every sub-row's second
+    '|' lands in the same column.  An empty label is all dots (a continuation line)."""
+    _lead_ = (label + ' ') if label else ''
+    return f' .. | {_lead_ + "." * max(1, width - len(_lead_))} | {text}'
+
+
 def _interactivePKeyboardCommands_(kbd_r_desc: str, has_z_key: bool,
-                                   has_search: bool, has_time_keys: bool) -> str:
-    _z_key_cmd_ = '\nz . | filter to color nearest to mouse (shift filters those records out)' if has_z_key else ''
-    _search_cmd_ = '\n/ . | filter bins: type substring + Enter (prefix -remove); Escape to cancel' if has_search else ''
-    _time_key_cmd_ = ('\nu . | (time x-axis) unfilter rows within the visible timeframe'
-                      '\ne . | (time x-axis) expand timeframe both directions'
-                      '\nshift+e . | (time x-axis) expand timeframe backward (earlier events)'
-                      '\nctrl+e . | (time x-axis) expand timeframe forward (later events)') if has_time_keys else ''
-    return f"""
-in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closes
-a . | open the settings panel: selection shape, tooltip, and how the view is drawn
- .. | in the panel ... | space cycles the row, shift-space reverses, enter opens that row's picker, esc closes
- .. | ............... | a / shift-a move the row cursor, or press the key shown in a row's [ ]
- .. | tooltip ....... | hover to read what is under the pointer (off | text | icon, when the view has icon=)
-h . | toggle help display
-q . | subtract the current from the top
-F . | pick selection shape (rectangle | oval) -- the panel's row is the same picker
-r . | {kbd_r_desc}
-R . | cycle brush shape{_z_key_cmd_}{_search_cmd_}{_time_key_cmd_}
-        """
+                                   has_search: bool, has_time_keys: bool,
+                                   has_select_shape: bool = True) -> str:
+    _shape_ = 'selection shape, ' if has_select_shape else ''
+    _rows_ = [
+        'in any picker menu: arrows or j/k cycle, mnemonic key jumps, enter commits, esc closes',
+        f'a . | open the settings panel: {_shape_}tooltip, and how the view is drawn',
+        _helpSubRow_('in the panel', "space cycles the row, shift-space reverses, enter opens that row's picker, esc closes"),
+        _helpSubRow_('', "a / shift-a move the row cursor; a row's [key] jumps to it, and again cycles it"),
+        _helpSubRow_('tooltip', 'hover to read what is under the pointer (off | text | icon, when the view has icon=)'),
+        'h . | toggle help display',
+        'q . | subtract the current from the top',
+        *(["F . | pick selection shape (rectangle | oval) -- the panel's row is the same picker"]
+          if has_select_shape else []),
+        f'r . | {kbd_r_desc}',
+        'R . | cycle brush shape',
+    ]
+    if has_z_key:
+        _rows_.append('z . | filter to color nearest to mouse (shift filters those records out)')
+    if has_search:
+        _rows_.append('/ . | filter bins: type substring + Enter (prefix -remove); Escape to cancel')
+    if has_time_keys:
+        _rows_ += ['u . | (time x-axis) unfilter rows within the visible timeframe',
+                   'e . | (time x-axis) expand timeframe both directions',
+                   _helpSubRow_('shift-e', '(time x-axis) expand timeframe backward (earlier events)'),
+                   _helpSubRow_('ctrl-e',  '(time x-axis) expand timeframe forward (later events)')]
+    return '\n' + '\n'.join(_rows_) + '\n'
+
+
+def _keyboardHelpSvg_(keyboard_commands: str) -> str:
+    """Static SVG for an 'h' help overlay, laid out from a command list: one monospace
+    <text> per line on a rounded panel sized to the longest line.
+
+    The help is a table drawn in a monospace font, so its columns line up only if every
+    space survives -- and SVG collapses runs of whitespace and drops a <text>'s leading
+    spaces, so a ' .. |' row rendered one character left of an 'a . |' row.  Each space
+    is therefore a no-break space, which SVG keeps.  The text is escaped as well:
+    linkpi's help has an '&intersect'."""
+    _lines_ = keyboard_commands.strip('\n').split('\n')
+    _w_     = max(len(_ln_) for _ln_ in _lines_) * 7 + 20
+    _h_     = len(_lines_) * 14 + 12
+    _style_ = "font-family: 'Courier New', monospace; font-size: 11px; fill: #222;"
+    _text_  = ''.join(
+        f'<text x="10" y="{12 + i*14}" style="{_style_}">{svgEscape(_ln_).replace(" ", "\u00a0")}</text>'
+        for i, _ln_ in enumerate(_lines_))
+    return (f'<rect x="0" y="0" width="{_w_}" height="{_h_}" '
+            f'fill="rgba(240,240,240,0.95)" stroke="#888" stroke-width="1" rx="3"/>{_text_}')
 
 
 def _interactivePKeyboardHelpSvg_(keyboard_commands: str) -> str:
     """Static SVG for the 'h' help overlay, laid out from the command list."""
-    _help_lines_  = keyboard_commands.strip().split('\n')
-    _help_w_      = max(len(_ln_) for _ln_ in _help_lines_) * 7 + 20
-    _help_h_      = len(_help_lines_) * 14 + 12
-    _help_font_style_ = "font-family: 'Courier New', monospace; font-size: 11px; fill: #222;"
-    _help_text_lines_ = ''.join(
-        f'<text x="10" y="{12 + i*14}" style="{_help_font_style_}">{_ln_}</text>'
-        for i, _ln_ in enumerate(_help_lines_)
-    )
-    return (
-        f'<rect x="0" y="0" width="{_help_w_}" height="{_help_h_}" '
-        f'fill="rgba(240,240,240,0.95)" stroke="#888" stroke-width="1" rx="3"/>'
-        f'{_help_text_lines_}'
-    )
+    return _keyboardHelpSvg_(keyboard_commands)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -946,6 +972,12 @@ class _InteractivePBase(_TooltipMixin_, JSComponent):
     has_z_key     = param.Boolean(default=False)
     has_search    = param.Boolean(default=False)
     has_time_keys = param.Boolean(default=False)
+    #: Whether the view offers an oval rubber band beside the rectangle: the settings row,
+    #: the 'F' picker, and the oval drag.  Only where marks spread freely in two
+    #: dimensions -- xypi's scatter, chordpi's ring.  A histogram's, a time series' or a
+    #: pie's marks are bars and slices, which a rectangle already selects as well as an
+    #: oval could (user feedback 2026-09-27).  linkpi has its own panel and keeps it.
+    has_select_shape = param.Boolean(default=True)
     brush_seq     = param.List(default=[0, 1, 2])
     #: The root <svg>'s id.  It used to be substituted into each class's own copy of the
     #: template, because Panel also used it as the JS variable name for that node; the
@@ -1034,6 +1066,7 @@ class _InteractivePBase(_TooltipMixin_, JSComponent):
         # kwargs, so they come off here exactly as mvc does.
         _icon_kw_   = kwargs.pop('icon', None)
         _fields_kw_ = kwargs.pop('tooltip_fields', None)
+        _count_kw_  = kwargs.pop('count_fields', None)
         if use_webgpu and getattr(_plot_, 'webgpu', None) is None:
             raise ValueError(f'_interactivep(): use_webgpu=True is not (yet) supported for '
                              f'"{type(self).__name__.lower()}"')
@@ -1062,17 +1095,17 @@ class _InteractivePBase(_TooltipMixin_, JSComponent):
         self.template = _plot_
         # F1 -- the tooltip, and the configuration panel that carries its row.
         self.__initTooltip__(_icon_kw_, _fields_kw_)
-        self.menu_items = {
-            'select_shape': [['r', 'rectangle'], ['o', 'oval']],
-            'tooltip':      self._tooltipItemsForRow_(),
-        }
+        self.menu_items = {'tooltip': self._tooltipItemsForRow_()}
+        if self.has_select_shape:
+            self.menu_items = {'select_shape': [['r', 'rectangle'], ['o', 'oval']], **self.menu_items}
         # Render rows.  The overrides start empty and stay empty until a row moves off
         # the value it was read from the template with -- an untouched panel renders
         # exactly what was built (see interactive_render_rows.py).
         self._df_: Any = _plot_.df_orig
         self._overrides_: dict = {}
+        _row_kw_ = self.__countFieldsKwarg__(_plot_, _count_kw_)
         self._render_rows_: RenderRowSet | None = \
-            self._render_rows_cls_(_plot_) if self._render_rows_cls_ is not None else None
+            self._render_rows_cls_(_plot_, **_row_kw_) if self._render_rows_cls_ is not None else None
         if self._render_rows_ is not None:
             self.menu_items = {**self.menu_items,
                                **{_r_.kind: _r_.items for _r_ in self._render_rows_.rows}}
@@ -1092,14 +1125,44 @@ class _InteractivePBase(_TooltipMixin_, JSComponent):
             self.param.watch(self.applySearchOp, 'search_op_finished')
 
     #
-    # The configuration panel's rows.  Two, both always enabled: `select_shape` is a
-    # choice the component can always make, and the tooltip row is never gated because
-    # every hit-testable component can always show text -- it is the row's third VALUE
-    # that comes and goes with icon=, which is a menu_items question, not a gating one.
+    # __countFieldsKwarg__() - count_fields=: the further fields the count row may switch to.
+    #
+    # The count row offers rows and the field the view was built with, and no more on its own:
+    # a column's type cannot tell a quantity (bytes) from an identifier (a port), so the
+    # caller names the quantities.  Checked here, where the data is, so a misspelled name
+    # fails at construction with a suggestion rather than as a refused setting later.  A
+    # view with no count row (xypi) refuses the keyword rather than ignore it.
+    #
+    def __countFieldsKwarg__(self, plot: Any, count_fields: Any) -> dict:
+        if count_fields is None: return {}
+        _name_ = type(self).__name__.lower()
+        _cls_  = self._render_rows_cls_
+        if _cls_ is None or not _cls_.accepts_count_fields:
+            raise TypeError(f'{_name_}: count_fields= is for a view with a count row '
+                            f'(histopi, timepi, piepi, chordpi)')
+        _fields_ = [count_fields] if isinstance(count_fields, (str, tuple)) else list(count_fields)
+        _df_ = plot.df_orig
+        for _spec_ in _fields_:
+            _cols_ = [_spec_] if isinstance(_spec_, str) else \
+                     [_f_ for _f_ in _spec_ if isinstance(_f_, str)] if isinstance(_spec_, tuple) else None
+            if _cols_ is None:
+                raise TypeError(f'{_name_}: count_fields= takes column names or count= specs, not {_spec_!r}')
+            for _c_ in _cols_:
+                if _df_ is not None and not plot.p2s.columnInDataFrame(_c_, _df_):
+                    raise ValueError(f'{_name_}: count_fields= names {_c_!r}, which is not a column'
+                                     f'{plot.p2s.columnSuggestion(_c_, _df_)}')
+        return {'count_fields': _fields_}
+
+    #
+    # The configuration panel's rows.  Selection shape (only where the view offers an
+    # oval -- has_select_shape) and tooltip come first, both always enabled: the tooltip
+    # row is never gated because every hit-testable component can always show text -- it
+    # is the row's third VALUE that comes and goes with icon=, which is a menu_items
+    # question, not a gating one.
     #
     def __configPanelRows__(self) -> list[list[Any]]:
-        _rows_: list[list[Any]] = [['s', 'select_shape', 'selection shape', True],
-                                   ['i', 'tooltip',      'tooltip',         True]]
+        _rows_: list[list[Any]] = [['s', 'select_shape', 'selection shape', True]] if self.has_select_shape else []
+        _rows_.append(['i', 'tooltip', 'tooltip', True])
         if self._render_rows_ is not None:
             _s_ = dict(self.render_settings)
             _rows_ += [[_r_.mnemonic, _r_.kind, _r_.label, bool(_r_.enabled(_s_))]
@@ -1219,7 +1282,7 @@ class _InteractivePBase(_TooltipMixin_, JSComponent):
             if not self.drag_op_finished: return
             _coords_ = (self.drag_x0, self.drag_y0, self.drag_x1, self.drag_y1)
             _shift_  = self.shiftkey
-            _shape_  = self.select_shape
+            _shape_  = self.select_shape if self.has_select_shape else 'rectangle'
             self.drag_op_finished = False
         if _shape_ == 'oval':
             # press point (drag_x0/y0) is the oval center; drag edge sets the radii
@@ -1334,6 +1397,7 @@ class _InteractivePBase(_TooltipMixin_, JSComponent):
 class TIMEPI(_InteractivePBase):
     """Interactive timep: drag to filter, brush to link, time-axis expand keys."""
     has_time_keys = param.Boolean(default=True)
+    has_select_shape = param.Boolean(default=False)
     brush_seq     = param.List(default=[0, 1, 2, 3, 4])
     _svg_parent_id_  = 'svgparenttimepi'
     _render_fn_      = 'timep'
@@ -1343,7 +1407,7 @@ class TIMEPI(_InteractivePBase):
     _render_rows_cls_ = TimepRenderRows
     _kbd_r_desc_     = 'toggle brush on/off'
     _keyboard_commands_ = _interactivePKeyboardCommands_(
-        _kbd_r_desc_, has_z_key=False, has_search=False, has_time_keys=True)
+        _kbd_r_desc_, has_z_key=False, has_search=False, has_time_keys=True, has_select_shape=False)
     svg_parent_id = param.String(default=_svg_parent_id_)
     kbd_help_svg  = param.String(default=_interactivePKeyboardHelpSvg_(_keyboard_commands_))
     _esm = _INTERACTIVEP_ESM_
@@ -1352,6 +1416,7 @@ class TIMEPI(_InteractivePBase):
 class HISTOPI(_InteractivePBase):
     """Interactive histop: drag to filter, brush to link, '/' substring search."""
     has_search = param.Boolean(default=True)
+    has_select_shape = param.Boolean(default=False)
     brush_seq  = param.List(default=[0, 1, 2, 5, 6])
     _svg_parent_id_  = 'svgparenthistopi'
     _render_fn_      = 'histop'
@@ -1361,7 +1426,7 @@ class HISTOPI(_InteractivePBase):
     _render_rows_cls_ = HistopRenderRows
     _kbd_r_desc_     = 'toggle brush on/off'
     _keyboard_commands_ = _interactivePKeyboardCommands_(
-        _kbd_r_desc_, has_z_key=False, has_search=True, has_time_keys=False)
+        _kbd_r_desc_, has_z_key=False, has_search=True, has_time_keys=False, has_select_shape=False)
     svg_parent_id = param.String(default=_svg_parent_id_)
     kbd_help_svg  = param.String(default=_interactivePKeyboardHelpSvg_(_keyboard_commands_))
     _esm = _INTERACTIVEP_ESM_
@@ -1406,6 +1471,7 @@ class CHORDPI(_InteractivePBase):
 class PIEPI(_InteractivePBase):
     """Interactive piep: drag to filter, brush to link, '/' substring search."""
     has_search = param.Boolean(default=True)
+    has_select_shape = param.Boolean(default=False)
     brush_seq  = param.List(default=[0, 1, 2])
     _svg_parent_id_  = 'svgparentpiepi'
     _render_fn_      = 'piep'
@@ -1415,7 +1481,7 @@ class PIEPI(_InteractivePBase):
     _render_rows_cls_ = PiepRenderRows
     _kbd_r_desc_     = 'toggle brush on/off'
     _keyboard_commands_ = _interactivePKeyboardCommands_(
-        _kbd_r_desc_, has_z_key=False, has_search=True, has_time_keys=False)
+        _kbd_r_desc_, has_z_key=False, has_search=True, has_time_keys=False, has_select_shape=False)
     svg_parent_id = param.String(default=_svg_parent_id_)
     kbd_help_svg  = param.String(default=_interactivePKeyboardHelpSvg_(_keyboard_commands_))
     _esm = _INTERACTIVEP_ESM_
@@ -2173,7 +2239,7 @@ _LINKPI_KEYBOARD_COMMANDS_ = """
  .. | [[selected matters]] acts on the selection if there is one, otherwise on everything
  .. |
 / . | search: type substring + Enter (prefix +add -remove &intersect); esc to cancel
-a . | open the settings panel: a/shift-a/arrows selects, space/shift-space/enter modifies, esc closes
+a . | settings panel: a/shift-a/arrows/[key] select; space/shift-space/[key] again/enter modify; esc closes
 b . | run the background producer | ctrl-b clears the background
  .. | shift-b ........ | select the background producer (also in the settings panel)
 c . | reset view, or focus on selected | shift-c uses selected + neighbors
@@ -2203,20 +2269,8 @@ z . | select node under mouse by color [[p(cs)^2]]
 1-6 | select node degree | 7: 7-19 | 8: 20-49 | 9: 50-99 | 0: 100+ [[p(cs)^2]]
 """
 
-# Build static SVG for keyboard help overlay
-_help_lines_  = _LINKPI_KEYBOARD_COMMANDS_.strip().split('\n')
-_help_w_      = max(len(_ln_) for _ln_ in _help_lines_) * 7 + 20
-_help_h_      = len(_help_lines_) * 14 + 12
-_font_style_  = "font-family: 'Courier New', monospace; font-size: 11px; fill: #222;"
-_text_lines_  = ''.join(
-    f'<text x="10" y="{12 + i*14}" style="{_font_style_}">{_ln_.replace(" ", " ")}</text>'
-    for i, _ln_ in enumerate(_help_lines_)
-)
-_LINKPI_KEYBOARD_HELP_SVG_ = (
-    f'<rect x="0" y="0" width="{_help_w_}" height="{_help_h_}" '
-    f'fill="rgba(240,240,240,0.95)" stroke="#888" stroke-width="1" rx="3"/>'
-    f'{_text_lines_}'
-)
+# The keyboard help overlay -- the same builder as the generic views'.
+_LINKPI_KEYBOARD_HELP_SVG_ = _keyboardHelpSvg_(_LINKPI_KEYBOARD_COMMANDS_)
 
 
 # Picker-menu data + state, prepended to the render script. Built separately

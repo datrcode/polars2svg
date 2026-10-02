@@ -798,6 +798,11 @@ class ChP(P2SComponentColorMixin, ExportMixin):
             else: raise ValueError(f'LinkP: relationship tuples must have 2 or 3 parts, got {_edge_!r}')
             i += 1
 
+        # color= is checked here rather than in __validateInput__: the categorical column
+        # below is pre-built from its field, and a misspelt one would fail inside polars first
+        self.__validateColorSpec__(self.color, 'color', keywords=('src', 'dst'),
+                                   constants=(self.p2s.COLOR_BY_SRC_NODE, self.p2s.COLOR_BY_DST_NODE))
+        self._link_end_: str | None = self.__linkEnd__()
         # Classify color modes and pre-build categorical color columns (must happen before group_by)
         self._link_color_mode_ = self.__colorModeInfo__(self.__effectiveColorSpec__('links'))
         self._node_color_mode_ = self.__colorModeInfo__(self.__effectiveColorSpec__('nodes'))
@@ -821,6 +826,23 @@ class ChP(P2SComponentColorMixin, ExportMixin):
             if i > 0: _parts_.append(pl.lit('|'))
             _parts_.append(pl.col(f).cast(pl.String))
         return df.with_columns(pl.concat_str(_parts_).alias(new_col))
+
+    #
+    # __linkEnd__() - 'src' / 'dst' when each link takes its source's / destination's node
+    # colour, else None.  That is color=p2s.COLOR_BY_SRC_NODE / COLOR_BY_DST_NODE.  The bare
+    # strings 'src' / 'dst' meant the same before the enums existed, and still do when no
+    # column has that name -- deprecated, so that a string always names a column
+    # (PLANNING.md §5 C-chordp-link-color-src).  A column of that name is the field.
+    #
+    def __linkEnd__(self) -> str | None:
+        if self.color == self.p2s.COLOR_BY_SRC_NODE: return 'src'
+        if self.color == self.p2s.COLOR_BY_DST_NODE: return 'dst'
+        if isinstance(self.color, str) and self.color in ('src', 'dst') \
+                and (self.df is None or self.color not in self.df.columns):
+            _enum_ = 'COLOR_BY_SRC_NODE' if self.color == 'src' else 'COLOR_BY_DST_NODE'
+            self.p2s.logger.warning(f"Chordp: color='{self.color}' is deprecated; use color=p2s.{_enum_} instead")
+            return str(self.color)
+        return None
 
     #
     # __countAggExpr__() - return the Polars aggregation expression for counting edges
@@ -860,10 +882,10 @@ class ChP(P2SComponentColorMixin, ExportMixin):
         for _rel_ in self.relationships:
             for _field_ in _rel_[:2]:
                 if _field_ not in self.df.columns:
-                    raise ValueError(f'ChP.__validateInput__(): field "{_field_}" not found in DataFrame')
+                    raise ValueError(f'ChP.__validateInput__(): field "{_field_}" not found in DataFrame{self.p2s.columnSuggestion(_field_, self.df)}')
         for _field_ in self.__countFields__():
             if _field_ not in self.df.columns:
-                raise ValueError(f'ChP.__validateInput__(): count field "{_field_}" not found in DataFrame')
+                raise ValueError(f'ChP.__validateInput__(): count field "{_field_}" not found in DataFrame{self.p2s.columnSuggestion(_field_, self.df)}')
         if self.color == self.p2s.COLOR_BY_NODE_NAME:
             raise ValueError(
                 'ChP.__validateInput__(): color=p2s.COLOR_BY_NODE_NAME is not valid for the '
@@ -1327,12 +1349,8 @@ class ChP(P2SComponentColorMixin, ExportMixin):
             for nm, amr in self.df_node.select(['__nm__', '__amr__']).iter_rows()
         }
 
-        # ── 5. Node color column ──────────────────────────────────────────────
-        if isinstance(self.node_color, self.p2s.HexColorString):
-            _co_expr_ = pl.lit(self.node_color)
-        else:
-            _co_expr_ = self.p2s.colorizeColumnPolarsOperations('__nm__')
-        self.df_node = self.df_node.with_columns(_co_expr_.alias('__nc_hex__'))
+        # ── 5. Node color column (the links read it for COLOR_BY_SRC/DST_NODE) ─
+        self.__nodeColorColumn__()
 
         # ── 6. SVG path strings via concat_str (no Python row loop) ───────────
         def _r2_(c: str) -> pl.Expr: return pl.col(c).round(2)
@@ -1360,6 +1378,55 @@ class ChP(P2SComponentColorMixin, ExportMixin):
             *self.df_node['__node_svg__'].to_list(),
             '</svg>',
         ])
+
+    #
+    # __nodeColorColumn__() - add __nc_hex__, each drawn node's colour, to df_node
+    # - a dict, a fixed hex, COLOR_BY_NODE_NAME and the default need only the name;
+    # - every other node_color= aggregates the node's rows -- each row naming it at
+    #   either end of any relationship, the rows linkp aggregates -- through the shared
+    #   colour mixin.  A node the p2s.REMAINDERp bucket absorbed gives its rows to the
+    #   bucket, and a node with no rows (a smallp panel's) takes the data default.
+    # - When the links carry a colour scale of their own, the scale -- the legend's
+    #   domain, smallp's shared SM_COLOR range -- stays theirs, and the nodes are
+    #   normalised on their own range (owns_scale; PLANNING.md §5 C-linkp-two-scales).
+    #
+    def __nodeColorColumn__(self) -> None:
+        if self.df is None: return
+        _bg_co_   = self.p2s.colorTyped('background', 'default')
+        _data_co_ = self.p2s.colorTyped('data', 'default')
+        _nc_      = self._node_color_mode_
+        _kind_, _field_ = _nc_['kind'], _nc_['field']
+        _names_   = pl.col('__nm__').cast(pl.String)
+
+        if isinstance(self.node_color, dict):
+            _filled_ = {str(k): (v if isinstance(v, self.p2s.HexColorString) else self.p2s.color(v))
+                        for k, v in self.node_color.items()}
+            _co_expr_ = _names_.replace_strict(_filled_, default=_bg_co_)
+        elif _kind_ == 'fixed_hex':
+            _co_expr_ = pl.lit(_nc_['hex'])
+        elif _kind_ == 'categorical' and _field_ is None:     # COLOR_BY_NODE_NAME
+            _co_expr_ = self.p2s.colorizeColumnPolarsOperations('__nm__')
+        elif _kind_ == 'default':
+            _co_expr_ = pl.lit(_data_co_)
+        else:
+            _extra_ = [] if _field_ is None else [pl.col(_field_)]
+            _rows_  = pl.concat([self.df.select(pl.col(_rel_[_j_]).cast(pl.String).alias('__nm__'), *_extra_)
+                                 for _rel_ in self.relationships for _j_ in (0, 1)]).drop_nulls('__nm__')
+            _drawn_ = self.df_node['__nm__'].cast(pl.String)
+            if self.p2s.REMAINDER_LABEL in _drawn_:
+                _rows_ = _rows_.with_columns(pl.when(pl.col('__nm__').is_in(_drawn_.implode()))
+                                               .then(pl.col('__nm__'))
+                                               .otherwise(pl.lit(self.p2s.REMAINDER_LABEL)).alias('__nm__'))
+            if   _kind_ == 'categorical':
+                _rows_ = _rows_.with_columns(self.p2s.colorizeColumnPolarsOperations(_field_).alias('__nc_cat__'))
+            elif _kind_ == 'cset':
+                _rows_ = _rows_.with_columns(pl.col(_field_).cast(pl.String).alias('__nc_cat__'))
+            _agg_ = _rows_.group_by('__nm__').agg(*self.__colorAggExprs__(_nc_, 'nc'))
+            _agg_ = self.__applyColorToDF__(_agg_, _nc_, 'nc', _data_co_,
+                                            owns_scale=self._link_color_mode_['kind'] not in self._SCALE_KINDS_)
+            _co_expr_ = _names_.replace_strict(dict(_agg_.select('__nm__', '__nc_hex__').iter_rows()),
+                                               default=_data_co_)
+        self.df_node = self.df_node.with_columns(_co_expr_.alias('__nc_hex__'))
 
     #
     # __renderLinks__()
@@ -1409,6 +1476,13 @@ class ChP(P2SComponentColorMixin, ExportMixin):
             '__arc_deg__': '__to_arc_deg__',
         })
 
+        # color=p2s.COLOR_BY_SRC_NODE / _DST_NODE: each link takes its source / destination
+        # node's colour (see __linkEnd__)
+        _end_ = None
+        if self._link_end_ is not None:
+            _end_ = '__fm_nm__' if self._link_end_ == 'src' else '__to_nm__'
+        _node_hex_ = dict(self.df_node.select(pl.col('__nm__').cast(pl.String), '__nc_hex__').iter_rows())
+
         _cx_ = float(self.cx)
         _cy_ = float(self.cy)
         _all_svg_ = set()
@@ -1430,6 +1504,9 @@ class ChP(P2SComponentColorMixin, ExportMixin):
                 pl.col(_fm_fld_).cast(pl.String).alias('__fm_nm__'),
                 pl.col(_to_fld_).cast(pl.String).alias('__to_nm__'),
             ).filter(pl.col('__fm_nm__') != pl.col('__to_nm__'))
+            if _end_ is not None:
+                _df_link_ = _df_link_.with_columns(
+                    pl.col(_end_).replace_strict(_node_hex_, default=_data_co_).alias('__lc_hex__'))
 
             # ── Step B: join arc geometry for fm and to endpoints ─────────────
             _df_link_ = (
@@ -2043,23 +2120,7 @@ class ChP(P2SComponentColorMixin, ExportMixin):
     # - generates radial or circular labels controlled by label_style
     #
     def __renderNodes__(self) -> None:
-        # ── 1. Node color ──────────────────────────────────────────────────────
-        _bg_co_   = self.p2s.colorTyped('background', 'default')
-        _data_co_ = self.p2s.colorTyped('data', 'default')
-        _nc_      = self._node_color_mode_
-
-        if isinstance(self.node_color, dict):
-            _filled_ = {str(k): (v if isinstance(v, self.p2s.HexColorString) else self.p2s.color(v))
-                        for k, v in self.node_color.items()}
-            _co_expr_ = pl.col('__nm__').cast(pl.String).replace_strict(_filled_, default=_bg_co_)
-        elif _nc_['kind'] == 'fixed_hex':
-            _co_expr_ = pl.lit(_nc_['hex'])
-        elif _nc_['kind'] == 'categorical':   # COLOR_BY_NODE_NAME or tuple('field', …)
-            _co_expr_ = self.p2s.colorizeColumnPolarsOperations('__nm__')
-        else:                                  # 'default' and stat/crow modes: data default
-            _co_expr_ = pl.lit(_data_co_)
-
-        self.df_node = self.df_node.with_columns(_co_expr_.alias('__nc_hex__'))
+        # ── 1. Node color: __nc_hex__, set by __calculateGeometry__ ────────────
 
         # ── 2. Build closed annulus-sector SVG paths ───────────────────────────
         def _r2_(c: str) -> pl.Expr: return pl.col(c).round(2)
@@ -2330,7 +2391,9 @@ class ChP(P2SComponentColorMixin, ExportMixin):
     # - SM_Y: share the bundled-edge routing skeleton (only meaningful when link_shape='bundled')
     # - SM_COUNT / SM_COLOR: share count / color-stat normalization ranges
     #
-    def renderSmallMultiples(self, df_all: Any, df_lu: dict, all_key: Any) -> dict:
+    def renderSmallMultiples(self, df_all: Any, df_lu: dict, all_key: Any,
+                             category_fields: list[str] | None = None) -> dict:
+        # category_fields: smallp's category column(s); only xyp uses them (line_split_by=).
         _kwargs_: dict[str, Any] = {'sm_shared': self.sm_shared}
         _needs_ref_ = (self.p2s.SM_X     in self.sm_shared or
                        self.p2s.SM_Y     in self.sm_shared or

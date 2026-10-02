@@ -6,6 +6,7 @@ from panel.custom import JSComponent
 from .p2s_esm import esm
 
 from . import od_flow_layout as _ofl_
+from .interactive_controller import _helpSubRow_, _keyboardHelpSvg_
 
 
 # _mlxCudaStatus_() - (mlx_available, cuda_available) for the header indicators below.
@@ -156,25 +157,16 @@ def _placement(n: int, index: int, avail: int, slot: int, ell_h: int) -> tuple:
 # interactive_controller._keyboard_help_svg_ for the sibling.  Kept concise so
 # the box stays legible on the narrow stack-control widget; the root <svg> is
 # also given overflow:visible so a wider box is never clipped.
-_STACK_KEYBOARD_COMMANDS_ = (
-    'h . | toggle help\n'
-    'c . | keep base + current\n'
-    'ctrl+shift+c . | current -> base'
-)
+# The six other views' help builder and sub-row rule, so this table lines up the way theirs
+# do: ctrl-shift-c is a sub-row of c rather than a wider key cell, and every space survives
+# SVG's whitespace collapsing (PLANNING.md §5 C-stack-help-key-column).
+_STACK_KEYBOARD_COMMANDS_ = '\n'.join([
+    'h . | toggle help',
+    'c . | keep base + current',
+    _helpSubRow_('ctrl-shift-c', 'current -> base'),
+])
 
-
-def _stackKeyboardHelpSvg_() -> str:
-    _lines_ = _STACK_KEYBOARD_COMMANDS_.split('\n')
-    _hw_    = max(len(_l_) for _l_ in _lines_) * 7 + 20
-    _hh_    = len(_lines_) * 14 + 12
-    _style_ = "font-family: 'Courier New', monospace; font-size: 11px; fill: #222;"
-    _text_  = ''.join(f'<text x="10" y="{12 + _i_ * 14}" style="{_style_}">{_l_}</text>'
-                      for _i_, _l_ in enumerate(_lines_))
-    return (f'<rect x="0" y="0" width="{_hw_}" height="{_hh_}" '
-            f'fill="rgba(240,240,240,0.95)" stroke="#888" stroke-width="1" rx="3"/>{_text_}')
-
-
-_STACK_HELP_SVG_ = _stackKeyboardHelpSvg_()
+_STACK_HELP_SVG_ = _keyboardHelpSvg_(_STACK_KEYBOARD_COMMANDS_)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

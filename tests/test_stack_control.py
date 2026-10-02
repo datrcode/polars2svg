@@ -350,7 +350,8 @@ class TestStackControlKeyOps(_StackControlBase):
         sc = self._make_sc()
         _markup_ = component_markup(sc)
         self.assertEqual(sc.help_display, 'none')          # not rendered until toggled
-        self.assertIn('toggle help', sc.kbd_help_svg)      # the chrome itself
+        # the chrome itself -- its spaces are no-break spaces, which SVG keeps
+        self.assertIn('toggle help', sc.kbd_help_svg.replace('\u00a0', ' '))
         self.assertIn('keyboardhelp', _markup_)            # ...and the node it goes into
         self.assertIn('kbd_help_svg', _markup_)            # ...wired to the param
         self.assertIn('help_display', _markup_)            # ...shown/hidden by this one

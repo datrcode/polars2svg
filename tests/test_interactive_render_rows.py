@@ -181,7 +181,13 @@ class TestOverrides(_RowsCase):
         _ov_ = _rows_.overrides(dict(_rows_.initial_settings(), distributions='x+y'))
         self.assertEqual(_ov_['x_distributions'], ['bytes', self.p2s.DISTRIBUTION_OUTSIDEp, 16])
 
+    # A fractional axis: a multiple is exactly that multiple of the auto count.  A whole-number
+    # axis keeps whole integers per bin instead -- the next test.
+    def _fractional_(self):
+        self.df = self.df.with_columns(pl.col('a') * 1.1, pl.col('b') * 1.1)
+
     def test_a_bin_multiple_is_a_multiple_of_the_auto_count(self):
+        self._fractional_()
         _t_, _rows_ = self._rows()
         _auto_ = self._render(_t_, _rows_, distributions='x').x_distributions_clean['bins'][0]
         for _label_, _m_ in (('auto x2', 2.0), ('auto /2', 0.5), ('auto /4', 0.25)):
@@ -191,6 +197,7 @@ class TestOverrides(_RowsCase):
 
     # The reason the rows split: time along a long x, a number up a short y.
     def test_each_axis_takes_its_own_bin_multiple(self):
+        self._fractional_()
         _t_, _rows_ = self._rows()
         _auto_ = self._render(_t_, _rows_, distributions='x+y')
         _ax_, _ay_ = _auto_.x_distributions_clean['bins'][0], _auto_.y_distributions_clean['bins'][0]
@@ -200,6 +207,18 @@ class TestOverrides(_RowsCase):
         _xy_ = self._render(_t_, _rows_, distributions='x+y', y_bins='auto x2')
         self.assertEqual(_xy_.x_distributions_clean['bins'][0], _ax_, 'x stays at auto')
         self.assertEqual(_xy_.y_distributions_clean['bins'][0], max(1, round(_ay_ * 2.0)))
+
+    # 'a' holds the whole numbers 1..8, one row each, and auto draws one bar per value.  A
+    # multiple must keep whole integers per bin: 'auto x2' used to ask for 16 equal-width
+    # bins, half of them empty (PLANNING.md §5 C-xypi-bin-multiple-whole-numbers).
+    def test_a_bin_multiple_keeps_whole_integers_on_a_whole_number_axis(self):
+        _t_, _rows_ = self._rows()
+        self.assertEqual(self._render(_t_, _rows_, distributions='x').x_distributions_clean['bins'], [8])
+        for _label_, _totals_ in (('auto x2', [1.0] * 8), ('auto x4', [1.0] * 8),
+                                  ('auto /2', [2.0] * 4), ('auto /4', [4.0] * 2)):
+            with self.subTest(bins=_label_):
+                _xy_ = self._render(_t_, _rows_, distributions='x', x_bins=_label_)
+                self.assertEqual(_xy_.df_x_distribution.sort('__xi_bin__')['__xi_total__'].to_list(), _totals_)
 
     def test_the_color_scale_swaps_magnitude_and_stretched(self):
         _, _rows_ = self._rows(color=self.p2s.CROW_STRETCHEDp)

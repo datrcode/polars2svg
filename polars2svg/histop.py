@@ -287,6 +287,14 @@ class Histop(P2SBinComponentMixin, ExportMixin):
             raise ValueError(f'Histop.__validateInput__(): bin_by must be str or tuple, got {type(self.bin_by)}')
 
         for _f_ in self._bin_cols_:
+            # A t-field reached here as "not found", and the column suggestion stayed silent:
+            # its column IS in the frame.  timep is what counts by a time transform, so say
+            # so -- whether histop should take t-fields is still open (PLANNING.md §5
+            # C-histop-tfield).
+            if _f_ not in self.df.columns and self.p2s.isTField(_f_, self.df):
+                _col_, _enum_ = self.p2s.tFieldTuple(_f_)
+                raise ValueError(f'Histop.__validateInput__(): bin_by={_f_!r} is a t-field, which histop does not take -- '
+                                 f'to count by {_enum_.name}, use p2s.timep(df, p2s.tField({_col_!r}, p2s.{_enum_.name}))')
             if _f_ not in self.df.columns:
                 raise ValueError(f'Histop.__validateInput__(): bin_by field "{_f_}" not found{self.p2s.columnSuggestion(_f_, self.df)}')
 

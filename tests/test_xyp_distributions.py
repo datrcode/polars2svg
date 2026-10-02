@@ -104,6 +104,33 @@ class Testxyp_distributions(unittest.TestCase):
         self.assertEqual(len({c for _, c in self._PATH_.findall(_set_.svg)}), 2)
         self.assertNotEqual(normalize_svg(_set_.svg), normalize_svg(_tuple_.svg))
 
+    def test_outlinesFollowFieldOrder(self):
+        # Several fields draw one outline each, in the order the spec names them -- each one
+        # over the ones before it.  The order used to come from a set of colours and from a
+        # sort tied on every bin, so one call could stack them either way from one render to
+        # the next (PLANNING.md §5 C-xyp-distribution-outline-order).
+        df = randomDataFrame(200, seed=71)
+        _a_, _b_, _c_, _d_, _e_ = (self.p2s.color((_f_,)) for _f_ in ('a', 'b', 'c', 'd', 'e'))
+        self.assertEqual(len({_a_, _b_, _c_, _d_, _e_}), 5, 'the fields no longer have distinct colours')
+        # the fields of one spec share a dtype: a and b are integers, c, d and e floats
+        for _axis_ in ('x', 'y'):
+            for _spec_, _want_ in ((['a', 'b'], [_a_, _b_]), (['b', 'a'], [_b_, _a_]), (('e', 'c', 'd'), [_e_, _c_, _d_])):
+                _xyp_  = self.p2s.xyp(df, 'j', 'k', **{f'{_axis_}_distributions': _spec_})
+                self.assertEqual([c for _, c in self._PATH_.findall(_xyp_.svg)], _want_, f'{_axis_}_distributions={_spec_!r}')
+                _dist_ = _xyp_.df_x_distribution if _axis_ == 'x' else _xyp_.df_y_distribution
+                self.assertEqual(_dist_[f'__{_axis_}dists_color__'].unique(maintain_order=True).to_list(), _want_)
+
+    def test_distributionsIndependentOfRowOrder(self):
+        # The same rows in any order draw the same distributions, and leave the same frame.
+        df     = randomDataFrame(200, seed=71)
+        _kw_   = {'x_distributions': ['a', 'b'], 'y_distributions': ['b', 'a']}
+        _ref_  = self.p2s.xyp(df, 'j', 'k', **_kw_)
+        for _seed_ in range(8):
+            _shuf_ = self.p2s.xyp(df.sample(fraction=1.0, shuffle=True, seed=_seed_), 'j', 'k', **_kw_)
+            self.assertEqual(_shuf_.svg_distributions, _ref_.svg_distributions, f'shuffle seed {_seed_}')
+            self.assertTrue(_shuf_.df_x_distribution.equals(_ref_.df_x_distribution), f'shuffle seed {_seed_}')
+            self.assertTrue(_shuf_.df_y_distribution.equals(_ref_.df_y_distribution), f'shuffle seed {_seed_}')
+
     def test_rowCounts(self, sample=1, df_size=200):
         df       = randomDataFrame(df_size, seed=72)
         _params_ = {'df':df, 'x':'a', 'y':'b'}

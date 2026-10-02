@@ -306,9 +306,11 @@ class TestChordPBasic(unittest.TestCase):
         cp  = p2s.chordp(relationships=_RELS_)
         self.assertIn('<svg', cp.svg)
 
+    # It used to be TypeError "'NoneType' object is not iterable", and this test pinned it
+    # (PLANNING.md §5 C-chordp-no-relationships).
     def test_missing_relationships_raises(self):
         p2s = Polars2SVG()
-        with self.assertRaisesRegex(TypeError, 'not iterable'):
+        with self.assertRaisesRegex(ValueError, 'relationships must be specified'):
             p2s.chordp(df=_DF_, relationships=None)
 
     def test_unknown_field_raises(self):

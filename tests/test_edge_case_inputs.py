@@ -151,6 +151,33 @@ class TestEmptyDataFrames(_EdgeCaseBase):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# No relationships: the graph components name what is missing
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestNoRelationships(_EdgeCaseBase):
+    '''Leaving relationships= out used to fail with "'NoneType' object is not iterable", from
+    the loop that expands tuple endpoints.  An empty list already raised the named error;
+    leaving it out now means the same (PLANNING.md §5 C-chordp-no-relationships).'''
+
+    def assertNamesMissingRelationships(self, name: str, **kwargs) -> None:
+        df = pl.DataFrame({'fm': ['a', 'b'], 'to': ['b', 'c'],
+                           'time': [datetime.datetime(2026, 1, 1), datetime.datetime(2026, 1, 2)]})
+        for _given_ in ({}, {'relationships': []}):
+            with self.subTest(component=name, given=_given_):
+                with self.assertRaisesRegex(ValueError, 'relationships must be specified'):
+                    getattr(self.p2s, name)(df=df, **_given_, **kwargs)
+
+    def test_chordp(self):
+        self.assertNamesMissingRelationships('chordp')
+
+    def test_linkp(self):
+        self.assertNamesMissingRelationships('linkp')
+
+    def test_spreadlinesp(self):
+        self.assertNamesMissingRelationships('spreadlinesp', ego='a', time='time')
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Single-row / single-node degenerate inputs
 # ─────────────────────────────────────────────────────────────────────────────
 

@@ -784,7 +784,9 @@ class ChP(P2SComponentColorMixin, ExportMixin):
             self.relationships = self.relationships_orig
         self.relationships_orig = self.relationships
         self.relationships, i = [], 0
-        for _edge_ in self.relationships_orig:
+        # No relationships at all is the empty list, so __validateInput__ names it rather than
+        # this loop failing on None (PLANNING.md §5 C-chordp-no-relationships).
+        for _edge_ in self.relationships_orig or []:
             _fm_, _to_ = _edge_[0], _edge_[1]
             new_fm, new_to = _fm_, _to_
             if isinstance(_fm_, tuple):
@@ -795,7 +797,7 @@ class ChP(P2SComponentColorMixin, ExportMixin):
                 self.df = self._createConcatColumn_(self.df, _to_, new_to)
             if   len(_edge_) == 2: self.relationships.append((new_fm, new_to))
             elif len(_edge_) == 3: self.relationships.append((new_fm, new_to, _edge_[2]))
-            else: raise ValueError(f'LinkP: relationship tuples must have 2 or 3 parts, got {_edge_!r}')
+            else: raise ValueError(f'ChP: relationship tuples must have 2 or 3 parts, got {_edge_!r}')
             i += 1
 
         # color= is checked here rather than in __validateInput__: the categorical column

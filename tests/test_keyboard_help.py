@@ -84,5 +84,34 @@ class TestKeyboardHelp(unittest.TestCase):
         self.assertIn(' .. | ctrl-e ........ | (time x-axis) expand timeframe forward', _cmds_)
 
 
+# stack control builds its help apart from the six views, and its 'ctrl+shift+c . |' key
+# cell was wider than 'h . |' (PLANNING.md §5 C-stack-help-key-column).
+@unittest.skipUnless(PANEL_AVAILABLE, 'panel not installed')
+class TestStackControlHelp(unittest.TestCase):
+
+    def _lines_(self):
+        from polars2svg.stack_control import _STACK_KEYBOARD_COMMANDS_
+        return _STACK_KEYBOARD_COMMANDS_.split('\n')
+
+    def _svg_(self):
+        from polars2svg.stack_control import STACKCONTROLI
+        return STACKCONTROLI.param['kbd_help_svg'].default
+
+    def test_the_key_column_lines_up(self):
+        self.assertEqual([_ln_.index('|') for _ln_ in self._lines_()], [4, 4, 4])
+        self.assertRegex(self._lines_()[2], _SUB_ROW_)
+        self.assertTrue(self._lines_()[2].endswith('| current -> base'))
+
+    def test_every_space_survives_into_the_svg(self):
+        _root_  = ET.fromstring(f'<svg xmlns="http://www.w3.org/2000/svg">{self._svg_()}</svg>')
+        _texts_ = [(_t_.text or '') for _t_ in _root_.iter('{http://www.w3.org/2000/svg}text')]
+        self.assertTrue(all(' ' not in _t_ for _t_ in _texts_), 'a plain space would be collapsed')
+        self.assertEqual([_t_.replace('\u00a0', ' ') for _t_ in _texts_], self._lines_())
+
+    def test_the_box_fits_the_longest_line(self):
+        _w_ = float(re.search(r'<rect x="0" y="0" width="([0-9.]+)"', self._svg_()).group(1))
+        self.assertGreaterEqual(_w_, max(len(_l_) for _l_ in self._lines_()) * 7)
+
+
 if __name__ == '__main__':
     unittest.main()

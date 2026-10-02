@@ -1143,18 +1143,31 @@ class XYp(P2SBackgroundMixin, ExportMixin):
     # __validateDistributions__()
     # - parses x/y distribution params and resolves INSIDE/OUTSIDE placement when not explicitly set
     #
+    #
+    # __autobinTarget__() - the count automatic bins aim at, when the spec names one.
+    #
+    # DISTRIBUTION_AUTOBINp with an int n keeps the automatic bins -- whole integers per bin on
+    # a whole-number axis, one bar per unit on a periodic one -- and aims them at n bins
+    # instead of the pixel-derived count.  An int alone is still n equal-width bins.  Kept apart
+    # from 'bins', which a render overwrites with the count it chose.
+    #
+    def __autobinTarget__(self, ints: list, enums: set) -> int | None:
+        return ints[0] if ints and self.p2s.DISTRIBUTION_AUTOBINp in enums else None
+
     def __validateDistributions__(self) -> None:
         if self.x_distributions is not None:
             _fields_, _ints_, _floats_, _colors_, _enums_ = self.__separateAndCleanParam__(self.x_distributions)
             self.__checkDistributionSpec__('x', self.x_distributions, _fields_, _ints_, _floats_, _enums_)
             _fields_, _ints_, _floats_, _colors_, _enums_ = self.__distributionsParamSetDefaults__(_fields_, _ints_, _floats_, _colors_, _enums_)
-            self.x_distributions_clean = {'fields': _fields_, 'bins': _ints_, 'h_percs': _floats_, 'colors': _colors_, 'enums': _enums_}
+            self.x_distributions_clean = {'fields': _fields_, 'bins': _ints_, 'h_percs': _floats_, 'colors': _colors_, 'enums': _enums_,
+                                          'target': self.__autobinTarget__(_ints_, _enums_)}
         else: self.x_distributions_clean = None
         if self.y_distributions is not None:
             _fields_, _ints_, _floats_, _colors_, _enums_ = self.__separateAndCleanParam__(self.y_distributions)
             self.__checkDistributionSpec__('y', self.y_distributions, _fields_, _ints_, _floats_, _enums_)
             _fields_, _ints_, _floats_, _colors_, _enums_ = self.__distributionsParamSetDefaults__(_fields_, _ints_, _floats_, _colors_, _enums_)
-            self.y_distributions_clean = {'fields': _fields_, 'bins': _ints_, 'h_percs': _floats_, 'colors': _colors_, 'enums': _enums_}
+            self.y_distributions_clean = {'fields': _fields_, 'bins': _ints_, 'h_percs': _floats_, 'colors': _colors_, 'enums': _enums_,
+                                          'target': self.__autobinTarget__(_ints_, _enums_)}
         else: self.y_distributions_clean = None
 
         # ... do something semi-intelligent with the distributions INSIDE/OUTSIDE settings (if the caller didn't set them)
@@ -2356,6 +2369,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
             _totals_field_      = f'__{_axis_}i_total__'             # the total for a particular cut
             _value_field_       = f'__{_axis_}dists__'               # field to total up (as part of the group_by)
             _color_field_       = f'__{_axis_}dists_color__'         # color for this specific bar
+            _order_field_       = f'__{_axis_}dists_order__'         # the color's rank in the spec -- its drawing order
             _min_field_         = f'__{_axis_}dists_{_axis_}i_min__' # the first coordinate (0.0 to 1.0) of the bar
             _max_field_         = f'__{_axis_}dists_{_axis_}i_max__' # the second coordinate (0.0 to 1.0) of the bar
             _totals_min_field_  = f'__{_axis_}i_total_min__'         # the min to compare the total to
@@ -2408,7 +2422,8 @@ class XYp(P2SBackgroundMixin, ExportMixin):
                     _num_of_bins_ = _max_ - _min_ + 1        # one bar per discrete period unit
                 else:
                     _dim_           = self.plot_size[0] if _axis_ == 'x' else self.plot_size[1]
-                    if isinstance(self.dot_size_orig, int):
+                    if   _clean_.get('target') is not None: _num_of_bins_ = _clean_['target']   # see __autobinTarget__
+                    elif isinstance(self.dot_size_orig, int):
                         if    self.dot_size_orig > 3: _num_of_bins_ = _dim_//self.dot_size_orig
                         else: _num_of_bins_ = _dim_//6
                     else: _num_of_bins_   = _dim_//6
@@ -2470,12 +2485,21 @@ class XYp(P2SBackgroundMixin, ExportMixin):
                 # half a bar off the values they count.
                 _labels_min_, _labels_max_ = _intBinFractions_(_int_bins_, _min_, _max_)
 
-            # Create an all-bins dataframe that will be used to create entries for missing bins
+            # Create an all-bins dataframe that will be used to create entries for missing bins.
+            # Each colour carries its rank in the spec -- the field order -- and that is the
+            # order its outline is drawn in.  Neither the group_by above nor a join keeps any
+            # row order, so nothing downstream may lean on one (PLANNING.md §5
+            # C-xyp-distribution-outline-order).
             _all_bins_df_ = pl.DataFrame({_bin_field_:_labels_, _min_field_:_labels_min_, _max_field_:_labels_max_})
-            if _color_field_ in _df_.columns: _all_bins_df_ = _all_bins_df_.join(pl.DataFrame({_color_field_:list(set(_df_[_color_field_]))}), how='cross')
+            if _color_field_ in _df_.columns:
+                _present_ = set(_df_[_color_field_].drop_nulls().to_list())
+                _ranked_  = [_c_ for _c_ in dict.fromkeys(_f_[-1] for _f_ in _clean_['fields']) if _c_ in _present_]
+                _colors_  = _ranked_ + sorted(_present_ - set(_ranked_))
+                _all_bins_df_ = _all_bins_df_.join(pl.DataFrame({_color_field_:_colors_, _order_field_:list(range(len(_colors_)))}), how='cross')
+            else: _all_bins_df_ = _all_bins_df_.with_columns(pl.lit(0).alias(_order_field_))
 
-            # Fill in the missing bins
-            _df_ = _all_bins_df_.join(_df_, on=_gb_str_, how='left').with_columns(pl.col(_totals_field_).fill_null(0.0))
+            # Fill in the missing bins -- in colour order, then bin order
+            _df_ = _all_bins_df_.join(_df_, on=_gb_str_, how='left').with_columns(pl.col(_totals_field_).fill_null(0.0)).sort([_order_field_, _bin_field_])
 
             # Assign a default color if none exists
             if _color_field_ not in _flat_.columns:
@@ -3523,6 +3547,7 @@ class XYp(P2SBackgroundMixin, ExportMixin):
             # Column-name scheme mirrors __distributeElements__() (only a subset is used here)
             _totals_field_      = f'__{_axis_}i_total__'             # the total for a particular cut
             _color_field_       = f'__{_axis_}dists_color__'         # color for this specific bar
+            _order_field_       = f'__{_axis_}dists_order__'         # the color's rank in the spec -- its drawing order
             _min_field_         = f'__{_axis_}dists_{_axis_}i_min__' # the first coordinate (0.0 to 1.0) of the bar
             _max_field_         = f'__{_axis_}dists_{_axis_}i_max__' # the second coordinate (0.0 to 1.0) of the bar
             _totals_min_field_  = f'__{_axis_}i_total_min__'         # the min to compare the total to
@@ -3544,9 +3569,11 @@ class XYp(P2SBackgroundMixin, ExportMixin):
                                      (u_base + u_sign * u_dist * (pl.col(_max_field_)       - pl.col(_min_field_).min())/
                                                                  (pl.col(_max_field_).max() - pl.col(_min_field_).min())).alias('u1'))
 
-            # Sort by increasing u (these are the bin coordinates)
+            # Sort by increasing u (these are the bin coordinates).  Every colour has a row in
+            # every bin, so u0 alone ties; the colour's rank breaks it, which is what makes the
+            # group_by below draw the outlines in the spec's order.
             _reversed_ = (_axis_ == 'y')
-            _df_       = _df_.sort('u0', descending=_reversed_)
+            _df_       = _df_.sort(['u0', _order_field_], descending=[_reversed_, False])
 
             # What are the conditions for drawing it in as a simple line (or set of lines?)
             # ... more than one line

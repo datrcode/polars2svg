@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-10-02
+
 ### Added
 
 - **`histopi`, `timepi`, `piepi`, `chordpi`: `count_fields=` names more fields for the
@@ -533,6 +535,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `tooltip_fields=` chooses which fields are *shown*. Whether a shown field counts as a
   magnitude still depends on the encodings.
 
+- **A configuration panel for `LINKPI`, on the `a` key**
+  (`20260921_config_panel_design.md`, CP1-CP12). Nine rows -- arrows, timing marks,
+  timing-mark spacing, labels, link shape, link size, link opacity, node size,
+  background -- each showing what the view is *currently* doing, and each editable in
+  place. `a` opens it and advances the row cursor, `shift-a` retreats, a row's mnemonic
+  jumps straight to it, `space` cycles that row's value forward, `shift-space` backward,
+  `Enter` opens the row's existing full picker, `esc` closes.
+
+  **It is `info_str` made editable and given room, not a key-saving measure.** That
+  framing is load-bearing: "free up keys" leads to a menu -- a thing you open, use and
+  close -- while "a state display" leads to a thing you leave open while you work, which
+  is what makes it worth building. The success criterion is whether you can glance at it
+  and know how the view is drawn.
+
+  **Twelve bindings are absorbed, and three left-hand bare keys come back.** `a`,
+  `shift-a`, `ctrl-a`, `b`, `l`, `shift-l`, `ctrl-l`, `shift-o`, `ctrl-o`, `shift-p`,
+  `ctrl-p` and `ctrl-shift-s` are gone; the free bare-letter set goes from `{i m o p}`
+  -- all right-hand, so the standing "shortcuts stay left-hand because the right hand is
+  on the mouse" rule could no longer be satisfied by any new binding -- to six including
+  `b` and `l`. ctrl-a, ctrl-l, ctrl-o and ctrl-p are not merely unbound but
+  **unguarded**: with no handler behind them there is nothing to `preventDefault`, so
+  select-all, the address bar, Open File and Print go back to the browser.
+
+  Points worth keeping:
+
+  - **A row IS a menu kind**, so `space` cycles exactly the list `Enter` shows in full,
+    from the one place the picker already reads. Absorbing the pickers is therefore a new
+    entry point rather than a rewrite, and the interaction grades by how much you know:
+    `space` if you know what you want, `shift-space` if you overshot, `Enter` if you do
+    not know the options. Four kinds that had no picker -- arrows, timing marks, labels,
+    background display -- gained one, so they work the same way.
+  - **The commit is debounced ~300ms; it is not issued on every `space`.** This is the
+    objection that would have broken the feature. The pickers navigate without rendering
+    and commit once on `Enter`; a live panel renders every intermediate state, so cycling
+    link shape `line -> curve -> flowmap -> off` would render **flowmap on the way past**
+    -- a force layout whose cost grows faster than linearly on a netflow-scale graph.
+    Debounced rather than Enter-to-commit, because tapping space and watching the graph is
+    the interaction that makes the panel worth having.
+  - **No walk-away auto-commit (`menuArmTimer`'s 2.5s) applies.** The pickers are
+    transient-modal and the panel is persistent; one that committed and closed itself
+    while you looked at the graph would be a bug. An explicit `esc` does flush, because
+    closing inside the 300ms window is a normal thing to do.
+  - **`shift` reverses, never `ctrl`** -- U2's lesson, *"the base key was never the
+    problem, needing a ctrl chord for a variant was"*. The four `ctrl-a/l/o/p`
+    reverse-cycles disappear into `shift-space`.
+  - **Rows have prerequisites, and an unmet one greys the row *and* makes the cursor skip
+    it.** Timing marks need a time field (they *are* the LinkP's `time=`), spacing needs
+    the marks on, and the background row needs a layout-produced background. Greying
+    alone would leave `space` silently doing nothing, which reads as the panel being
+    broken rather than the setting being unavailable.
+  - **Arrows and timing marks are two rows, not the one 4-state `a` cycle they replace.**
+    That cycle flipped exactly one of the two per step, so reaching a given combination
+    cost up to three presses; two rows reach any of the four in one.
+  - **Modal for v1.** Non-modal -- only the panel's keys captured, everything else
+    falling through -- is more useful, but re-opens the keyspace conflict the panel
+    exists to close. Revisit only if modality proves annoying in use.
+  - **Layout mode and layout operation did NOT become rows.** They are persistent
+    selections, but they are inputs to an action (`g` / `w`) rather than descriptions of
+    how the render is drawn, which is the line the panel draws. `shift-g` / `shift-w` are
+    unchanged.
+
 ### Changed
 
 - **`xyp`: automatic distribution bins on whole-number axes no longer leave gaps.** The
@@ -549,6 +612,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Explicit bin counts and fractional data are unchanged. Periodic time axes keep their
     existing one-bar-per-unit bins.
   - The `distributions` golden was regenerated; its data is whole numbers.
+  - **New: `p2s.DISTRIBUTION_AUTOBINp` with a count aims the automatic bins at that count**,
+    e.g. `x_distributions=['books', p2s.DISTRIBUTION_AUTOBINp, 40]`. On a whole-number axis
+    the bins still hold whole integers each. On a periodic axis they stay one per unit,
+    and on fractional data you get that many bins. A count on its own still means that
+    many equal-width bins. The pair used to be accepted and the count silently ignored.
+  - **`xypi`'s bins row keeps this.** `auto x2` / `auto /4` scale the automatic bins
+    through the pair above, rather than passing a bare count that brought the gaps back. On
+    an axis already at one integer per bin, `auto x2` and `auto x4` stay there, since
+    anything finer would leave bins empty.
 
 - **`xyp`: the axis end labels are the axis label colour, not blue and red.** The min
   label was blue and the max red in both palettes. That suggests a low/high meaning the
@@ -598,6 +670,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     columns or fewer is listed instead. Internal `__name__` columns are never suggested.
   - smallp now checks `category_by=` and `order=` given by keyword up front, instead of
     failing inside polars.
+  - histop takes no t-field. `histop(df, p2s.tField('ts', p2s.PT_Hp))` said `bin_by field
+    "ts|Hp" not found`, with no suggestion, since the column `ts` is there. It now says
+    the field is a t-field and names the timep call that counts by it:
+    `p2s.timep(df, p2s.tField('ts', p2s.PT_Hp))`.
 
 - **`xyp`: a distribution spec that cannot mean anything is rejected, with a message that
   names the parameter.** Before, these failed with an unrelated error (`'int' object is
@@ -614,10 +690,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The docstring now also says that a top-level tuple is the same as a list. It used to
   claim a tuple meant one multi-field measure, which is spelled `[('c1', 'c2')]`.
 
-- **`chordp`: `color='src'` / `color='dst'` are deprecated** in favour of
-  `p2s.COLOR_BY_SRC_NODE` / `p2s.COLOR_BY_DST_NODE`. They still work, drawing the same
-  thing, when the frame has no column of that name, and warn once. A column named `src` or
-  `dst` is the field, as before.
 - **Graph components: an enum a colour parameter does not accept is refused by name**
   (`node_color=p2s.COLOR_BY_SRC_NODE is not a constant node_color accepts`), rather than
   as an "unsupported type".
@@ -634,9 +706,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `flow field (3 layers)`. The run happens off the event loop and the refresh on it,
   which the old commit path did not do. Esc still cancels only layouts, not a
   running producer.
+
 - **`linkpi`: ctrl-d clears community colors; shift-d is unbound.** This matches ctrl-b,
   so ctrl clears in both places. Shift-d is being kept free for a future picker of
   community-detection algorithms.
+
 - **`linkpi`: the settings panel gains three rows for the action keys**: `[g] layout
   shape`, `[w] layout operation` and `[f] background producer`. They go between
   `tooltip` and `background`, so `background` stays last (the backward-wrap test relies
@@ -644,12 +718,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   panel write the same param. The producer row uses `f` because `b` is taken by the
   display row, and `k` would have been unreachable: the panel treats `j`/`k` as
   cursor keys before it looks at row letters.
+
 - **"Appearance panel" is now the "settings panel"** in every view: the header
   (`settings:`), the help text, and the README. The name no longer fit once the panel
   also held action settings.
+
 - **`linkpi` degree key `0` now means 100 and up.** It used to select degrees from 100
   up to (but not including) 10,000, so a hub with 10,000 or more neighbors could not be
   selected at all.
+
 - **`linkpi`'s `h` help was rewritten** from 45 lines to 31. Shift/ctrl variants now sit
   on their key's line. Two tags defined once at the top replace the explanation that
   used to be repeated: `[[p(cs)^2]]` for the selection modifiers (plain replaces, ctrl
@@ -660,6 +737,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and nothing else changed.** Every diff was in `#keyboardhelp` and the `#svgparent`
   text that starts with it. The only param-side change is that `background_op_seq` is
   gone from the four `linkpi` watch lists.
+
 - **The seven interaction parity goldens were re-recorded**, for two DOM additions and a
   help-text change and nothing else. Every view gains a `#tooltip` group; the five generic
   views also gain `#configpanel`; and the `h` overlay gains the panel's lines. **The param
@@ -668,7 +746,235 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   nothing crossing into Python changed. That is also the empirical form of the default-off
   argument: with the tooltip off, a hover issues no round trip at all.
 
+- **`info_str` is shorter: `N Selected | layout_mode | layout_operation`.** The label
+  mode and the background state moved into the configuration panel and came out of the
+  status line with it. Layout mode and operation stay, because they did *not* become
+  panel rows -- dropping them too would have left them with no on-screen display at all.
+
+- **`ctrl-shift-s` no longer cycles the label mode** -- that is the panel's `labels` row.
+  The chord still reaches the sticky-label handler, where it now takes the `shift`
+  branch and removes the selection from the sticky set, exactly as `shift-s` does. Called
+  out rather than left to be discovered: an absorbed binding that quietly starts doing
+  something *else* is worse than one that stops working.
+  *(Superseded: the chord now selects the sticky-labelled nodes -- see Added.)*
+
+- **Re-recorded the four `linkpi` parity goldens** (`linkpi`, `linkpi_menu`,
+  `linkpi_search`, `linkpi_wheel_multiplicity`). The diffs are the intended change and
+  nothing else: the new `#configpanel` element (so `#svgparent` gains a child), the
+  shorter `#infostr`, the rewritten keyboard help, and the five new params. The wheel
+  golden's `write_counts` are untouched, which is the invariant that file exists for.
+
+  `linkpi_menu`'s gesture also changed, from `ctrl-l` to `shift-w`. `ctrl-l` opened the
+  link-size picker and the panel absorbed that entry point, so the old gesture now falls
+  through the binding chain and opens nothing -- it would have been tracing the absence
+  of a menu. `shift-w` reaches the same state machine through a door that still exists.
+
+  A JS-only overlay is structurally invisible to these goldens -- the digest is taken
+  after a gesture settles, which is why `#selbox` and `#drag_rect` went uncovered for as
+  long as they existed. The panel is that shape, so its tests were written rather than
+  inherited: `tests/interaction/test_config_panel.py`.
+
+- **`LINKPI` / `LINKPI_GPU` ported to `JSComponent`. The migration is complete —
+  no view in the package derives from `ReactiveHTML` any more** (PLANNING.md W1).
+  The largest contract by a wide margin: 26 scripts, ~37 KB of JavaScript, a
+  12.5 KB `myOnKeyDown` with ~50 bindings, and four layout-preview shapes.
+
+  The handler bodies were converted mechanically rather than retyped, because at
+  that size a transcription slip is the likeliest way to break something no test
+  covers. Element names are unchanged for the same reason — every id'd node
+  becomes a closure `const` of exactly that name — which is why `svgparent` is the
+  root's name here where the smaller modules say `root`.
+
+  With the last view ported, the scaffolding goes too: **`p2s_reactive_base.py` is
+  deleted** (`P2SReactiveHTML` existed only to re-seed child params past Panel's
+  HTML sanitizer, and the ESM path has neither), along with `_withGpuScripts_`,
+  `_GPU_RENDER_JS_` and `_GPU_PAYLOAD_JS_`. `ReactiveHTML` is still imported for
+  one `isinstance` in `panelize()`, which accepts third-party views through the
+  `panelWrapper()` extension point.
+
+- **`_WS_PAYLOAD_INFLATION_` collapses back to a single rate, 1.25.** The two-rate
+  scheme existed only because a half-migrated layout held both kinds of view.
+  Re-measured now that every view is ESM, on a 60k-row `xypi`: `mod_inner`
+  1,139,906 B → document 1,430,387 B, **1.25×**, with no `data:image/svg+xml`
+  copy anywhere. It was 2.5× under `ReactiveHTML`, which shipped the SVG twice.
+
+- **The five generic components ported to `JSComponent`.** `TIMEPI`, `HISTOPI`,
+  `XYPI`, `CHORDPI`, `PIEPI` and their `*_GPU` subclasses — ten classes, and the
+  largest contract so far at 19 scripts and ~16 KB of JavaScript. **`LINKPI` is
+  the only view left on `ReactiveHTML`.** All three generic parity goldens pass
+  unchanged.
+
+  `interactive_controller.py` loses 468 lines. Five near-identical template and
+  script pairs become **one** shared ESM module: what was substituted into each
+  class's own copy — the root `<svg>`'s id and the pre-laid-out keyboard-help
+  overlay — is read from the new `svg_parent_id` / `kbd_help_svg` params at render
+  time instead. `_bindInteractivePText_`, `_bindInteractivePScripts_` and
+  `_bindInteractivePGpuScripts_` go with them.
+
+  `myOnMouseWheel` is **not** carried over. It was unreachable: no `onwheel`
+  attribute bound it, no param shared its name, and nothing called
+  `self.myOnMouseWheel()`. The wheel has always been handled by the non-passive
+  listener `render` attaches to `#screen`, which is ported as-is.
+
+- **The generic components' selection-shape picker now has a highlight test.**
+  `test_F_opens_the_selection_shape_picker` read the menu's *text*, which an
+  off-by-one highlight does not change, and the parity goldens cannot see it
+  either — the DOM digest records `#pickermenu`'s tag, child count and text, and a
+  misplaced highlight changes none of the three. A mutation shifting every
+  highlight down one row passed the entire suite. LINKPI has had this covered all
+  along; these components share the row geometry but not the tests.
+
+- **`SLPI` / `SLPI_GPU` and `STACKCONTROLI` ported to `JSComponent`.** Three of
+  the five interactive contracts are now on the ESM API; `_InteractivePBase`
+  (the five generic components) and `LINKPI` remain. Both parity goldens pass
+  unchanged and no interaction test needed an edit.
+
+  The two shared fragments carried over as designed — `p2s_dom.js` unchanged,
+  `p2s_gpu_mount.js` picking up `SLPI_GPU` with no edit at all, which is the
+  first evidence that the `*_GPU` scaffold generalises rather than having been
+  fitted to SMALLPI.
+
+  Two per-contract details worth recording:
+
+  - `STACKCONTROLI`'s keyboard-help overlay was a module constant concatenated
+    into `_template`. An ESM module has no markup to concatenate it into, so it
+    travels as a new `kbd_help_svg` param. Same bytes on the wire (the template
+    shipped per view too), and the markup stays out of the JavaScript.
+  - `SLPI`'s rubber band is deliberately **not** shared with LINKPI's yet.
+    LINKPI draws an oval as well as a rect and parks the band off-canvas when
+    idle; the generic components encode a different set of modifier states.
+    Phase 4/5 decides whether a common implementation actually falls out, rather
+    than forcing one now.
+
+- **`#drag_rect`, SLPI's selection rubber band, now has tests** — the same gap
+  `#selbox` had on SMALLPI, and for the same reason: `InteractivePage.drag_rect()`
+  reads `#drag`, which is LINKPI's element, so nothing in the suite had ever
+  looked at SLPI's. Covers geometry in both drag directions, clearing on release,
+  and the stroke colour that encodes the set-operation.
+
+  The colour tests deliberately take no focus first. LINKPI's band colours come
+  from `data.ctrlkey`, which only its `myOnKeyDown` sets, so a modifier pressed
+  while focus is elsewhere never reaches the band — that path is where the two
+  dead colours of **U8** hid. SLPI reads `event.shiftKey` / `event.ctrlKey`
+  straight off the mouse event, so its colours are correct without focus, and
+  that difference is now asserted rather than assumed. Mutation-tested: a
+  reconstruction of the exact U8 typo (`shftkey`) is caught.
+
+- **`SMALLPI` / `SMALLPI_GPU` are the first views on Panel's 2nd-generation (ESM)
+  component API.** `_template` and `_scripts` are gone; the browser half is
+  `polars2svg/js/p2s_smallpi.js` plus two shared fragments. Behaviour is
+  unchanged — the parity golden recorded from the `ReactiveHTML` implementation
+  passes against the port untouched, and **none of the 234 pre-existing
+  interaction tests needed an edit**, which was the gate condition.
+
+  Three things simply stop existing, rather than being reimplemented:
+
+  - `P2SReactiveHTML._init_params()`. `mod_inner` goes through the constructor
+    like any other param now. It could not before: bound as a content
+    `${mod_inner}` it was a Panel *child*, and `_init_params()` both dropped
+    children from the initial data model and ran plain string params through
+    panel's HTML sanitizer, which strips an SVG to nothing. The ESM path has
+    neither. (`P2SReactiveHTML` stays for the four contracts not yet ported.)
+  - The subtree rebuild. With no `Child` params, `render()` runs once per mount,
+    so the scripts' defensive `state` re-seeding became plain initialisation.
+  - The six jinja GPU head/tail constants and `_withGpuScripts_`, replaced by one
+    `if (model.use_webgpu)` branch in `js/fragments/p2s_gpu_mount.js`. The
+    subclass split is unchanged, so an SVG view still ships none of the ~14 KB
+    runtime.
+
+  **Measured on the wire** (60k-row render, panel 1.9.2 / bokeh 3.9.0), which was
+  the open question the spike existed to answer:
+
+  | view | mod_inner | document | per byte of SVG |
+  | --- | --- | --- | --- |
+  | `SMALLPI` (ESM) | 768,249 B | 947,649 B | **1.23×** |
+  | `XYPI` (ReactiveHTML) | 1,139,912 B | 2,913,305 B | **2.56×** |
+
+  An ESM view has no child, so the base64 `data:image/svg+xml` copy is gone and
+  the SVG ships once. The cost is a fixed **+3,059 bytes per view** (the ESM
+  module is larger than the template plus script table it replaces), which a
+  render of more than ~2.4 KB of SVG already repays.
+
+  `_warnOversizePanelPayload_` therefore charges each view its own rate —
+  `_WS_PAYLOAD_INFLATION_` 2.5 for `ReactiveHTML`, 1.25 for ESM, conservative for
+  anything unrecognised. A flat rate would have warned at half the real limit for
+  ported views, and every layout holds both kinds until the migration finishes.
+
+- **`#selbox`, SMALLPI's selection rubber band, now has tests.** It had none: it
+  is browser-only state, and it only exists *during* a drag, so the parity
+  goldens cannot see it either — they digest the DOM after the gesture, by which
+  time `myOnMouseUp` has hidden it. A mutant that never drew the box passed the
+  goldens and the entire suite. Two mid-drag assertions cover appearance,
+  min/abs geometry in both drag directions, and clearing on release.
+
+- **Groundwork for the `ReactiveHTML` → `JSComponent` migration (PLANNING.md W1),
+  with no change to what any component does.** Phase 1 of the plan: build the
+  seams the port needs and record what the components do *before* anything moves.
+
+  - **New `polars2svg/p2s_esm.py` and `polars2svg/js/`.** The project's
+    JavaScript is moving out of Python string literals into real `.js` files,
+    which ruff/mypy/bandit cannot see but an editor can. `p2s_esm.esm(*names)`
+    concatenates fragments into one ES module. **Concatenation rather than
+    `import`**, because `ReactiveESM._render_esm()` only emits a *URL* for a
+    file-valued `_esm` when it is the class's `_bundle_path` *and* a real server
+    session exists — otherwise it inlines the text into a blob URL, which has no
+    base for a relative specifier. A sibling `import` would therefore work under
+    `panel serve` and fail in a notebook, which is the primary target. `panel
+    compile` is the supported alternative and needs node + esbuild.
+  - **`P2S_GPU_JS` is the first asset moved**, from a 362-line raw string in
+    `p2s_webgpu_runtime.py` to `js/fragments/p2s_gpu_runtime.js` — byte-identical,
+    verified against the previous revision. One copy now feeds both the Panel
+    views and `standalone_html()`, which is why fragments must stay `export`-free.
+  - **New `tests/view_js_utils.py`**, the seam between ~45 assertions and however
+    a view carries its JavaScript. `component_js`, `component_script`,
+    `component_markup`, `component_node_ids`, `named_scripts` and `has_script`
+    read `_scripts`/`_template` today and an `_esm` module after a port, so each
+    assertion site changed once, now, rather than during the port.
+    `component_script` brace-matches a named function out of an ESM module so
+    that an assertion *about* `menuCommit` cannot pass on text that happens to
+    live in `myOnKeyDown`.
+  - **New `tests/interaction/test_param_trace_parity.py` and
+    `tests/interaction/parity/*.json`** — 10 recordings of what each of the five
+    contracts does. Every JS→Python hop in this codebase is a param write plus a
+    `param.watch`, so a gesture's param writes are its observable behaviour;
+    the DOM digest beside them covers the picker menu, brush cursor, search
+    buffer and selection labels, which never cross into Python. Because each
+    contract cuts over in place there is no second implementation to diff against
+    at port time, so these files are the only durable statement of the
+    "before". **They are recorded once and must not be re-recorded to make a port
+    pass.**
+  - `panelize()` now accepts `panel.custom.ReactiveESM` alongside `ReactiveHTML`,
+    so porting a view is a change to that view alone.
+  - `tests/interaction/interaction_harness.py` resolves the interaction root by
+    bare id *or* Panel's per-model suffix. `ReactiveHTML` rewrites `id="svgparent"`
+    to `id="svgparent-p1015"`; an ESM view emits it bare, and `suffix` then
+    resolves to `''`, which leaves every other lookup in the harness correct
+    without a branch.
+
+### Deprecated
+
+- **`chordp`: `color='src'` / `color='dst'` are deprecated** in favour of
+  `p2s.COLOR_BY_SRC_NODE` / `p2s.COLOR_BY_DST_NODE`. They still work, drawing the same
+  thing, when the frame has no column of that name, and warn once. A column named `src` or
+  `dst` is the field, as before.
+
 ### Fixed
+
+- **`chordp`, `linkp`, `spreadlinesp`: leaving out `relationships=` names the problem.**
+  It used to fail with `TypeError: 'NoneType' object is not iterable`, from inside the
+  loop that expands tuple endpoints. It now raises the same `ValueError` an empty list
+  already did: `…relationships must be specified`. This closes the 0.3.0 known issue,
+  which named only chordp; linkp and spreadlinesp failed the same way.
+
+- **`xyp`: several distribution fields draw their outlines in the order you name them.**
+  - With `x_distributions=['a', 'b']` (or a `y_distributions=` of several fields), each
+    field's outline is drawn over the ones before it, so `['b', 'a']` puts `a` on top.
+  - The order used to come from a Python `set` of the fields' colours and from a sort that
+    tied on every bin. That sort doesn't keep tied rows in order. So the same call could
+    stack the outlines either way, and the SVG differed from one render to the next. It
+    showed up as an occasional failure of a test comparing two identical renders.
+  - `df_x_distribution` / `df_y_distribution` now come out in the same order every time,
+    and carry a `__xdists_order__` / `__ydists_order__` column holding each colour's rank.
 
 - **`histop`: a null bin with `color=` set draws its bar, and reads `(null)`.**
   - A coloured (stacked) histop dropped the null bin's segments, leaving an empty row
@@ -680,6 +986,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     millionaire-habits survey's `tax_planning_behavior` has both (26,833 `"None"`, 11,447
     null), and drew two bars labelled `None`.
   - A `/` search for the null bin is now `/null`.
+
 - **Interactive views: the `h` keyboard help lines up and is no longer cut off.**
   - SVG drops a text line's leading spaces, so in xypi, histopi, timepi, chordpi and
     piepi every indented `..` row rendered one character left of the rows above it.
@@ -693,6 +1000,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     lost. It now extends past the view's edge while the view has focus, the same way the
     settings panel does.
   - The help text is now escaped (linkpi's says `&intersect`).
+  - `stack_controli`'s help uses the same builder. Its `ctrl+shift+c` key cell was wider
+    than `h` and `c`; `ctrl-shift-c` is now an indented row under `c`. The
+    `stack_controli` parity golden was re-recorded for the new help text.
+
 - **`histop`: the bars no longer touch the distribution strip, and a drag selects only
   drawn bars.**
   - The bars were allowed to end exactly on the strip's top edge. When bins were cut off,
@@ -703,6 +1014,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     drag over the bars could then select bins that were never drawn.
   - The render and all three hit tests now share one rule. Across 1,200 sizes and legend
     placements, 214 renders had touched the strip and 353 drags had reached undrawn bins.
+
 - **`xyp`: two or more distribution fields counted every row once per field.** With
   `x_distributions=['a', 'b']` over a single x and y, xyp copied every row once per field.
   The distributions need those copies, but everything else read them as well:
@@ -715,6 +1027,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   The extra copies are now dropped once the distributions are computed. Each field's bars
   are unchanged, and two x columns still make two sets of dots.
+
 - **`smallp`: xyp lines in the Remainder and "All" panels ran across categories.** A
   panel that holds several categories chained every category's points into one line per
   `line=` value. The line zig-zagged between categories and read as a filled area. smallp
@@ -722,6 +1035,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   draws one line per category in the colours the categories' own panels use.
   - Single-category panels are unchanged.
   - A list or dict `category_by` names no column, so its mixed panels still merge.
+
 - **`xyp`: a time-zone-aware datetime column raised `SchemaError`.** Any column with a
   zone could not be plotted at all, including one parsed with `%z`. It is now drawn as
   wall-clock time in its own zone, so a `UTC` column is labelled in UTC and an
@@ -731,35 +1045,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     column's zone.
   - The interactive time keys (`u` / `e`) work on an aware column.
   - `recordsAt()` still returns the rows with their zone intact.
+
 - **`smallp`: an xyp's shared colour or size scale (`sm_shared={SM_COLOR}` /
   `{SM_COUNT}`) was stretched by a hidden render of the whole frame.** Where categories
   overlap on a pixel, the scale ran up to their combined value, which no panel draws, so
   every panel read paler (or its dots smaller) than it should. smallp also rendered its
   template once more on the whole frame for nothing; it now renders only its panels.
+
 - **`spreadlinesp`: a highlighted node packed into a cloud showed nothing**, so a
   selection arriving from a linked view vanished in a dense bin. The cloud's pill now
   takes a highlighted circle's emphasis: the wider ring when some of its members are
   highlighted, the ring and the near-opaque fill when all are.
+
 - **`histop` / `timep`: a negative `count=` is drawn as zero, and says so.** A bin
   whose count sums below zero is clamped to zero, with a one-time warning naming the
   component, the count field and the bins. It used to draw as zero silently, and only
   for simple bars. In a stacked bar a negative segment ran the bar past the end of its
   axis (histop) or knocked the stack off its baseline (timep); each segment is now
   clamped on its own. A negative bin now sorts as zero under the default `order=`.
+
 - **`histop` / `timep`: a stacked bar whose segments summed to zero wrote `NaN` into
   the SVG.**
+
 - **`histop` / `timep`: a stacked bar could end in two "misc" segments.** One was the
   `'(other)'` pool, the other an unlabelled block, in the default colour, of the segments
   too thin to draw. They are now one segment, in `'(other)'`'s colour, at the end of the
   bar.
+
 - **`histop` / `timep`: a colour value could be named in the legend and drawn nowhere.**
   Values were pooled into `'(other)'` against the canvas size, not the plot. A value
   just wide enough for the canvas was then too thin for a plot narrowed by a legend or
   axis labels. Pooling is now checked against the plot the bars are drawn on.
+
 - **`histop` / `timep`: stacked-bar segments were written at full float precision**
   (`x="45.698630136986296"`). They are now written to 0.1 px like simple bars, and
   adjacent segments still meet exactly. **This changes the SVG text of every stacked
   bar, not its appearance.**
+
 - **`xyp`: a null in the colour, size, opacity, distribution or line field removed the
   whole row.** A row with a perfectly good x and y lost its dot, its category on a
   categorical axis, and its share of the axis extents. Now only a null x or y drops a
@@ -1034,98 +1356,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `view_js_utils.strip_noise()`, single-pass, which cannot make that mistake because a
   `//` inside a string is already inside a string when it is reached.
 
-- **A configuration panel for `LINKPI`, on the `a` key**
-  (`20260921_config_panel_design.md`, CP1-CP12). Nine rows -- arrows, timing marks,
-  timing-mark spacing, labels, link shape, link size, link opacity, node size,
-  background -- each showing what the view is *currently* doing, and each editable in
-  place. `a` opens it and advances the row cursor, `shift-a` retreats, a row's mnemonic
-  jumps straight to it, `space` cycles that row's value forward, `shift-space` backward,
-  `Enter` opens the row's existing full picker, `esc` closes.
-
-  **It is `info_str` made editable and given room, not a key-saving measure.** That
-  framing is load-bearing: "free up keys" leads to a menu -- a thing you open, use and
-  close -- while "a state display" leads to a thing you leave open while you work, which
-  is what makes it worth building. The success criterion is whether you can glance at it
-  and know how the view is drawn.
-
-  **Twelve bindings are absorbed, and three left-hand bare keys come back.** `a`,
-  `shift-a`, `ctrl-a`, `b`, `l`, `shift-l`, `ctrl-l`, `shift-o`, `ctrl-o`, `shift-p`,
-  `ctrl-p` and `ctrl-shift-s` are gone; the free bare-letter set goes from `{i m o p}`
-  -- all right-hand, so the standing "shortcuts stay left-hand because the right hand is
-  on the mouse" rule could no longer be satisfied by any new binding -- to six including
-  `b` and `l`. ctrl-a, ctrl-l, ctrl-o and ctrl-p are not merely unbound but
-  **unguarded**: with no handler behind them there is nothing to `preventDefault`, so
-  select-all, the address bar, Open File and Print go back to the browser.
-
-  Points worth keeping:
-
-  - **A row IS a menu kind**, so `space` cycles exactly the list `Enter` shows in full,
-    from the one place the picker already reads. Absorbing the pickers is therefore a new
-    entry point rather than a rewrite, and the interaction grades by how much you know:
-    `space` if you know what you want, `shift-space` if you overshot, `Enter` if you do
-    not know the options. Four kinds that had no picker -- arrows, timing marks, labels,
-    background display -- gained one, so they work the same way.
-  - **The commit is debounced ~300ms; it is not issued on every `space`.** This is the
-    objection that would have broken the feature. The pickers navigate without rendering
-    and commit once on `Enter`; a live panel renders every intermediate state, so cycling
-    link shape `line -> curve -> flowmap -> off` would render **flowmap on the way past**
-    -- a force layout whose cost grows faster than linearly on a netflow-scale graph.
-    Debounced rather than Enter-to-commit, because tapping space and watching the graph is
-    the interaction that makes the panel worth having.
-  - **No walk-away auto-commit (`menuArmTimer`'s 2.5s) applies.** The pickers are
-    transient-modal and the panel is persistent; one that committed and closed itself
-    while you looked at the graph would be a bug. An explicit `esc` does flush, because
-    closing inside the 300ms window is a normal thing to do.
-  - **`shift` reverses, never `ctrl`** -- U2's lesson, *"the base key was never the
-    problem, needing a ctrl chord for a variant was"*. The four `ctrl-a/l/o/p`
-    reverse-cycles disappear into `shift-space`.
-  - **Rows have prerequisites, and an unmet one greys the row *and* makes the cursor skip
-    it.** Timing marks need a time field (they *are* the LinkP's `time=`), spacing needs
-    the marks on, and the background row needs a layout-produced background. Greying
-    alone would leave `space` silently doing nothing, which reads as the panel being
-    broken rather than the setting being unavailable.
-  - **Arrows and timing marks are two rows, not the one 4-state `a` cycle they replace.**
-    That cycle flipped exactly one of the two per step, so reaching a given combination
-    cost up to three presses; two rows reach any of the four in one.
-  - **Modal for v1.** Non-modal -- only the panel's keys captured, everything else
-    falling through -- is more useful, but re-opens the keyspace conflict the panel
-    exists to close. Revisit only if modality proves annoying in use.
-  - **Layout mode and layout operation did NOT become rows.** They are persistent
-    selections, but they are inputs to an action (`g` / `w`) rather than descriptions of
-    how the render is drawn, which is the line the panel draws. `shift-g` / `shift-w` are
-    unchanged.
-
-### Changed
-
-- **`info_str` is shorter: `N Selected | layout_mode | layout_operation`.** The label
-  mode and the background state moved into the configuration panel and came out of the
-  status line with it. Layout mode and operation stay, because they did *not* become
-  panel rows -- dropping them too would have left them with no on-screen display at all.
-
-- **`ctrl-shift-s` no longer cycles the label mode** -- that is the panel's `labels` row.
-  The chord still reaches the sticky-label handler, where it now takes the `shift`
-  branch and removes the selection from the sticky set, exactly as `shift-s` does. Called
-  out rather than left to be discovered: an absorbed binding that quietly starts doing
-  something *else* is worse than one that stops working.
-  *(Superseded: the chord now selects the sticky-labelled nodes -- see Added.)*
-
-- **Re-recorded the four `linkpi` parity goldens** (`linkpi`, `linkpi_menu`,
-  `linkpi_search`, `linkpi_wheel_multiplicity`). The diffs are the intended change and
-  nothing else: the new `#configpanel` element (so `#svgparent` gains a child), the
-  shorter `#infostr`, the rewritten keyboard help, and the five new params. The wheel
-  golden's `write_counts` are untouched, which is the invariant that file exists for.
-
-  `linkpi_menu`'s gesture also changed, from `ctrl-l` to `shift-w`. `ctrl-l` opened the
-  link-size picker and the panel absorbed that entry point, so the old gesture now falls
-  through the binding chain and opens nothing -- it would have been tracing the absence
-  of a menu. `shift-w` reaches the same state machine through a door that still exists.
-
-  A JS-only overlay is structurally invisible to these goldens -- the digest is taken
-  after a gesture settles, which is why `#selbox` and `#drag_rect` went uncovered for as
-  long as they existed. The panel is that shape, so its tests were written rather than
-  inherited: `tests/interaction/test_config_panel.py`.
-
-- **Fixed: `has_focus` now survives a re-render.** `ReactiveHTML`'s `render` script
+- **`has_focus` now survives a re-render.** `ReactiveHTML`'s `render` script
   re-ran on every subtree rebuild and reset `data.has_focus` to false, so a component
   stopped believing it had focus each time its plot redrew. That is the defect
   `InteractivePage.press_at()` exists for, and documents: "a second keystroke after an
@@ -1148,31 +1379,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unchanged** — which is the point. Re-recording would have baked one browser's layout
   into the oracle, and a macOS recording would have failed on Linux all over again.
 
-- **`LINKPI` / `LINKPI_GPU` ported to `JSComponent`. The migration is complete —
-  no view in the package derives from `ReactiveHTML` any more** (PLANNING.md W1).
-  The largest contract by a wide margin: 26 scripts, ~37 KB of JavaScript, a
-  12.5 KB `myOnKeyDown` with ~50 bindings, and four layout-preview shapes.
-
-  The handler bodies were converted mechanically rather than retyped, because at
-  that size a transcription slip is the likeliest way to break something no test
-  covers. Element names are unchanged for the same reason — every id'd node
-  becomes a closure `const` of exactly that name — which is why `svgparent` is the
-  root's name here where the smaller modules say `root`.
-
-  With the last view ported, the scaffolding goes too: **`p2s_reactive_base.py` is
-  deleted** (`P2SReactiveHTML` existed only to re-seed child params past Panel's
-  HTML sanitizer, and the ESM path has neither), along with `_withGpuScripts_`,
-  `_GPU_RENDER_JS_` and `_GPU_PAYLOAD_JS_`. `ReactiveHTML` is still imported for
-  one `isinstance` in `panelize()`, which accepts third-party views through the
-  `panelWrapper()` extension point.
-
-- **`_WS_PAYLOAD_INFLATION_` collapses back to a single rate, 1.25.** The two-rate
-  scheme existed only because a half-migrated layout held both kinds of view.
-  Re-measured now that every view is ESM, on a 60k-row `xypi`: `mod_inner`
-  1,139,906 B → document 1,430,387 B, **1.25×**, with no `data:image/svg+xml`
-  copy anywhere. It was 2.5× under `ReactiveHTML`, which shipped the SVG twice.
-
-- **Fixed: `myUpdateDragRect` assigned four undeclared variables.** `x`, `y`, `w`
+- **`myUpdateDragRect` assigned four undeclared variables.** `x`, `y`, `w`
   and `h` were written without `var`. A `_scripts` body ran as a sloppy-mode
   function, so those became implicit globals and worked; **an ES module is strict
   mode automatically**, where the same assignment throws `ReferenceError`. Ported
@@ -1184,37 +1391,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   every assignment in every module against the names declared around it. It was
   the only instance in ~58 KB of ported JavaScript.
 
-- **Fixed: `p2sGpuWrap` overwrote the root's `style` attribute** instead of
+- **`p2sGpuWrap` overwrote the root's `style` attribute** instead of
   appending to it. Only LINKPI noticed — it is the one root carrying a style of
   its own (`user-select:none`), which the GPU variant would have silently dropped.
 
-- **The five generic components ported to `JSComponent`.** `TIMEPI`, `HISTOPI`,
-  `XYPI`, `CHORDPI`, `PIEPI` and their `*_GPU` subclasses — ten classes, and the
-  largest contract so far at 19 scripts and ~16 KB of JavaScript. **`LINKPI` is
-  the only view left on `ReactiveHTML`.** All three generic parity goldens pass
-  unchanged.
-
-  `interactive_controller.py` loses 468 lines. Five near-identical template and
-  script pairs become **one** shared ESM module: what was substituted into each
-  class's own copy — the root `<svg>`'s id and the pre-laid-out keyboard-help
-  overlay — is read from the new `svg_parent_id` / `kbd_help_svg` params at render
-  time instead. `_bindInteractivePText_`, `_bindInteractivePScripts_` and
-  `_bindInteractivePGpuScripts_` go with them.
-
-  `myOnMouseWheel` is **not** carried over. It was unreachable: no `onwheel`
-  attribute bound it, no param shared its name, and nothing called
-  `self.myOnMouseWheel()`. The wheel has always been handled by the non-passive
-  listener `render` attaches to `#screen`, which is ported as-is.
-
-- **The generic components' selection-shape picker now has a highlight test.**
-  `test_F_opens_the_selection_shape_picker` read the menu's *text*, which an
-  off-by-one highlight does not change, and the parity goldens cannot see it
-  either — the DOM digest records `#pickermenu`'s tag, child count and text, and a
-  misplaced highlight changes none of the three. A mutation shifting every
-  highlight down one row passed the entire suite. LINKPI has had this covered all
-  along; these components share the row geometry but not the tests.
-
-- **Fixed: the parity recorder could miss a gesture's param writes.**
+- **The parity recorder could miss a gesture's param writes.**
   `ParityTrace.gesture()` stopped watching after `wait_until_idle()`, which returns
   as soon as the controller lock looks free — and a keystroke whose Python
   operation has not *yet* acquired the lock leaves it trivially free. The writes
@@ -1229,7 +1410,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   committed goldens pass unchanged under the fix, so it closes a race without
   changing what is recorded.
 
-- **Fixed: harness lookups were not scoped to their component.** Panel's per-model
+- **Harness lookups were not scoped to their component.** Panel's per-model
   id suffix used to make `#mod` unique across a page; ported components emit bare
   ids, so the stack control beside its plot gives two `#mod` elements. Playwright
   pierces shadow roots, so a page-level locator matches both — reported as a
@@ -1237,135 +1418,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `wait_for_mod_change()`, which resolved the id document-wide and could poll the
   wrong component indefinitely. Every inner-id lookup now goes through
   `self.root.locator(...)`.
-
-- **`SLPI` / `SLPI_GPU` and `STACKCONTROLI` ported to `JSComponent`.** Three of
-  the five interactive contracts are now on the ESM API; `_InteractivePBase`
-  (the five generic components) and `LINKPI` remain. Both parity goldens pass
-  unchanged and no interaction test needed an edit.
-
-  The two shared fragments carried over as designed — `p2s_dom.js` unchanged,
-  `p2s_gpu_mount.js` picking up `SLPI_GPU` with no edit at all, which is the
-  first evidence that the `*_GPU` scaffold generalises rather than having been
-  fitted to SMALLPI.
-
-  Two per-contract details worth recording:
-
-  - `STACKCONTROLI`'s keyboard-help overlay was a module constant concatenated
-    into `_template`. An ESM module has no markup to concatenate it into, so it
-    travels as a new `kbd_help_svg` param. Same bytes on the wire (the template
-    shipped per view too), and the markup stays out of the JavaScript.
-  - `SLPI`'s rubber band is deliberately **not** shared with LINKPI's yet.
-    LINKPI draws an oval as well as a rect and parks the band off-canvas when
-    idle; the generic components encode a different set of modifier states.
-    Phase 4/5 decides whether a common implementation actually falls out, rather
-    than forcing one now.
-
-- **`#drag_rect`, SLPI's selection rubber band, now has tests** — the same gap
-  `#selbox` had on SMALLPI, and for the same reason: `InteractivePage.drag_rect()`
-  reads `#drag`, which is LINKPI's element, so nothing in the suite had ever
-  looked at SLPI's. Covers geometry in both drag directions, clearing on release,
-  and the stroke colour that encodes the set-operation.
-
-  The colour tests deliberately take no focus first. LINKPI's band colours come
-  from `data.ctrlkey`, which only its `myOnKeyDown` sets, so a modifier pressed
-  while focus is elsewhere never reaches the band — that path is where the two
-  dead colours of **U8** hid. SLPI reads `event.shiftKey` / `event.ctrlKey`
-  straight off the mouse event, so its colours are correct without focus, and
-  that difference is now asserted rather than assumed. Mutation-tested: a
-  reconstruction of the exact U8 typo (`shftkey`) is caught.
-
-- **`SMALLPI` / `SMALLPI_GPU` are the first views on Panel's 2nd-generation (ESM)
-  component API.** `_template` and `_scripts` are gone; the browser half is
-  `polars2svg/js/p2s_smallpi.js` plus two shared fragments. Behaviour is
-  unchanged — the parity golden recorded from the `ReactiveHTML` implementation
-  passes against the port untouched, and **none of the 234 pre-existing
-  interaction tests needed an edit**, which was the gate condition.
-
-  Three things simply stop existing, rather than being reimplemented:
-
-  - `P2SReactiveHTML._init_params()`. `mod_inner` goes through the constructor
-    like any other param now. It could not before: bound as a content
-    `${mod_inner}` it was a Panel *child*, and `_init_params()` both dropped
-    children from the initial data model and ran plain string params through
-    panel's HTML sanitizer, which strips an SVG to nothing. The ESM path has
-    neither. (`P2SReactiveHTML` stays for the four contracts not yet ported.)
-  - The subtree rebuild. With no `Child` params, `render()` runs once per mount,
-    so the scripts' defensive `state` re-seeding became plain initialisation.
-  - The six jinja GPU head/tail constants and `_withGpuScripts_`, replaced by one
-    `if (model.use_webgpu)` branch in `js/fragments/p2s_gpu_mount.js`. The
-    subclass split is unchanged, so an SVG view still ships none of the ~14 KB
-    runtime.
-
-  **Measured on the wire** (60k-row render, panel 1.9.2 / bokeh 3.9.0), which was
-  the open question the spike existed to answer:
-
-  | view | mod_inner | document | per byte of SVG |
-  | --- | --- | --- | --- |
-  | `SMALLPI` (ESM) | 768,249 B | 947,649 B | **1.23×** |
-  | `XYPI` (ReactiveHTML) | 1,139,912 B | 2,913,305 B | **2.56×** |
-
-  An ESM view has no child, so the base64 `data:image/svg+xml` copy is gone and
-  the SVG ships once. The cost is a fixed **+3,059 bytes per view** (the ESM
-  module is larger than the template plus script table it replaces), which a
-  render of more than ~2.4 KB of SVG already repays.
-
-  `_warnOversizePanelPayload_` therefore charges each view its own rate —
-  `_WS_PAYLOAD_INFLATION_` 2.5 for `ReactiveHTML`, 1.25 for ESM, conservative for
-  anything unrecognised. A flat rate would have warned at half the real limit for
-  ported views, and every layout holds both kinds until the migration finishes.
-
-- **`#selbox`, SMALLPI's selection rubber band, now has tests.** It had none: it
-  is browser-only state, and it only exists *during* a drag, so the parity
-  goldens cannot see it either — they digest the DOM after the gesture, by which
-  time `myOnMouseUp` has hidden it. A mutant that never drew the box passed the
-  goldens and the entire suite. Two mid-drag assertions cover appearance,
-  min/abs geometry in both drag directions, and clearing on release.
-
-- **Groundwork for the `ReactiveHTML` → `JSComponent` migration (PLANNING.md W1),
-  with no change to what any component does.** Phase 1 of the plan: build the
-  seams the port needs and record what the components do *before* anything moves.
-
-  - **New `polars2svg/p2s_esm.py` and `polars2svg/js/`.** The project's
-    JavaScript is moving out of Python string literals into real `.js` files,
-    which ruff/mypy/bandit cannot see but an editor can. `p2s_esm.esm(*names)`
-    concatenates fragments into one ES module. **Concatenation rather than
-    `import`**, because `ReactiveESM._render_esm()` only emits a *URL* for a
-    file-valued `_esm` when it is the class's `_bundle_path` *and* a real server
-    session exists — otherwise it inlines the text into a blob URL, which has no
-    base for a relative specifier. A sibling `import` would therefore work under
-    `panel serve` and fail in a notebook, which is the primary target. `panel
-    compile` is the supported alternative and needs node + esbuild.
-  - **`P2S_GPU_JS` is the first asset moved**, from a 362-line raw string in
-    `p2s_webgpu_runtime.py` to `js/fragments/p2s_gpu_runtime.js` — byte-identical,
-    verified against the previous revision. One copy now feeds both the Panel
-    views and `standalone_html()`, which is why fragments must stay `export`-free.
-  - **New `tests/view_js_utils.py`**, the seam between ~45 assertions and however
-    a view carries its JavaScript. `component_js`, `component_script`,
-    `component_markup`, `component_node_ids`, `named_scripts` and `has_script`
-    read `_scripts`/`_template` today and an `_esm` module after a port, so each
-    assertion site changed once, now, rather than during the port.
-    `component_script` brace-matches a named function out of an ESM module so
-    that an assertion *about* `menuCommit` cannot pass on text that happens to
-    live in `myOnKeyDown`.
-  - **New `tests/interaction/test_param_trace_parity.py` and
-    `tests/interaction/parity/*.json`** — 10 recordings of what each of the five
-    contracts does. Every JS→Python hop in this codebase is a param write plus a
-    `param.watch`, so a gesture's param writes are its observable behaviour;
-    the DOM digest beside them covers the picker menu, brush cursor, search
-    buffer and selection labels, which never cross into Python. Because each
-    contract cuts over in place there is no second implementation to diff against
-    at port time, so these files are the only durable statement of the
-    "before". **They are recorded once and must not be re-recorded to make a port
-    pass.**
-  - `panelize()` now accepts `panel.custom.ReactiveESM` alongside `ReactiveHTML`,
-    so porting a view is a change to that view alone.
-  - `tests/interaction/interaction_harness.py` resolves the interaction root by
-    bare id *or* Panel's per-model suffix. `ReactiveHTML` rewrites `id="svgparent"`
-    to `id="svgparent-p1015"`; an ESM view emits it bare, and `suffix` then
-    resolves to `''`, which leaves every other lookup in the harness correct
-    without a branch.
-
-### Fixed
 
 - **`panelize()`'s WebSocket payload guard measured the wrong thing and could
   never fire.** `_estimate_panel_payload_bytes_()` summed each view's
@@ -1406,6 +1458,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   updated for 0.3.0 and so went two releases stale, telling anyone who read the
   policy that the version they were running was unsupported. The file ships in
   the sdist, so the wrong text travelled with the package. Now `0.3.x`.
+
+### Known issues
+
+- **`save('.png')` silently drops `<textPath>` elements.** A `linkp` drawn with
+  `link_shape='curve'` and `draw_link_labels=True` rasterizes without its edge labels,
+  with no warning: svglib has no `textPath` handling. The SVG itself is correct, and
+  `link_shape='line'` is unaffected because it rotates real `<text>`. Curve link labels
+  are the only `<textPath>` the package emits. Carried from 0.3.0.
+
+- **`histop` / `timep`: a bar's smallest segments can draw in the `(other)` colour
+  with no `(other)` legend entry.** A segment under 3 px is drawn as the bar's
+  remainder, in `(other)`'s colour. The legend lists `(other)` only when some value was
+  pooled into it, so when none was, that sliver's colour is unnamed.
 
 ## [0.3.1] — 2026-09-18
 
@@ -4279,7 +4344,8 @@ large frames.
 - **SECURITY.md** documenting the SVG-injection threat model (row-data label text
   is HTML-escaped; component configuration is trusted).
 
-[Unreleased]: https://github.com/datrcode/polars2svg/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/datrcode/polars2svg/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/datrcode/polars2svg/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/datrcode/polars2svg/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/datrcode/polars2svg/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/datrcode/polars2svg/compare/v0.1.2...v0.2.0

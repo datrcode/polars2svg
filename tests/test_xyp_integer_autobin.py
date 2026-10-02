@@ -108,6 +108,34 @@ class TestXYpIntegerAutobin(unittest.TestCase):
         self.assertEqual(_x_.x_distributions_clean['bins'], [10])
         self.assertEqual(len(self._counts_(_x_)), 10)
 
+    # DISTRIBUTION_AUTOBINp with a count aims the automatic bins at it: still whole integers
+    # per bin.  It is how xypi's bins row scales them (PLANNING.md §5
+    # C-xypi-bin-multiple-whole-numbers); the count alone would be ignored before.
+    def _aimed_(self, df, n, x='v'):
+        _x_ = self.p2s.xyp(df, x, 'y', dot_size=None, wxh=(512, 120),
+                           x_distributions=[self.p2s.ROW_COUNTp, self.p2s.DISTRIBUTION_AUTOBINp, n])
+        _x_._repr_svg_()
+        return _x_
+
+    def test_an_aimed_count_keeps_whole_integers_per_bin(self):
+        _x_    = self._aimed_(self._survey_(), 9)
+        _bell_ = [1.0 + min(_v_, 26 - _v_) for _v_ in range(27)]
+        self.assertEqual(_x_.x_distributions_clean['bins'], [9])
+        self.assertEqual(self._counts_(_x_), [sum(_bell_[_i_:_i_ + 3]) for _i_ in range(0, 27, 3)])
+
+    def test_an_aimed_count_finer_than_the_integers_is_one_per_bin(self):
+        self.assertEqual(self._aimed_(self._survey_(), 100).x_distributions_clean['bins'], [27])
+
+    def test_an_aimed_count_survives_a_second_render(self):
+        _x_ = self._aimed_(self._survey_(), 9)
+        _x_._repr_svg_()
+        self.assertEqual(_x_.x_distributions_clean['bins'], [9])
+        self.assertEqual(_x_.x_distributions_clean['target'], 9)
+
+    def test_an_aimed_count_on_fractional_values_is_that_many_bins(self):
+        _df_ = pl.DataFrame({'v': [_i_ * 0.37 for _i_ in range(60)], 'y': [1.0] * 60})
+        self.assertEqual(self._aimed_(_df_, 15).x_distributions_clean['bins'], [15])
+
     # xyp widens a one-value axis to (v, v+1), so the window holds two integers and the
     # second has no rows -- and the first bar is the half bar under the dots at the edge.
     def test_a_single_value(self):

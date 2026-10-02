@@ -929,6 +929,9 @@ class Polars2SVG(P2SColorsMixin,
 
         a single integer controls the number of bins
         - by default the number of bins is calculated from the plot size (one bar per value on a periodic time axis)
+        - on an axis of whole numbers the automatic bins hold whole integers each, so none is empty or doubled
+        - an integer alone is that many equal-width bins; with polars2svg.DISTRIBUTION_AUTOBINp it is the count
+          the automatic bins aim at instead, and they stay whole-integer -- [field, polars2svg.DISTRIBUTION_AUTOBINp, 40]
 
         a single floating point value in (0, 1] controls the height of the rendering as a fraction of the space available
 

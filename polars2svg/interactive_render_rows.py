@@ -443,7 +443,9 @@ class XYpRenderRows(RenderRowSet):
                                          x_distributions=_spec_['x'], y_distributions=_spec_['y'])
             for _a_ in _scaled_:
                 _auto_ = getattr(_probe_, f'{_a_}_distributions_clean')['bins'][0]
-                _spec_[_a_] = list(_spec_[_a_] or []) + [max(1, int(round(_auto_ * cast(float, _mult_[_a_]))))]
+                # Aimed with AUTOBINp rather than given as a bare count, so a whole-number axis
+                # keeps whole integers per bin (PLANNING.md §5 C-xypi-bin-multiple-whole-numbers).
+                _spec_[_a_] = list(_spec_[_a_] or []) + [self.p2s.DISTRIBUTION_AUTOBINp, max(1, int(round(_auto_ * cast(float, _mult_[_a_]))))]
         return {'x_distributions': _spec_['x'], 'y_distributions': _spec_['y']}
 
     def __spec__(self, axis: str, placement: str, bins: str) -> list:

@@ -44,7 +44,7 @@
         "keyboardhelp": {
           "tag": "g",
           "kids": 4,
-          "text": "h . | toggle helpc . | keep base + currentctrl+shift+c . | current -> base"
+          "text": "h . | toggle helpc . | keep base + current .. | ctrl-shift-c .. | current -> base"
         },
         "screen": {
           "tag": "rect",
@@ -86,7 +86,7 @@
         "keyboardhelp": {
           "tag": "g",
           "kids": 4,
-          "text": "h . | toggle helpc . | keep base + currentctrl+shift+c . | current -> base"
+          "text": "h . | toggle helpc . | keep base + current .. | ctrl-shift-c .. | current -> base"
         },
         "screen": {
           "tag": "rect",
@@ -133,7 +133,7 @@
         "keyboardhelp": {
           "tag": "g",
           "kids": 4,
-          "text": "h . | toggle helpc . | keep base + currentctrl+shift+c . | current -> base"
+          "text": "h . | toggle helpc . | keep base + current .. | ctrl-shift-c .. | current -> base"
         },
         "screen": {
           "tag": "rect",

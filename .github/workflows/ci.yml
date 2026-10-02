@@ -422,45 +422,39 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v7
+      - uses: astral-sh/setup-uv@v7
         with:
           python-version: '3.13'
 
       - name: Install the package and the suite's dependencies
-        # Resolved through the project rather than re-listed, for the reason the
-        # clean-room job spells out: a hand-kept list drifts from
-        # [project.optional-dependencies] and the drift shows up as collection
-        # errors, not as a missing package.
+        # Resolved through uv.lock, like every other job (PLANNING.md R12).  This job
+        # used to `pip install ".[interactive,layouts]"` against the open index, with
+        # tornado pinned by hand -- and on 2026-09-14 that cost a full CI outage:
+        # tornado 6.5.9 was published at 18:08Z, and the next run of this suite hung
+        # for 26 minutes with no output and had to be cancelled.  The run 111 minutes
+        # earlier, on code identical but for ci.yml, passed in 6m37s.  Of all 76
+        # installed packages tornado was the only one that differed.  The hand pin
+        # then drifted itself: it held 6.5.8 after uv.lock moved to 6.5.10 to clear
+        # pip-audit advisories.  The lock now decides every version here.
         #
         # `export` is deliberately absent. It is the svglib/reportlab/rlPyCairo
-        # rasterization chain, which nothing here uses — and on Linux pycairo
-        # compiles from sdist, so pulling it in would mean a C toolchain and
-        # cairo's headers for no coverage. Pillow, which the WebGPU pixel
-        # assertions do need, is a *core* dependency and arrives regardless; if
-        # that ever changes, test_webgpu_render.py's `importorskip('PIL')` would
-        # skip all 16 of its tests silently rather than failing.
+        # rasterization chain, which nothing here uses.  The dev group carries the
+        # same chain, so rlpycairo and pycairo are excluded by name, as the mypy and
+        # lint jobs do: pycairo has no Linux wheel and would compile against cairo's
+        # headers, which this runner lacks.  Pillow, which the WebGPU pixel
+        # assertions do need, is a *core* dependency and arrives regardless; if that
+        # ever changes, test_webgpu_render.py's `importorskip('PIL')` would skip all
+        # 16 of its tests silently rather than failing.
         #
-        # pytest-playwright is named explicitly because it is deliberately not in
-        # [dependency-groups] dev — the browser tooling stays opt-in for local
-        # work, so `uv sync` installs nothing new.
-        #
-        # tornado is pinned to the version uv.lock resolves, and that pin is the only
-        # thing standing between this job and the open internet.  This is the ONLY job
-        # that installs unpinned -- every other one resolves through uv.lock -- and on
-        # 2026-09-14 that cost a full CI outage: tornado 6.5.9 was published at 18:08Z,
-        # and the next run of this suite hung for 26 minutes with no output and had to
-        # be cancelled.  The run 111 minutes earlier, on code identical but for ci.yml,
-        # passed in 6m37s.  Of all 76 installed packages tornado was the only one that
-        # differed.  tornado is Bokeh/Panel's web server, which this suite boots and
-        # drives, so the whole harness sat waiting on a server that never answered.
-        #
-        # Keep this equal to uv.lock's tornado.  The real fix is to resolve this job
-        # through the lockfile like every other one; until then an upstream release can
-        # take CI down between two identical commits, which is exactly the unpinned-
-        # tooling failure that 20260913_fable_code_audit.md F4 was about.
+        # pytest-playwright and playwright are the two packages outside the lock: they
+        # are deliberately not in [dependency-groups] dev, so the browser tooling stays
+        # opt-in for local work.  They are pinned exactly, to the versions the suite
+        # is run with locally, and added after the sync.  Every later step runs
+        # `uv run --no-sync`, because a syncing `uv run` would remove them again.
         run: |
-          pip install --no-cache-dir ".[interactive,layouts]" "tornado==6.5.8"
-          pip install --no-cache-dir pytest pytest-playwright
+          uv sync --extra layouts --extra interactive --group dev \
+                  --no-install-package rlpycairo --no-install-package pycairo
+          uv pip install "pytest-playwright==0.9.0" "playwright==1.62.0"
 
       - name: Install chromium
         # --with-deps pulls the shared libraries chromium needs on a bare runner.
@@ -468,7 +462,7 @@ jobs:
         # the WebGPU tests need the former (`channel='chromium'`), because
         # headless-shell exposes navigator.gpu but returns a null adapter, which
         # would make every GPU test skip for a reason that looks like hardware.
-        run: python -m playwright install --with-deps chromium
+        run: uv run --no-sync python -m playwright install --with-deps chromium
 
       - name: Run the interaction suite
         # --interaction is the opt-in gate; without it every test here skips, which
@@ -489,4 +483,4 @@ jobs:
         # which a bare count cannot tell apart from a fixture quietly breaking and
         # taking tests with it. Green at the wrong number is the exact failure mode
         # these tests exist to catch, so the reasons belong in the log.
-        run: python -m pytest tests/interaction --interaction -q -rs
+        run: uv run --no-sync python -m pytest tests/interaction --interaction -q -rs

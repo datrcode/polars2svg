@@ -121,6 +121,45 @@ class TestSavePNG(unittest.TestCase):
         self.assertTrue(data.startswith(_PNG_MAGIC_))
 
 
+class TestTextPathPNGWarning(unittest.TestCase):
+    '''svglib draws no text that follows a path, so a PNG silently lacked those labels
+    (PLANNING.md C-textpath-png).  It must now say so, and only when it applies.'''
+
+    _df_ = pl.DataFrame({'fm': list('abcabd'), 'to': list('bcdcda'), 'lbl': list('uvwxyz')})
+
+    def _png_warnings_(self, plot):
+        import warnings
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter('always')
+            data = svgToPNGBytes(plot._repr_svg_())
+        self.assertTrue(data.startswith(_PNG_MAGIC_))
+        return [str(x.message) for x in w if '<textPath>' in str(x.message)]
+
+    def test_curve_link_labels_warn_with_their_count(self):
+        p2s  = Polars2SVG()
+        plot = p2s.linkp(df=self._df_, relationships=[('fm', 'to', 'lbl')], link_shape='curve',
+                         draw_link_labels=True, draw_node_labels=False)
+        msgs = self._png_warnings_(plot)
+        self.assertEqual(len(msgs), 1)
+        self.assertTrue(msgs[0].startswith('6 <textPath>'), msgs[0])
+
+    def test_circular_chord_labels_warn(self):
+        p2s  = Polars2SVG()
+        plot = p2s.chordp(df=self._df_, relationships=[('fm', 'to')], draw_labels=True,
+                          label_style='circular')
+        msgs = self._png_warnings_(plot)
+        self.assertEqual(len(msgs), 1)
+        self.assertTrue(msgs[0].startswith('4 <textPath>'), msgs[0])
+
+    def test_straight_labels_do_not_warn(self):
+        p2s   = Polars2SVG()
+        line  = p2s.linkp(df=self._df_, relationships=[('fm', 'to', 'lbl')], link_shape='line',
+                          draw_link_labels=True, draw_node_labels=False)
+        radial = p2s.chordp(df=self._df_, relationships=[('fm', 'to')], draw_labels=True)
+        self.assertEqual(self._png_warnings_(line), [])
+        self.assertEqual(self._png_warnings_(radial), [])
+
+
 class TestSavePNGMissingDeps(unittest.TestCase):
     '''Without the [export] extra, PNG export must fail with a clear message.'''
 

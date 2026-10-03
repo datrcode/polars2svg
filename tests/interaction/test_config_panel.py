@@ -297,6 +297,22 @@ def test_space_between_presses_keeps_the_row_selected_by_its_key(timing_page):
     timing_page.assert_panel_value('arrows', 'off')
 
 
+def test_a_row_note_is_drawn_after_its_value(timepi_page):
+    """F17: when the frame on screen is too narrow for the chosen timeline level, Python
+    adds a fifth element to the granularity row ('-> auto (hourly)') and the panel draws it
+    after the value.  The Python half -- when the note exists -- is in
+    tests/test_interactive_render_rows.py; this is the half only a browser can see."""
+    _open(timepi_page)
+    _view_ = timepi_page.app.view()
+    _rows_ = [list(_r_) for _r_ in _view_.config_panel_rows]
+    _rows_ = [_r_ + ['-> auto (hourly)'] if _r_[1] == 'granularity' else _r_ for _r_ in _rows_]
+    _view_.config_panel_rows = _rows_
+    assert_eventually(lambda: '-> auto (hourly)' in timepi_page.panel_text(),
+                      lambda: f'the note never reached the panel: {timepi_page.panel_text()!r}')
+    _line_ = [_l_ for _l_ in timepi_page.panel_values().items() if _l_[0] == 'granularity'][0][1]
+    assert _line_.endswith('-> auto (hourly)'), _line_
+
+
 def test_a_cycled_value_reaches_python(timing_page):
     """The row is not a label: the LinkP has to actually change."""
     _open(timing_page)

@@ -293,6 +293,12 @@ function p2sConfigPanel(ctx) {
           var _lead_ = _rows_[_i_][2] + ' ';
           while (_lead_.length < _lw_ + 5) { _lead_ += '.'; }
           var _txt_ = '[' + _rows_[_i_][0] + '] ' + _lead_ + ' ' + panelValue(_rows_[_i_][1]);
+          // A fifth element is a note from Python: the frame on screen is not using the
+          // row's value (timepi's granularity, F17 -- 'monthly' falls back to auto on a
+          // frame too narrow for it).  Shown only while nothing is pending on the row.
+          if (_rows_[_i_].length > 4 && state.panel_pending[_rows_[_i_][1]] === undefined) {
+              _txt_ += ' ' + _rows_[_i_][4];
+          }
           _texts_.push(_txt_);
           _maxlen_ = Math.max(_maxlen_, _txt_.length + 4);
       }

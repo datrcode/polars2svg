@@ -7,6 +7,76 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`p2s.help(component, parameter)` prints one parameter's documentation.** The
+  component docstrings are long (`xyp`'s is about 18,000 characters), so
+  `p2s.help('xyp', 'x_distributions')` prints just the distributions section: every form
+  the parameter takes and the explanation under it. A parameter in a list such as the
+  render options prints only its own lines. `p2s.help('xyp')` prints the whole docstring,
+  and a rendered component works in place of its name. `p2s.helpText(...)` returns the
+  same text as a string. A misspelled component or parameter raises `ValueError` naming
+  the close matches.
+
+- **For contributors: three new consistency checks.**
+  - **Dependency floors in CI:** a `dependency-floors` job installs every direct
+    dependency, extras included, at its declared minimum on Python 3.12 and runs the
+    suite. That is how the two floor fixes below were found.
+  - **Parameter documentation:** a test lists the public keywords that have no entry
+    `help()` can find (41 today, most of them on `spreadlinesp`). The list can only
+    shrink: a new keyword without documentation fails the suite.
+  - **The mypy ceiling:** a test reads the error ceiling from `tools/preflight.sh`,
+    `ci.yml` and the per-module table, and fails when they differ. `ci.yml` had been left
+    at 60 while the other two moved to 57.
+
+### Changed
+
+- **`timepi`: a timeline granularity falls back to auto on a frame too narrow for it.**
+  A granularity chosen on the settings panel used to apply at every level of the
+  drill-down stack, so `monthly` on a one-week frame drew a single bar.
+  - **The rule:** a timeline level (`monthly`, `daily`, ...) now holds on a frame while it
+    still draws at least 4 bars. Below that, the frame is drawn at the automatic level.
+  - **The panel shows it:** the granularity row reads, for example,
+    `quarterly (timeline) -> auto (daily)`.
+  - **Your choice is kept:** going back up to a wider frame draws your level again.
+  - **Cycles are unaffected:** a cycle (`day of week`, `hour`, ...) means the same at any
+    zoom, so it applies everywhere as before.
+  - **Also applies to a built-in level:** a view built with a timeline level, as in
+    `p2s.timep(df, p2s.tField('ts', p2s.LT_Y_mp))`, falls back the same way.
+  - **Tuning:** the threshold is `TimepRenderRows.min_timeline_bars`.
+
+- **`save('.png')` warns when the PNG will be missing labels.** svglib cannot draw text
+  that follows a path, so a PNG has always left those labels out and said nothing. It now
+  raises a `UserWarning` giving how many labels are affected. It applies to `chordp` with
+  `label_style='circular'` and to `linkp` curve link labels (`link_shape='curve'` with
+  `draw_link_labels=True`). The SVG was always correct, and `.svg` output is unchanged.
+
+### Fixed
+
+- **The `layouts` extra's `scipy` floor is `>=1.15`, not `>=1.13`.** On scipy 1.13 and
+  1.14, `LandmarkMDSLayout` and `PivotMDSLayout` raised `ValueError: Buffer dtype
+  mismatch, expected 'int' but got 'long'`. networkx builds the graph's sparse matrix with
+  64-bit indices, and scipy's shortest-path routine accepts those only from 1.15.0. An
+  install that resolved scipy 1.15 or newer, which is nearly all of them, was unaffected.
+
+- **The `layouts` extra's `shapely` floor is `>=2.0.2`, not `>=2.0`.** shapely 2.0.0 and
+  2.0.1 publish no Python 3.12 wheel, and 3.12 is this package's own floor, so an install
+  that resolved to the lowest allowed shapely tried to compile it from source and failed.
+  2.0.2 is the first release with a 3.12 wheel. Installs that resolve to the newest shapely,
+  which is nearly all of them, are unaffected.
+
+### Known issues
+
+- **`save('.png')` still leaves out labels that follow a path.** It now warns (see
+  Changed), but the labels are not drawn: `chordp` with `label_style='circular'` and
+  `linkp` curve link labels. The SVG is correct. Carried from 0.3.0; earlier notes named
+  only the `linkp` case.
+
+- **`histop` / `timep`: a bar's smallest segments can draw in the `(other)` colour
+  with no `(other)` legend entry.** A segment under 3 px is drawn as the bar's
+  remainder, in `(other)`'s colour. The legend lists `(other)` only when some value was
+  pooled into it, so when none was, that sliver's colour is unnamed. Carried from 0.4.0.
+
 ## [0.4.0] — 2026-10-02
 
 ### Added

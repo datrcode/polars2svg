@@ -165,6 +165,16 @@ class RenderRowSet:
         is what the ParamRows are already setting.  None, unless a subclass has such rows.'''
         return {}
 
+    def frameOverrides(self, overrides: dict[str, Any], df: Any) -> dict[str, Any]:
+        '''The overrides as they apply to one frame of the stack.  Unchanged, unless a
+        row's value can stop fitting a frame (timepi's timeline levels).'''
+        return overrides
+
+    def rowNote(self, kind: str, settings: dict[str, str], plot: Any) -> str:
+        '''What the panel shows after a row's value when the frame on screen is not
+        using it.  '' when it is.'''
+        return ''
+
     def _changed_(self, settings: dict[str, str], *kinds: str) -> bool:
         _init_ = self.initial_settings()
         return any(settings.get(_k_, _init_[_k_]) != _init_[_k_] for _k_ in kinds)
@@ -712,9 +722,15 @@ class TimepRenderRows(RenderRowSet):
 
     accepts_count_fields = True
 
+    #: A timeline level is kept on a frame while it draws at least this many bars; below
+    #: that the frame falls back to auto and the row says so (PLANNING.md §7 F17, DT
+    #: 2026-10-03: four).  A class attribute so it can be tuned without a new keyword.
+    min_timeline_bars: int = 4
+
     def __init__(self, template: Any, count_fields: list | None = None) -> None:
         super().__init__()
         _p_ = template.p2s
+        self._template_ = template
 
         def _not_boxplot_(s: dict[str, str]) -> bool:
             return s.get('style') not in _BOXPLOTS_
@@ -726,6 +742,7 @@ class TimepRenderRows(RenderRowSet):
         if   isinstance(template.time, _p_.TField): _built_ = template.time.transform
         elif isinstance(template.time, tuple):      _built_ = template.time[1]
         else:                                       _built_ = None
+        self._built_ = _built_
         _choices_ = [('u', 'auto', _col_)] + [(_TIME_LEVEL_KEYS_[_e_.name], time_level_label(template, _e_),
                                                 _p_.tField(_col_, _e_)) for _e_ in _levels_]
         self.rows = [
@@ -737,3 +754,28 @@ class TimepRenderRows(RenderRowSet):
             legend_row(template, also=_not_boxplot_),
             color_scale_row(template, also=_not_boxplot_),
         ]
+    def _timelineLevel_(self, overrides: dict[str, Any]) -> Any:
+        '''The timeline level in force: the row's, else the one the view was built with.'''
+        _lv_ = getattr(overrides['time'], 'transform', None) if 'time' in overrides else self._built_
+        return _lv_ if isinstance(_lv_, self._template_.p2s.TimeLinearTypeP) else None
+
+    def frameOverrides(self, overrides: dict[str, Any], df: Any) -> dict[str, Any]:
+        '''A timeline level the frame is too narrow for -- fewer than min_timeline_bars
+        bars, e.g. monthly on one week -- is dropped for this frame only, so the template's
+        own resolution (auto) draws it.  The setting itself is untouched, so a wider frame
+        back up the stack gets the level again.  A cycle means the same at any zoom, so a
+        periodic level always applies.'''
+        _lv_ = self._timelineLevel_(overrides)
+        if _lv_ is None or df is None: return overrides
+        if self._template_.timelineBars(_lv_, df) >= self.min_timeline_bars: return overrides
+        # The bare column is auto -- it also replaces a level the view was BUILT with,
+        # which render_with() would otherwise copy off the template.
+        return {**overrides, 'time': self._template_._time_field_}
+
+    def rowNote(self, kind: str, settings: dict[str, str], plot: Any) -> str:
+        if kind != 'granularity' or plot is None: return ''
+        _lv_ = self._timelineLevel_(self.overrides(settings))
+        _drawn_ = getattr(plot, '_time_enum_', None)
+        if _lv_ is None or _drawn_ is None or _drawn_ == _lv_: return ''
+        return f'-> auto ({plot.timeLevelName(_drawn_)})'
+

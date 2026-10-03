@@ -739,6 +739,63 @@ class TestTimepRows(unittest.TestCase):
         self.assertIn('>month / day<', _t_._repr_svg_())
 
 
+
+class TestTimelineLevelFallback(unittest.TestCase):
+    """PLANNING.md §7 F17 (DT, 2026-10-03): a timeline level holds on a drilled-in frame
+    while it draws at least TimepRenderRows.min_timeline_bars bars (4); below that the frame
+    falls back to auto and the row says so.  A cycle always applies."""
+
+    def setUp(self):
+        self.p2s  = Polars2SVG()
+        self.df   = pl.DataFrame({'ts': pl.datetime_range(pl.datetime(2025, 1, 1), pl.datetime(2026, 6, 30),
+                                                          '12h', eager=True)}).with_columns(bytes=pl.int_range(pl.len()))
+        self.half = self.df.filter(pl.col('ts') < datetime.datetime(2025, 7, 1))     # two quarters
+        self.week = self.df.filter(pl.col('ts') < datetime.datetime(2025, 1, 8))
+        self.t    = self.p2s.timep(self.df, 'ts', count='bytes')
+        self.rows = TimepRenderRows(self.t)
+
+    def _ov_(self, label):
+        return self.rows.overrides(dict(self.rows.initial_settings(), granularity=label))
+
+    def test_timeline_bars_counts_the_spine(self):
+        self.assertEqual(self.t.timelineBars(self.p2s.LT_Y_Qp), 6)
+        self.assertEqual(self.t.timelineBars(self.p2s.LT_Y_mp), 18)
+        self.assertEqual(self.t.timelineBars(self.p2s.LT_Y_Qp, self.half), 2)
+        self.assertEqual(self.t.timelineBars(self.p2s.LT_Y_m_dp, self.week), 7)
+        self.assertEqual(self.t.timelineBars(self.p2s.LT_Y_mp, self.df.clear()), 0)
+
+    def test_a_level_that_fits_is_kept_and_one_that_does_not_falls_back_to_auto(self):
+        _ov_ = self._ov_('quarterly (timeline)')
+        self.assertEqual(self.rows.frameOverrides(_ov_, self.df), _ov_)
+        self.assertEqual(self.rows.frameOverrides(_ov_, self.half), {'time': 'ts'})
+        self.assertEqual(_ov_, {'time': self.p2s.tField('ts', self.p2s.LT_Y_Qp)}, 'the setting is untouched')
+
+    def test_a_cycle_always_applies(self):
+        _ov_ = self._ov_('day of week (cycle)')
+        self.assertEqual(self.rows.frameOverrides(_ov_, self.week), _ov_)
+
+    def test_a_level_the_view_was_built_with_falls_back_too(self):
+        _rows_ = TimepRenderRows(self.p2s.timep(self.df, self.p2s.tField('ts', self.p2s.LT_Y_Qp)))
+        self.assertEqual(_rows_.frameOverrides({}, self.df), {})
+        self.assertEqual(_rows_.frameOverrides({}, self.half), {'time': 'ts'})
+
+    def test_the_threshold_is_adjustable(self):
+        self.assertEqual(TimepRenderRows.min_timeline_bars, 4)
+        _ov_ = self._ov_('quarterly (timeline)')
+        self.rows.min_timeline_bars = 2
+        self.assertEqual(self.rows.frameOverrides(_ov_, self.half), _ov_)
+
+    def test_the_row_notes_the_level_auto_drew_only_on_a_fallback(self):
+        _s_    = dict(self.rows.initial_settings(), granularity='quarterly (timeline)')
+        _ov_   = self.rows.overrides(_s_)
+        _half_ = self.p2s.timep(df=self.half, template=self.t, **self.rows.frameOverrides(_ov_, self.half))
+        _full_ = self.p2s.timep(df=self.df, template=self.t, **self.rows.frameOverrides(_ov_, self.df))
+        self.assertNotEqual(_half_._time_enum_, self.p2s.LT_Y_Qp)
+        self.assertEqual(self.rows.rowNote('granularity', _s_, _half_),
+                         f'-> auto ({_half_.timeLevelName(_half_._time_enum_)})')
+        self.assertEqual(self.rows.rowNote('granularity', _s_, _full_), '')
+        self.assertEqual(self.rows.rowNote('style', _s_, _half_), '')
+
 @unittest.skipUnless(_PANEL_AVAILABLE_, 'panel not installed')
 class TestTimePIRenderRows(unittest.TestCase):
     def setUp(self):
@@ -757,6 +814,28 @@ class TestTimePIRenderRows(unittest.TestCase):
         _sub_ = self.df.filter(pl.col('bytes') < 30)
         asyncio.run(_v_.display(_sub_, [self.df, _sub_], 1))
         self.assertEqual(_v_._plot_.time, self.p2s.tField('ts', self.p2s.PT_DoWp))
+
+    def test_a_timeline_level_falls_back_on_a_narrow_frame_and_returns_on_a_wide_one(self):
+        """F17 through the view: drilling into a frame too narrow for the level draws auto
+        and notes it on the row; popping back out draws the level again."""
+        _df_  = pl.DataFrame({'ts': pl.datetime_range(pl.datetime(2025, 1, 1), pl.datetime(2026, 6, 30),
+                                                      '12h', eager=True)}).with_columns(bytes=pl.int_range(pl.len()))
+        _sub_ = _df_.filter(pl.col('ts') < datetime.datetime(2025, 7, 1))
+        _v_   = self.p2s.timepi(self.p2s.timep(_df_, 'ts', count='bytes'))
+        _v_.render_settings = dict(_v_.render_settings, granularity='quarterly (timeline)')
+        _settle()
+        _row_ = lambda: [_r_ for _r_ in _v_.config_panel_rows if _r_[1] == 'granularity'][0]  # noqa: E731
+        self.assertEqual(_v_._plot_._time_enum_, self.p2s.LT_Y_Qp)
+        self.assertEqual(len(_row_()), 4, 'no note while the level is in force')
+
+        asyncio.run(_v_.display(_sub_, [_df_, _sub_], 1))
+        self.assertNotEqual(_v_._plot_._time_enum_, self.p2s.LT_Y_Qp)
+        self.assertEqual(_row_()[4], f'-> auto ({_v_._plot_.timeLevelName(_v_._plot_._time_enum_)})')
+        self.assertEqual(_v_.render_settings['granularity'], 'quarterly (timeline)')
+
+        asyncio.run(_v_.display(_df_, [_df_], 0))
+        self.assertEqual(_v_._plot_._time_enum_, self.p2s.LT_Y_Qp)
+        self.assertEqual(len(_row_()), 4)
 
     def test_the_tooltip_keeps_the_time_field_on_a_level(self):
         """The tooltip names the columns the marks encode; a t-field's own value

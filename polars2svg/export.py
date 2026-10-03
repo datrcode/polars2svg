@@ -18,6 +18,7 @@ from typing import Any
 import io
 import os
 import re
+import warnings
 
 
 #
@@ -69,6 +70,13 @@ def svgToPNGBytes(svg: str) -> bytes:
             "(svglib, reportlab). Install them with:\n"
             "    pip install polars2svg[export]"
         ) from _e_
+    _n_textpath_ = len(re.findall(r'<textPath\b', svg))
+    if _n_textpath_:
+        warnings.warn(
+            f"{_n_textpath_} <textPath> label(s) will be missing from the PNG: svglib cannot "
+            f"draw text that follows a path (chordp label_style='circular', linkp "
+            f"link_shape='curve' link labels). The SVG is correct; save it as .svg to keep them.",
+            UserWarning, stacklevel=3)
     _drawing_ = svg2rlg(io.StringIO(_fixSVGForRasterize_(svg)))
     return renderPM.drawToString(_drawing_, fmt='PNG')
 

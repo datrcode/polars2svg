@@ -128,7 +128,7 @@ export = ["svglib>=1.5,<2", "reportlab>=4.0", "rlPyCairo>=0.3"]
 # background= shapes on xyp/linkp. chordp's node-ordering is core to every
 # chord render, so chordp effectively requires this extra. Install with:
 # pip install polars2svg[layouts]
-layouts = ["networkx>=3.2", "scikit-learn>=1.5", "scipy>=1.13", "shapely>=2.0", "squarify>=0.4.4"]
+layouts = ["networkx>=3.2", "scikit-learn>=1.5", "scipy>=1.15", "shapely>=2.0.2", "squarify>=0.4.4"]
 
 # Interactive, cross-linked variants (panelize/xypi/histopi/timepi/linkpi/smallpi)
 # built on Panel. Includes `layouts`: interactive_controller.py's graph views

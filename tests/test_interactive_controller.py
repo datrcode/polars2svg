@@ -2744,7 +2744,12 @@ class TestPayloadEstimateTracksTheDocument(_UnfilteredLoggerMixin, unittest.Test
         _doc_  = Document()
         _doc_.add_root(_view_.get_root(_doc_))
         _ser_  = _doc_.to_json()
-        _real_ = len(json.dumps(_ser_.content).encode('utf-8')) + sum(len(b) for b in _ser_.buffers)
+        if hasattr(_ser_, 'content'):
+            _real_ = len(json.dumps(_ser_.content).encode('utf-8')) + sum(len(b) for b in _ser_.buffers)
+        else:
+            # bokeh < 3.6 -- what panel 1.5.x pins -- returns the bare DocJson and drops the
+            # deferred buffers, so ask for them inline instead (PLANNING.md R11 floor leg).
+            _real_ = len(json.dumps(_doc_.to_json(deferred=False)).encode('utf-8'))
         return _view_, ic._estimate_panel_payload_bytes_([_view_]), _real_
 
     def test_estimate_grows_with_the_render(self):

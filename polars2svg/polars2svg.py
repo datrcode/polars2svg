@@ -712,6 +712,61 @@ class Polars2SVG(P2SColorsMixin,
             raise ValueError('webgpuHTML(): component has no rendered content')
         return standalone_html(_payload_, border=border)
 
+    # The components help() knows, by factory-method name and by class name, so a rendered
+    # component can be passed as well as its name.
+    _HELP_COMPONENTS_ = {'xyp': 'XYp', 'histop': 'Histop', 'timep': 'Timep', 'piep': 'Piep',
+                         'linkp': 'LinkP', 'chordp': 'ChP', 'smallp': 'Smallp',
+                         'spreadlinesp': 'SpreadLinesP', 'tile': 'Tile'}
+
+    def help(self, component: Any, parameter: str | None = None) -> None:
+        '''
+        help(component, parameter=None)
+
+        Print one parameter's documentation, or a component's whole docstring.
+
+            p2s.help('xyp', 'x_distributions')   # just the distributions section
+            p2s.help('linkp', 'node_size')
+            p2s.help('histop')                   # everything, as help(p2s.histop) shows
+
+        component = 'xyp' | 'histop' | 'timep' | 'piep' | 'linkp' | 'chordp' | 'smallp'
+                  | 'spreadlinesp' | 'tile', or a rendered component (p2s.xyp(...))
+        parameter = None (default)               # the whole docstring
+                  = 'name'                       # that parameter's section
+
+        A parameter documented in more than one place prints every place.  An unknown
+        component or a parameter with no documentation raises ValueError, naming close
+        matches.
+        '''
+        print(self.helpText(component, parameter))
+
+    def helpText(self, component: Any, parameter: str | None = None) -> str:
+        '''
+        helpText(component, parameter=None)
+
+        What help() prints, returned as a string instead.
+        '''
+        from .p2s_help import helpText
+        _name_ = self._helpComponentName_(component)
+        return helpText(_name_, self._helpDoc_(_name_), parameter)
+
+    def _helpComponentName_(self, component: Any) -> str:
+        if not isinstance(component, str):
+            _by_class_ = {_c_: _n_ for _n_, _c_ in self._HELP_COMPONENTS_.items()}
+            _cls_      = type(component).__name__
+            if _cls_ not in _by_class_:
+                raise ValueError(f'help(): {_cls_} is not a component; '
+                                 f'pass one of {", ".join(sorted(self._HELP_COMPONENTS_))}')
+            return _by_class_[_cls_]
+        if component not in self._HELP_COMPONENTS_:
+            _close_ = difflib.get_close_matches(component, list(self._HELP_COMPONENTS_), n=3, cutoff=0.6)
+            _hint_  = (f' -- did you mean {", ".join(repr(_c_) for _c_ in _close_)}?' if _close_
+                       else f' -- the components are {", ".join(sorted(self._HELP_COMPONENTS_))}')
+            raise ValueError(f'help(): no component {component!r}{_hint_}')
+        return component
+
+    def _helpDoc_(self, name: str) -> str:
+        return getattr(type(self), name).__doc__ or ''
+
     def xyp(self, *args: Any, **kwargs: Unpack[XYpKwargs]) -> XYp:
         '''
         xyp(polars.DataFrame, x, y, ...)

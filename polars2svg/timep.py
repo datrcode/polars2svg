@@ -618,6 +618,24 @@ class Timep(P2SBinComponentMixin, ExportMixin):
         return _selected_
 
     #
+    # timelineBars() - how many bars a timeline (linear) level draws on `df`: the spine from
+    # the first truncated timestamp to the last, empty bins included, which is what the plot
+    # shows.  timepi's granularity row uses it to decide whether a chosen level still fits a
+    # drilled-in frame (PLANNING.md §7 F17).  0 for a frame with no timestamps.
+    #
+    def timelineBars(self, level: TimeLinearTypeP, df: pl.DataFrame | None = None) -> int:
+        _df_ = self.df_orig if df is None else df
+        if _df_ is None or len(_df_) == 0 or self._time_field_ not in _df_.columns: return 0
+        _trunc_ = self.__linearTruncMap__()[level]
+        _tf_    = pl.col(self._time_field_).dt.truncate(_trunc_)
+        _mn_, _mx_ = _df_.select(_tf_.min().alias('__mn__'), _tf_.max().alias('__mx__')).row(0)
+        if _mn_ is None or _mx_ is None: return 0
+        if _trunc_.endswith('mo') or _trunc_.endswith('y'):
+            _months_ = {'1mo': 1, '3mo': 3, '1y': 12}[_trunc_]
+            return ((_mx_.year - _mn_.year) * 12 + (_mx_.month - _mn_.month)) // _months_ + 1
+        return int(round((_mx_ - _mn_).total_seconds() / _SECS_PER_TRUNC_[_trunc_])) + 1
+
+    #
     # timeLevels() - the time levels an interactive view can offer this plot, coarsest
     # first: every linear level whose spine fits the plot, then every periodic level whose
     # cycle does -- each no finer than the data resolves, and each drawing at least two

@@ -1013,9 +1013,8 @@ class _InteractivePBase(_TooltipMixin_, JSComponent):
     use_webgpu = param.Boolean(default=False)
 
     mod_inner   = param.String(default='')
-    # Not bound as ${info_str} in _template, on purpose -- a content binding makes
-    # it a ReactiveHTML child and every write then rebuilds the subtree, killing
-    # the JS-only interaction state.  See the long note on LINKPI's info_str.
+    # The status line: p2s_interactivep.js writes it into the `infostr` text element.  An
+    # ordinary data param, so a write re-renders nothing.  See LINKPI's info_str.
     info_str          = param.String(default='')
     keyboardhelp_x    = param.Integer(default=-1000)
     x0_middle         = param.Integer(default=0)
@@ -1165,8 +1164,13 @@ class _InteractivePBase(_TooltipMixin_, JSComponent):
         _rows_.append(['i', 'tooltip', 'tooltip', True])
         if self._render_rows_ is not None:
             _s_ = dict(self.render_settings)
-            _rows_ += [[_r_.mnemonic, _r_.kind, _r_.label, bool(_r_.enabled(_s_))]
-                       for _r_ in self._render_rows_.rows]
+            for _r_ in self._render_rows_.rows:
+                _row_: list[Any] = [_r_.mnemonic, _r_.kind, _r_.label, bool(_r_.enabled(_s_))]
+                # A fifth element only when the frame on screen is not using the row's value
+                # (timepi's F17 fallback); the panel draws it after the value.
+                _note_ = self._render_rows_.rowNote(_r_.kind, _s_, getattr(self, '_plot_', None))
+                if _note_: _row_.append(_note_)
+                _rows_.append(_row_)
         return _rows_
 
     #
@@ -1191,7 +1195,8 @@ class _InteractivePBase(_TooltipMixin_, JSComponent):
                 if _ov_ == self._overrides_:
                     self.config_panel_rows = self.__configPanelRows__()
                     return
-                _plot_ = getattr(self.template.p2s, self._render_fn_)(df=self._df_, template=self.template, **_ov_)
+                _plot_ = getattr(self.template.p2s, self._render_fn_)(
+                    df=self._df_, template=self.template, **self._render_rows_.frameOverrides(_ov_, self._df_))
             except (MemoryError, KeyboardInterrupt):
                 raise
             except Exception:
@@ -1255,7 +1260,8 @@ class _InteractivePBase(_TooltipMixin_, JSComponent):
 
     # Render the view
     def __renderView__(self, df):
-        return getattr(self.template.p2s, self._render_fn_)(df=df, template=self.template, **self._overrides_)
+        _ov_ = self._overrides_ if self._render_rows_ is None else self._render_rows_.frameOverrides(self._overrides_, df)
+        return getattr(self.template.p2s, self._render_fn_)(df=df, template=self.template, **_ov_)
 
     # Core brush logic: call recordsAt and broadcast to peers
     async def _doBrushAt(self, xy, state_idx, seq=None):
@@ -1380,6 +1386,9 @@ class _InteractivePBase(_TooltipMixin_, JSComponent):
             self._plot_ = _entry_[1]
             self._df_   = df          # what a render-row change re-renders
             self.__refreshView__()
+            # a row's note can depend on the frame (timepi's granularity fallback, F17)
+            if self._render_rows_ is not None:
+                self.config_panel_rows = self.__configPanelRows__()
             # clean up the cache
             _ids_ = set([id(df) for df in dfs])
             for _id_ in list(self._cache_.keys()):
@@ -2356,26 +2365,14 @@ class LINKPI(_TooltipMixin_, JSComponent):
     # the SELECTION: past it nothing is labeled, and info_str says so.
     selection_labels              = param.Dict(default={})
     max_selection_labels          = param.Integer(default=32)
-    # info_str is deliberately NOT bound as ${info_str} in _template, and putting it
-    # back re-opens PLANNING.md U5.  A content binding -- ${p} between tags, as opposed
-    # to an attribute binding inside a tag -- registers the param as a ReactiveHTML
-    # *child*, and panel's _update_model then takes the `prop in child_params` branch
-    # (reactive.py ~2208): it sets new_children[prop], which re-renders the whole
-    # subtree.  Every JS-only variable dies with it -- an open picker menu loses
-    # menu_open/menu_index, the search buffer empties, brush_state resets to 0 -- and
-    # because Python rewrites info_str after almost every operation, that was happening
-    # constantly.  Unbound, info_str is an ordinary data param: the 'info_str' script
-    # below still writes infostr.innerHTML, so the line displays exactly as before, and
-    # nothing rebuilds.
-    #
-    # mod_inner cannot get the same treatment, which is why it is still bound.  Unbound
-    # params take the `isinstance(v, str)` branch instead (reactive.py ~2243) and are
-    # run through panel's HTML_SANITIZER, which strips SVG markup to the empty string --
-    # the plot would simply never draw.  Being a child is what exempts mod_inner from
-    # that, so it keeps both the exemption and the rebuild.  The rebuild is tolerable
-    # there because mod_inner only changes when the plot genuinely redraws.  Only a
-    # non-string carrier (param.Dict, as gpu_payload already does) would buy the same
-    # exemption without the rebuild; that is a wider change than U5 needs.
+    # info_str is the status line (selection count, layout mode and operation, cost note).
+    # The view reads it from the model: p2s_linkpi.js writes it into the `infostr` text
+    # element at mount and again on every `model.on('info_str')`.  It is an ordinary data
+    # param -- writing it re-renders nothing and leaves the JS-only state alone.  (Under the
+    # old ReactiveHTML build a `${info_str}` content binding made it a Panel child, and every
+    # write rebuilt the subtree, which is what PLANNING.md U5 fixed by unbinding it.  There is
+    # no `_template` and no sanitizer now, so the rule has nothing left to govern; it is
+    # recorded here only because U5 and the CHANGELOG still name it.)
     info_str                      = param.String(default=" | | grid")
     layout_mode                   = param.String(default="grid")
     layout_operation              = param.String(default="spring nx")

@@ -252,6 +252,7 @@ class TestAnnotationCoverageRatchet(unittest.TestCase):
         'p2s_colors_mixin':                       0,
         'p2s_interactive_mixin':                  0,
         'p2s_esm':                                0,
+        'p2s_help':                               0,
         'p2s_text_mixin':                         0,
         'circle_packer':                          0,
         'tile':                                   0,
@@ -433,6 +434,38 @@ class TestMypyErrorRatchet(unittest.TestCase):
             f'per-module counts sum to {_total_} but MAX_ERRORS sums to '
             f'{sum(self.MAX_ERRORS.values())}; keep _MYPY_CEILING_ in tools/preflight.sh '
             "and _CEILING_ in ci.yml's type-check job equal to the new total.")
+
+
+class TestMypyCeilingsAgree(unittest.TestCase):
+    '''The mypy ceiling lives in three places -- the per-module table above,
+    tools/preflight.sh and ci.yml's type-check job -- and CLAUDE.md says they are tested
+    against each other.  Until PLANNING.md R15 nothing read the two files, so ci.yml sat
+    at 60 while the other two moved to 57.  Each half skips where its file does not exist
+    (_dev has no .github/), and each reads its number out of the file, so a ceiling moved
+    in one place alone fails whichever checkout has the other file.'''
+
+    _ROOT_ = Path(__file__).resolve().parent.parent
+
+    def _read_number_(self, rel, pattern):
+        _path_ = self._ROOT_ / rel
+        if not _path_.is_file(): self.skipTest(f'{rel} is not in this checkout')
+        _found_ = re.findall(pattern, _path_.read_text(encoding='utf-8'), flags=re.MULTILINE)
+        # Exactly one: zero means the pattern went stale and the test would pass on nothing;
+        # two means a second assignment this test is not looking at.
+        self.assertEqual(len(_found_), 1, f'{rel}: expected one ceiling assignment, found {_found_}')
+        return int(_found_[0])
+
+    def test_preflight_ceiling_equals_the_per_module_table(self):
+        _n_ = self._read_number_('tools/preflight.sh', r'^_MYPY_CEILING_=(\d+)\b')
+        self.assertEqual(_n_, sum(TestMypyErrorRatchet.MAX_ERRORS.values()),
+                         '_MYPY_CEILING_ in tools/preflight.sh and the MAX_ERRORS table '
+                         'must move together (and so must ci.yml)')
+
+    def test_ci_ceiling_equals_the_per_module_table(self):
+        _n_ = self._read_number_('.github/workflows/ci.yml', r'^\s*_CEILING_=(\d+)\b')
+        self.assertEqual(_n_, sum(TestMypyErrorRatchet.MAX_ERRORS.values()),
+                         "_CEILING_ in ci.yml's type-check job and the MAX_ERRORS table "
+                         'must move together (and so must tools/preflight.sh)')
 
 
 class TestRatchetConfigConsistency(unittest.TestCase):

@@ -24,6 +24,11 @@ class TestBenchReleasesReport(unittest.TestCase):
     """The pure parts of tools/bench_releases.py; the venv / network parts are exercised by
     running the tool, not by the suite."""
 
+    @classmethod
+    def setUpClass(cls):
+        if not (_TOOLS_ / 'bench_releases.py').exists():
+            raise unittest.SkipTest('tools/bench_releases.py not present (dev-only tooling)')
+
     def test_summarize_takes_median_of_rounds_and_ignores_failed_rounds(self):
         b = _load_()
         s = b.summarize([_ok_(1.0), _ok_(3.0), {'status': 'oom'}, _ok_(2.0)])

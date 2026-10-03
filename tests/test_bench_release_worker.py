@@ -20,6 +20,11 @@ class TestBenchReleaseWorker(unittest.TestCase):
     """tools/bench_release_worker.py is run under old releases by the G5 driver, so it must
     keep working against the current tree: every workload renders at a tiny size."""
 
+    @classmethod
+    def setUpClass(cls):
+        if not (_TOOLS_ / 'bench_release_worker.py').exists():
+            raise unittest.SkipTest('tools/bench_release_worker.py not present (dev-only tooling)')
+
     def test_netflow_frame_is_deterministic_and_shaped(self):
         w = _load_worker_()
         a, b = w.make_netflow(2000, seed=1), w.make_netflow(2000, seed=1)

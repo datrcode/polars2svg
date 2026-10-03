@@ -136,9 +136,13 @@ class TestTextPathPNGWarning(unittest.TestCase):
         return [str(x.message) for x in w if '<textPath>' in str(x.message)]
 
     def test_curve_link_labels_warn_with_their_count(self):
+        # Pinned layout: linkp's default places nodes at random, and ~1% of draws put two
+        # linked nodes close enough that the edge is too short for its label, so it is
+        # (correctly) culled and the count reads 5.
         p2s  = Polars2SVG()
+        pos  = {'a': (0.1, 0.1), 'b': (0.9, 0.1), 'c': (0.9, 0.9), 'd': (0.1, 0.9)}
         plot = p2s.linkp(df=self._df_, relationships=[('fm', 'to', 'lbl')], link_shape='curve',
-                         draw_link_labels=True, draw_node_labels=False)
+                         pos=pos, draw_link_labels=True, draw_node_labels=False)
         msgs = self._png_warnings_(plot)
         self.assertEqual(len(msgs), 1)
         self.assertTrue(msgs[0].startswith('6 <textPath>'), msgs[0])

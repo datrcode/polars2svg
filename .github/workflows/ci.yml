@@ -84,7 +84,9 @@ jobs:
         #
         # Keep this number equal to _MYPY_CEILING_ in tools/preflight.sh and to
         # the sum of MAX_ERRORS in tests/test_typing_surface.py, which splits the
-        # same total by module and is checked by the suite.
+        # same total by module.  TestMypyCeilingsAgree reads all three and fails the
+        # suite when they differ (PLANNING.md R15: this one sat at 60 while the other
+        # two had moved to 57, and nothing noticed).
         #
         # The count is a function of the dependency versions as well as the
         # code, so it only means something against a stated environment. This
@@ -95,7 +97,7 @@ jobs:
         # local .venv is lock-aligned. A polars bump moving this is a deliberate
         # re-baseline, not a regression; name the new version when you raise it.
         run: |
-          _CEILING_=60
+          _CEILING_=57
           set +e
           _out_="$(uv run --no-sync mypy polars2svg 2>&1)"; _rc_=$?
           set -e

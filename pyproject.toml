@@ -404,8 +404,9 @@ exclude = [
   "pypi_instructions.txt",
   "CLAUDE.md",
   "PLANNING.md",
-  "20260913_fable_code_audit.md",
-  "20260915_fable_code_audit.md",
-  "20260917_fable_least_confidence.md",
-  "20260917_fable_what_am_i_missing.md",
+  # The dated working notes at the repo root (YYYYMMDD_*: audits, design notes,
+  # draft patches).  A pattern rather than a list of names, because a list only
+  # covered the notes that existed when it was last edited.  The leading `/`
+  # anchors it to the root so it cannot match a file deeper in the tree.
+  "/20[0-9][0-9][01][0-9][0-3][0-9]_*",
 ]

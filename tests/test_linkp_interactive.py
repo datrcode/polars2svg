@@ -520,11 +520,11 @@ class TestLinkPInteractive(unittest.TestCase):
         # After __moveSelectedEntities__ + renderSVG(), the df_node __sx__ for
         # the moved node must reflect the new position.
         lp       = self.lp
-        sx_before = lp.df_node.explode('__nm__').filter(
+        sx_before = lp.df_node.explode('__nm__', empty_as_null=False).filter(
             pl.col('__nm__') == 'a')['__sx__'][0]
         lp.__moveSelectedEntities__((20, 0), {'a'})
         lp.renderSVG()
-        sx_after  = lp.df_node.explode('__nm__').filter(
+        sx_after  = lp.df_node.explode('__nm__', empty_as_null=False).filter(
             pl.col('__nm__') == 'a')['__sx__'][0]
         self.assertNotAlmostEqual(
             sx_after, sx_before, delta=1,
@@ -537,7 +537,7 @@ class TestLinkPInteractive(unittest.TestCase):
         lp = self.lp
         lp.__moveSelectedEntities__((30, 0), {'a'})
         svg    = lp.renderSVG()
-        new_sx = lp.df_node.explode('__nm__').filter(
+        new_sx = lp.df_node.explode('__nm__', empty_as_null=False).filter(
             pl.col('__nm__') == 'a')['__sx__'][0]
         self.assertIn(f'cx="{new_sx}"', svg)
 
@@ -617,7 +617,7 @@ class TestLinkPInteractiveIntegerNodes(unittest.TestCase):
                               node_color={'103244': '#2166ac', '103245': '#d6604d',
                                           '103246': '#2166ac'})
         _lp_.renderSVG()
-        _row_  = _lp_.df_node.explode('__nm__').filter(pl.col('__nm__') == '103244')
+        _row_  = _lp_.df_node.explode('__nm__', empty_as_null=False).filter(pl.col('__nm__') == '103244')
         _found_ = set()
         for _e_ in _lp_.entitiesAtPoint((_row_['__sx__'][0], _row_['__sy__'][0])):
             _found_ |= set(_lp_.nodesWithColor(_lp_.nodeColor(_e_)))
@@ -1773,7 +1773,7 @@ class TestZKeyColorSelection(unittest.TestCase):
         self.ctrl   = self.p2s.linkpi(self.lp)
 
     def _press_z_over(self, node):
-        _row_ = self.lp.df_node.explode('__nm__').filter(pl.col('__nm__') == str(node))
+        _row_ = self.lp.df_node.explode('__nm__', empty_as_null=False).filter(pl.col('__nm__') == str(node))
         self.ctrl.x_mouse, self.ctrl.y_mouse = _row_['__sx__'][0], _row_['__sy__'][0]
         self.ctrl.key_op_finished = 'z'
         asyncio.run(self.ctrl.applyKeyOp(None))

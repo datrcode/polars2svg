@@ -135,7 +135,7 @@ class TestSelectionLabelsGeometry(unittest.TestCase):
         return _payload_['labels'][0]
 
     def test_label_sits_under_its_own_node(self):
-        _row_ = (self.lp.df_node.explode('__nm__')
+        _row_ = (self.lp.df_node.explode('__nm__', empty_as_null=False)
                      .filter(pl.col('__nm__') == 'a')
                      .select('__sx__', '__sy__').row(0))
         _e_ = self._entry('a')

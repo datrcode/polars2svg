@@ -31,6 +31,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **polars is capped below 2.0: the requirement is now `polars>=1.36,<2`.** polars
+  2.0 is in release candidates (2.0.0rc2 since 2026-09-20). Against it, every
+  categorical colour changes, and a few xyp renders stop being repeatable. The cap keeps
+  a fresh install on polars 1.x until 2.0 is supported. It also excludes the release
+  candidates. Releases up to 0.4.0 declare no upper bound, so pin `polars<2` yourself if
+  you stay on one of them.
+
 - **`timepi`: a timeline granularity falls back to auto on a frame too narrow for it.**
   A granularity chosen on the settings panel used to apply at every level of the
   drill-down stack, so `monthly` on a one-week frame drew a single bar.
@@ -52,6 +59,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `draw_link_labels=True`). The SVG was always correct, and `.svg` output is unchanged.
 
 ### Fixed
+
+- **`xyp`: a categorical gridline label no longer depends on the order of the rows.**
+  When an axis has more categories than pixels, two categories can share a gridline. If
+  they also had the same number of rows, the label drawn there followed the input's row
+  order, so sorting a frame differently could relabel its axis. Under polars 2.0 it
+  changed between identical calls. The gridline now takes the category first in reading
+  order: left to right on x, top to bottom on y. Axes with fewer categories than pixels
+  are unaffected.
 
 - **The `layouts` extra's `scipy` floor is `>=1.15`, not `>=1.13`.** On scipy 1.13 and
   1.14, `LandmarkMDSLayout` and `PivotMDSLayout` raised `ValueError: Buffer dtype

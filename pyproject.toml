@@ -33,6 +33,12 @@ keywords        = ["polars", "svg", "visualization", "jupyter", "dataframe", "ch
 # which every dated or datetime xyp axis calls; 1.36 is also the first release
 # with `explode(empty_as_null=)`.  Do not lower it without re-running that sweep.
 #
+# polars also carries the only upper bound here, `<2`, and it is temporary
+# (PLANNING.md §5 C-polars2-color-hash, 2026-10-04).  The suite fails against 2.0.0rc2,
+# chiefly because every categorical colour comes from `pl.Expr.hash()`, which polars keeps
+# stable only within one version, so 2.0 recolours every chart.  `<2` also excludes
+# the 2.0 release candidates (PEP 440).  Lift it once the suite passes on 2.0.
+#
 # Core is deliberately slim: xyp/histop/timep/piep/smallp/spreadlinesp only need
 # polars + numpy (+ pyarrow/pillow/platformdirs for I/O). linkp's/chordp's
 # pluggable-layout algorithms, the graph-layout mixin (treemaps, force-directed,
@@ -45,7 +51,7 @@ keywords        = ["polars", "svg", "visualization", "jupyter", "dataframe", "ch
 # previous "batteries included" install.
 dependencies    = [
   "numpy>=1.26",
-  "polars>=1.36",
+  "polars>=1.36,<2",
   "pyarrow>=16",
   "pillow>=12.3",
   "platformdirs>=4.0",

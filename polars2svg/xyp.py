@@ -2672,8 +2672,8 @@ class XYp(P2SBackgroundMixin, ExportMixin):
             _svg_.append(_txt_)
             if dl is not None: dl.text(self.p2s, f'{_label_}', _lx_, _ly_, color=self.p2s.colorTyped('axis', 'inner'), txt_h=self.txt_h*0.6, rotation=_rot_, svg='')
         # Get the column names
-        if    x_axis: px_col, axis_col = '__xpx__', '__x__'
-        else:         px_col, axis_col = '__ypx__', '__y__'
+        if    x_axis: px_col, axis_col, slot_col = '__xpx__', '__x__', '__xi__'
+        else:         px_col, axis_col, slot_col = '__ypx__', '__y__', '__yi__'
 
         # Organize the data by the most rows -- this will be the priority for rendering.
         #
@@ -2690,9 +2690,17 @@ class XYp(P2SBackgroundMixin, ExportMixin):
         # below that spreads the labels evenly across the axis rather than clustering
         # them.  Counts that genuinely differ are unaffected -- 'len' is still primary.
         # PLANNING.md §15.
-        _df_ = (self.df_flat.group_by([px_col, axis_col], maintain_order=True)
+        #
+        # The screen coordinate is not unique either: with more categories than pixels,
+        # two categories share a pixel, and at an equal count the tie fell back to row
+        # order.  Under polars 2.0rc2 the top gridline of a 199-category, 192px axis read
+        # one category in 153 of 300 identical renders and its neighbour in 147.  The slot
+        # (__xi__/__yi__, one per category) is the third key, taken in the same reading
+        # direction as the pixel: ascending on x, descending on y, where a higher slot
+        # sits higher up.  PLANNING.md §5 C-xyp-set-gridline-label-ties.
+        _df_ = (self.df_flat.group_by([px_col, axis_col, slot_col], maintain_order=True)
                             .len()
-                            .sort(['len', px_col], descending=[True, False]))
+                            .sort(['len', px_col, slot_col], descending=[True, False, not x_axis]))
 
         # Limit the number of labels based on the pixel goal and the dimension
         _max_labels_to_render_ = _dim_ // pixel_goal

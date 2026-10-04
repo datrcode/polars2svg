@@ -1,3 +1,4 @@
+import re
 import unittest
 import polars as pl
 from polars2svg import Polars2SVG
@@ -326,6 +327,46 @@ class Testxyp_categorical_label_priority(unittest.TestCase):
         for _i_ in range(4):
             with self.subTest(repeat=_i_):
                 self.assertEqual(self._svg_(_df_, False, (256, 256)), _first_)
+
+    #
+    # The screen coordinate is not unique either.  With more categories than pixels two
+    # categories share a pixel, and at an equal count the pixel tie fell back to row
+    # order.  On polars 1.41.2 that made the label follow the input's row order -- the
+    # unfixed code fails this test with the rows forward on y and reversed on x -- and under
+    # polars 2.0rc2 the top gridline of a 199-category axis read one category in about half
+    # of identical renders and its neighbour in the rest.  Reversing the slot key fails it
+    # too.  PLANNING.md §5 C-xyp-set-gridline-label-ties.
+    #
+    def assertTiedGridlinesFollowTheSlot(self, xp, axis: str) -> None:
+        '''Every drawn gridline whose pixel two categories share at an equal count is
+        labelled by the one first in reading order: lowest slot on x, highest on y.'''
+        _px_, _ax_, _sl_ = (f'__{axis}px__', f'__{axis}__', f'__{axis}i__')
+        # gridline labels are the 0.6 x txt_h text; an x label is rotated, so a transform follows
+        _drawn_ = set(re.findall(r'font-size="7\.\d+px"[^>]*>([^<]+)</text>', xp.svg))
+        _groups_ = xp.df_flat.group_by([_px_, _ax_, _sl_]).len()
+        _tied_ = (_groups_.join(_groups_.group_by([_px_, 'len']).len(name='__n__'), on=[_px_, 'len'])
+                          .filter(pl.col('__n__') > 1))
+        _checked_ = 0
+        for _, _grp_ in _tied_.group_by([_px_, 'len']):
+            _names_ = set(_grp_[_ax_].to_list())
+            if not (_names_ & _drawn_): continue
+            _expected_ = _grp_.sort(_sl_, descending=(axis == 'y'))[_ax_][0]
+            self.assertEqual(_names_ & _drawn_, {_expected_},
+                             f'{axis}: the gridline shared by {sorted(_names_)} is labelled by '
+                             f'{sorted(_names_ & _drawn_)}, not by {_expected_!r}')
+            _checked_ += 1
+        self.assertGreater(_checked_, 0, f'{axis}: the frame no longer puts a drawn label on a tied pixel')
+
+    def test_a_shared_pixel_is_labelled_by_its_first_category_in_reading_order(self):
+        _cats_ = [f'c{i:03d}' for i in range(600)]
+        for _axis_ in ('x', 'y'):
+            for _reverse_ in (False, True):
+                with self.subTest(axis=_axis_, reversed_rows=_reverse_):
+                    _df_ = pl.DataFrame({'c': _cats_, 'n': list(range(len(_cats_)))})
+                    if _reverse_: _df_ = _df_.reverse()
+                    _xp_ = (self.p2s.xyp(_df_, x='c', y='n') if _axis_ == 'x' else
+                            self.p2s.xyp(_df_, x='n', y='c'))
+                    self.assertTiedGridlinesFollowTheSlot(_xp_, _axis_)
 
 
 if __name__ == '__main__':

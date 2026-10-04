@@ -1840,7 +1840,7 @@ requires-dist = [
     { name = "param", marker = "extra == 'interactive'", specifier = ">=2.0" },
     { name = "pillow", specifier = ">=12.3" },
     { name = "platformdirs", specifier = ">=4.0" },
-    { name = "polars", specifier = ">=1.36" },
+    { name = "polars", specifier = ">=1.36,<2" },
     { name = "polars2svg", extras = ["interactive", "layouts", "export", "mlx"], marker = "extra == 'all'" },
     { name = "polars2svg", extras = ["layouts"], marker = "extra == 'interactive'" },
     { name = "polars2svg", extras = ["layouts"], marker = "extra == 'mlx'" },

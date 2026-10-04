@@ -109,8 +109,13 @@ classifiers=[
 #
 # The CUDA backend needs: NVIDIA SM >= 7.5 (Turing+), driver >= 550.54.14 (>= 580 for
 # CUDA 13), CUDA toolkit >= 12.0, glibc >= 2.35, Linux x86_64/aarch64. There are no
-# Windows CUDA wheels. Off that envelope MLX falls back to CPU (TFDPLayout still
-# works, just slower) — see _default_device() in tfdp_layout.py.
+# Windows CUDA wheels. With a device present but off that envelope (old SM, toolkit
+# mismatch), MLX falls back to CPU and TFDPLayout still works, just slower: see
+# _default_device() in tfdp_layout.py. With NO usable device at all (no driver module,
+# CUDA_VISIBLE_DEVICES="", a container without --gpus) the CUDA build cannot import, so
+# there is no CPU fallback: TFDPLayout is unavailable and ODFlowLayout runs on NumPy.
+# The package imports mlx.core exactly once, because a second attempt after that
+# failure aborts the interpreter (PLANNING.md C-mlx-cuda-no-device-abort, 2026-10-04).
 mlx        = ["mlx", "polars2svg[layouts]"]
 mlx-cpu    = ["mlx[cpu]; sys_platform == 'linux'", "polars2svg[layouts]"]
 mlx-cuda   = ["mlx[cuda12]; sys_platform == 'linux'", "polars2svg[layouts]"]

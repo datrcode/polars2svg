@@ -376,6 +376,56 @@ jobs:
         # stop exercising this test with nothing in the log to say so.
         run: python -m pytest tests/ -q -rs --ignore=tests/test_performance.py
 
+  # Every dependency at its declared floor (PLANNING.md R11 / LD2).  The clean-room job
+  # above resolves the NEWEST release of everything, so a lower bound in pyproject.toml is
+  # a claim nothing checks -- and three were wrong at once: polars>=1.25 (R8, 95 failing
+  # tests below 1.36), shapely>=2.0 (no 3.12 wheel before 2.0.2) and scipy>=1.13 (dijkstra
+  # rejects networkx's int64 CSR indices before 1.15).  The last two were found by running
+  # this job by hand, which is the case for having it.
+  #
+  # --resolution lowest-direct puts every DIRECT dependency, extras included, at its floor
+  # and lets transitive ones resolve normally.  The extras are the point: both of the
+  # 2026-10-03 bugs live in [layouts], and the R8 sweep that covered only the core missed
+  # them.  On 3.12 because that is requires-python's floor and a floor package must
+  # install there; it is also the leg the clean-room matrix (3.13/3.14) does not have.
+  #
+  # The test tools are installed in a SECOND step, without the resolution flag: in the
+  # same step lowest-direct applies to them too and picks pytest==2.0.0, which does not
+  # build.  The PNG-RMS goldens skip here as in the clean-room job (they are macOS-only);
+  # on macOS at the floors they fail, because the rasterizer at its floor draws
+  # differently -- not a floor problem, and the exact-SVG goldens all pass.
+  dependency-floors:
+    name: Dependency floors (lowest-direct, py3.12)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    container: python:3.12-slim
+    steps:
+      # Same as the clean-room job: pycairo has no Linux wheel, and rlPyCairo at its
+      # floor still pulls it in through [export].
+      - name: Install git and pycairo's build dependencies
+        run: |
+          apt-get update && apt-get install -y --no-install-recommends \
+            git build-essential libcairo2-dev pkg-config
+
+      - uses: actions/checkout@v7
+
+      - name: Install the package with every direct dependency at its floor
+        run: |
+          pip install --no-cache-dir uv
+          uv venv --python 3.12 /opt/floors
+          uv pip install --python /opt/floors/bin/python --resolution lowest-direct \
+            ".[interactive,layouts,export]"
+
+      - name: Install test-only dependencies
+        run: uv pip install --python /opt/floors/bin/python pytest kagglehub fonttools
+
+      - name: Show what the floors resolved to
+        # The point of the job is which versions it ran; put them in the log.
+        run: uv pip list --python /opt/floors/bin/python
+
+      - name: Run the test suite
+        run: /opt/floors/bin/python -m pytest tests/ -q -rs --ignore=tests/test_performance.py
+
   # The browser-driven interaction suite (tests/interaction/, PLANNING.md 2.1).
   #
   # Everything it covers is JavaScript that no Python test can reach: the keydown

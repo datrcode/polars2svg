@@ -6,9 +6,11 @@ import networkx as nx
 # (Metal), polars2svg[mlx-cuda] on Linux + NVIDIA. Guard the import so this module
 # still collects where mlx is absent (e.g. the clean-room CI); the tests then skip
 # rather than erroring at collection.
+# mx comes from polars2svg's own (single) mlx import rather than a separate
+# `import mlx.core`: after a failed first import, a second one aborts the interpreter
+# on mlx's CUDA build (PLANNING.md C-mlx-cuda-no-device-abort).
 try:
-    import mlx.core as mx
-    from polars2svg.tfdp_layout import TFDPLayout, gpu_backend
+    from polars2svg.tfdp_layout import TFDPLayout, gpu_backend, mx
     _HAS_MLX = True
 except ImportError:
     mx = None

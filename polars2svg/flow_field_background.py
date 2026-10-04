@@ -70,6 +70,14 @@ DEFAULT_MAX_EDGES = 25_000
 # strongest layer there counts as untouched by that group (see _assign_layers).
 FREE_LAYER_REL = 1e-6
 
+# Layer scores closer than this are a tie, and a tie goes to the lowest-index layer (see
+# _assign_layers).  Scores are cosines in [-1, 1], so 1e-9 is far below any real
+# preference.  It is far above the rounding residue an exactly orthogonal flow leaves
+# behind, though: about 1e-17 to 1e-19, with a sign that numpy 1.x and 2.x round
+# differently.  Comparing exactly let that sign pick the layer
+# (PLANNING.md §5 C-flowfield-layer-tie-noise).
+SCORE_TIE_TOL = 1e-9
+
 # Fallback palette for layerAppearance(); layer 1 (the dominant flow) first.
 _PALETTE = ('#2b6ca3', '#c8642a', '#4f9d5b', '#8a5fa8', '#b0913b', '#a34f5e')
 
@@ -320,7 +328,8 @@ def _assign_layers(k_layers: int, weights: np.ndarray, ends: np.ndarray, dirs: n
     structure would fight (cos < tau) and loses to one it agrees with
     (cos > tau).  So the dominant flow keeps consolidating into layer 0 and the
     later layers fill with the counter-flows and crossings layer 0 cannot
-    represent.  Ties go to the lowest-index layer.
+    represent.  Ties go to the lowest-index layer, where scores within
+    ``SCORE_TIE_TOL`` count as tied, so float noise cannot break one.
 
     Nothing is ever dropped -- with all K layers in conflict the least-bad one
     wins, which is what makes K a hard parameter rather than a cap.
@@ -396,7 +405,7 @@ def _assign_layers(k_layers: int, weights: np.ndarray, ends: np.ndarray, dirs: n
         for k in range(k_layers):
             free  = peak_all <= EPS or peaks[k] <= FREE_LAYER_REL * peak_all
             score = tau if (free or dens[k] <= EPS) else nums[k] / dens[k]
-            if score > best_score:
+            if score > best_score + SCORE_TIE_TOL:
                 best_k, best_score = k, score
 
         _deposit(group, best_k, 1.0)

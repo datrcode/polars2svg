@@ -22,6 +22,7 @@ from typing import Any
 
 import contextlib
 import math
+import sys
 import numpy as np
 
 # MLX is optional (polars2svg[mlx] / [mlx-cuda]).  Absent it, everything runs on
@@ -32,11 +33,29 @@ import numpy as np
 # [tool.mypy] no_implicit_reexport an imported name is private to the module that
 # imported it, while a module-level assignment is public.  Same reasoning as
 # TField in __init__.py.
-try:
-    import mlx.core
-    mx = mlx.core
-except ImportError:
-    mx = None
+#
+# This is also the package's ONLY `import mlx.core` attempt, and tfdp_layout reuses its
+# outcome rather than trying again.  A second attempt after a failed first one is not a
+# retry but a crash: mlx's CUDA build registers its nanobind types before it finds out
+# there is no usable device (driver missing, CUDA_VISIBLE_DEVICES="", a container without
+# --gpus), so re-running the extension's init aborts the interpreter with SIGABRT.  No
+# `except` can catch that.  PLANNING.md §5 C-mlx-cuda-no-device-abort.
+#
+# "Once" has to hold per PROCESS, not per execution of this module: reloading
+# polars2svg (importlib.reload, or a test that purges polars2svg.* from sys.modules and
+# re-imports it) re-runs this block.  So a failure is also recorded on the `mlx`
+# front-end package, which imported fine and stays in sys.modules after its `core`
+# failed, and a re-run reads it back instead of trying again.
+mx: Any = None
+_MLX_IMPORT_ERROR_: ImportError | None = getattr(sys.modules.get('mlx'), '_polars2svg_core_import_error_', None)
+if _MLX_IMPORT_ERROR_ is None:
+    try:
+        import mlx.core
+        mx = mlx.core
+    except ImportError as _mlx_err_:
+        _MLX_IMPORT_ERROR_ = _mlx_err_
+        if 'mlx' in sys.modules:
+            setattr(sys.modules['mlx'], '_polars2svg_core_import_error_', _mlx_err_)
 
 
 # ---------------------------------------------------------------------------

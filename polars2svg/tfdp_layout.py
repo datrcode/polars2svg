@@ -16,12 +16,19 @@ import logging
 import time
 from typing import Any
 
-try:
-    import mlx.core as mx
-except ImportError as _mlx_err:
+from . import od_flow_layout as _ofl_
+
+# mlx.core is imported once, by od_flow_layout, and that outcome is reused here instead of
+# a second `import mlx.core`.  After a failed first attempt a second one aborts the whole
+# interpreter on mlx's CUDA build (C-mlx-cuda-no-device-abort; see od_flow_layout.py).
+# When the first attempt succeeded, the import at the bottom of this block is a
+# sys.modules lookup -- and it keeps `mx` a module, so `mx.Device` stays a valid type.
+if _ofl_.mx is None:
+    _mlx_err = _ofl_._MLX_IMPORT_ERROR_
     # Two different failures wear the same exception. `mlx` absent entirely is an extras
     # problem; `mlx` importable-but-broken means the backend distribution is missing --
-    # PyPI's `mlx` ships no backend library, and on Linux nothing pulls one in.
+    # PyPI's `mlx` ships no backend library, and on Linux nothing pulls one in -- or, with
+    # a CUDA backend installed, that no CUDA device is usable right now.
     from importlib.util import find_spec as _find_spec
     if _find_spec('mlx') is None:
         raise ImportError(
@@ -47,8 +54,14 @@ except ImportError as _mlx_err:
         "silently -- a CUDA install can end up running on CPU.\n"
         "On Windows there is no backend distribution to install, so TFDPLayout "
         "cannot run there at all.\n"
+        "If a CUDA backend (mlx-cuda-12 / mlx-cuda-13) IS installed, the GPU is not "
+        "usable right now: check `nvidia-smi` (a kernel update can leave no driver "
+        "module), CUDA_VISIBLE_DEVICES, and a container's --gpus flag. mlx's CUDA build "
+        "cannot import at all without a device, so there is no CPU fallback for it.\n"
         f"Underlying error: {_mlx_err}"
     ) from _mlx_err
+
+import mlx.core as mx
 
 import numpy as np
 import scipy.sparse as sp

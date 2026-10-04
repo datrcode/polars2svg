@@ -5,9 +5,11 @@ import unittest
 # blame localization: MLX's CUDA backend is newer than its Metal one, so if a single
 # op (scatter-add, keyed RNG) has a backend gap, it should fail *here* by name rather
 # than surface as a mystery NaN 300 steps into a layout loop.
+# mx comes from polars2svg's own (single) mlx import rather than a separate
+# `import mlx.core`: after a failed first import, a second one aborts the interpreter
+# on mlx's CUDA build (PLANNING.md C-mlx-cuda-no-device-abort).
 try:
-    import mlx.core as mx
-    from polars2svg.tfdp_layout import _default_device, gpu_backend
+    from polars2svg.tfdp_layout import _default_device, gpu_backend, mx
     _HAS_MLX = True
 except ImportError:
     mx = None

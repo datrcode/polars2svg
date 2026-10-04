@@ -126,9 +126,12 @@ def _accel():
     """
     if find_spec('mlx') is None:
         return 'nomlx', None
-    try:
-        import mlx.core  # noqa: F401
-    except Exception:   # broad on purpose: front-end without a backend library
+    # Read polars2svg's own mlx import rather than importing mlx.core again: a second
+    # attempt after a failed one aborts the interpreter on mlx's CUDA build
+    # (PLANNING.md C-mlx-cuda-no-device-abort).  A CUDA backend with no usable device
+    # lands here too, as 'mlx-nobackend'.
+    from polars2svg import od_flow_layout as _ofl_
+    if _ofl_.mx is None:   # front-end without a backend library, or no CUDA device
         return 'mlx-nobackend', None
     try:
         from polars2svg.tfdp_layout import gpu_backend

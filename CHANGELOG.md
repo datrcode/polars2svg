@@ -60,6 +60,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`FlowFieldBackground`: which layer a flow lands in no longer depends on the numpy
+  version.** When a flow scored exactly the same against two layers, the choice came down
+  to the sign of rounding error, and numpy 1.x and 2.x round it differently. The same
+  data could split into different layers on different installs. Scores within `1e-9`
+  now count as tied, and a tie goes to the lowest-numbered layer, as documented. Some
+  layered flow fields assign a flow to a different layer once, from this release on.
+
+- **`import polars2svg` no longer crashes Python when mlx's CUDA backend has no GPU.**
+  With `polars2svg[mlx-cuda]` or `[mlx-cuda13]` installed and no usable NVIDIA device,
+  importing the package killed the interpreter outright (`Aborted (core dumped)`). Examples
+  are a driver module missing after a kernel update, `CUDA_VISIBLE_DEVICES=""`, or a
+  container started without `--gpus`. The package tried to import mlx twice, and mlx's
+  CUDA build cannot survive a second attempt after a failed first one. It now imports mlx
+  once. In that situation `TFDPLayout` is unavailable, with an error naming the likely
+  cause, and flow maps lay out on NumPy. mlx's CUDA build cannot run on the CPU without a
+  device, so there is no CPU fallback for it.
+
 - **`xyp`: a categorical gridline label no longer depends on the order of the rows.**
   When an axis has more categories than pixels, two categories can share a gridline. If
   they also had the same number of rows, the label drawn there followed the input's row

@@ -705,6 +705,16 @@ def _tooltipHitKey_(recs: pl.DataFrame) -> tuple:
     return (len(recs), tuple(sorted(recs.hash_rows().to_list())))
 
 
+def _tooltipHitTag_(hit: tuple) -> str:
+    """_tooltipHitKey_() as a short string the browser can hold and compare.
+
+    A string, not the int: hash() is 64-bit and a JS number is not.  Equal hits give
+    equal tags for the life of the process -- the key holds only ints and a tuple of
+    them, which PYTHONHASHSEED does not randomise -- and that is all a hold probe needs.
+    """
+    return format(hash(hit) & 0xFFFF_FFFF_FFFF_FFFF, 'x')
+
+
 class _TooltipMixin_(param.Parameterized):
     """The half of F1 that is the same for every view.
 
@@ -712,7 +722,7 @@ class _TooltipMixin_(param.Parameterized):
     when its owning class is built by ParameterizedMetaclass, and a param.String sitting
     on an ordinary class is an unnamed descriptor that raises on first read.  Both hosts
     already derive from Parameterized through JSComponent, so this only says out loud
-    where these six params come from.
+    where these seven params come from.
 
     A host supplies three things: ``_tooltipRecordsAt_()`` (the hit test -- each host's
     ``recordsAt()`` takes a different shape argument, and linkp reads its current stack
@@ -734,11 +744,17 @@ class _TooltipMixin_(param.Parameterized):
     tooltip_x         = param.Integer(default=0)
     tooltip_y         = param.Integer(default=0)
     tooltip_seq       = param.Integer(default=0)
+    #: Browser -> Python.  True for a HOLD PROBE: a box is on screen and the pointer has
+    #: moved, so the browser asks only whether it is still over the same mark.  The
+    #: answer is the hit's key and nothing else -- no text and, above all, no icon
+    #: render, so moving over a mark costs a hit test and never a render.
+    tooltip_probe     = param.Boolean(default=False)
     #: Dwell before the request fires.  Load-bearing rather than an optimisation: in icon
     #: mode every request is a full component render, so firing one per mousemove would
     #: queue renders faster than they complete.
     tooltip_delay_ms  = param.Integer(default=200)
-    #: Python -> browser.  {seq, x, y, w, h, lines, svg, icon_h, empty}.
+    #: Python -> browser.  {seq, x, y, w, h, lines, svg, icon_h, empty, key}, or
+    #: {seq, probe, key} answering a probe.  key is _tooltipHitTag_() of the hit.
     tooltip_payload   = param.Dict(default={})
 
     def __initTooltip__(self, icon: Any, tooltip_fields: Any) -> None:
@@ -793,6 +809,7 @@ class _TooltipMixin_(param.Parameterized):
         async with self.lock:
             _mode_ = self.tooltip
             _xy_   = (self.tooltip_x, self.tooltip_y)
+            _probe_ = bool(self.tooltip_probe)
         if _mode_ not in ('text', 'icon') or _seq_ <= 0:
             return
         if _seq_ != self.tooltip_seq:
@@ -809,7 +826,14 @@ class _TooltipMixin_(param.Parameterized):
         if _recs_ is None or len(_recs_) == 0:
             self.tooltip_payload = {'seq': _seq_, 'empty': True}
             return
-        _key_  = (_mode_,) + _tooltipHitKey_(_recs_)
+        _hit_ = _tooltipHitKey_(_recs_)
+        _tag_ = _tooltipHitTag_(_hit_)
+        if _probe_:
+            # The browser compares the tag with the box it is showing and keeps or erases
+            # it; nothing about the box itself is needed to decide that.
+            self.tooltip_payload = {'seq': _seq_, 'probe': True, 'key': _tag_}
+            return
+        _key_  = (_mode_,) + _hit_
         _body_ = self._tooltip_cache_.get(_key_)
         if _body_ is None:
             _body_ = self.__tooltipBody__(_recs_, _mode_)
@@ -818,7 +842,7 @@ class _TooltipMixin_(param.Parameterized):
             self._tooltip_cache_ = {_key_: _body_}
         if _seq_ != self.tooltip_seq:
             return                          # superseded while the icon was rendering
-        self.tooltip_payload = dict(_body_, seq=_seq_, x=_xy_[0], y=_xy_[1])
+        self.tooltip_payload = dict(_body_, seq=_seq_, x=_xy_[0], y=_xy_[1], key=_tag_)
 
     def __tooltipBody__(self, recs: Any, mode: str) -> dict:
         """Everything about a payload that depends only on the records, so it caches."""

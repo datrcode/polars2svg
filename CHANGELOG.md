@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **README reorganized around who the package is for.** It now opens with what
+  polars2svg is good at: consistent value-derived colors across views, independent
+  `count=` and `color=`, linked brushing that includes the graph views, layouts from
+  the literature, and plain-SVG output. A new "When something else fits better"
+  section says plainly where another library is the better choice. Two runnable
+  sections are new: a worked example on network-flow data, and "Network and flow
+  views", which brings the `linkp` layouts and `link_shape='flowmap'` together in
+  one place. The MLX/CUDA install material moved out of "Install" into its own
+  "GPU-accelerated layouts" section, so the quickstart is no longer behind it. The
+  requirements line now states the Polars range (1.x, ≥ 1.36).
+
+### Fixed
+
+- **A hover tooltip no longer flickers while the pointer moves over its mark.** It used
+  to vanish on any mouse movement, even one pixel within the same node, and reappear
+  after the dwell delay. It now stays on screen until the pointer leaves the mark. While
+  a tooltip is showing, mouse movement sends a lightweight check that asks only whether
+  the pointer is still over the same records. If it is, the box stays. If not, the box
+  clears at once, and the next mark's tooltip appears once the pointer rests. The check
+  never renders anything, so in `icon` mode moving the pointer still costs no icon
+  render.
+
 ## [0.4.1] — 2026-10-04
 
 ### Added

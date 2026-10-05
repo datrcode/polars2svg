@@ -47,8 +47,11 @@ export function render({ model, el }) {
     layout_op_shape: '',       // trigger field for python to perform the layout operation
     search_mode: false, search_buffer: '',
     // F1.  seq_sent is what the browser has asked for, seq_drawn what it has answered or
-    // abandoned; a payload is drawn only while the two say it is still wanted.
+    // abandoned; a payload is drawn only while the two say it is still wanted.  key is
+    // the hit identity of the box on screen (null when none is), which a probe answer is
+    // compared against; probe_at throttles the probes.
     tooltip_timer: null, tooltip_seq_sent: 0, tooltip_seq_drawn: 0,
+    tooltip_key: null, tooltip_probe_at: 0,
     last_brush_x: -999, last_brush_y: -999,
     brush_defs: [null, ['circle', 5], ['circle', 15]],
     brush_names: ['', 'circ r=5', 'circ r=15'],

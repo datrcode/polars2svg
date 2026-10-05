@@ -18,6 +18,17 @@
 // The dwell timer is not an optimisation.  In icon mode every request is a full component
 // render, so firing one per mousemove would queue renders faster than they complete.
 //
+// HOLDING.  A drawn box stays up while the pointer moves, for as long as it is still over
+// the same mark -- DT's finding on the first hover of hover_tooltips.ipynb was that a box
+// which vanished on every one-pixel twitch and came back a dwell later was unusable.  The
+// browser cannot tell where a mark ends (the hit test is recordsAt(), in Python), so
+// while a box is up, moves send a throttled PROBE: the same request with tooltip_probe
+// set, which Python answers with the hit's identity key and nothing else -- no text, no
+// icon render.  Same key as the drawn box: leave it alone.  Different key, or a miss:
+// erase it, and the dwell brings up the new mark's box once the pointer rests.  So a box
+// never describes a mark the pointer has left for longer than a probe round trip, and
+// moving never costs a render.
+//
 // STALENESS.  A tooltip that resolves slowly and lands after the pointer has moved on is
 // U7 exactly -- the defect the brush already carries a sequence ticket for -- so the
 // ticket is here from the start rather than rediscovered.  Python echoes the seq it
@@ -39,35 +50,56 @@ function p2sTooltip(ctx) {
   const model = ctx.model, state = ctx.state, node = ctx.node;
   const NS_ = 'http://www.w3.org/2000/svg';
   const PAD_ = 4, LINE_H_ = 11, GAP_ = 12;
+  // At most one probe per this many ms while a box is up and the pointer is moving.
+  const PROBE_MS_ = 80;
 
   function isOn() { return model.tooltip && model.tooltip !== 'off'; }
 
-  // Clear the drawing AND supersede anything in flight.  Called on mouse-out, on the
-  // mode going off, and on every re-render -- a tooltip drawn over a plot that has
-  // since been replaced describes marks that are no longer there.
-  function clear() {
-      state.tooltip_seq_drawn = state.tooltip_seq_sent;
-      if (state.tooltip_timer != null) { clearTimeout(state.tooltip_timer); state.tooltip_timer = null; }
+  // Remove the drawn box, and forget which mark it described.
+  function erase() {
+      state.tooltip_key = null;
       while (node.firstChild) { node.removeChild(node.firstChild); }
   }
 
-  // Called from myOnMouseMove.  Re-arms the dwell on every move, so the request fires
-  // once the pointer has been still for tooltip_delay_ms and not once per pixel.
+  // Clear the drawing AND supersede anything in flight.  Called on mouse-out, on the
+  // mode going off, on a drag, and on every re-render -- a tooltip drawn over a plot
+  // that has since been replaced describes marks that are no longer there.
+  function clear() {
+      state.tooltip_seq_drawn = state.tooltip_seq_sent;
+      if (state.tooltip_timer != null) { clearTimeout(state.tooltip_timer); state.tooltip_timer = null; }
+      erase();
+  }
+
+  // One request.  x/y and the probe flag first, then the seq, which is the trigger.
+  function send(x, y, probe) {
+      state.tooltip_seq_sent += 1;
+      model.tooltip_x     = Math.round(x);
+      model.tooltip_y     = Math.round(y);
+      model.tooltip_probe = probe;
+      model.tooltip_seq   = state.tooltip_seq_sent;
+  }
+
+  // Called from myOnMouseMove.  Re-arms the dwell on every move, so the full request
+  // fires once the pointer has been still for tooltip_delay_ms and not once per pixel.
   //
-  // It also CLEARS on every move, which is deliberate: a box that lingered where the
-  // pointer used to be is describing a mark the pointer has left.  The brush throttles
-  // by distance instead (>= 3px of travel) because a brush that flickered off on every
-  // twitch would drop the linked views it feeds; a tooltip feeds nothing, so hiding and
-  // coming back is free.
+  // It does NOT erase the box (see HOLDING above): while one is up, the move sends a
+  // throttled probe instead, and the probe's answer decides whether the box stays.
+  // Nothing in flight is superseded either -- a probe sent 20ms ago is exactly the
+  // answer wanted, and the seq check in draw() already keeps an older payload from
+  // landing over a newer one.
   function onMouseMove(x, y) {
       if (!isOn()) { return; }
-      clear();
+      if (state.tooltip_timer != null) { clearTimeout(state.tooltip_timer); state.tooltip_timer = null; }
+      if (state.tooltip_key != null) {
+          var _now_ = Date.now();
+          if (_now_ - (state.tooltip_probe_at || 0) >= PROBE_MS_) {
+              state.tooltip_probe_at = _now_;
+              send(x, y, true);
+          }
+      }
       state.tooltip_timer = setTimeout(function() {
           state.tooltip_timer = null;
-          state.tooltip_seq_sent += 1;
-          model.tooltip_x   = Math.round(x);
-          model.tooltip_y   = Math.round(y);
-          model.tooltip_seq = state.tooltip_seq_sent;
+          send(x, y, false);
       }, Math.max(0, model.tooltip_delay_ms));
   }
 
@@ -79,8 +111,10 @@ function p2sTooltip(ctx) {
       // an out-of-order arrival must not resurrect an older payload either.
       if (_p_.seq <= state.tooltip_seq_drawn) { return; }
       state.tooltip_seq_drawn = _p_.seq;
-      while (node.firstChild) { node.removeChild(node.firstChild); }
-      if (!isOn() || _p_.empty) { return; }
+      // A probe answer: keep the box while the pointer is on the mark it describes.
+      if (_p_.probe && _p_.key != null && _p_.key === state.tooltip_key) { return; }
+      erase();
+      if (!isOn() || _p_.empty || _p_.probe) { return; }
 
       var _w_ = _p_.w, _h_ = _p_.h;
       // Flip at the canvas edge rather than clamp: a box pinned to the right edge sits
@@ -128,6 +162,7 @@ function p2sTooltip(ctx) {
           _g_.appendChild(_t_);
       }
       node.appendChild(_g_);
+      state.tooltip_key = (_p_.key != null) ? _p_.key : null;
   }
 
   return { onMouseMove: onMouseMove, draw: draw, clear: clear };

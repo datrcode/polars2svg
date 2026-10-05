@@ -1,12 +1,10 @@
 # polars2svg
 
-**Polars-native DataFrame → SVG visualizations for Jupyter.** Pass a
-[Polars](https://pola.rs) `DataFrame` straight to a component and get a crisp,
-self-contained SVG back — scatter plots, histograms, temporal bars, network and
-chord diagrams, pie charts, and small multiples. Every component also has a
-linked, interactive variant (built on [Panel](https://panel.holoviz.org)) for
-brushing and cross-filtering in a notebook, plus optional WebGPU rendering for
-large frames.
+**Fast, consistent, linkable views of event and relationship data in Jupyter —
+including the network and flow views other libraries don't do — rendered as plain
+SVG.** Hand a [Polars](https://pola.rs) `DataFrame` to a component and get a
+self-contained SVG back. Brush any interactive view and every other view in the
+dashboard follows, the network graph included.
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/datrcode/polars2svg/main/docs/images/xyp_scatter.png" alt="Scatter plot" width="32%">
@@ -14,80 +12,72 @@ large frames.
   <img src="https://raw.githubusercontent.com/datrcode/polars2svg/main/docs/images/chordp_flows.png" alt="Chord diagram" width="32%">
 </p>
 
-## Install
+## Why polars2svg
 
-The base install is deliberately slim — just Polars + NumPy (+ PyArrow/Pillow for
-I/O) — so a "give me SVG from a DataFrame" install stays light:
+It is built for exploratory analysis of records that have a time, a few categories
+and relationships between entities: logs, network flows, transactions,
+communications. The goal is to look at many small views of the same data quickly.
+
+- **The same value gets the same color in every chart.** Categorical colors are
+  derived from the value itself, so `'tcp'` is the same color in a histogram, a
+  timeline and a network graph without coordinating legends, and it stays that
+  color in the light and dark palettes alike. Across a dozen small views, this is
+  what lets the eye connect them.
+- **Size and color answer different questions.** A bar can be sized by bytes and
+  colored by how many rows produced it, so "few events, lots of traffic" stands
+  out without pre-aggregating by hand. See
+  [Encoding data](#encoding-data-count-and-color).
+- **Linked brushing that includes graphs.** Seven components have interactive
+  variants that share one selection through `p2s.panelize()`. The node-link and
+  chord views take part as fully as the scatter plot and the histogram.
+- **Network and flow layouts from the literature.** t-FDP, neighborhood-preserving
+  circle packing, force-directed origin-destination flow maps, hierarchical edge
+  bundling, Pivot and Landmark MDS, and IPv4-subnet layouts. Each is cited in
+  [References](#references). See [Network and flow views](#network-and-flow-views).
+- **The output is a string.** Every chart is a self-contained SVG with no
+  JavaScript, which you can save, diff, embed in HTML, or check against an
+  [output contract](#security--deployment) before serving it.
+- **A slim base install.** Polars and NumPy, plus PyArrow and Pillow for I/O.
+  Everything heavier is an opt-in extra.
+
+## When something else fits better
+
+- **Polars input alone isn't a reason to switch.** Altair, Plotly and hvPlot accept
+  a Polars `DataFrame` directly now.
+- **A chart type that isn't in the [component list](#components), or a fully custom
+  encoding.** The components here are fixed chart types, not a grammar of graphics.
+  Altair or plotnine will get you there.
+- **Publication figures with fine typographic control.** Use matplotlib.
+- **Millions of marks in a static image.** An SVG grows with every mark it draws.
+  Aggregate to a raster instead, for example with Datashader. The interactive
+  views can render through WebGPU (`use_webgpu=True`), but the static SVG cannot.
+- **A web dashboard served to many people.** The interactive layer runs one trusted
+  user per process. See [Security & deployment](#security--deployment).
+
+## Install
 
 ```bash
 pip install polars2svg
 ```
 
-That covers `xyp`, `histop`, `timep`, `piep`, `smallp`, and `spreadlinesp`.
-Everything else lives behind extras:
+The base install covers `xyp`, `histop`, `timep`, `piep`, `smallp`, and
+`spreadlinesp`. Everything else lives behind extras:
 
 ```bash
 pip install polars2svg[layouts]     # linkp, chordp, and shapely-typed background= shapes
 pip install polars2svg[interactive] # panelize / xypi / histopi / ... (includes layouts)
 pip install polars2svg[export]      # component.save('chart.png')
-pip install polars2svg[mlx]         # MLX-accelerated t-FDP layout (Apple silicon / Metal)
-pip install polars2svg[mlx-cpu]     # ... the same layout on Linux, CPU backend
-pip install polars2svg[mlx-cuda]    # ... the same layout on Linux + NVIDIA (CUDA 12)
-pip install polars2svg[mlx-cuda13]  # ... the same layout on Linux + NVIDIA (CUDA 13)
-pip install polars2svg[all]         # everything above (plain [mlx]; see the Linux note below)
+pip install polars2svg[all]         # all of the above, plus the MLX GPU layout
 ```
 
 Calling a component that needs an extra you haven't installed (e.g. `chordp()`
 or `panelize()`) raises a clear `ImportError` naming the extra to install.
 
-**On Linux, `[mlx]` and `[all]` are not enough.** PyPI's `mlx` is a front-end that ships
-no backend library; on macOS it depends on the Metal backend unconditionally, on Linux it
-pulls nothing. The install succeeds and `import mlx.core` then fails with `ImportError:
-libmlx.so: cannot open shared object file`. Choose the backend explicitly:
+The GPU-accelerated `TFDPLayout` has its own extras, and on Linux `[all]` alone
+leaves it unable to load. See [GPU-accelerated layouts](#gpu-accelerated-layouts)
+before installing on Linux or Windows.
 
-```bash
-pip install polars2svg[mlx-cpu]     # Linux, no NVIDIA GPU
-pip install polars2svg[mlx-cuda13]  # Linux + NVIDIA, CUDA 13 toolkit
-pip install polars2svg[mlx-cuda]    # Linux + NVIDIA, CUDA 12 toolkit
-```
-
-Combine one of these with `[all]` if you want everything — `polars2svg[all,mlx-cuda13]`.
-**Install exactly one backend.** They all ship the same `libmlx.so`, so asking for two
-leaves you with whichever was installed last, and no warning that it happened.
-
-**On Windows there is no MLX backend at all**, so `TFDPLayout` cannot run there. `mlx`
-publishes Windows front-end wheels, which is why `[mlx]` and `[all]` still install; every
-backend distribution is Linux- or macOS-only. Everything else in polars2svg works
-normally.
-
-Only `TFDPLayout` is affected by any of this: `ODFlowLayout` runs on NumPy and reaches for
-MLX only when MLX works.
-
-`TFDPLayout` runs the same MLX code on either GPU backend — Metal on Apple silicon,
-CUDA on NVIDIA. Check which one you got with `polars2svg.gpu_backend()` (`'metal'`,
-`'cuda'`, or `'cpu'`). That name is exported **only when MLX imports successfully**, so
-on the broken-Linux install above it is absent rather than reporting `'cpu'` —
-`hasattr(polars2svg, 'gpu_backend')` is itself the "did MLX load?" check, and
-`import polars2svg` keeps working either way. The CUDA wheels are Linux-only and need NVIDIA SM ≥ 7.5
-(Turing or newer), driver ≥ 550.54.14, and glibc ≥ 2.35. Outside that envelope MLX
-falls back to the CPU device — `TFDPLayout` still works, just slower.
-
-**Match the extra to your CUDA toolkit, not just your driver.** MLX JIT-compiles its
-CUDA kernels against the system CUDA headers (`CUDA_HOME` / `CUDA_PATH`, else
-`/usr/local/cuda`), so the wheel's NVRTC and those headers have to agree:
-
-| System CUDA toolkit | Extra | Also needs |
-|---|---|---|
-| 12.x | `polars2svg[mlx-cuda]` | driver ≥ 550.54.14 |
-| 13.x | `polars2svg[mlx-cuda13]` | driver ≥ 580 |
-
-Mismatch it and the first GPU kernel dies in a wall of `nvcc` syntax errors from inside
-the CUDA headers (e.g. NVRTC 12.9 cannot parse CUDA 13's `cuda_fp4.hpp`). polars2svg
-detects this at import, logs a warning naming the cause, and falls back to CPU rather
-than failing mid-layout — so a silent slowdown here means it's worth checking
-`gpu_backend()`.
-
-Requires **Python ≥ 3.12**.
+Requires **Python ≥ 3.12** and **Polars 1.x (≥ 1.36)**.
 
 ## Quickstart
 
@@ -127,29 +117,54 @@ from polars2svg import display_svg
 display_svg(df)
 ```
 
-It is wrong twice over. The name appears to be borrowed from IPython's
-`IPython.display.display_svg` — a different function in a different package,
-which takes SVG data rather than a DataFrame. And there is no "render a
-DataFrame as a table" entry point to rename it to: every component encodes named
+The name appears to be borrowed from IPython's `IPython.display.display_svg`, a
+different function that takes SVG data rather than a DataFrame. polars2svg has no
+"render a DataFrame as a table" entry point at all: every component encodes named
 *fields* into a chart, so no single-argument function could know what you wanted
-drawn.
-
-Reach for a component instead — `Polars2SVG()` plus one of the calls under
-[Components](#components):
+drawn. Reach for one of the [components](#components) instead:
 
 ```python
+p2s.histop(pl.DataFrame({"Engine": ["Polars", "Pandas", "Spark"],
+                         "Speed":  [30.5, 1.0, 12.3]}),
+           "Engine", count="Speed", wxh=(400, 200))
+```
+
+## A worked example
+
+A few network flows, viewed three ways and tiled into one SVG:
+
+```python
+from datetime import datetime
+
 import polars as pl
 from polars2svg import Polars2SVG
 
 p2s = Polars2SVG()
 
-df = pl.DataFrame({
-    "Engine": ["Polars", "Pandas", "Spark"],
-    "Speed":  [30.5, 1.0, 12.3],
+flows = pl.DataFrame({
+    "ts":    [datetime(2026, 9, d, h) for d, h in
+              [(1, 9), (1, 14), (2, 3), (3, 22), (4, 9), (5, 11), (6, 2), (7, 16)]],
+    "src":   ["10.0.0.5", "10.0.0.5", "10.0.0.7", "10.0.1.9",
+              "10.0.0.7", "10.0.1.9", "10.0.0.5", "10.0.1.3"],
+    "dst":   ["10.0.1.9", "8.8.8.8",  "10.0.1.9", "8.8.8.8",
+              "10.0.0.5", "10.0.1.3", "8.8.8.8",  "10.0.0.7"],
+    "proto": ["tcp", "udp", "tcp", "udp", "tcp", "tcp", "udp", "tcp"],
+    "bytes": [1_200, 64, 980_000, 80, 3_400, 15_000, 72, 2_100],
 })
 
-p2s.histop(df, "Engine", count="Speed", wxh=(400, 200))
+# Bar length is total bytes; bar color is how many flows produced it.
+by_bytes = p2s.histop(flows, "src", count="bytes", color=p2s.CROW_MAGNITUDEp, wxh=(260, 160))
+# Row count per source, split by protocol.
+by_proto = p2s.histop(flows, "src", color="proto", wxh=(260, 160))
+# Every day folded onto one 24-hour cycle.
+by_hour  = p2s.timep(flows, p2s.tField("ts", p2s.PT_Hp), color="proto", wxh=(260, 160))
+
+p2s.tile([by_bytes, by_proto, by_hour])
 ```
+
+The `proto` colors match across the second and third charts, and they will match
+in the network graph below, because each color comes from the value rather than
+from the chart.
 
 ## Components
 
@@ -223,6 +238,36 @@ model: `None` (the default) is a single row, `<n>` fills a grid row by row, and 
 single column. `spacer=` is one gap in both directions or a `(horizontal, vertical)`
 pair, and `wxh=` scales the whole tiling — uniformly and centered — into a canvas of that
 size.
+
+## Network and flow views
+
+`linkp` places nodes from `pos=`, a networkx-style `{node: (x, y)}` dict, so any
+layout that produces one works. polars2svg ships several of its own, for graphs
+where a generic spring layout falls short:
+
+- **`p2s.ipSubnetTreeMapLayout()`** and **`p2s.ipSubnetForceDirectedLayout()`**
+  group IPv4 nodes by subnet.
+- **`p2s.hyperTreeLayout()`** draws a radial tree.
+- **`PivotMDSLayout`** and **`LandmarkMDSLayout`** scale to large graphs, and
+  **`TFDPLayout`** is the t-distribution force-directed layout, which runs on the GPU
+  ([GPU-accelerated layouts](#gpu-accelerated-layouts)). Each takes a networkx graph
+  and returns `pos` from `.results()`.
+- **`link_shape='flowmap'`** bends each edge with a force-directed
+  origin-destination flow layout, so that overlapping flows separate.
+- **`p2s.chordp()`** draws weighted flows around a circle and can bundle its links
+  with hierarchical edge bundling.
+
+Continuing the worked example, the same flows as a graph laid out by subnet:
+
+```python
+g   = p2s.createNetworkXGraph(flows, [("src", "dst")], count="bytes")
+pos = p2s.ipSubnetTreeMapLayout(g, subnet_mask=24)
+
+p2s.linkp(flows, [("src", "dst")], pos, color="proto",
+          count="bytes", link_size="vary", wxh=(360, 260))
+```
+
+These need the `layouts` extra.
 
 ## Encoding data: `count=` and `color=`
 
@@ -304,6 +349,59 @@ The palette reaches the **interactive** components too: the selection rectangle,
 layout guides and the status line follow it, so a drag stays visible on a dark canvas.
 The tooltip and configuration panel still draw on their own light surface.
 
+## GPU-accelerated layouts
+
+`TFDPLayout` runs on [MLX](https://github.com/ml-explore/mlx). On macOS with Apple
+silicon, `pip install polars2svg[mlx]` is all it needs. Linux and Windows need the
+notes below.
+
+**On Linux, `[mlx]` and `[all]` are not enough.** PyPI's `mlx` is a front-end that ships
+no backend library; on macOS it depends on the Metal backend unconditionally, on Linux it
+pulls nothing. The install succeeds and `import mlx.core` then fails with `ImportError:
+libmlx.so: cannot open shared object file`. Choose the backend explicitly:
+
+```bash
+pip install polars2svg[mlx-cpu]     # Linux, no NVIDIA GPU
+pip install polars2svg[mlx-cuda13]  # Linux + NVIDIA, CUDA 13 toolkit
+pip install polars2svg[mlx-cuda]    # Linux + NVIDIA, CUDA 12 toolkit
+```
+
+Combine one of these with `[all]` if you want everything — `polars2svg[all,mlx-cuda13]`.
+**Install exactly one backend.** They all ship the same `libmlx.so`, so asking for two
+leaves you with whichever was installed last, and no warning that it happened.
+
+**On Windows there is no MLX backend at all**, so `TFDPLayout` cannot run there. `mlx`
+publishes Windows front-end wheels, which is why `[mlx]` and `[all]` still install; every
+backend distribution is Linux- or macOS-only. Everything else in polars2svg works
+normally.
+
+Only `TFDPLayout` is affected by any of this: `ODFlowLayout` runs on NumPy and reaches for
+MLX only when MLX works.
+
+`TFDPLayout` runs the same MLX code on either GPU backend — Metal on Apple silicon,
+CUDA on NVIDIA. Check which one you got with `polars2svg.gpu_backend()` (`'metal'`,
+`'cuda'`, or `'cpu'`). That name is exported **only when MLX imports successfully**, so
+on the broken-Linux install above it is absent rather than reporting `'cpu'` —
+`hasattr(polars2svg, 'gpu_backend')` is itself the "did MLX load?" check, and
+`import polars2svg` keeps working either way. The CUDA wheels are Linux-only and need NVIDIA SM ≥ 7.5
+(Turing or newer), driver ≥ 550.54.14, and glibc ≥ 2.35. Outside that envelope MLX
+falls back to the CPU device — `TFDPLayout` still works, just slower.
+
+**Match the extra to your CUDA toolkit, not just your driver.** MLX JIT-compiles its
+CUDA kernels against the system CUDA headers (`CUDA_HOME` / `CUDA_PATH`, else
+`/usr/local/cuda`), so the wheel's NVRTC and those headers have to agree:
+
+| System CUDA toolkit | Extra | Also needs |
+|---|---|---|
+| 12.x | `polars2svg[mlx-cuda]` | driver ≥ 550.54.14 |
+| 13.x | `polars2svg[mlx-cuda13]` | driver ≥ 580 |
+
+Mismatch it and the first GPU kernel dies in a wall of `nvcc` syntax errors from inside
+the CUDA headers (e.g. NVRTC 12.9 cannot parse CUDA 13's `cuda_fp4.hpp`). polars2svg
+detects this at import, logs a warning naming the cause, and falls back to CPU rather
+than failing mid-layout — so a silent slowdown here means it's worth checking
+`gpu_backend()`.
+
 ## Security & deployment
 
 polars2svg supports three deployment profiles, described in full in
@@ -339,8 +437,8 @@ untrusting users; run one process per user behind your own authentication.
 ## Development
 
 ```bash
-uv venv --python 3.13 && uv pip install -e .        # runtime deps
-uv pip install -e . --group dev                     # + test/dev tooling
+uv venv --python 3.13                               # then install exactly what uv.lock pins:
+uv sync --frozen --extra layouts --extra interactive --extra export --group dev
 .venv/bin/python -m pytest tests/                   # run the suite
 ```
 

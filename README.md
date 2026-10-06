@@ -77,7 +77,7 @@ The GPU-accelerated `TFDPLayout` has its own extras, and on Linux `[all]` alone
 leaves it unable to load. See [GPU-accelerated layouts](#gpu-accelerated-layouts)
 before installing on Linux or Windows.
 
-Requires **Python ≥ 3.12** and **Polars 1.x (≥ 1.36)**.
+Requires **Python ≥ 3.12** and **Polars ≥ 1.36** (1.x and 2.x).
 
 ## Quickstart
 

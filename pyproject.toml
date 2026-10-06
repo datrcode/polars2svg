@@ -33,11 +33,12 @@ keywords        = ["polars", "svg", "visualization", "jupyter", "dataframe", "ch
 # which every dated or datetime xyp axis calls; 1.36 is also the first release
 # with `explode(empty_as_null=)`.  Do not lower it without re-running that sweep.
 #
-# polars also carries the only upper bound here, `<2`, and it is temporary
-# (PLANNING.md §5 C-polars2-color-hash, 2026-10-04).  The suite fails against 2.0.0rc2,
-# chiefly because every categorical colour comes from `pl.Expr.hash()`, which polars keeps
-# stable only within one version, so 2.0 recolours every chart.  `<2` also excludes
-# the 2.0 release candidates (PEP 440).  Lift it once the suite passes on 2.0.
+# polars has no upper bound.  0.4.1 capped it at `<2` because every categorical
+# colour came from `pl.Expr.hash()`, which polars keeps stable only within one
+# version.  The colours now come from blake2b over each value, and the suite passes
+# unchanged on 1.36 through 2.0.0 (PLANNING.md §5 C-polars2-color-hash and R18,
+# 2026-10-06).  Both ends stay tested: CI's floor job resolves 1.36, and the lock
+# carries 2.x.  Nothing here needs 2.0, so the floor does not move with the lock.
 #
 # Core is deliberately slim: xyp/histop/timep/piep/smallp/spreadlinesp only need
 # polars + numpy (+ pyarrow/pillow/platformdirs for I/O). linkp's/chordp's
@@ -51,7 +52,7 @@ keywords        = ["polars", "svg", "visualization", "jupyter", "dataframe", "ch
 # previous "batteries included" install.
 dependencies    = [
   "numpy>=1.26",
-  "polars>=1.36,<2",
+  "polars>=1.36",
   "pyarrow>=16",
   "pillow>=12.3",
   "platformdirs>=4.0",

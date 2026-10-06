@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Polars 2.0 is supported. The requirement is now `polars>=1.36`, with no upper
+  bound.** 0.4.1 capped Polars below 2.0 because 2.0 changed every categorical color.
+  With the color hash below no longer depending on Polars, the cap is lifted. The test
+  suite passes unchanged on Polars 1.36 through 2.0.0. Nothing requires 2.0, so the
+  1.36 floor stays and an existing 1.x install keeps working.
+
 - **Categorical colors change once, and then stop depending on the Polars version.**
   Every color derived from a value (a category, a node name, a set element) used to
   come from Polars' own `hash()`, which Polars documents as free to change between
@@ -30,7 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   views", which brings the `linkp` layouts and `link_shape='flowmap'` together in
   one place. The MLX/CUDA install material moved out of "Install" into its own
   "GPU-accelerated layouts" section, so the quickstart is no longer behind it. The
-  requirements line now states the Polars range (1.x, ≥ 1.36).
+  requirements line now states the Polars range (≥ 1.36, 1.x and 2.x).
 
 ### Fixed
 

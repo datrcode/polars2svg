@@ -2,8 +2,10 @@ name: Release
 
 # Publishes polars2svg to PyPI via Trusted Publishing (OIDC) on release tags.
 #
-# Runs only when a tag matching v* is pushed (e.g. `git tag vX.Y.Z && git push
-# origin vX.Y.Z`). The `ci` job below calls ci.yml as a reusable workflow, so
+# Publishes only from a tag matching v* (e.g. `git tag vX.Y.Z && git push
+# origin vX.Y.Z`). workflow_dispatch can start a run from any branch, so the
+# `publish` job carries its own tag check; a manual run from a branch builds and
+# tests but uploads nothing. The `ci` job below calls ci.yml as a reusable workflow, so
 # the full suite must pass against the tagged commit before anything is built
 # or published. This gate exists because a tag push does NOT trigger ci.yml on
 # its own (ci.yml is push-on-main + PR), and because v0.1.1 shipped while CI
@@ -146,6 +148,10 @@ jobs:
   publish:
     name: Publish to PyPI
     needs: build
+    # Only from a v* tag, matching the push trigger above.  Without this, a
+    # workflow_dispatch from a branch uploaded that branch's version for real, and
+    # a version number on PyPI can never be reused.
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     # Trusted Publishing: no API token/secret. PyPI verifies the OIDC identity
     # of this workflow running in the `pypi` environment.

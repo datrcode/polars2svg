@@ -15,6 +15,7 @@ import os
 import random
 from datetime import datetime, timedelta
 
+import networkx as nx
 import polars as pl
 from polars2svg import Polars2SVG
 
@@ -103,7 +104,11 @@ def make_linkp():
         "dst":  [b for _, b in edges],
         "tier": [tier[a] for a, _ in edges],
     })
-    save(p2s.linkp(df, [("src", "dst")], node_color="tier", color="tier",
+    # Explicit positions: without pos= linkp places nodes with random.random() in an
+    # order that varies between processes, so random.seed() alone does not pin it.
+    pos = nx.spring_layout(nx.Graph(edges), seed=3)
+    save(p2s.linkp(df, [("src", "dst")], pos={n: (float(x), float(y)) for n, (x, y) in pos.items()},
+                   node_color="tier", color="tier",
                    node_size="medium", draw_node_labels=True, wxh=(400, 360),
                    legend=True),
          "linkp_network.svg")

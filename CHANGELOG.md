@@ -40,6 +40,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `CMAGNITUDE_*`, `CROW_*` and the other spectrum modes may differ from 0.4.1's by one
   unit in a channel, which is not visible.
 
+- **`p2s.color()` no longer gives `-1.0` the color of `-1`.** The color cache was keyed
+  by value, and Python counts `-1 == -1.0`, `1 == True` and `0 == False == 0.0` as the
+  same key. So whichever of them was asked for first fixed the color of the others on
+  that `Polars2SVG` instance, while a fresh instance gave each its own. The cache is now
+  keyed the way the colors themselves are derived, so each value always gets its own
+  color. Rendered charts were not affected, because a column holds one type.
+
+- **`p2s.colors()` accepts a list of mixed types.** `p2s.colors([1, 'a'])` used to raise
+  `TypeError`, because every uncached value went into one Polars column. The returned
+  dict now follows the input order. It is still keyed by value, so `-1` and `-1.0` in
+  one call share an entry, which holds the first one's color.
+
 - **A hover tooltip no longer flickers while the pointer moves over its mark.** It used
   to vanish on any mouse movement, even one pixel within the same node, and reappear
   after the dwell delay. It now stays on screen until the pointer leaves the mark. While

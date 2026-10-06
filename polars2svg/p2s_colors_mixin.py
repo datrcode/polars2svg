@@ -170,6 +170,10 @@ class P2SColorsMixin:
         # override results), color_overrides_lu holds what setColorOverrides() was given.
         # Two Polars2SVG instances share neither, so an override set on one is invisible
         # to the other -- see the Configuration section of the class docstring.
+        # to_color_lu is keyed by colorHashKey(value), not by the value: Python treats
+        # -1 == -1.0 and 1 == True as one dict key, but the colorizer gives each its own
+        # colour, so a value-keyed memo let whichever was asked for first fix the colour
+        # of the rest (PLANNING.md C-color-memo-numeric-keys).
         self.to_color_lu: dict = {}
         self.color_overrides_lu: dict = {}
 
@@ -186,8 +190,7 @@ class P2SColorsMixin:
         #
         # p2s.color('-1')   # "#a88196"
         # p2s.color(-1)     # "#b7b846"
-        # p2s.color(-1.0)   # "#ae3ba6"   (on a fresh instance: the memo is keyed by
-        #                                  value, and -1 == -1.0 -- PLANNING.md §5)
+        # p2s.color(-1.0)   # "#ae3ba6"
         #
         self.__applyPalette__(resolvePalette(palette))
 
@@ -268,22 +271,29 @@ class P2SColorsMixin:
         if self.color_overrides_lu:
             _override_ = self.color_overrides_lu.get(_obj_ if isinstance(_obj_, str) else str(_obj_))
             if _override_ is not None: return _override_
-        if _obj_ not in self.to_color_lu.keys():
+        _key_ = colorHashKey(_obj_)
+        if _key_ not in self.to_color_lu:
             if isinstance(_obj_, self.HexColorString):
-                self.to_color_lu[_obj_] = _obj_
+                self.to_color_lu[_key_] = _obj_
             else:
                 _df_ = pl.DataFrame({'to_color':[_obj_]})
                 _df_ = _df_.with_columns(self.colorizeColumnPolarsOperations('to_color', apply_overrides=False).alias('__hexcolor__'))
-                self.to_color_lu[_obj_] = _df_['__hexcolor__'][0]
-        return self.to_color_lu[_obj_]
+                self.to_color_lu[_key_] = _df_['__hexcolor__'][0]
+        return self.to_color_lu[_key_]
 
     #
-    # colors() - batch version of color() ... resolves all values in a single Polars pass
+    # colors() - batch version of color() ... one Polars pass per Python type among the misses
     # - returns {value: hex_color} for every distinct value in _objs_
-    # - one collect for all cache misses instead of one 1-row collect per miss
+    # - the misses are batched by type: one Series cannot hold 1 and 'a', or -1 and -1.0
+    #   without casting one to the other's dtype, and a cast value takes the other
+    #   type's colour.  A single type is the usual case, and one pass.
+    # - the returned dict is keyed by value, so values Python counts as equal (-1 and
+    #   -1.0, 1 and True) share one entry, which holds the first one's colour.  color()
+    #   and the memo keep them apart.
     #
     def colors(self, _objs_: list | set) -> dict:
-        _result_, _to_compute_ = {}, []
+        _result_: dict = {}                     # a miss holds its place (None) until computed
+        _to_compute_: dict[type, dict] = {}     # type -> {value: memo key}, in input order
         for _obj_ in _objs_:
             if _obj_ in _result_: continue
             if self.color_overrides_lu:
@@ -291,18 +301,20 @@ class P2SColorsMixin:
                 if _override_ is not None:
                     _result_[_obj_] = _override_
                     continue
-            if   _obj_ in self.to_color_lu:
-                _result_[_obj_] = self.to_color_lu[_obj_]
+            _key_ = colorHashKey(_obj_)
+            if   _key_ in self.to_color_lu:
+                _result_[_obj_] = self.to_color_lu[_key_]
             elif isinstance(_obj_, self.HexColorString):
-                self.to_color_lu[_obj_] = _obj_
+                self.to_color_lu[_key_] = _obj_
                 _result_[_obj_]         = _obj_
             else:
-                _to_compute_.append(_obj_)
-        if _to_compute_:
-            _df_ = pl.DataFrame({'to_color': _to_compute_})
+                _to_compute_.setdefault(type(_obj_), {})[_obj_] = _key_
+                _result_[_obj_] = None
+        for _group_ in _to_compute_.values():
+            _df_ = pl.DataFrame({'to_color': list(_group_)})
             _df_ = _df_.with_columns(self.colorizeColumnPolarsOperations('to_color', apply_overrides=False).alias('__hexcolor__'))
-            for _obj_, _hex_ in zip(_to_compute_, _df_['__hexcolor__'].to_list()):
-                self.to_color_lu[_obj_] = _hex_
+            for (_obj_, _key_), _hex_ in zip(_group_.items(), _df_['__hexcolor__'].to_list()):
+                self.to_color_lu[_key_] = _hex_
                 _result_[_obj_]         = _hex_
         return _result_
 

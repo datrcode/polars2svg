@@ -198,5 +198,72 @@ class TestColorize(unittest.TestCase):
                                  self._colorize_(pl.DataFrame({'v': ['b']}))[0]])
 
 
+class TestColorMemo(unittest.TestCase):
+    '''color() / colors() memoize per instance (PLANNING.md C-color-memo-numeric-keys).
+
+    The memo used to be keyed by the value, and Python counts -1 == -1.0, 1 == True and
+    0 == False == 0.0 as one dict key, so whichever was asked for first fixed the colour
+    of the rest on that instance.  colors() also put every miss into one Series, which
+    cannot hold 1 and 'a' (or -1 and -1.0) and raised.
+    '''
+    # Pairs Python treats as one dict key but the colorizer colours apart
+    _LOOK_ALIKES_ = [(-1, -1.0), (1, True), (0, False), (0, 0.0), (False, 0.0), ((-1,), (-1.0,))]
+
+    @staticmethod
+    def _fresh_(value) -> str:
+        return Polars2SVG().color(value)
+
+    def test_look_alikes_really_differ(self):
+        # Without this every test below could pass on a pair the colorizer merges anyway
+        for _a_, _b_ in self._LOOK_ALIKES_:
+            with self.subTest(a=_a_, b=_b_):
+                self.assertNotEqual(self._fresh_(_a_), self._fresh_(_b_))
+
+    def test_color_keeps_look_alikes_apart_in_either_order(self):
+        for _a_, _b_ in self._LOOK_ALIKES_:
+            for _first_, _second_ in ((_a_, _b_), (_b_, _a_)):
+                with self.subTest(first=_first_, second=_second_):
+                    _p2s_ = Polars2SVG()
+                    self.assertEqual(_p2s_.color(_first_),  self._fresh_(_first_))
+                    self.assertEqual(_p2s_.color(_second_), self._fresh_(_second_))
+
+    def test_color_matches_the_colorizer(self):
+        _p2s_ = Polars2SVG()
+        for _value_ in (-1, -1.0, True, 'x', None, dt.date(2026, 10, 6)):
+            with self.subTest(value=_value_):
+                _hex_ = pl.DataFrame({'v': [_value_]}).select(_p2s_.colorizeColumnPolarsOperations('v', apply_overrides=False)).item()
+                self.assertEqual(_p2s_.color(_value_), _hex_)
+
+    def test_colors_takes_a_list_of_mixed_types(self):
+        _values_ = [1, 'a', 2.5, None, dt.date(2026, 10, 6), 'b', 3]
+        _got_    = Polars2SVG().colors(_values_)
+        self.assertEqual(list(_got_), _values_)                         # input order, not batch order
+        for _value_ in _values_:
+            with self.subTest(value=_value_):
+                self.assertEqual(_got_[_value_], self._fresh_(_value_))
+
+    def test_colors_gives_python_equal_values_one_entry_the_first_ones(self):
+        for _a_, _b_ in self._LOOK_ALIKES_:
+            with self.subTest(a=_a_, b=_b_):
+                _p2s_ = Polars2SVG()
+                _got_ = _p2s_.colors([_a_, _b_])
+                self.assertEqual(len(_got_), 1)
+                self.assertEqual(_got_[_a_], self._fresh_(_a_))
+                # ... and the memo it filled does not leak into the other value
+                self.assertEqual(_p2s_.color(_b_), self._fresh_(_b_))
+
+    def test_colors_and_color_share_the_memo_without_merging(self):
+        # Not a dict: -1 and -1.0 would be one key in it -- the bug under test
+        _int_, _float_, _bool_ = self._fresh_(-1), self._fresh_(-1.0), self._fresh_(True)
+        _p2s_ = Polars2SVG()
+        _p2s_.colors([-1, 1])
+        with mock.patch.object(p2s_colors_mixin, 'colorHashes', wraps=p2s_colors_mixin.colorHashes) as _spy_:
+            self.assertEqual(_p2s_.color(-1),   _int_)                  # memo hit
+            self.assertEqual(_spy_.call_count, 0)
+            self.assertEqual(_p2s_.color(-1.0), _float_)                # a miss, not -1's entry
+            self.assertEqual(_p2s_.color(True), _bool_)                 # a miss, not 1's entry
+            self.assertEqual(_spy_.call_count, 2)
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -50,10 +50,14 @@ class TestPaletteTables(unittest.TestCase):
     def test_multiset_slots_are_the_hash_colours_of_minus_one(self):
         # They are a record of colorizer output, not a choice, so nothing else stops them
         # going stale when the hash changes -- as they did, by 0.4.1, under pl.Expr.hash().
-        # Colorized directly: color()'s memo would merge -1 and -1.0 (PLANNING.md §5).
+        # Colorized directly, and through color() on one instance: the three values are
+        # one dict key to Python, and the memo must still keep them apart
+        # (PLANNING.md C-color-memo-numeric-keys).
         _p2s_ = Polars2SVG()
         for _subtype_, _value_ in (('str', '-1'), ('int', -1), ('float', -1.0)):
             _hex_ = pl.DataFrame({'v': [_value_]}).select(_p2s_.colorizeColumnPolarsOperations('v', apply_overrides=False)).item()
+            with self.subTest(via='color()', subtype=_subtype_):
+                self.assertEqual(_p2s_.color(_value_), _hex_)
             for _name_ in PALETTES:
                 with self.subTest(palette=_name_, subtype=_subtype_):
                     self.assertEqual(PALETTES[_name_]['color_type_lu'][('multiset', _subtype_)], _hex_)

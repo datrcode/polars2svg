@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.2] — 2026-10-06
+
 ### Changed
 
 - **Polars 2.0 is supported. The requirement is now `polars>=1.36`, with no upper
@@ -66,6 +68,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   clears at once, and the next mark's tooltip appears once the pointer rests. The check
   never renders anything, so in `icon` mode moving the pointer still costs no icon
   render.
+
+### Known issues
+
+- **`save('.png')` still leaves out labels that follow a path.** It warns, but the
+  labels are not drawn: `chordp` with `label_style='circular'` and `linkp` curve link
+  labels. The SVG is correct. Carried from 0.3.0.
+
+- **`histop` / `timep`: a bar's smallest segments can draw in the `(other)` colour
+  with no `(other)` legend entry.** A segment under 3 px is drawn as the bar's
+  remainder, in `(other)`'s colour. The legend lists `(other)` only when some value was
+  pooled into it, so when none was, that sliver's colour is unnamed. Carried from 0.4.0.
 
 ## [0.4.1] — 2026-10-04
 
@@ -4508,7 +4521,8 @@ large frames.
 - **SECURITY.md** documenting the SVG-injection threat model (row-data label text
   is HTML-escaped; component configuration is trusted).
 
-[Unreleased]: https://github.com/datrcode/polars2svg/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/datrcode/polars2svg/compare/v0.4.2...HEAD
+[0.4.2]: https://github.com/datrcode/polars2svg/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/datrcode/polars2svg/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/datrcode/polars2svg/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/datrcode/polars2svg/compare/v0.3.0...v0.3.1

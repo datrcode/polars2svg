@@ -325,7 +325,7 @@ class TestLinkPBasic(unittest.TestCase):
         import re
         lp = self.p2s.linkp(_make_df(), relationships=_rels(), pos=_make_pos(),
                             color='category', node_color='fm')
-        multiset_color = '#7f8367'
+        multiset_color = self.p2s.colorTyped('multiset', 'str')   # tests/test_palettes.py ties it to the colorizer
         fills = re.findall(r'<circle[^>]*fill="(#[0-9a-f]+)"', lp.svg)
         self.assertGreater(len(fills), 0)
         # In _make_df(), every node appears on both fm and to sides with different fm values → all multiset
@@ -337,7 +337,7 @@ class TestLinkPBasic(unittest.TestCase):
         import re
         lp = self.p2s.linkp(_make_df(), relationships=_rels(), pos=_make_pos(),
                             node_color=('fm', self.p2s.CSETp))
-        multiset_color = '#7f8367'
+        multiset_color = self.p2s.colorTyped('multiset', 'str')   # tests/test_palettes.py ties it to the colorizer
         fills = re.findall(r'<circle[^>]*fill="(#[0-9a-f]+)"', lp.svg)
         self.assertGreater(len(fills), 0)
         self.assertTrue(all(f == multiset_color for f in fills),

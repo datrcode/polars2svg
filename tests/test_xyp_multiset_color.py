@@ -18,7 +18,7 @@ class TestXYPMultisetColor(unittest.TestCase):
         print(f"Multiset color: {hex_color}")
         self.assertEqual(sorted(color_set), ['blue', 'red'])
         # A mixed pixel is no category's: no set element, and the default colour.  It was
-        # marked '-1' and hashed to '#7f8367', which a real category named "-1" shares
+        # marked '-1' and hashed, which gave it the colour of a real category named "-1"
         # (PLANNING.md §5 C-xyp-cset-mixed-pixel).
         self.assertIsNone(set_element)
         self.assertEqual(hex_color, p2s.colorTyped('data', 'default'))

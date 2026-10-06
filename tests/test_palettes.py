@@ -47,6 +47,17 @@ class TestPaletteTables(unittest.TestCase):
         # independent, so they are identical on purpose. Nothing else should be.
         self.assertEqual(_same_, {('multiset', 'str'), ('multiset', 'int'), ('multiset', 'float')})
 
+    def test_multiset_slots_are_the_hash_colours_of_minus_one(self):
+        # They are a record of colorizer output, not a choice, so nothing else stops them
+        # going stale when the hash changes -- as they did, by 0.4.1, under pl.Expr.hash().
+        # Colorized directly: color()'s memo would merge -1 and -1.0 (PLANNING.md §5).
+        _p2s_ = Polars2SVG()
+        for _subtype_, _value_ in (('str', '-1'), ('int', -1), ('float', -1.0)):
+            _hex_ = pl.DataFrame({'v': [_value_]}).select(_p2s_.colorizeColumnPolarsOperations('v', apply_overrides=False)).item()
+            for _name_ in PALETTES:
+                with self.subTest(palette=_name_, subtype=_subtype_):
+                    self.assertEqual(PALETTES[_name_]['color_type_lu'][('multiset', _subtype_)], _hex_)
+
     def test_the_dark_background_is_actually_dark(self):
         self.assertLess(_luminance_(PALETTES['dark']['color_type_lu'][('background', 'default')]), 0.1)
         self.assertGreater(_luminance_(PALETTES['light']['color_type_lu'][('background', 'default')]), 0.9)

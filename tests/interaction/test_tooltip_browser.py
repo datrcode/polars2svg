@@ -165,6 +165,25 @@ def test_moving_to_empty_canvas_clears_it(xypi_page):
                          f'{xypi_page.tooltip_text()!r}')
 
 
+def test_small_moves_over_the_mark_keep_it_up(xypi_page):
+    """DT, on the first hover of hover_tooltips.ipynb: the box vanished on every
+    one-pixel move and came back a dwell later.  It has to stay up, unbroken, for as long
+    as the pointer is still over the mark -- so this samples between every move and after
+    the last one, not just at the end."""
+    _set_mode(xypi_page, 'text')
+    _x_, _y_ = xypi_page.first_mark_xy()
+    assert xypi_page.hover_and_dwell(_x_, _y_)
+    _text_ = xypi_page.tooltip_text()
+    for _dx_, _dy_ in ((1, 0), (1, 1), (0, 1), (-1, 1), (0, 0)):
+        xypi_page.page.mouse.move(*xypi_page._page_xy(_x_ + _dx_, _y_ + _dy_))
+        assert xypi_page.tooltip_is_showing(), f'the box dropped on a move of ({_dx_},{_dy_})'
+        time.sleep(0.1)
+        assert xypi_page.tooltip_is_showing(), f'a probe at ({_dx_},{_dy_}) erased the box'
+    time.sleep(1.0)                         # past the dwell and its round trip
+    assert xypi_page.tooltip_is_showing(), 'the box did not survive the dwell after the moves'
+    assert xypi_page.tooltip_text() == _text_, xypi_page.tooltip_text()
+
+
 def test_turning_the_row_off_removes_the_drawing(xypi_page):
     """Not just "no new ones": the one on screen has to go with the mode."""
     _set_mode(xypi_page, 'text')

@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Categorical colors change once, and then stop depending on the Polars version.**
+  Every color derived from a value (a category, a node name, a set element) used to
+  come from Polars' own `hash()`, which Polars documents as free to change between
+  releases. Polars 2.0 does change it, so every categorical chart would have recolored
+  on upgrade. The hash is now blake2b over a canonical form of each value, which no
+  Polars release can move. The cost is one recolor now: every hash-derived color differs
+  from 0.4.1's. Colors no longer depend on the column's dtype either. An integer gets the
+  same color at any width, and a Categorical or Enum value the same color as the
+  string. `'10'` and `10` still get different colors, as before. Colors set with
+  `setColorOverrides()` are unaffected. Coloring is also faster: each value is now
+  hashed once per call, where the old expression evaluated the hash dozens of times.
+
 - **README reorganized around who the package is for.** It now opens with what
   polars2svg is good at: consistent value-derived colors across views, independent
   `count=` and `color=`, linked brushing that includes the graph views, layouts from
@@ -21,6 +33,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   requirements line now states the Polars range (1.x, ≥ 1.36).
 
 ### Fixed
+
+- **Spectrum and magnitude colors round to the nearest hex level instead of truncating.**
+  A channel computed as 93.9999 drew as `5d` rather than `5e`, and floating-point noise
+  decided which, so the end color of a spectrum could be one unit off. Colors from
+  `CMAGNITUDE_*`, `CROW_*` and the other spectrum modes may differ from 0.4.1's by one
+  unit in a channel, which is not visible.
 
 - **A hover tooltip no longer flickers while the pointer moves over its mark.** It used
   to vanish on any mouse movement, even one pixel within the same node, and reappear

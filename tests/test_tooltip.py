@@ -43,14 +43,16 @@ def _strip_svg_id(svg):
     return re.sub(r'id="[^"]*"', 'id=""', svg)
 
 
-def _hover(view, xy, seq, budget_s=5.0):
+def _hover(view, xy, seq, budget_s=5.0, probe=False):
     """Drive one hover exactly as the browser's dwell timer does, and wait for the answer.
 
-    The browser writes tooltip_x/tooltip_y and then bumps tooltip_seq; the watcher is
-    async, so the answer is the payload carrying that seq back.
+    The browser writes tooltip_x/tooltip_y and tooltip_probe and then bumps tooltip_seq;
+    the watcher is async, so the answer is the payload carrying that seq back.  probe=True
+    is the hold probe a move sends while a box is up.
     """
     async def _go():
         view.tooltip_x, view.tooltip_y = int(xy[0]), int(xy[1])
+        view.tooltip_probe = probe
         view.tooltip_seq = seq
         _deadline_ = asyncio.get_event_loop().time() + budget_s
         while asyncio.get_event_loop().time() < _deadline_:
@@ -339,6 +341,62 @@ class TestIconMode(_TooltipTestCase):
         _bad_.wxh = (0, 0)
         with self.assertRaises(ValueError):
             self.p2s.xypi(self.xyp, icon=_bad_)
+
+
+# ── holding the box while the pointer stays on the mark ─────────────────────
+
+class TestTheHoldProbe(_TooltipTestCase):
+    """DT, on the first hover of hover_tooltips.ipynb: a box that vanished on every
+    one-pixel move and came back a dwell later was unusable.  While a box is up the
+    browser now probes instead, and these are the answers it decides on."""
+
+    def test_a_probe_on_the_same_mark_answers_the_drawn_boxs_key(self):
+        _v_ = self.p2s.xypi(self.xyp)
+        _v_.tooltip = 'text'
+        _x_, _y_ = self._mark_xy()
+        _full_  = _hover(_v_, (_x_, _y_), 1)
+        _probe_ = _hover(_v_, (_x_ + 1, _y_), 2, probe=True)
+        self.assertEqual(_probe_, {'seq': 2, 'probe': True, 'key': _full_['key']})
+
+    def test_a_probe_on_another_mark_answers_a_different_key(self):
+        _v_ = self.p2s.xypi(self.xyp)
+        _v_.tooltip = 'text'
+        _flat_ = self.xyp.df_flat
+        _a_ = (int(_flat_['__xpx__'][0]), int(_flat_['__ypx__'][0]))
+        _b_ = (int(_flat_['__xpx__'][1]), int(_flat_['__ypx__'][1]))
+        _full_  = _hover(_v_, _a_, 1)
+        _probe_ = _hover(_v_, _b_, 2, probe=True)
+        self.assertTrue(_probe_.get('probe'), _probe_)
+        self.assertNotEqual(_probe_['key'], _full_['key'])
+
+    def test_a_probe_off_every_mark_is_a_miss(self):
+        _v_ = self.p2s.xypi(self.xyp)
+        _v_.tooltip = 'text'
+        _hover(_v_, self._mark_xy(), 1)
+        self.assertEqual(_hover(_v_, self._empty_xy(), 2, probe=True),
+                         {'seq': 2, 'empty': True})
+
+    def test_a_probe_never_renders_the_icon(self):
+        """The reason a probe exists rather than a plain request per move: in icon mode a
+        request for a new mark is a full component render, and moving must not cost one."""
+        _v_ = self.p2s.xypi(self.xyp, icon=self.icon)
+        _v_.tooltip = 'icon'
+        _calls_ = []
+        _real_  = self.icon.render_with
+        self.icon.render_with = lambda _d_, **_kw_: (_calls_.append(1), _real_(_d_, **_kw_))[1]
+        _flat_ = self.xyp.df_flat
+        for _i_ in range(3):
+            _pay_ = _hover(_v_, (int(_flat_['__xpx__'][_i_]), int(_flat_['__ypx__'][_i_])),
+                           _i_ + 1, probe=True)
+            self.assertNotIn('svg', _pay_)
+        self.assertEqual(_calls_, [])
+
+    def test_the_tag_is_a_string_the_browser_can_compare_exactly(self):
+        """hash() is 64-bit and a JS number is not, so the key crosses as a string."""
+        _tag_ = ic._tooltipHitTag_(ic._tooltipHitKey_(_df()))
+        self.assertIsInstance(_tag_, str)
+        self.assertEqual(_tag_, ic._tooltipHitTag_(ic._tooltipHitKey_(_df().reverse())))
+        self.assertNotEqual(_tag_, ic._tooltipHitTag_(ic._tooltipHitKey_(_df().head(3))))
 
 
 # ── the cache, and the U7 staleness ticket ──────────────────────────────────

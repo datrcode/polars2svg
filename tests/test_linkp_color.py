@@ -103,7 +103,7 @@ class TestLinkPNodeColorConsistency(unittest.TestCase):
     def test_node_color_str_field_multiset_nodes_get_sentinel(self):
         lp = self.p2s.linkp(**_linkp_params(node_color='category'))
         # 'b' and 'd' span cat_x and cat_y → string multiset sentinel
-        self.assertIn('#7f8367', _node_fills(lp.svg))
+        self.assertIn(self.p2s.colorTyped('multiset', 'str'), _node_fills(lp.svg))
 
     # --- cell 89447ea3 ---
     # node_color=('cat_n', CSETp): integer field treated categorically.

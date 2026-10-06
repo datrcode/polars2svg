@@ -270,11 +270,11 @@ class TestLinkPWebGPU(unittest.TestCase):
             self.assertIn((x1, y1, x2, y2), gpu)
             row = gpu[(x1, y1, x2, y2)]
             self.assertAlmostEqual(float(row[4]), 1.5, places=5)      # stroke-width="1.5"
-            # the SVG hex is the truncation of these floats, so each channel sits in
-            # [hex, hex + 1/255)
+            # the SVG hex rounds these floats to the nearest level (PLANNING.md
+            # C-hex-truncation), so each channel sits within half a level of it
             for ch, val in enumerate(hex_to_rgb01(hx)):
-                self.assertGreaterEqual(float(row[5 + ch]), val - 1e-4, hx)
-                self.assertLess(float(row[5 + ch]), val + 1.0 / 255.0 + 1e-4, hx)
+                self.assertGreaterEqual(float(row[5 + ch]), val - 0.5 / 255.0 - 1e-4, hx)
+                self.assertLessEqual(float(row[5 + ch]), val + 0.5 / 255.0 + 1e-4, hx)
 
     def test_collapsed_nodes_emit_cloud_rects(self):
         # every node at one position -> a single collapsed node, drawn as the shared

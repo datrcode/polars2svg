@@ -158,15 +158,22 @@ class TestStaleGoldenIsReported(unittest.TestCase):
         self.addCleanup(self._restore)
         self._prior_force = os.environ.get('P2S_FORCE_PNG_GOLDEN')
         os.environ['P2S_FORCE_PNG_GOLDEN'] = '1'
+        # These tests need UPDATE_GOLDEN unset, so a full-suite UPDATE_GOLDEN=1 run must
+        # not reach them as an update run -- and must get the variable back afterwards.
+        # Dropping it here without restoring it silently ended every such run at this
+        # file: smallp, spreadlinesp, timep and xyp sort after it and kept stale goldens.
+        self._prior_update = os.environ.get('UPDATE_GOLDEN')
         os.environ.pop('UPDATE_GOLDEN', None)
 
     def _restore(self):
         svg_test_utils.GOLDEN_PNG_DIR = self._prior_dir
         svg_test_utils.rasterize_svg  = self._prior_rast
-        if self._prior_force is None:
-            os.environ.pop('P2S_FORCE_PNG_GOLDEN', None)
-        else:
-            os.environ['P2S_FORCE_PNG_GOLDEN'] = self._prior_force
+        for _name_, _prior_ in (('P2S_FORCE_PNG_GOLDEN', self._prior_force),
+                                ('UPDATE_GOLDEN',        self._prior_update)):
+            if _prior_ is None:
+                os.environ.pop(_name_, None)
+            else:
+                os.environ[_name_] = _prior_
 
     def _stubRender(self, color: tuple, size: tuple = (40, 40)) -> None:
         svg_test_utils.rasterize_svg = lambda svg: Image.new('RGB', size, color)
@@ -229,6 +236,26 @@ class TestStaleGoldenIsReported(unittest.TestCase):
         with self.assertRaises(AssertionError) as ctx:
             assert_image_matches_golden('<svg/>', 'absent')
         self.assertIn('No golden PNG', str(ctx.exception))
+
+
+class TestUpdateGoldenSurvivesTheHarnessTests(unittest.TestCase):
+    '''TestStaleGoldenIsReported drops UPDATE_GOLDEN for its own run; it must hand it back.
+
+    It used not to, so `UPDATE_GOLDEN=1 pytest tests/` regenerated only the goldens of
+    the files sorting before this one and left the rest stale, reporting green.
+    '''
+
+    def test_update_golden_is_restored_after_each_harness_test(self):
+        _prior_ = os.environ.get('UPDATE_GOLDEN')
+        self.addCleanup(lambda: os.environ.pop('UPDATE_GOLDEN', None) if _prior_ is None
+                        else os.environ.__setitem__('UPDATE_GOLDEN', _prior_))
+        # setUp drops it; the second test also sets and drops it in its own finally
+        for _name_ in ('test_matching_golden_passes', 'test_update_golden_regenerates_and_clears_the_drift'):
+            os.environ['UPDATE_GOLDEN'] = 'sentinel'
+            _result_ = unittest.TestResult()
+            TestStaleGoldenIsReported(_name_).run(_result_)
+            self.assertTrue(_result_.wasSuccessful(), f'{_name_}: {_result_.errors + _result_.failures}')
+            self.assertEqual(os.environ.get('UPDATE_GOLDEN'), 'sentinel', _name_)
 
 
 class TestNoOrphanGoldens(unittest.TestCase):

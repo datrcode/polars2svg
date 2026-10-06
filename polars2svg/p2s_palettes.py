@@ -58,9 +58,9 @@ _LIGHT_: dict[tuple[str, str], str] = {
     ('direction',     'ending'):      '#0000ff', # entity departs (right-pointing marker)
     ('direction',     'new_muted'):   '#d3494e', # the same pair on a collapsed cloud,
     ('direction',     'ending_muted'):'#658cbb', # muted so the cloud stays readable
-    ('multiset',      'str'):         '#7f8367', # derived from polarsOperation behavior / not used
-    ('multiset',      'int'):         '#19d084', # derived from polarsOperation behavior / not used
-    ('multiset',      'float'):       '#e3e294', # derived from polarsOperation behavior / not used
+    ('multiset',      'str'):         '#a88196', # hash colour of -1 -- see the note below / not used
+    ('multiset',      'int'):         '#b7b846', # hash colour of -1 -- see the note below / not used
+    ('multiset',      'float'):       '#ae3ba6', # hash colour of -1 -- see the note below / not used
 }
 
 #
@@ -115,9 +115,9 @@ _DARK_: dict[tuple[str, str], str] = {
     ('direction',     'ending'):      '#7f9cff', # entity departs (right-pointing marker)
     ('direction',     'new_muted'):   '#c96f73', # the same pair on a collapsed cloud,
     ('direction',     'ending_muted'):'#7fa3cc', # muted so the cloud stays readable
-    ('multiset',      'str'):         '#7f8367', # hash-derived, palette-independent -- see above
-    ('multiset',      'int'):         '#19d084', # hash-derived, palette-independent -- see above
-    ('multiset',      'float'):       '#e3e294', # hash-derived, palette-independent -- see above
+    ('multiset',      'str'):         '#a88196', # hash-derived, palette-independent -- see above
+    ('multiset',      'int'):         '#b7b846', # hash-derived, palette-independent -- see above
+    ('multiset',      'float'):       '#ae3ba6', # hash-derived, palette-independent -- see above
 }
 
 #

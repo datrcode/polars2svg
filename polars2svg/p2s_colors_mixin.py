@@ -1,4 +1,9 @@
+import datetime
+import decimal
+import hashlib
+import json
 from typing import Any, TypeGuard
+import numpy as np
 import polars as pl
 
 from .p2s_palettes import resolvePalette, paletteNames
@@ -32,6 +37,111 @@ def isHexColor(value: Any) -> TypeGuard[str]:
     if len(_body_) not in (3, 6, 8):
         return False
     return all(_c_ in _HEX_DIGITS_ for _c_ in _body_)
+
+#
+# colorHashKey() - the bytes a value's hash colour is derived from (PLANNING.md
+# C-polars2-color-hash).
+# - A type tag, a NUL, then a canonical rendering of the *Python* value.  Never a
+#   polars cast to String: polars' formatting is free to change between versions, and
+#   version-independence is the whole point.  pl.Expr.hash() was replaced for exactly
+#   that reason -- polars documents it as unstable across releases.
+# - The tag keeps '10' and 10 apart, as they always were.  Within a tag the dtype does
+#   not matter: every integer width is 'int' (so histop and linkp give one integer one
+#   colour), and String, Categorical and Enum are all 'str'.
+# - Floats go through v + 0.0, which turns -0.0 into 0.0.  Polars' unique() treats the
+#   two as one value and keeps whichever it met first, so without it a colour would
+#   depend on row order.  NaN renders as 'nan' whatever its sign.
+# - Lists and structs are compact JSON over the same canonical forms (_jsonable_).
+# - Anything else falls back to repr(), which is only as stable as that type's repr.
+#
+def colorHashKey(value: Any) -> bytes:
+    if value is None:                                   return b'null\x00'
+    if isinstance(value, str):                          return b'str\x00'       + value.encode('utf-8')
+    if isinstance(value, bool):                         return b'bool\x00'      + (b'1' if value else b'0')
+    if isinstance(value, int):                          return b'int\x00'       + str(value).encode('ascii')
+    if isinstance(value, float):                        return b'float\x00'     + repr(value + 0.0).encode('ascii')
+    if isinstance(value, datetime.datetime):            return b'datetime\x00'  + value.isoformat().encode('ascii')
+    if isinstance(value, datetime.date):                return b'date\x00'      + value.isoformat().encode('ascii')
+    if isinstance(value, datetime.time):                return b'time\x00'      + value.isoformat().encode('ascii')
+    if isinstance(value, datetime.timedelta):           return b'timedelta\x00' + f'{value.days},{value.seconds},{value.microseconds}'.encode('ascii')
+    if isinstance(value, decimal.Decimal):              return b'decimal\x00'   + str(value).encode('ascii')
+    if isinstance(value, bytes | bytearray):            return b'bytes\x00'     + bytes(value)
+    if isinstance(value, list | tuple | dict):          return b'json\x00'      + json.dumps(_jsonable_(value), ensure_ascii=False, separators=(',', ':')).encode('utf-8')
+    return b'repr\x00' + repr(value).encode('utf-8', errors='backslashreplace')
+
+#
+# _jsonable_() - a nested value in the canonical forms colorHashKey() uses, ready for json
+# - a scalar JSON cannot hold keeps its colorHashKey() rendering, tag included, so a
+#   date inside a list cannot collide with a string inside a list
+#
+def _jsonable_(value: Any) -> Any:
+    if value is None or isinstance(value, str | bool | int): return value
+    if isinstance(value, float):                              return value + 0.0
+    if isinstance(value, list | tuple):                       return [_jsonable_(_v_) for _v_ in value]
+    if isinstance(value, dict):                               return {str(_k_): _jsonable_(_v_) for _k_, _v_ in value.items()}
+    return colorHashKey(value).decode('utf-8', errors='backslashreplace')
+
+#
+# colorHashes() - one 32-bit blake2b hash per element of s, as a UInt32 Series of the
+# same length and name
+# - Each element costs one hashlib call, so callers hand this distinct values only.
+# - Nulls hash like any other value (to colorHashKey(None)'s digest); the result has
+#   no nulls.
+# - 32 bits because the hash colour reads exactly that many (H, S and V).
+# - String-like columns skip colorHashKey()'s dispatch; tests hold the two paths equal.
+#
+def colorHashes(s: pl.Series) -> pl.Series:
+    _blake2b_ = hashlib.blake2b
+    if s.dtype == pl.String or isinstance(s.dtype, pl.Categorical | pl.Enum):
+        _keys_ = [b'null\x00' if _v_ is None else b'str\x00' + _v_ for _v_ in s.cast(pl.String).cast(pl.Binary).to_list()]
+    else:
+        _keys_ = [colorHashKey(_v_) for _v_ in s.to_list()]
+    _digests_ = b''.join(_blake2b_(_k_, digest_size=4).digest() for _k_ in _keys_)
+    return pl.Series(s.name, np.frombuffer(_digests_, dtype='<u4'), dtype=pl.UInt32)
+
+#
+# _unitRGBToHexExpr_() - '#rrggbb' from three [0, 1] channel expressions
+# - Rounds to the nearest of the 256 levels.  It used to truncate, so a channel computed
+#   as 93.999... drew as 0x5d, and float noise decided which (PLANNING.md
+#   C-hex-truncation).  floor(x + 0.5) rather than Expr.round(), whose tie mode is
+#   polars' to choose.
+#
+def _unitRGBToHexExpr_(r: pl.Expr, g: pl.Expr, b: pl.Expr) -> pl.Expr:
+    _hex_digits_ = '0123456789abcdef'
+    _parts_: list[pl.Expr] = [pl.lit('#')]
+    for _c_ in (r, g, b):
+        _byte_ = (_c_ * 255 + 0.5).floor().clip(0, 255).cast(pl.UInt8)
+        _parts_ += [pl.lit(_hex_digits_).str.slice(_byte_ // 16, 1), pl.lit(_hex_digits_).str.slice(_byte_ % 16, 1)]
+    return pl.concat_str(_parts_)
+
+#
+# _hashToHexExpr_() - a hash colour from a 32-bit hash column
+# - H from bits 16-31, S (0.1-0.9) from bits 8-15, V (0.5-0.9) from bits 0-7; the band
+#   is fixed, so hash colours do not depend on the palette
+# - hc must be a materialised column: every channel reads it many times over
+#
+def _hashToHexExpr_(hc: pl.Expr) -> pl.Expr:
+    _hsv_h_     = (((hc //  2**16) & 0x00ffff)/65535.0)
+    _hsv_s_     = (0.1 + 0.8 * ((hc //  2** 8) & 0x0000ff)/  255.0)
+    _hsv_v_     = (0.5 + 0.4 * ((hc          ) & 0x0000ff)/  255.0)
+    _conv_i_    = ((_hsv_h_*6).floor().cast(pl.Int8))
+    _conv_f_    = ((_hsv_h_*6) - (_hsv_h_*6).floor())
+    _conv_p_    = (_hsv_v_ * (1.0 - _hsv_s_))
+    _conv_q_    = (_hsv_v_ * (1.0 - _conv_f_ * _hsv_s_))
+    _conv_t_    = (_hsv_v_ * (1.0 - (1 - _conv_f_) * _hsv_s_))
+    _r_ = pl.when((_conv_i_ == 0) | (_conv_i_ == 5)).then(_hsv_v_)  \
+            .when(_conv_i_ == 1)                  .then(_conv_q_) \
+            .when((_conv_i_ == 2) | (_conv_i_ == 3)).then(_conv_p_) \
+            .otherwise(                                   _conv_t_)
+    _g_ = pl.when(_conv_i_ == 0)                  .then(_conv_t_) \
+            .when((_conv_i_ == 1) | (_conv_i_ == 2)).then(_hsv_v_)  \
+            .when(_conv_i_ == 3)                  .then(_conv_q_) \
+            .otherwise(                                   _conv_p_)
+    _b_ = pl.when((_conv_i_ == 0) | (_conv_i_ == 1)).then(_conv_p_) \
+            .when(_conv_i_ == 2)                  .then(_conv_t_) \
+            .when((_conv_i_ == 3) | (_conv_i_ == 4)).then(_hsv_v_)  \
+            .otherwise(                                   _conv_q_)
+    return _unitRGBToHexExpr_(_r_, _g_, _b_)
 
 class P2SColorsMixin:
     def __init__(self) -> None:
@@ -68,20 +178,16 @@ class P2SColorsMixin:
         # p2s_palettes.py.  resolvePalette() hands back copies, so mutating
         # color_type_lu on one instance (which tests do) cannot reach another.
         #
-        # Multi-set Color Derivations -- the ('multiset', *) slots record what the
-        # hash colorizer emits for three dtypes, reproduced here:
+        # Multi-set Color Derivations -- the ('multiset', *) slots record the colour a
+        # node whose rows carry several values of a CSETp field ends up with: the cset
+        # path in p2s_component_color_mixin marks it -1 in the field's dtype and hash-
+        # colours that.  So each slot is the hash colour of -1 as a str, an int and a
+        # float (tests/test_palettes.py holds them to colorizeColumnPolarsOperations):
         #
-        # _df_ = pl.DataFrame({
-        #     'val':  ['a','a','b','b','c','c'],
-        #     'cat':  ['x','y','x','y','w','z'],
-        #     'cat_n':[ 1,  2,  1,  2,  3,  4],
-        #     'cat_f':[2.1,3.1,2.1,3.1,4.1,6.2],
-        # })
-        # _params_ = {'df':_df_, 'x':'val', 'y':'val', 'dot_size':10.0, 'draw_context':False, 'insets':(16,16), 'wxh':(96,96)}
-        # p2s.xyp(**_params_, color='cat')                # "#7f8367"
-        # p2s.xyp(**_params_, color=('cat',   p2s.CSETp)) # "#7f8367"
-        # p2s.xyp(**_params_, color=('cat_n', p2s.CSETp)) # "#19d084"
-        # p2s.xyp(**_params_, color=('cat_f', p2s.CSETp)) # "#e3e294"
+        # p2s.color('-1')   # "#a88196"
+        # p2s.color(-1)     # "#b7b846"
+        # p2s.color(-1.0)   # "#ae3ba6"   (on a fresh instance: the memo is keyed by
+        #                                  value, and -1 == -1.0 -- PLANNING.md §5)
         #
         self.__applyPalette__(resolvePalette(palette))
 
@@ -326,16 +432,7 @@ class P2SColorsMixin:
     # - red_column, green_column, blue_column are columns of type float from 0.0 to 1.0
     #
     def hexColorFromRGBTriplesPolarsOperations(self, red_column: str, green_column: str, blue_column: str) -> pl.Expr:
-        hex_digits = "0123456789abcdef"
-        return  pl.concat_str([
-                pl.lit("#"),
-                pl.lit(hex_digits).str.slice((pl.col(red_column)   * 255).cast(pl.UInt8) // 16, 1),
-                pl.lit(hex_digits).str.slice((pl.col(red_column)   * 255).cast(pl.UInt8) %  16, 1),
-                pl.lit(hex_digits).str.slice((pl.col(green_column) * 255).cast(pl.UInt8) // 16, 1),
-                pl.lit(hex_digits).str.slice((pl.col(green_column) * 255).cast(pl.UInt8) %  16, 1),
-                pl.lit(hex_digits).str.slice((pl.col(blue_column)  * 255).cast(pl.UInt8) // 16, 1),
-                pl.lit(hex_digits).str.slice((pl.col(blue_column)  * 255).cast(pl.UInt8) %  16, 1),
-        ])
+        return _unitRGBToHexExpr_(pl.col(red_column), pl.col(green_column), pl.col(blue_column))
 
     #
     # rgbFromHexPolarsOperations() - unpack a '#rrggbb' hex color string column into
@@ -352,44 +449,25 @@ class P2SColorsMixin:
 
     #
     # colorizeColumnPolarsOperations() - colorize a column (of any type) into a hex color string column.
-    # - apply_overrides=False skips the color_overrides_lu when/then chain (used by color()/colors(),
-    #   which resolve overrides in Python and cache only the base hash colors)
+    # - apply_overrides=False skips color_overrides_lu (used by color()/colors(), which
+    #   resolve overrides in Python and cache only the base hash colors)
+    #
+    # One map_batches UDF, so the hash runs once per call: distinct values -> colorHashes()
+    # (blake2b, version-stable) -> HSV band -> hex, overrides, then a join back onto the
+    # rows.  The colour math used to read pl.Expr.hash() directly, and eager polars has no
+    # common-subexpression elimination, so every with_columns evaluated the hash 94 times
+    # -- and pl.Expr.hash() recoloured every chart at polars 2.0 (PLANNING.md
+    # C-polars2-color-hash).  Overrides still match on the value's polars String cast,
+    # so a key means what it always meant.
     #
     def colorizeColumnPolarsOperations(self, input: Any, apply_overrides: bool = True) -> pl.Expr:
-            _color_     = pl.col(input)
-            _hc_        = _color_.hash()
-            _hsv_h_     = (((_hc_ //  2**16) & 0x00ffff)/65535.0)
-            _hsv_s_     = (0.1 + 0.8 * ((_hc_ //  2** 8) & 0x0000ff)/  255.0)
-            _hsv_v_     = (0.5 + 0.4 * ((_hc_          ) & 0x0000ff)/  255.0)
-            _conv_i_    = ((_hsv_h_*6).floor().cast(pl.Int8))
-            _conv_f_    = ((_hsv_h_*6) - (_hsv_h_*6).floor())
-            _conv_p_    = (_hsv_v_ * (1.0 - _hsv_s_))
-            _conv_q_    = (_hsv_v_ * (1.0 - _conv_f_ * _hsv_s_))
-            _conv_t_    = (_hsv_v_ * (1.0 - (1 - _conv_f_) * _hsv_s_))
-            _r_ = pl.when((_conv_i_ == 0) | (_conv_i_ == 5)).then(_hsv_v_)  \
-                    .when(_conv_i_ == 1)                  .then(_conv_q_) \
-                    .when((_conv_i_ == 2) | (_conv_i_ == 3)).then(_conv_p_) \
-                    .otherwise(                                   _conv_t_)
-            _g_ = pl.when(_conv_i_ == 0)                  .then(_conv_t_) \
-                    .when((_conv_i_ == 1) | (_conv_i_ == 2)).then(_hsv_v_)  \
-                    .when(_conv_i_ == 3)                  .then(_conv_q_) \
-                    .otherwise(                                   _conv_p_)
-            _b_ = pl.when((_conv_i_ == 0) | (_conv_i_ == 1)).then(_conv_p_) \
-                    .when(_conv_i_ == 2)                  .then(_conv_t_) \
-                    .when((_conv_i_ == 3) | (_conv_i_ == 4)).then(_hsv_v_)  \
-                    .otherwise(                                   _conv_q_)
-            hex_digits = "0123456789abcdef"
-            _base_ = pl.concat_str([pl.lit("#"),
-                                    pl.lit(hex_digits).str.slice((_r_ * 255).cast(pl.UInt8) // 16, 1),
-                                    pl.lit(hex_digits).str.slice((_r_ * 255).cast(pl.UInt8) %  16, 1),
-                                    pl.lit(hex_digits).str.slice((_g_ * 255).cast(pl.UInt8) // 16, 1),
-                                    pl.lit(hex_digits).str.slice((_g_ * 255).cast(pl.UInt8) %  16, 1),
-                                    pl.lit(hex_digits).str.slice((_b_ * 255).cast(pl.UInt8) // 16, 1),
-                                    pl.lit(hex_digits).str.slice((_b_ * 255).cast(pl.UInt8) %  16, 1)])
-            if not apply_overrides or not self.color_overrides_lu:
-                return _base_
-            _expr_ = _base_
-            for _val_, _hex_ in self.color_overrides_lu.items():
-                _expr_ = pl.when(pl.col(input).cast(pl.String) == _val_).then(pl.lit(_hex_)).otherwise(_expr_)
-            return _expr_
+        _overrides_ = dict(self.color_overrides_lu) if apply_overrides and self.color_overrides_lu else {}
+        def _colorize_(s: pl.Series) -> pl.Series:
+            _distinct_ = s.unique()
+            _hex_      = colorHashes(_distinct_).to_frame('h').select(_hashToHexExpr_(pl.col('h'))).to_series()
+            if _overrides_:
+                _hex_  = _distinct_.cast(pl.String).replace_strict(_overrides_, default=_hex_, return_dtype=pl.String)
+            _lut_      = pl.DataFrame({'k': _distinct_, 'hex': _hex_})
+            return s.to_frame('k').join(_lut_, on='k', how='left', nulls_equal=True, maintain_order='left').get_column('hex')
+        return pl.col(input).map_batches(_colorize_, return_dtype=pl.String)
 

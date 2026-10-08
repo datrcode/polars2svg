@@ -43,12 +43,12 @@
 # python:3.13-slim container on linux/amd64, and the whole point of it is being
 # a different platform than this machine.  Let CI own that one.
 #
-# The test suite is also deliberately not here.  The golden-image tests render
-# against this machine's fonts and fail locally while passing on CI, so folding
-# them in would leave preflight permanently red -- and a gate that is always red
-# is a gate you learn to ignore.  Run tests as their own deliberate step:
+# The test suite is also deliberately not here: preflight mirrors CI's fast jobs
+# and finishes in seconds, and the suite does not.  Run tests as their own step --
+# the unit suite, then the browser suite as a separate run:
 #
-#   .venv/bin/python -m pytest tests/
+#   .venv/bin/python -m pytest tests/ -q --ignore=tests/test_performance.py -n auto
+#   .venv/bin/python -m pytest tests/interaction --interaction -q -n 4
 #
 # Unlike CI, this runs all four checks even after one fails, so a single pass
 # shows you everything that needs fixing.  Exits non-zero if any check failed.
@@ -213,7 +213,7 @@ _step_ 'pip-audit (dependencies)' bash -c \
 printf '\n'
 if [ ${#_FAILED_[@]} -eq 0 ]; then
     printf 'preflight green -- ci.yml fast jobs should pass\n'
-    printf 'reminder: the test suite is separate (.venv/bin/python -m pytest tests/)\n\n'
+    printf 'reminder: the test suite is separate (see the header of tools/preflight.sh)\n\n'
     exit 0
 fi
 

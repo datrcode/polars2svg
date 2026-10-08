@@ -393,10 +393,10 @@ export function render({ model, el }) {
       state.y1_drag  = event.offsetY;
       state.drag_op  = true;
       myUpdateDragRect();
-    } else if (event.button == 1) {
-      model.x0_middle = model.x1_middle = event.offsetX;
-      model.y0_middle = model.y1_middle = event.offsetY;
     }
+    // No middle button here.  linkpi pans on a middle drag and resets on a middle click;
+    // the generic views have no zoom to pan or reset, so that arrives with it (PLANNING.md
+    // §7 F2).  This branch used to record a middle press and never report the release.
   }
 
   function myOnMouseUp(event) {

@@ -11,10 +11,27 @@ that only showed up in certain selections. Instances are now independent (each
 that sets overrides builds its own instance in ``setUp``, so the isolation is structural
 rather than something a fixture has to keep restoring.
 """
+import os
 from collections.abc import Generator
 from typing import Any
 
 import pytest
+
+# Under pytest-xdist each worker is its own process with its own Polars thread pool, and
+# Polars sizes that pool to every core: 18 workers x 18 threads stalled the suite for
+# 27+ minutes on polars 2.0, where two threads each run it in about 32 s (PLANNING.md
+# V12).  Polars reads POLARS_MAX_THREADS once, at import, so this must run before
+# anything imports polars -- xdist exports PYTEST_XDIST_WORKER before it loads this
+# file.  A value already in the environment wins.  A serial run keeps every thread, as
+# users do.  The check turns a pool that escaped the cap into an error at startup
+# rather than a stall.
+if os.environ.get('PYTEST_XDIST_WORKER'):
+    os.environ.setdefault('POLARS_MAX_THREADS', '2')
+    import polars as _pl_
+    if _pl_.thread_pool_size() != int(os.environ['POLARS_MAX_THREADS']):
+        raise RuntimeError(f'polars was imported before tests/conftest.py could cap its thread pool '
+                           f'({_pl_.thread_pool_size()} threads, not {os.environ["POLARS_MAX_THREADS"]}); '
+                           'an uncapped -n auto run stalls (PLANNING.md V12)')
 
 
 def pytest_addoption(parser):

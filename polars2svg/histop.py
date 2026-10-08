@@ -216,6 +216,9 @@ class Histop(P2SBinComponentMixin, ExportMixin):
         self.p2s.assertParamSpecMatches('Histop', self._VALID_KWARGS, _defaults_)
 
         self.df, self.df_orig = None, None
+        self._bin_tfields_: dict[str, Any] = {}     # t-field bin -> its time enum (__validateInput__)
+        self._derived_cols_: list[str]     = []     # t-field columns added to df (__addColumnsToDataFrame__)
+        self._tfield_enums_: dict[str, Any] = {}    # every t-field spec (bin, count, color) -> its time enum
 
         # Template support
         self.template = None
@@ -286,16 +289,20 @@ class Histop(P2SBinComponentMixin, ExportMixin):
         else:
             raise ValueError(f'Histop.__validateInput__(): bin_by must be str or tuple, got {type(self.bin_by)}')
 
+        # A t-field bin (PLANNING.md §5 C-histop-tfield) is checked against its source
+        # column here; __addColumnsToDataFrame__ derives it.  Its enum is kept so each
+        # bar can be labelled 'mon' rather than 1 (__binLabel__).
+        self._bin_tfields_ = {}
         for _f_ in self._bin_cols_:
-            # A t-field reached here as "not found", and the column suggestion stayed silent:
-            # its column IS in the frame.  timep is what counts by a time transform, so say
-            # so -- whether histop should take t-fields is still open (PLANNING.md §5
-            # C-histop-tfield).
-            if _f_ not in self.df.columns and self.p2s.isTField(_f_, self.df):
+            if self.p2s.isTField(_f_, self.df):
                 _col_, _enum_ = self.p2s.tFieldTuple(_f_)
-                raise ValueError(f'Histop.__validateInput__(): bin_by={_f_!r} is a t-field, which histop does not take -- '
-                                 f'to count by {_enum_.name}, use p2s.timep(df, p2s.tField({_col_!r}, p2s.{_enum_.name}))')
-            if _f_ not in self.df.columns:
+                if _col_ not in self.df.columns:
+                    raise ValueError(f'Histop.__validateInput__(): bin_by t-field {_f_!r}: column "{_col_}" not found{self.p2s.columnSuggestion(_col_, self.df)}')
+                if not any(isinstance(self.df.schema[_col_], _t_) for _t_ in self.p2s.tFieldAccepts(_f_)):
+                    raise ValueError(f'Histop.__validateInput__(): bin_by t-field {_f_!r} needs a Date or Datetime column; '
+                                     f'"{_col_}" is {self.df.schema[_col_]}')
+                self._bin_tfields_[_f_] = _enum_
+            elif _f_ not in self.df.columns:
                 raise ValueError(f'Histop.__validateInput__(): bin_by field "{_f_}" not found{self.p2s.columnSuggestion(_f_, self.df)}')
 
         # Validate count
@@ -350,34 +357,56 @@ class Histop(P2SBinComponentMixin, ExportMixin):
         if self.df is None: return
         _ops_ = []
 
-        # Multi-field bin: concatenate to '__bin__' (non-printable separator so distinct
-        # field tuples can't collide into one bar; shown as '|' via formatMultiFieldValue)
-        if isinstance(self.bin_by, tuple):
-            _ops_.append(pl.concat_str(self._bin_cols_, separator=self.p2s.MULTI_FIELD_SEP).alias('__bin__'))
+        # Bin t-fields.  A single one keeps its raw value -- order=LABELp then sorts
+        # mon..sun, 00h..23h -- and is labelled at draw time.
+        for _f_ in self._bin_tfields_:
+            self.p2s.warnIfTFieldAliasCollides(_f_, self.df_orig, 'Histop')
+            _ops_.append(self.p2s.polarsOperationForTField(_f_).alias(_f_))
 
-        # Count field t-fields
-        if isinstance(self.count, str) and self.p2s.isTField(self.count, df=self.df_orig):
-            self.p2s.warnIfTFieldAliasCollides(self.count, self.df_orig, 'Histop')
-            _ops_.append(self.p2s.polarsOperationForTField(self.count).alias(self.count))
-        elif isinstance(self.count, tuple):
-            for _f_ in self.count:
-                if isinstance(_f_, str) and self.p2s.isTField(_f_, df=self.df_orig):
+        # Count and color field t-fields.  Each is recorded with its enum: a t-field is a
+        # time bin, never a magnitude, so it counts distinct values (D2) and colors
+        # categorically (D1) whatever its dtype, and its legend reads 'mon', not 1
+        # (PLANNING.md §5 C-histop-tfield).
+        self._tfield_enums_ = dict(self._bin_tfields_)
+        for _spec_ in (self.count, self.color):
+            for _f_ in (_spec_ if isinstance(_spec_, tuple) else (_spec_,)):
+                if isinstance(_f_, str) and _f_ not in self._tfield_enums_ and self.p2s.isTField(_f_, df=self.df_orig):
                     self.p2s.warnIfTFieldAliasCollides(_f_, self.df_orig, 'Histop')
                     _ops_.append(self.p2s.polarsOperationForTField(_f_).alias(_f_))
-
-        # Color field t-fields
-        if isinstance(self.color, str) and self.p2s.isTField(self.color, df=self.df_orig):
-            self.p2s.warnIfTFieldAliasCollides(self.color, self.df_orig, 'Histop')
-            _ops_.append(self.p2s.polarsOperationForTField(self.color).alias(self.color))
-        elif isinstance(self.color, tuple):
-            for _f_ in self.color:
-                if isinstance(_f_, str) and self.p2s.isTField(_f_, df=self.df_orig):
-                    self.p2s.warnIfTFieldAliasCollides(_f_, self.df_orig, 'Histop')
-                    _ops_.append(self.p2s.polarsOperationForTField(_f_).alias(_f_))
+                    self._tfield_enums_[_f_] = self.p2s.tFieldTuple(_f_)[1]
 
         if len(_ops_) > 0:
+            _before_ = set(self.df.columns)
             if self.use_lazy_execution: self.df = self.df.lazy().with_columns(_ops_).collect()
             else:                       self.df = self.df.with_columns(_ops_)
+            self._derived_cols_ = [c for c in self.df.columns if c not in _before_]
+
+        # Multi-field bin: concatenate to '__bin__' (non-printable separator so distinct
+        # field tuples can't collide into one bar; shown as '|' via formatMultiFieldValue).
+        # A second pass because a t-field part must exist before it can be joined, and it
+        # joins in its readable form ('a|mon', not 'a|1'), mapped over its distinct values.
+        if isinstance(self.bin_by, tuple):
+            _parts_: list[Any] = []
+            for _f_ in self._bin_cols_:
+                if _f_ in self._bin_tfields_:
+                    _lu_ = {_v_: self.p2s.timeFieldHumanReadable(_v_, self._bin_tfields_[_f_])
+                            for _v_ in self.df[_f_].unique().to_list() if _v_ is not None}
+                    _parts_.append(pl.col(_f_).replace_strict(_lu_, default=None, return_dtype=pl.String))
+                else:
+                    _parts_.append(pl.col(_f_))
+            _concat_ = pl.concat_str(_parts_, separator=self.p2s.MULTI_FIELD_SEP).alias('__bin__')
+            if self.use_lazy_execution: self.df = self.df.lazy().with_columns(_concat_).collect()
+            else:                       self.df = self.df.with_columns(_concat_)
+
+    #
+    # __binLabel__() - the text a bin is drawn with, and searched by
+    # - a single t-field bin is labelled from its raw value ('mon', '13h', '2026-01');
+    #   a tuple's t-field parts were made readable before the join
+    #
+    def __binLabel__(self, value: Any) -> str:
+        if value is not None and self._bin_col_ in self._bin_tfields_:
+            return self.p2s.timeFieldHumanReadable(value, self._bin_tfields_[self._bin_col_])
+        return self.p2s.formatMultiFieldValue(value)
 
     # ── Count aggregate expression ──────────────────────────────────────────
 
@@ -385,6 +414,8 @@ class Histop(P2SBinComponentMixin, ExportMixin):
         if self.count == self.p2s.ROW_COUNTp:
             return pl.len().alias('__count__')
         elif isinstance(self.count, str):
+            if self.count in self._tfield_enums_:        # a time bin: distinct, never summed (D2)
+                return pl.col(self.count).n_unique().alias('__count__')
             _is_num_ = self.p2s.numericColumn(self.df, self.count)
             self.p2s.logDtypeKeyedCount('Histop', self.count, _is_num_)
             if _is_num_: return pl.col(self.count).sum()    .alias('__count__')
@@ -392,6 +423,8 @@ class Histop(P2SBinComponentMixin, ExportMixin):
         elif isinstance(self.count, tuple):
             _fields_ = [_f_ for _f_ in self.count if isinstance(_f_, str)]
             if self.p2s.SETp in self.count:
+                return pl.col(_fields_[0]).n_unique().alias('__count__')
+            elif len(_fields_) == 1 and _fields_[0] in self._tfield_enums_ and self.p2s.SCALARp not in self.count:
                 return pl.col(_fields_[0]).n_unique().alias('__count__')
             elif len(_fields_) == 1:
                 return pl.col(_fields_[0]).sum().alias('__count__')
@@ -413,13 +446,17 @@ class Histop(P2SBinComponentMixin, ExportMixin):
     # boxplot never draws one either).  Public so an interactive view offers exactly what
     # the constructor would draw, rather than keeping a second copy of the rules.
     #
+    # A t-field counts distinct values, so it is no boxplot's numeric field unless the
+    # spec says SCALARp outright.
+    #
     def numericCountField(self, count: Any = None) -> str | None:
         _count_ = self.count if count is None else count
-        if isinstance(_count_, str) and self.p2s.numericColumn(self.df, _count_):
+        if isinstance(_count_, str) and self.p2s.numericColumn(self.df, _count_) and _count_ not in self._tfield_enums_:
             return _count_
         elif isinstance(_count_, tuple):
             for _f_ in _count_:
-                if isinstance(_f_, str) and self.p2s.numericColumn(self.df, _f_):
+                if isinstance(_f_, str) and self.p2s.numericColumn(self.df, _f_) \
+                   and (_f_ not in self._tfield_enums_ or self.p2s.SCALARp in _count_):
                     return _f_
         return None
 
@@ -491,7 +528,9 @@ class Histop(P2SBinComponentMixin, ExportMixin):
                     elif _has_cstr_:
                         self._color_is_stretched_ = True
                     else:
-                        if self._color_field_ is not None:
+                        if self._color_field_ in self._tfield_enums_:   # a time bin: categorical (D1)
+                            self._color_is_categorical_ = True
+                        elif self._color_field_ is not None:
                             _is_num_ = self.p2s.numericColumn(self.df, self._color_field_)
                             # Only the mode chosen purely from dtype is diagnosed; a
                             # magnitude/stretch color enum in the tuple is explicit intent.
@@ -500,6 +539,9 @@ class Histop(P2SBinComponentMixin, ExportMixin):
                             self._color_is_categorical_ = not _is_num_
                         else:
                             self._color_is_categorical_ = False
+            elif isinstance(self.color, str) and self.color in self._tfield_enums_:   # a time bin: categorical (D1)
+                self._color_field_          = self.color
+                self._color_is_categorical_ = True
             else:
                 self._color_field_          = self.color
                 _is_num_ = self.p2s.numericColumn(self.df, self.color)
@@ -677,7 +719,9 @@ class Histop(P2SBinComponentMixin, ExportMixin):
             # df_agg carries the rendered categories (post-'(other)' collapse for
             # stacked); weight by the aggregated count so order matches bar area
             _vc_ = self.p2s.legendCategoricalValueCounts(self.df_agg, self._color_field_, weight='__count__')
-            self.legend_info = self.p2s.legendInfoCategorical(_spec_, _vc_, _title_)
+            _enum_ = self._tfield_enums_.get(self._color_field_)
+            _lfn_  = None if _enum_ is None else (lambda _v_: self.p2s.timeFieldHumanReadable(_v_, _enum_))
+            self.legend_info = self.p2s.legendInfoCategorical(_spec_, _vc_, _title_, label_fn=_lfn_)
         else:
             self.legend_info = self.p2s.legendInfoColorbar(_title_)
             if self._color_is_cset_spectrum_:
@@ -1048,7 +1092,7 @@ class Histop(P2SBinComponentMixin, ExportMixin):
         _lbl_max_w_ = self._plot_w_ - 2 * _lbl_pad_
         _ell_w_     = self.p2s.textLength('...', self.txt_h)
         for _i_, _bin_ in enumerate(_visible_bins_) if self.draw_labels else []:
-            _lbl_full_ = self.p2s.formatMultiFieldValue(_bin_)
+            _lbl_full_ = self.__binLabel__(_bin_)
             if self.p2s.textLength(_lbl_full_, self.txt_h) <= _lbl_max_w_:
                 _lbl_ = _lbl_full_
             else:
@@ -1239,10 +1283,16 @@ class Histop(P2SBinComponentMixin, ExportMixin):
     # inner join returned no rows and the anti join removed none of them, so the
     # "None" bar could neither be selected nor filtered out.
     #
+    #
+    # Records go back with the caller's columns only.  The t-field columns derived for
+    # bin_by / count / color ('ts|DoWp') used to ride along, and a record set handed to
+    # another view binned by the same t-field then read as a real column shadowing it.
+    #
     def __dropInternal__(self, df: pl.DataFrame) -> pl.DataFrame:
         _to_drop_ = [c for c in ['__p2s_index__'] if c in df.columns]
         if self._bin_col_ == '__bin__' and '__bin__' in df.columns:
             _to_drop_.append('__bin__')
+        _to_drop_ += [c for c in self._derived_cols_ if c in df.columns and c not in _to_drop_]
         return df.drop(_to_drop_)
 
     def __recordsForBins__(self, bins: list, remove: bool = False) -> pl.DataFrame:
@@ -1380,7 +1430,7 @@ class Histop(P2SBinComponentMixin, ExportMixin):
         # A null bin is matched on its rendered label ('(null)'), the same text the
         # user reads off the bar, so '/null' selects it like any other bin.
         _matching_bins_ = [b for b in self._sorted_bins_
-                           if _sub_ in self.p2s.formatMultiFieldValue(b).lower()]
+                           if _sub_ in self.__binLabel__(b).lower()]
         return self.__recordsForBins__(_matching_bins_, remove=remove_bins)
 
     def recordsAt(self, xy: tuple, shape: SelectShapeP | None = None, threshold: float = 2.0) -> pl.DataFrame:

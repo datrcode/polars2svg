@@ -899,6 +899,13 @@ _CASES_ = [
      HistopRenderRows, 'histopi'),
     ('histop: numeric bins by label', lambda p, d: p.histop(d, 'bytes', order=p.LABELp, descending=False),
      HistopRenderRows, 'histopi'),
+    # t-fields as bin, count and colour (PLANNING.md §5 C-histop-tfield)
+    ('histop: t-field bin', lambda p, d: p.histop(d, p.tField('ts', p.PT_DoWp)), HistopRenderRows, 'histopi'),
+    ('histop: t-field bin and colour, legend',
+     lambda p, d: p.histop(d, p.tField('ts', p.PT_Hp), color=p.tField('ts', p.PT_DoWp), legend=True),
+     HistopRenderRows, 'histopi'),
+    ('histop: t-field count', lambda p, d: p.histop(d, 'pet', count=p.tField('ts', p.PT_Hp)),
+     HistopRenderRows, 'histopi'),
     # piep: each style, each colour mode the legend and scale gates tell apart, and a
     # magnitude enum on a text field (which piep turns categorical, with a warning)
     ('piep: rows', lambda p, d: p.piep(d, 'pet'), PiepRenderRows, 'piepi'),

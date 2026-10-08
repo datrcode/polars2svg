@@ -1,3 +1,4 @@
+import datetime as _dt_
 import unittest
 import polars as pl
 from polars2svg import Polars2SVG
@@ -28,6 +29,13 @@ _DF_BOX = pl.DataFrame({
 _DF_MULTI = pl.DataFrame({
     'cat': ['A'] * 4 + ['A'] * 3 + ['B'] * 2 + ['B'] * 1,
     'grp': ['x'] * 4 + ['y'] * 3 + ['x'] * 2 + ['y'] * 1,
+})
+
+
+# t-field bin frame: 2026-01-05 is a Monday; day i of that week has 7-i rows, at varied
+# hours, so the day-of-week counts are mon=7 ... sun=1 with no ties.
+_DF_TFIELD = pl.DataFrame({
+    'ts': [_dt_.datetime(2026, 1, 5 + _i_, (3 * _k_) % 24) for _i_ in range(7) for _k_ in range(7 - _i_)],
 })
 
 
@@ -157,6 +165,14 @@ class TestHistopGolden(unittest.TestCase):
         hp = self.p2s.histop(_DF_MULTI, ('cat', 'grp'), wxh=(160, 160))
         assert_svg_matches_golden(hp.svg, 'histop_multi_field_bin')
         assert_image_matches_golden(hp.svg, 'histop_multi_field_bin')
+
+    # ------------------------------------------------------------------
+    # t-field bin — day of week, labelled mon..sun, in count order (mon=7 ... sun=1)
+    # ------------------------------------------------------------------
+    def test_tfield_bin(self):
+        hp = self.p2s.histop(_DF_TFIELD, self.p2s.tField('ts', self.p2s.PT_DoWp), wxh=(128, 160))
+        assert_svg_matches_golden(hp.svg, 'histop_tfield_bin')
+        assert_image_matches_golden(hp.svg, 'histop_tfield_bin')
 
 
 if __name__ == '__main__':

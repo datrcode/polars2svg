@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from typing import Any
 import math
 
@@ -194,8 +195,11 @@ class P2SLegendMixin:
     #   is carried in .overflow and rendered as '... N more'
     # - hex_lu: optional {key_str: '#rrggbb'} overriding the default string-hash
     #   colors, for components that colorize the raw (non-string-cast) values
+    # - label_fn: optional raw value -> label, for values that read better than their
+    #   string cast (a t-field's 1 is 'mon').  A user's fmt= still wins where it applies.
     #
-    def legendInfoCategorical(self, spec: dict, value_counts: list, title: str, hex_lu: Any = None) -> Any:
+    def legendInfoCategorical(self, spec: dict, value_counts: list, title: str, hex_lu: Any = None,
+                              label_fn: Callable[[Any], str] | None = None) -> Any:
         _order_ = spec['order']
         if isinstance(_order_, (list, tuple)):
             _pos_lu_ = {str(_v_): _i_ for _i_, _v_ in enumerate(_order_)}
@@ -212,6 +216,8 @@ class P2SLegendMixin:
         for _key_, _n_, _raw_ in _shown_:
             if spec['fmt'] is not None and isinstance(_raw_, (int, float)) and not isinstance(_raw_, bool):
                 _label_ = self.legendFormatValue(_raw_, spec['fmt'])
+            elif label_fn is not None and _raw_ is not None:
+                _label_ = label_fn(_raw_)
             else:
                 _label_ = self.formatMultiFieldValue(_key_)
             _info_.entries.append((_label_, _hex_lu_[_key_]))

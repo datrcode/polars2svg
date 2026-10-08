@@ -305,6 +305,11 @@ class Polars2SVG(P2SColorsMixin,
         @property
         def alias(self) -> str: return str(self)
         def __repr__(self) -> str: return f'TField({self.column!r}, {self.transform})'
+        # copy and pickle would rebuild a str subclass from its string value alone, which
+        # __new__ cannot take, then restore the slots through the __setattr__ above, which
+        # refuses -- so rebuild from (column, transform), leaving no state to restore.
+        def __reduce__(self) -> tuple[type['Polars2SVG.TField'], tuple[str, _enums_.TimeLinearTypeP | _enums_.TimePeriodicTypeP]]:
+            return (type(self), (self.column, self.transform))
 
     # The thirteen classes that replaced the RenderEnumsP grab-bag, OrderKeyP since,
     # and the tuple and union alias that still mean "any render enum".
@@ -1143,6 +1148,10 @@ class Polars2SVG(P2SColorsMixin,
 
         bin_by         = 'field'                                   # (can be specified as a string / i.e., not a keyword argument)
                        = ('field1', 'field2', ...)                 # multi-field bins are joined with '|' for display
+                       = p2s.tField('ts', p2s.PT_DoWp)             # a t-field: one bar per time bin of a Date/Datetime column
+                                                                   # (here day of week), labelled 'mon', '13h', '2026-01' -- not 1;
+                                                                   # still ranked by count, order=p2s.LABELp for time order
+                       = ('field', p2s.tField('ts', p2s.PT_Hp))    # a t-field inside a tuple reads 'a|13h'
 
         template       = None                                      # another Histop instance; copies all settings, then applies any overrides
 
@@ -1973,9 +1982,11 @@ class Polars2SVG(P2SColorsMixin,
     #   user-field check on a spec that the component may resolve as a t-field routes
     #   through here (histop/piep/timep count & color, smallp's __isColumn__, xyp's
     #   transform builder). Checks that intentionally do NOT accept t-fields keep a
-    #   plain `x in df.columns` on purpose: histop/piep `bin_by` (no bin transform is
-    #   applied, so accepting a t-field would validate then crash at aggregation) and
-    #   the graph components' relationship/field checks (node identity, not time).
+    #   plain `x in df.columns` on purpose: piep `bin_by` (no bin transform is applied,
+    #   so accepting a t-field would validate then crash at aggregation) and the graph
+    #   components' relationship/field checks (node identity, not time).  histop's
+    #   `bin_by` does take t-fields: it checks the source column and its dtype itself
+    #   and derives the bin (PLANNING.md §5 C-histop-tfield).
     #
     def columnInDataFrame(self, column: Any, df: pl.DataFrame) -> bool:
         if self.isTField(column, df=df): column, _ = self.tFieldTuple(column)

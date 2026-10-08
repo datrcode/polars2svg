@@ -299,3 +299,37 @@ class P2STimeMixin:
         }
         return _lu_[_enum_](value)
 
+    #
+    # timeLinearFormatStr() - the strftime format for a linear (LT_*) t-field's values
+    # - each LT_* value is a timestamp truncated to its level, so the format shows the
+    #   parts that vary and no more
+    # - moved out of Timep so histop labels the same values the same way
+    #   (PLANNING.md C-histop-tfield)
+    #
+    def timeLinearFormatStr(self, _enum_: TimeLinearTypeP | TimePeriodicTypeP | None) -> str:
+        _lu_: dict[Any, str] = {
+            self.LT_Yp:              '%Y',
+            self.LT_Y_Qp:            '%Y-%m',
+            self.LT_Y_mp:            '%Y-%m',
+            self.LT_Y_m_dp:          '%Y-%m-%d',
+            self.LT_Y_m_d_4Hp:       '%Y-%m-%d %H',
+            self.LT_Y_m_d_Hp:        '%Y-%m-%d %H',
+            self.LT_Y_m_d_H_15Mp:    '%Y-%m-%d %H:%M',
+            self.LT_Y_m_d_H_Mp:      '%Y-%m-%d %H:%M',
+            self.LT_Y_m_d_H_M_15Sp:  '%Y-%m-%d %H:%M:%S',
+            self.LT_Y_m_d_H_M_Sp:    '%Y-%m-%d %H:%M:%S',
+        }
+        return _lu_.get(_enum_, '%Y-%m-%d')
+
+    #
+    # timeFieldHumanReadable() - the label for one value of a t-field, of either kind
+    # - periodic: timePeriodicHumanReadable() (1 -> 'mon', 13 -> '13h')
+    # - linear: strftime with timeLinearFormatStr()
+    # - None reads '(null)', as formatMultiFieldValue() has it
+    #
+    def timeFieldHumanReadable(self, value: Any, _enum_: TimeLinearTypeP | TimePeriodicTypeP) -> str:
+        if value is None:                         return '(null)'
+        if isinstance(_enum_, TimePeriodicTypeP): return self.timePeriodicHumanReadable(int(value), _enum_)
+        if hasattr(value, 'strftime'):            return str(value.strftime(self.timeLinearFormatStr(_enum_)))
+        return str(value)[:10]
+

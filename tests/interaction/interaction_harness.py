@@ -240,7 +240,9 @@ def serve_panel(layout: Any, *, attempts: int = 6, **panelize_kwargs: Any) -> Se
     has to *close* the probe socket before ``pn.serve`` can bind it, and anything on
     the machine -- including the next test in this same run -- can take it in between.
     A lost race shows up as a server that never listens, which without the retry
-    surfaces as an opaque fixture-setup error one run in some tens.
+    surfaces as an opaque fixture-setup error one run in some tens.  Under ``-n`` the
+    other workers join the race, since ``_ISSUED_PORTS`` is per process: one of three
+    loaded ``-n 4`` runs lost it twice (PLANNING.md V12 step 3).
 
     When it happens you will see a ``PytestUnhandledThreadExceptionWarning`` carrying
     an ``OSError: [Errno 48] Address already in use`` from a ``get_server`` thread, on

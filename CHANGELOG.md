@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`histop` bins by a t-field.** `p2s.histop(df, p2s.tField('ts', p2s.PT_DoWp))` draws
+  one bar per day of the week, as xyp, timep and smallp already allowed. It used to
+  raise and point at `timep`. Bars are still ranked by count, which answers "which days
+  are busiest"; `order=p2s.LABELp` puts them in time order. Labels read as times: `mon`,
+  `13h`, `2026-01`, not `1`, `13` or a full timestamp. Inside a tuple bin the label reads
+  `a|mon`. Any periodic or linear t-field works on a `Date` or `Datetime` column, and
+  another column type is named in the error.
+
+### Changed
+
+- **`histop`: a t-field as `count=` counts its distinct values, and as `color=` colors
+  by category.** A periodic t-field's values are integers (day of week 1-7, hour 0-23).
+  So `count=p2s.tField('ts', p2s.PT_Hp)` used to add up hour numbers, and drew a bar of
+  "2.3K" where 24 hours were possible. `color=` the same t-field drew a gradient over
+  summed day numbers. Now `count=` gives the number of distinct hours per bar, and
+  `color=` gives one color per day, with a legend reading `mon`..`sun` (or `2026-01` for
+  a linear t-field). An explicit enum still wins: `count=(t-field, p2s.SCALARp)` sums,
+  and `color=(t-field, p2s.CSTRETCHED_SUMp)` draws a colorbar.
+
+### Removed
+
+- **Unused middle-button state on `xypi`, `histopi`, `timepi`, `chordpi` and `piepi`.**
+  The parameters `x0_middle`, `y0_middle`, `x1_middle`, `y1_middle`, `middle_op_finished`
+  and `last_key` were never acted on: a middle press was recorded and its release never
+  reported. A middle click on these views does nothing, as before. `linkpi`'s middle
+  drag (pan) and middle click (reset view) are unchanged. Pan and reset will come to the
+  other views with their zoom.
+
+### Fixed
+
+- **`histop`'s selected records come back with your columns only.** With a t-field as
+  `count=` or `color=`, the records from a search, a selection or a filter also carried
+  the column histop derived (`ts|Hp`). Fed into another view using the same t-field, that
+  column was taken for a real one and reported as shadowing it.
+
+- **`histop` no longer fails when two parameters name the same t-field.**
+  `count=` and `color=` the same t-field (or `color=` and `bin_by`) derived its column
+  twice in one step, and Polars refused the duplicate name.
+
+- **A t-field can be copied and pickled.** `copy.copy`, `copy.deepcopy` and `pickle`
+  all raised `TypeError` on a `p2s.tField(...)`, and so did copying or pickling anything
+  that held one, such as a dict of component settings. Each now gives back an equal
+  t-field, with the same column and transform.
+
 ## [0.4.2] — 2026-10-06
 
 ### Changed

@@ -1363,20 +1363,6 @@ class Timep(P2SBinComponentMixin, ExportMixin):
 
         self.svg = _svg_head_ + _dl_.svg() + '</svg>'
 
-    def __linearFormatStr__(self) -> str:
-        return {
-            self.p2s.LT_Yp:              '%Y',
-            self.p2s.LT_Y_Qp:            '%Y-%m',
-            self.p2s.LT_Y_mp:            '%Y-%m',
-            self.p2s.LT_Y_m_dp:          '%Y-%m-%d',
-            self.p2s.LT_Y_m_d_4Hp:       '%Y-%m-%d %H',
-            self.p2s.LT_Y_m_d_Hp:        '%Y-%m-%d %H',
-            self.p2s.LT_Y_m_d_H_15Mp:    '%Y-%m-%d %H:%M',
-            self.p2s.LT_Y_m_d_H_Mp:      '%Y-%m-%d %H:%M',
-            self.p2s.LT_Y_m_d_H_M_15Sp:  '%Y-%m-%d %H:%M:%S',
-            self.p2s.LT_Y_m_d_H_M_Sp:    '%Y-%m-%d %H:%M:%S',
-        }.get(self._time_enum_, '%Y-%m-%d')
-
     def __linearTopTickLabel__(self, ts: Any) -> str:
         '''Short contextual label for a top-axis tick mark.
         Shows only the component that varies at the current granularity;
@@ -1522,7 +1508,7 @@ class Timep(P2SBinComponentMixin, ExportMixin):
     def __renderTimeContext__(self, _dl_: Any, tick_color: str, label_color: str) -> None:
         _y_lbl_ = self._plot_y1_ + self.txt_h + 2
         _lbl_h_ = self.txt_h * 0.8
-        _fmt_   = self.__linearFormatStr__()
+        _fmt_   = self.p2s.timeLinearFormatStr(self._time_enum_)
         if self._is_periodic_:
             _l_lbl_ = self.p2s.timePeriodicHumanReadable(self._bin_min_, self._time_enum_)
             _r_lbl_ = self.p2s.timePeriodicHumanReadable(self._bin_max_, self._time_enum_)

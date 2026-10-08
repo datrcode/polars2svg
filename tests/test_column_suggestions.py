@@ -109,19 +109,19 @@ class TestComponentMessages(unittest.TestCase):
                 with self.assertRaisesRegex((ValueError, TypeError), _pattern_):
                     _build_()._repr_svg_()
 
-    # histop takes no t-field.  It said 'bin_by field "t|Hp" not found', and the suggestion
-    # stayed silent because the column t is there; it now points at timep
-    # (PLANNING.md §5 C-histop-tfield).
-    def test_histop_names_a_tfield_and_points_at_timep(self):
-        _tf_   = self.p2s.tField('t', self.p2s.PT_Hp)
-        _want_ = r"is a t-field, which histop does not take -- to count by PT_Hp, use p2s\.timep\(df, p2s\.tField\('t', p2s\.PT_Hp\)\)"
+    # histop takes a t-field as bin_by (PLANNING.md §5 C-histop-tfield; it used to refuse
+    # and point at timep).  A t-field over a misspelt column is named, with the
+    # suggestion a misspelt plain field gets.
+    def test_histop_tfield_over_a_misspelt_column_is_suggested(self):
+        _tf_   = self.p2s.tField('tt', self.p2s.PT_Hp)
+        _want_ = r'column "tt" not found.*did you mean \'t\'\?'
         for _bin_by_ in (_tf_, ('iso3', _tf_)):
             with self.subTest(bin_by=_bin_by_):
                 with self.assertRaisesRegex(ValueError, _want_):
                     self.p2s.histop(self.df, _bin_by_)
         with self.assertLogs(level='WARNING'):          # the legacy string is deprecated, and still named
             with self.assertRaisesRegex(ValueError, _want_):
-                self.p2s.histop(self.df, 't|Hp')
+                self.p2s.histop(self.df, 'tt|Hp')
 
 
 if __name__ == '__main__':

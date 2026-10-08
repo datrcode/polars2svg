@@ -3,9 +3,14 @@
 **Opt-in.**  These tests boot a Panel server and drive a real Chromium, so they are
 an order of magnitude slower than the rest of the suite and depend on tooling the
 package does not otherwise need.  ``pytest tests/`` therefore skips them; run them
-with ``--interaction`` (or ``P2S_INTERACTION=1``):
+with ``--interaction`` (or ``P2S_INTERACTION=1``), as a run of their own:
 
-    .venv/bin/python -m pytest tests/interaction --interaction -q
+    .venv/bin/python -m pytest tests/interaction --interaction -q -n 4
+
+``-n 4`` takes about 2:15 against about 7.5 minutes serially, and passed three runs in
+a row on a loaded machine (PLANNING.md V12 step 3).  Keep it a run of its own: the
+browser tests must come after every unit test in their process (see
+``pytest_collection_modifyitems`` below), and xdist does not guarantee that.
 
 Setup, once:
 
@@ -73,8 +78,9 @@ def pytest_collection_modifyitems(config: pytest.Config,
     ``tests/interaction`` sorts before ``tests/test_*.py``, so by default the browser
     tests run *first* and poison everything after them.  Running them last confines
     the loop to the tail of the session, where nothing follows.  ``trylast`` so the
-    ordering survives any other plugin that reorders (none is installed today, but
-    pytest-randomly or -p xdist would each disturb it).
+    ordering survives any other plugin that reorders.  pytest-randomly would disturb
+    it, and so would xdist in a run that mixes browser and unit tests; a browser-only
+    run under ``-n`` (the documented one) has nothing after the browser tests to poison.
     """
     _enabled_ = config.getoption('--interaction') or os.environ.get('P2S_INTERACTION') == '1'
     _skip_    = pytest.mark.skip(reason='browser-driven; pass --interaction (or set P2S_INTERACTION=1) to run')

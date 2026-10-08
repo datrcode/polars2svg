@@ -1,6 +1,8 @@
 import unittest
 import polars as pl
+import copy
 import datetime
+import pickle
 import random
 from polars2svg import Polars2SVG, TField, InvalidSpecError
 from svg_test_utils import DURATION_TOLERANCE, DURATION_UNITS, durationSeconds
@@ -152,6 +154,39 @@ class Testp2s_tfields(unittest.TestCase):
                 _str_            = self.p2s.timePeriodicHumanReadable(_value_, _enum_)
                 assert _answers_[(_row_, _tfield_)] == _str_
 
+    def test_timeFieldHumanReadable_linear(self):
+        '''Each linear value is the transform's own output, formatted by its level.'''
+        df       = pl.DataFrame({'ts': ['2025-11-08 22:24:01']}).with_columns(pl.col('ts').str.to_datetime())
+        _answers_ = {
+            self.p2s.LT_Yp:             '2025',
+            self.p2s.LT_Y_Qp:           '2025-10',
+            self.p2s.LT_Y_mp:           '2025-11',
+            self.p2s.LT_Y_m_dp:         '2025-11-08',
+            self.p2s.LT_Y_m_d_4Hp:      '2025-11-08 20',
+            self.p2s.LT_Y_m_d_Hp:       '2025-11-08 22',
+            self.p2s.LT_Y_m_d_H_15Mp:   '2025-11-08 22:15',
+            self.p2s.LT_Y_m_d_H_Mp:     '2025-11-08 22:24',
+            self.p2s.LT_Y_m_d_H_M_15Sp: '2025-11-08 22:24:00',
+            self.p2s.LT_Y_m_d_H_M_Sp:   '2025-11-08 22:24:01',
+        }
+        self.assertEqual(set(_answers_), set(self.p2s.TimeLinearTypeP))   # every level covered
+        for _enum_, _want_ in _answers_.items():
+            with self.subTest(enum=_enum_.name):
+                _value_ = df.select(self.p2s.polarsOperationForEnum('ts', _enum_)).item()
+                self.assertEqual(self.p2s.timeFieldHumanReadable(_value_, _enum_), _want_)
+
+    def test_timeFieldHumanReadable_periodic_and_null(self):
+        # Periodic values go through timePeriodicHumanReadable() unchanged
+        for _enum_, _value_, _want_ in ((self.p2s.PT_DoWp, 1, 'mon'), (self.p2s.PT_DoWp, 7, 'sun'),
+                                        (self.p2s.PT_Hp, 13, '13h'),  (self.p2s.PT_mp, 2, 'feb')):
+            with self.subTest(enum=_enum_.name, value=_value_):
+                self.assertEqual(self.p2s.timeFieldHumanReadable(_value_, _enum_), _want_)
+                self.assertEqual(self.p2s.timeFieldHumanReadable(_value_, _enum_),
+                                 self.p2s.timePeriodicHumanReadable(_value_, _enum_))
+        for _enum_ in (self.p2s.PT_DoWp, self.p2s.LT_Y_mp):
+            with self.subTest(null=_enum_.name):
+                self.assertEqual(self.p2s.timeFieldHumanReadable(None, _enum_), '(null)')
+
     def test_timePeriodicRanges(self):
         '''Ten thousand timestamps across two millennia: every periodic value lands inside
         its enum's documented range, so pinning x_range to that range drops no row.'''
@@ -219,6 +254,32 @@ class TestTField(unittest.TestCase):
             tf.column = 'other'
         with self.assertRaises(AttributeError):
             tf.transform = self.p2s.PT_Sp
+
+    def test_copy_and_deepcopy_rebuild_an_equal_tfield(self):
+        tf = self.p2s.tField('ts', self.p2s.PT_Hp)
+        for _copier_ in (copy.copy, copy.deepcopy):
+            with self.subTest(copier=_copier_.__name__):
+                _c_ = _copier_(tf)
+                self.assertIsInstance(_c_, TField)
+                self.assertEqual((_c_, _c_.column, _c_.transform), (tf, 'ts', self.p2s.PT_Hp))
+                self.assertEqual(hash(_c_), hash('ts|Hp'))
+
+    def test_a_settings_dict_holding_one_deep_copies(self):
+        # what a copied kwargs dict does -- and pytest's subtest report, under xdist
+        _kw_ = {'bin_by': (self.p2s.tField('ts', self.p2s.PT_DoWp), 'host'), 'count': self.p2s.tField('ts', self.p2s.PT_Hp)}
+        _c_  = copy.deepcopy(_kw_)
+        self.assertEqual(_c_, _kw_)
+        self.assertIsInstance(_c_['bin_by'][0], TField)
+        self.assertEqual(_c_['count'].transform, self.p2s.PT_Hp)
+
+    def test_pickle_round_trips_every_transform_at_every_protocol(self):
+        for _enum_ in [*self.p2s.TimeLinearTypeP, *self.p2s.TimePeriodicTypeP]:
+            tf = self.p2s.tField('ts', _enum_)
+            for _protocol_ in range(pickle.HIGHEST_PROTOCOL + 1):
+                with self.subTest(transform=_enum_.name, protocol=_protocol_):
+                    _u_ = pickle.loads(pickle.dumps(tf, protocol=_protocol_))
+                    self.assertIsInstance(_u_, TField)
+                    self.assertEqual((_u_, _u_.column, _u_.transform), (tf, 'ts', _enum_))
 
     def test_repr(self):
         tf = self.p2s.tField('ts', self.p2s.PT_mp)

@@ -4175,25 +4175,51 @@ class XYp(P2SBackgroundMixin, ExportMixin):
         #
         # Perform the transformation
         #
-        if self.use_lazy_execution:
-            _df_pixels_ = self.df_flat.lazy().group_by(_groupby_) \
-                                             .agg(_agg_ops_) \
-                                             .with_columns(_norm_ops_) \
-                                             .with_columns(_spectrum_ops_) \
-                                             .with_columns(_tohexcolor_ops_) \
-                                             .with_columns(_fill_nulls_) \
-                                             .with_columns(_concat_ops_) \
-                                             .collect()
-        else:
-            _df_pixels_ = self.df_flat       .group_by(_groupby_) \
-                                             .agg(_agg_ops_) \
-                                             .with_columns(_norm_ops_) \
-                                             .with_columns(_spectrum_ops_) \
-                                             .with_columns(_tohexcolor_ops_) \
-                                             .with_columns(_fill_nulls_) \
-                                             .with_columns(_concat_ops_)
+        # The draw order (__drawOrder__()) is decided as soon as __radius__ exists, right
+        # after the normalization, so the sort moves the few columns that exist then; the
+        # colour stages after it are row-wise and compute the same values in the new order.
+        # Sorting the finished frame instead moved every colour column and string too.
+        _src_: pl.DataFrame | pl.LazyFrame = self.df_flat.lazy() if self.use_lazy_execution else self.df_flat
+        _staged_ = _src_.group_by(_groupby_) \
+                        .agg(_agg_ops_) \
+                        .with_columns(_norm_ops_)
+        if not line_rendering_mode: _staged_ = self.__drawOrder__(_staged_)
+        _staged_ = _staged_.with_columns(_spectrum_ops_) \
+                        .with_columns(_tohexcolor_ops_) \
+                        .with_columns(_fill_nulls_) \
+                        .with_columns(_concat_ops_)
+        _df_pixels_ = _staged_.collect() if isinstance(_staged_, pl.LazyFrame) else _staged_
         if not line_rendering_mode: self.__legendCaptureColorbarDomain__(_df_pixels_)
         return _df_pixels_
+
+    #
+    # __drawOrder__() - the order the dots are drawn in, which decides which one is on top
+    # where they overlap.  The group_by above leaves its output order unspecified, so the
+    # same call drew its dots in a different order on every render (PLANNING.md §5
+    # C-xyp-draw-order-nondeterministic).
+    # - sized dots draw largest first, so a small dot is not buried under a big one
+    # - ties, and dots of one size, draw top-to-bottom then left-to-right
+    # (__xpx__, __ypx__) is the group key, so the order is total.
+    #
+    # The sort is over the drawn pixels, not the rows, so its cost follows the pixel count:
+    # 5-14 ms on the 46M-row VAST 2013 netflow (124k-407k pixels), but +11-24 ms on a dense
+    # 4096x4096 canvas (808k pixels), a third or more of the dot stage.  Three things keep
+    # it down, none of which changes the order:
+    # - integer pixels sort on ONE packed key, y * 2^32 + (x + 2^31): for Int32 x and y it
+    #   orders exactly as (y, x) does, and one Int64 key sorts much faster than two
+    # - a constant float dot_size gives every dot the same __radius__, which decides
+    #   nothing, so it is not a key; a size column or a per-series list keeps it
+    # - the sort runs before the colour columns and SVG strings exist (__renderDots__())
+    #
+    def __drawOrder__(self, df: pl.DataFrame | pl.LazyFrame) -> pl.DataFrame | pl.LazyFrame:
+        _schema_ = df.collect_schema()
+        if _schema_['__xpx__'].is_integer() and _schema_['__ypx__'].is_integer():
+            _xy_: list = [pl.col('__ypx__').cast(pl.Int64) * 4294967296 + (pl.col('__xpx__').cast(pl.Int64) + 2147483648)]
+        else:
+            _xy_ = [pl.col('__ypx__'), pl.col('__xpx__')]
+        if '__radius__' in _schema_.names() and not isinstance(self.dot_size_orig, float):
+            return df.sort([pl.col('__radius__')] + _xy_, descending=[True] + [False] * len(_xy_))
+        return df.sort(_xy_)
 
     #
     # __legendCaptureColorbarDomain__() - metadata-capture hook (colorbar half):
@@ -4427,10 +4453,12 @@ class XYp(P2SBackgroundMixin, ExportMixin):
             if remove_records: return cast(pl.DataFrame, self.df).join(_df_all_idx_, on='__p2s_index__', how='anti').drop('__p2s_index__')
             else:              return cast(pl.DataFrame, self.df).join(_df_all_idx_, on='__p2s_index__')            .drop('__p2s_index__')
 
-        # Find the pixel nearest to the given coordinate and read its color.
-        _df_near_ = self.df_pixels.with_columns(
+        # Find the pixel nearest to the given coordinate and read its color.  Of pixels at
+        # the same distance, the one drawn last wins: it is the one on top.  df_pixels is
+        # in draw order (__drawOrder__()); sorting on distance alone left the tie to chance.
+        _df_near_ = self.df_pixels.with_row_index('__drawn__').with_columns(
             ((pl.col('__xpx__') - _x_).pow(2) + (pl.col('__ypx__') - _y_).pow(2)).alias('__dist2__')
-        ).sort('__dist2__').head(1)
+        ).sort(['__dist2__', '__drawn__'], descending=[False, True]).head(1)
 
         if _df_near_['__dist2__'][0] ** 0.5 > distance_threshold:
             return None

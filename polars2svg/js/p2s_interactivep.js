@@ -435,6 +435,11 @@ export function render({ model, el }) {
   // the `myOnMouseWheel` entry in _scripts was unreachable, with no onwheel attribute,
   // no matching param and no self.myOnMouseWheel() call -- so this listener, attached in
   // `render`, was and remains the only wheel path.  The dead entry is not carried over.
+  //
+  // A PLACEHOLDER, deliberately: no Python watches wheel_op_finished on these views.
+  // Whether a wheel zoom fits the stack methodology is DT's deferred decision (PLANNING.md
+  // §7 F2, 2026-10-08), so the params are kept for it and the wheel does nothing here.
+  // Keeping the notebook from scrolling is p2sConsumeWheel()'s job, on the whole view.
   screen.addEventListener('wheel', function(event) {
     event.preventDefault();
     model.wheel_x = event.offsetX; model.wheel_y = event.offsetY;
@@ -506,5 +511,5 @@ export function render({ model, el }) {
   model.brushing_mode = false;
   model.brush_changed = 0;
 
-  return (typeof p2sGpuWrap === 'function') ? p2sGpuWrap(model, root) : root;
+  return p2sConsumeWheel((typeof p2sGpuWrap === 'function') ? p2sGpuWrap(model, root) : root);
 }

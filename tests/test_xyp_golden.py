@@ -157,5 +157,40 @@ class Testxyp_golden(unittest.TestCase):
         assert_svg_matches_golden(_xyp_.svg, 'xyp_background_records')
         assert_image_matches_golden(_xyp_.svg, 'xyp_background_records')
 
+    # ------------------------------------------------------------------
+    # Overlapping dots, where the draw order decides what is on top (PLANNING.md §5
+    # C-xyp-draw-order-nondeterministic).  Three clusters of nine points, a centre and
+    # its ring, closer together than the dots are wide.
+    # ------------------------------------------------------------------
+    _RING_    = [(0, 0), (-1, -1), (0, -1), (1, -1), (-1, 0), (1, 0), (-1, 1), (0, 1), (1, 1)]
+    _CENTERS_ = [(1.0, 1.0), (2.0, 3.0), (3.0, 1.5)]
+
+    # one size: draws top to bottom, then left to right, so the colours mixed within a
+    # cluster cover each other the same way on every render
+    def test_overlap_float(self):
+        df = pl.DataFrame({
+            'x':     [cx + 0.12 * dx for cx, cy in self._CENTERS_ for dx, dy in self._RING_],
+            'y':     [cy + 0.12 * dy for cx, cy in self._CENTERS_ for dx, dy in self._RING_],
+            'group': ['abc'[i % 3] for i in range(27)],
+        })
+        _xyp_ = self.p2s.xyp(df, 'x', 'y', color='group', dot_size=7.0,
+                              x_range=(0.5, 3.5), y_range=(0.5, 3.5), wxh=(200, 200))
+        assert_svg_matches_golden(_xyp_.svg, 'xyp_overlap_float')
+        assert_image_matches_golden(_xyp_.svg, 'xyp_overlap_float')
+
+    # sized by a column: draws largest first, so each centre's large dot sits under
+    # its ring of small ones rather than hiding them
+    def test_overlap_sized(self):
+        df = pl.DataFrame({
+            'x':     [cx + 0.1 * dx for cx, cy in self._CENTERS_ for dx, dy in self._RING_],
+            'y':     [cy + 0.1 * dy for cx, cy in self._CENTERS_ for dx, dy in self._RING_],
+            'group': ['a' if k == 0 else 'bc'[k % 2] for _ in self._CENTERS_ for k in range(9)],
+            'size':  [100 if k == 0 else 5 + 4 * k for _ in self._CENTERS_ for k in range(9)],
+        })
+        _xyp_ = self.p2s.xyp(df, 'x', 'y', color='group', dot_size='size', dot_size_range=(2.0, 14.0),
+                              x_range=(0.5, 3.5), y_range=(0.5, 3.5), wxh=(200, 200))
+        assert_svg_matches_golden(_xyp_.svg, 'xyp_overlap_sized')
+        assert_image_matches_golden(_xyp_.svg, 'xyp_overlap_sized')
+
 if __name__ == '__main__':
     unittest.main()

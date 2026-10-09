@@ -294,6 +294,15 @@ class ODFlowLayout:
         self._is_a_ = ((1 - _ti_) * (1 - _ti_))
         self._is_b_ = (2 * (1 - _ti_) * _ti_)
         self._is_c_ = (_ti_ * _ti_)
+        # Bernstein coefficients for the move-off clearance test (n=24 -> 25 points),
+        # and the order _clearCandidates_() checks them in: in from both ends, where
+        # samples sit nearest the nodes a flow starts and ends among.  The endpoints
+        # themselves (0, 24) go last: a node obstacle there is _endpointBlockedFlows_()'s.
+        _tm_ = np.arange(25) / 24.0
+        self._mo_a_ = ((1 - _tm_) * (1 - _tm_))
+        self._mo_b_ = (2 * (1 - _tm_) * _tm_)
+        self._mo_c_ = (_tm_ * _tm_)
+        self._mo_order_ = [_k_ for _p_ in zip(range(1, 12), range(23, 12, -1)) for _k_ in _p_] + [12, 0, 24]
 
         # Move-off spiral (3.2.3): the candidate (theta, r) sequence depends only
         # on the constant spacing, so its (dx, dy) offsets are identical for every
@@ -313,6 +322,43 @@ class ODFlowLayout:
         self._spiral_r_  = np.array(_sr_)  if _sr_  else np.zeros(0)
         self._spiral_dx_ = np.array(_sdx_) if _sdx_ else np.zeros(0)
         self._spiral_dy_ = np.array(_sdy_) if _sdy_ else np.zeros(0)
+
+        self._endpoint_blocked_ = self._endpointBlockedFlows_()
+
+    #
+    # _endpointBlockedFlows_() - per flow, True when an unconnected node lies within
+    # clearance (node_radius + min_obstacle_dist) of one of the flow's own endpoints.
+    # Such a flow can never be moved off its obstacles, so _moveOffObstacles_() fails
+    # it without the scan.  Exact, not a heuristic:
+    # - every candidate curve is sampled at t=0 and t=1, where the Bernstein weights
+    #   are exactly (1, 0, 0) and (0, 0, 1), so those two samples ARE the endpoints,
+    #   bit for bit, whatever the control point
+    # - the distance below is the scan's own: np.hypot(sample - obstacle)
+    # - an obstacle that near an endpoint always survives the scan's bbox prefilter
+    # So the scan would reject every candidate, and a failed scan changes nothing.
+    # Node obstacles are fixed for the whole run, so this is computed once.  Arrow
+    # obstacles move, and stay with the scan.  On the uniform 200-flow benchmark these
+    # flows were 63% of the failed move-offs and 24 of the 39 s they took (G3).
+    #
+    def _endpointBlockedFlows_(self) -> np.ndarray:
+        _F_, _nn_ = len(self.flows), len(self.node_xy)
+        _blocked_ = np.zeros(_F_, dtype=bool)
+        if _F_ == 0 or _nn_ < 3: return _blocked_
+        _min_ = self.node_radius + self.min_obstacle_dist
+        _nodes_ = np.asarray(self.node_xy, dtype=np.float64)
+        # near[n] = the other nodes within clearance of node n (rows in chunks, so the
+        # nodes x nodes distance matrix is never whole)
+        _near_: list = []
+        _CH_ = max(1, (1 << 22) // _nn_)
+        for _s_ in range(0, _nn_, _CH_):
+            _e_  = min(_s_ + _CH_, _nn_)
+            _dd_ = np.hypot(_nodes_[_s_:_e_, 0][:, None] - _nodes_[None, :, 0],
+                            _nodes_[_s_:_e_, 1][:, None] - _nodes_[None, :, 1])
+            for _r_, _row_ in enumerate(_dd_ < _min_):
+                _near_.append(set(np.nonzero(_row_)[0].tolist()) - {_s_ + _r_})
+        for _f_, (_s_, _e_) in enumerate(self.flow_nodes):
+            _blocked_[_f_] = bool(_near_[_s_] - {_e_}) or bool(_near_[_e_] - {_s_})
+        return _blocked_
 
     def results(self) -> list:
         '''Control points, one ``(cx, cy)`` tuple per input flow (input order).'''
@@ -756,20 +802,6 @@ class ODFlowLayout:
         _y_ = _a_ * _fy_ + _b_ * _cy_ + _c_ * _ty_
         return np.stack([_x_, _y_], axis=1)
 
-    #
-    # _sampleArrBatch_() - curve samples of flow ``f`` at many control points
-    # ``cands`` (K, 2); returns (K, n+1, 2)
-    #
-    def _sampleArrBatch_(self, f: int, cands: np.ndarray, n: int = 24) -> np.ndarray:
-        _fx_, _fy_, _tx_, _ty_ = self.flows[f]
-        _t_ = np.arange(n + 1) / n
-        _a_, _b_, _c_ = (1 - _t_) * (1 - _t_), 2 * (1 - _t_) * _t_, _t_ * _t_
-        _cx_ = cands[:, 0][:, None]
-        _cy_ = cands[:, 1][:, None]
-        _x_ = _a_[None, :] * _fx_ + _b_[None, :] * _cx_ + _c_[None, :] * _tx_   # (K, n+1)
-        _y_ = _a_[None, :] * _fy_ + _b_[None, :] * _cy_ + _c_[None, :] * _ty_
-        return np.stack([_x_, _y_], axis=2)
-
     def _curvesIntersect_(self, f: Any, g: Any, shared_pt: Any, n: int = 20) -> bool:
         _pa_, _pb_ = self._samples_(f, n), self._samples_(g, n)
         _ax_ = [p[0] for p in _pa_]; _ay_ = [p[1] for p in _pa_]
@@ -917,6 +949,7 @@ class ODFlowLayout:
         return _out_
 
     def _moveOffObstacles_(self, f: int) -> bool:
+        if self._endpoint_blocked_[f]: return False             # see _endpointBlockedFlows_()
         _fx_, _fy_, _tx_, _ty_ = self.flows[f]
         _cx_, _cy_ = self.cps[f]
         _B_ = self.B[f]
@@ -953,18 +986,10 @@ class ODFlowLayout:
         # the common early success tests only a handful, while a flow that cannot
         # escape still vectorizes over the whole candidate set.
         _pos_, _chunk_ = 0, 16
+        _tests_ = [(_o_, _m_) for _o_, _m_ in ((_obs_, _minO_), (_arr_, _minA_)) if len(_o_) > 0]
         while _pos_ < len(_incand_):
             _blk_ = _incand_[_pos_:_pos_ + _chunk_]
-            _samp_ = self._sampleArrBatch_(f, _blk_)                 # (k, S, 2)
-            _clear_ = np.ones(len(_blk_), dtype=bool)
-            if len(_obs_) > 0:
-                _dd_ = np.hypot(_samp_[:, :, 0][:, :, None] - _obs_[None, None, :, 0],
-                                _samp_[:, :, 1][:, :, None] - _obs_[None, None, :, 1])
-                _clear_ &= _dd_.min(axis=(1, 2)) >= _minO_
-            if len(_arr_) > 0:
-                _dd_ = np.hypot(_samp_[:, :, 0][:, :, None] - _arr_[None, None, :, 0],
-                                _samp_[:, :, 1][:, :, None] - _arr_[None, None, :, 1])
-                _clear_ &= _dd_.min(axis=(1, 2)) >= _minA_
+            _clear_ = self._clearCandidates_(f, _blk_, _tests_)
             _hit_ = np.nonzero(_clear_)[0]
             if len(_hit_) > 0:
                 _sel_ = int(_idxs_[_pos_ + _hit_[0]])
@@ -974,6 +999,36 @@ class ODFlowLayout:
             _pos_ += _chunk_
             _chunk_ = min(_chunk_ * 2, 512)
         return False
+
+    #
+    # _clearCandidates_() - per candidate control point in ``cands`` (k, 2), True iff
+    # every one of flow f's 25 curve samples is at least ``min_dist`` from every
+    # obstacle, for each (obstacles (O, 2), min_dist) in ``tests``.
+    # - checked one sample at a time, keeping only the candidates still clear, so a
+    #   rejected candidate costs the samples it took to reject it rather than all 25
+    #   (G3 step 2: on the uniform 200-flow benchmark ~75 % of candidates are rejected
+    #   by the first four samples checked; 14.6 s -> 3.5 s on Metal)
+    # - exact: a candidate is clear iff every sample is, whatever order they are
+    #   checked in, and each sample is the same arithmetic as before -- the Bernstein
+    #   sum a*fm + b*cp + c*to, np.hypot, a minimum over the obstacles
+    #
+    def _clearCandidates_(self, f: int, cands: np.ndarray, tests: list) -> np.ndarray:
+        _fx_, _fy_, _tx_, _ty_ = self.flows[f]
+        _alive_ = np.arange(len(cands))
+        _cx_, _cy_ = cands[:, 0], cands[:, 1]
+        for _k_ in self._mo_order_:
+            if len(_alive_) == 0 or not tests: break
+            _a_, _b_, _c_ = self._mo_a_[_k_], self._mo_b_[_k_], self._mo_c_[_k_]
+            _xs_ = _a_ * _fx_ + _b_ * _cx_[_alive_] + _c_ * _tx_
+            _ys_ = _a_ * _fy_ + _b_ * _cy_[_alive_] + _c_ * _ty_
+            _keep_ = np.ones(len(_alive_), dtype=bool)
+            for _obs_, _min_ in tests:
+                _dd_ = np.hypot(_xs_[:, None] - _obs_[None, :, 0], _ys_[:, None] - _obs_[None, :, 1])
+                _keep_ &= _dd_.min(axis=1) >= _min_
+            _alive_ = _alive_[_keep_]
+        _out_ = np.zeros(len(cands), dtype=bool)
+        _out_[_alive_] = True
+        return _out_
 
 
 #

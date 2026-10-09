@@ -801,5 +801,5 @@ export function render({ model, el }) {
   model.brushing_mode      = false;
   model.brush_changed      = 0;
 
-  return (typeof p2sGpuWrap === 'function') ? p2sGpuWrap(model, svgparent) : svgparent;
+  return p2sConsumeWheel((typeof p2sGpuWrap === 'function') ? p2sGpuWrap(model, svgparent) : svgparent);
 }

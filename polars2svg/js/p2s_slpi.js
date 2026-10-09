@@ -124,5 +124,5 @@ export function render({ model, el }) {
   mod.innerHTML = model.mod_inner;
   model.on('mod_inner', function() { mod.innerHTML = model.mod_inner; });
 
-  return (typeof p2sGpuWrap === 'function') ? p2sGpuWrap(model, root) : root;
+  return p2sConsumeWheel((typeof p2sGpuWrap === 'function') ? p2sGpuWrap(model, root) : root);
 }

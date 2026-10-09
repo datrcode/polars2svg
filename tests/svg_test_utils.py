@@ -49,9 +49,9 @@ def assert_ordered_keys(test_case, actual, expected):
 def normalize_svg(svg):
     '''Canonicalize an SVG string so identical visual output always compares equal.
 
-    Two sources of non-determinism are neutralized:
+    One source of non-determinism is neutralized:
 
-    1. Random IDs — the renderer embeds a random 32-bit integer (_randid_) in:
+    Random IDs — the renderer embeds a random 32-bit integer (_randid_) in:
          - CSS class names : rect-group-{randid}, circle-group-{randid}
          - Clip path ID    : plotClip-{randid}
          - Gradient IDs    : lines_{randid}_...
@@ -62,32 +62,15 @@ def normalize_svg(svg):
        replaced in the LinkP and SpreadLinesP-clip cases: the trailing _{n} / _{bin}
        distinguishes the elements within one render and must survive.
 
-    2. Dot element order — __renderDots__() uses group_by() whose row order is
-       non-deterministic across runs.  The individual <rect> and <circle>
-       elements inside the plot <g> are sorted lexicographically so the joined
-       string is stable without requiring a sort in the production pipeline.
-
-    LinkP renders deterministically (sorted() at source), so no element sorting
-    is needed here -- but its 'curve' link labels do carry random <textPath> ids,
-    which is why p2sll appears in the substitution above.
+    Element order is NOT normalized: it is the draw order, which decides what is on
+    top, so a golden pins it.  xyp's dots used to need sorting here because its
+    per-pixel group_by left their order unspecified; xyp now sorts them at the source
+    (PLANNING.md §5 C-xyp-draw-order-nondeterministic).  LinkP sorts at the source
+    too -- but its 'curve' link labels do carry random <textPath> ids, which is why
+    p2sll appears in the substitution above.
     '''
-    # 1. Replace random IDs
-    svg = re.sub(r'(plotClip-|lines_|smallp_|xyp_|histop_|timep_|chordp_|piep_|p2sll|ccl_'
-                 r'|cloud_outline_|cloud_|(?:rect|circle)-group-)(\d+)', r'\1TESTID', svg)
-
-    # 2. Sort dot elements within the plot group
-    def _sort_plot_group_(m):
-        elements = sorted(re.findall(r'<(?:rect|circle)\b[^>]*/>', m.group(2)))
-        return m.group(1) + ''.join(elements) + m.group(3)
-
-    svg = re.sub(
-        r'(<g class="(?:rect|circle)-group-TESTID"[^>]*>)(.*?)(</g>)',
-        _sort_plot_group_,
-        svg,
-        flags=re.DOTALL,
-    )
-
-    return svg
+    return re.sub(r'(plotClip-|lines_|smallp_|xyp_|histop_|timep_|chordp_|piep_|p2sll|ccl_'
+                  r'|cloud_outline_|cloud_|(?:rect|circle)-group-)(\d+)', r'\1TESTID', svg)
 
 def assert_svg_matches_golden(svg, name):
     '''Compare a normalized SVG string to the stored golden file at

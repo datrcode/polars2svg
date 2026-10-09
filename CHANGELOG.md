@@ -28,6 +28,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a linear t-field). An explicit enum still wins: `count=(t-field, p2s.SCALARp)` sums,
   and `color=(t-field, p2s.CSTRETCHED_SUMp)` draws a colorbar.
 
+- **Flow maps (`link_shape='flowmap'`, `ODFlowLayout`) lay out up to 10x faster, with
+  the same result.** Almost all the time went into moving flows off nodes they do not
+  connect to, and nearly all of that into attempts that failed, round after round. Two
+  changes, neither of which moves a control point:
+  - a flow with an unconnected node within clearance of one of its own endpoints can
+    never be moved, since every curve passes through its endpoints. Such flows are
+    recognised once, up front, instead of being searched for a clear position every
+    round;
+  - a candidate position is now rejected at the first point along its curve that is too
+    close to a node, instead of after every point has been measured.
+
+  Measured on 200 flows: 37 s to 3.5 s on the GPU and 42 s to 9.6 s without it.
+
 ### Removed
 
 - **Unused middle-button state on `xypi`, `histopi`, `timepi`, `chordpi` and `piepi`.**
@@ -52,6 +65,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   all raised `TypeError` on a `p2s.tField(...)`, and so did copying or pickling anything
   that held one, such as a dict of component settings. Each now gives back an equal
   t-field, with the same column and transform.
+
+- **`xyp` draws its dots in the same order every time.** The same call used to draw the
+  same dots in a different order on each render, so where dots overlapped, which one sat
+  on top could change between identical calls, and `smallp` panels did the same. Dots
+  sized by a column now draw largest first, so a small dot is not buried under a large
+  one; dots of one size draw top to bottom, then left to right. Square (integer
+  `dot_size=`) dots never overlap, so they look the same as before, but the SVG text no
+  longer changes from render to render. The cost is a sort over the drawn pixels, so it
+  grows with how many pixels are drawn rather than with the rows: 5-14 ms on a 46M-row
+  netflow render of about a second, and 5-10 ms on a dense 4096x4096 canvas of 808,000
+  dots.
+
+- **Selecting by colour in `xypi` picks the dot you see on top.** When the click was
+  equally near two dots, `filterByColorAtXY()` took whichever its sort happened to put
+  first, which could be the dot underneath. It now takes the dot drawn last.
+
+- **The mouse wheel no longer scrolls the notebook from inside an interactive view.**
+  `smallpi`, `spreadlinepi` and the stack control let it through everywhere, and every
+  other view let it through over its configuration panel and help. The wheel is now
+  consumed anywhere in every interactive view. Only `linkpi` acts on it (zoom); on the
+  others it does nothing.
 
 ## [0.4.2] — 2026-10-06
 

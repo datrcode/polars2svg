@@ -59,3 +59,22 @@ function p2sInk(model, key) {
   const val = (pal.setop && pal.setop[key] !== undefined) ? pal.setop[key] : pal[key];
   return val || P2S_INK_FALLBACK[key] || '#000000';
 }
+
+//
+// p2sConsumeWheel() - the wheel stops at every interactive view
+//
+// DT, 2026-10-08: with the pointer over any interactive view the wheel must not scroll
+// the notebook.  Only LINKPI does anything with it (zoom), from its own listeners; on
+// the others it is consumed and does nothing, because whether a wheel zoom fits the
+// stack methodology every view obeys is DEFERRED (PLANNING.md §7 F2).  The generic
+// views' wheel_* params stay as the placeholder for that decision.
+//
+// Registered on the node render() returns -- the root, or the WebGPU wrapper around
+// it -- so it covers everything the view draws, overlays included: the configuration
+// panel and the help can overhang the canvas, and a listener on #screen alone let the
+// wheel through over them.  {passive: false}, or preventDefault() is ignored.
+//
+function p2sConsumeWheel(node) {
+  node.addEventListener('wheel', function(event) { event.preventDefault(); }, { passive: false });
+  return node;
+}

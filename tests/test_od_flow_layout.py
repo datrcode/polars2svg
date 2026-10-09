@@ -1,5 +1,8 @@
 import math
 import unittest
+from unittest import mock
+
+import numpy as np
 
 import polars2svg.od_flow_layout as odmod
 from polars2svg.od_flow_layout import ODFlowLayout
@@ -115,6 +118,111 @@ class TestODFlowLayoutBehavior(unittest.TestCase):
         layout = ODFlowLayout(_hub_flows(), iterations=5)
         for f in layout.active:
             self.assertEqual(layout._arrowObstacles_(f), [])
+
+
+#
+# The endpoint-blocked shortcut (PLANNING.md G3): a flow with an unconnected node within
+# clearance of one of its own endpoints fails _moveOffObstacles_() without the scan.  It
+# must change nothing -- not a control point, not which flows are pinned.
+#
+def _scattered_flows():
+    _rng_ = np.random.default_rng(7)
+    return [tuple(map(float, r)) for r in _rng_.uniform((0, 0, 0, 0), (300, 200, 300, 200), size=(30, 4))]
+
+
+def _no_shortcut(self):
+    return np.zeros(len(self.flows), dtype=bool)
+
+
+class TestEndpointBlockedShortcut(unittest.TestCase):
+
+    def _layout(self, **kwargs):
+        return ODFlowLayout(_scattered_flows(), canvas=(0.0, 0.0, 300.0, 200.0), iterations=40,
+                            backend='numpy', **kwargs)
+
+    def test_the_shortcut_changes_nothing(self):
+        for kwargs in ({}, dict(arrows=True, arrow_radius=3.0)):
+            with self.subTest(**kwargs):
+                fast = self._layout(**kwargs)
+                with mock.patch.object(ODFlowLayout, '_endpointBlockedFlows_', _no_shortcut):
+                    full = self._layout(**kwargs)
+                self.assertGreater(int(fast._endpoint_blocked_.sum()), 0, 'no flow took the shortcut')
+                self.assertGreater(len(fast._pinned_), 0, 'no flow was moved off an obstacle')
+                self.assertEqual(fast.results(), full.results())
+                self.assertEqual(fast._pinned_, full._pinned_)
+
+    def test_the_full_scan_cannot_move_a_blocked_flow(self):
+        layout = self._layout()
+        blocked = np.nonzero(layout._endpoint_blocked_)[0]
+        self.assertGreater(len(blocked), 0)
+        layout._endpoint_blocked_[:] = False
+        for f in blocked:
+            cp = layout.cps[f]
+            self.assertFalse(layout._moveOffObstacles_(int(f)))
+            self.assertEqual(layout.cps[f], cp)
+            self.assertNotIn(int(f), layout._pinned_)
+
+    def test_only_an_unconnected_node_inside_the_clearance_blocks(self):
+        # clearance is node_radius + min_obstacle_dist = 5 + 4 = 9 px
+        def blocked(flows):
+            return ODFlowLayout(flows, iterations=0)._endpoint_blocked_.tolist()
+        # a node 5 px from (0, 0) blocks both flows: each has the other's endpoint that near
+        self.assertEqual(blocked([(0, 0, 100, 0), (5, 0, 5, 100)]), [True, True])
+        # a shared node is the flow's own endpoint, not an obstacle
+        self.assertEqual(blocked([(0, 0, 100, 0), (0, 0, 0, 100)]), [False, False])
+        # exactly 9 px away is clear: the scan rejects only distances below the clearance
+        self.assertEqual(blocked([(0, 0, 100, 0), (9, 0, 9, 100)]), [False, False])
+        # a node near the far endpoint counts too
+        self.assertEqual(blocked([(0, 0, 100, 0), (100, 6, 100, 100)]), [True, True])
+
+
+#
+# The move-off clearance test checks one curve sample at a time and drops rejected
+# candidates as it goes (PLANNING.md G3 step 2).  It must agree with checking all 25
+# samples of every candidate against every obstacle.
+#
+class TestClearCandidatesPruning(unittest.TestCase):
+
+    def _brute(self, layout, f, cands, tests):
+        out = []
+        for cp in cands:
+            pts = layout._sampleArr_(f, cp=(float(cp[0]), float(cp[1])))     # (25, 2)
+            ok = True
+            for obs, mn in tests:
+                dd = np.hypot(pts[:, 0][:, None] - obs[None, :, 0], pts[:, 1][:, None] - obs[None, :, 1])
+                ok &= bool(dd.min() >= mn)
+            out.append(ok)
+        return out
+
+    def test_pruning_agrees_with_checking_every_sample(self):
+        layout = ODFlowLayout(_scattered_flows(), canvas=(0.0, 0.0, 300.0, 200.0), iterations=1,
+                              backend='numpy', arrows=True, arrow_radius=3.0)
+        rng = np.random.default_rng(3)
+        cands = rng.uniform((0, 0), (300, 200), size=(400, 2))
+        seen = set()
+        for f in layout.active:
+            nodes  = np.asarray(layout._obstacles_(f), dtype=np.float64)
+            arrows = np.asarray(layout._arrowObstacles_(f), dtype=np.float64).reshape(-1, 2)
+            tests  = [(o, m) for o, m in ((nodes,  layout.node_radius  + layout.min_obstacle_dist),
+                                          (arrows, layout.arrow_radius + layout.min_obstacle_dist)) if len(o) > 0]
+            got = layout._clearCandidates_(f, cands, tests).tolist()
+            self.assertEqual(got, self._brute(layout, f, cands, tests), f'flow {f}')
+            seen.update(got)
+        self.assertEqual(seen, {True, False}, 'the candidates should include clear and rejected ones')
+
+    def test_exactly_the_clearance_away_is_clear(self):
+        # A straight flow (0,0)->(240,0) with its control point at the midpoint: sample 12
+        # (t = 0.5) is exactly (120, 0), so an obstacle at (120, 9) is exactly 9 px away
+        layout = ODFlowLayout([(0, 0, 240, 0)], iterations=1, backend='numpy')
+        cand   = np.array([[120.0, 0.0]])
+        at     = [(np.array([[120.0, 9.0]]),  9.0)]
+        inside = [(np.array([[120.0, 8.99]]), 9.0)]
+        self.assertTrue(layout._clearCandidates_(0, cand, at)[0])
+        self.assertFalse(layout._clearCandidates_(0, cand, inside)[0])
+
+    def test_no_obstacles_clears_every_candidate(self):
+        layout = ODFlowLayout(_hub_flows(), iterations=1, backend='numpy')
+        self.assertTrue(layout._clearCandidates_(0, np.array([[1.0, 2.0], [3.0, 4.0]]), []).all())
 
 
 class TestODFlowLayoutBackends(unittest.TestCase):

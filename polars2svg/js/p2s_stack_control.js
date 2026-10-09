@@ -85,5 +85,5 @@ export function render({ model, el }) {
     keyboardhelp.setAttribute('display', model.help_display);
   });
 
-  return root;
+  return p2sConsumeWheel(root);
 }

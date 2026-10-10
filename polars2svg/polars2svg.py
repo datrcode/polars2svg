@@ -1363,9 +1363,15 @@ class Polars2SVG(P2SColorsMixin,
         relationships  = [('from_field', 'to_field')]
                        = [('from_field', 'to_field', 'predicate_field')]
                        = [(('f0','f1'), ('f2','f3'))]      # tuple fields are concatenated with '|'
+                                                            # endpoints of different types (a string column linked to an
+                                                            # integer one) are matched by node name as a string, so the
+                                                            # string '2' and the integer 2 are one node
 
         pos            = {node_name: [x, y], ...}          # networkx-style position dict
                                                             # nodes absent from pos get random positions
+                                                            # a key may be the node's value or its string form, so the
+                                                            # string-keyed dict p2s.loadPositions() returns places an
+                                                            # integer graph's nodes
 
         null_nodes     = False                             # default — a row with one null endpoint draws only the
                                                             # entity beside it, as an unconnected dot

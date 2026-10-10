@@ -1730,8 +1730,12 @@ class P2SGraphMixin:
         with open(filename) as f:
             pos = json.load(f)
         if linkp is not None and hasattr(linkp, 'all_nodes'):
+            # JSON keys are always strings, so compare the nodes as strings too: an integer
+            # graph's own file would otherwise differ in every node.  linkp places a node by
+            # its string form when the raw key misses (PLANNING.md §5
+            # C-linkp-mixed-endpoint-dtypes), so this is the match the render will make.
             file_nodes  = set(pos.keys())
-            linkp_nodes = linkp.all_nodes
+            linkp_nodes = {str(_n_) for _n_ in linkp.all_nodes}
             diff        = file_nodes.symmetric_difference(linkp_nodes)
             if diff:
                 in_file_only  = file_nodes  - linkp_nodes

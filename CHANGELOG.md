@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`linkp` draws a graph whose two endpoint columns have different types.** Linking a
+  string column to an integer one (`[('host', 'port')]` with `port` an integer), or a
+  tuple endpoint to an integer column, raised a `TypeError` while laying out, so the
+  workaround was to cast both columns to one type. Such a graph now draws, with every node
+  named as a string, as its labels already were: the string `'2'` and the integer `2` are
+  one node. Graphs whose endpoints share a type are drawn exactly as before. Known issue in
+  0.5.0; present since 0.1.0.
+
+- **A graph with integer nodes can reload its saved positions.** `p2s.loadPositions()`
+  returns string keys, since that is what JSON stores, and `linkp(..., pos=)` raised a
+  `TypeError` when given them for integer nodes. The nodes now go back where they were
+  saved. `loadPositions(filename, linkp)` also stopped warning that every node differs
+  between the file and such a graph.
+
 ## [0.5.0] — 2026-10-10
 
 ### Added

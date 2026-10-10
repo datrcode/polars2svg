@@ -844,6 +844,23 @@ class TestLoadPositions(unittest.TestCase):
             self.p2s.loadPositions(fname, linkp)
         self.assertIn('2 node(s) differ', cm.output[0])
 
+    def test_integer_graph_file_matches_its_own_nodes(self):
+        # A positions file's keys are strings; an integer graph's nodes are not.  Compared
+        # raw, every node "differed" (6 for a three-node graph).
+        fname = self._write_pos_file({1: (0.1, 0.2), 2: (0.5, 0.7), 3: (0.9, 0.3)})
+        linkp = _make_linkp_stub({}, all_nodes={1, 2, 3})
+        with self.assertNoLogs('polars2svg_logger', level='WARNING'):
+            result = self.p2s.loadPositions(fname, linkp)
+        self.assertEqual(set(result), {'1', '2', '3'})
+
+    def test_integer_graph_still_warns_on_a_real_difference(self):
+        fname = self._write_pos_file({1: (0.1, 0.2), 2: (0.5, 0.7), 4: (0.9, 0.3)})
+        linkp = _make_linkp_stub({}, all_nodes={1, 2, 3})
+        with self.assertLogs('polars2svg_logger', level='WARNING') as cm:
+            self.p2s.loadPositions(fname, linkp)
+        self.assertIn('2 node(s) differ', cm.output[0])
+        self.assertIn('in file only: 1, in linkp only: 1', cm.output[0])
+
     def test_linkp_without_all_nodes_does_not_crash(self):
         fname = self._write_pos_file(self.pos)
         linkp = _make_linkp_stub(self.pos)  # no all_nodes attribute

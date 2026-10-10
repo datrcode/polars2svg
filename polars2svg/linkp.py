@@ -959,6 +959,37 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
         else:                   self._legend_region_ = (0, self.wxh[1] - _b_, self.wxh[0], _b_)
 
     #
+    # __positionsByNodeString__() - the world x / y of every node, keyed by its name as a
+    # string, for a graph whose node keys mix types.
+    # - the strings are each endpoint column's own polars cast (what __nm__ draws), not
+    #   Python str() of the node set: Python makes 1 and 1.0 one key, but they cast to '1'
+    #   and '1.0', and keying by str() would leave one of them with no position.
+    # - each value finds its position by its raw key first, then by its string (a positions
+    #   file's keys are strings), and a node with neither gets a random one under its raw key.
+    # - '2' and 2 are one node: the first endpoint column to name it fixes its position.
+    #
+    def __positionsByNodeString__(self) -> tuple[dict[str, float], dict[str, float]]:
+        if self.df is None: return {}, {}
+        _pos_str_: dict[str, tuple] = {}
+        for _k_, _v_ in self.pos.items():
+            _pos_str_.setdefault(str(_k_), _v_)
+        _xpos_: dict[str, float] = {}
+        _ypos_: dict[str, float] = {}
+        for _rel_ in self.relationships:
+            for _col_ in _rel_[:2]:
+                _u_ = (self.df.select(pl.col(_col_)).drop_nulls().unique(maintain_order=True)
+                              .with_columns(pl.col(_col_).cast(pl.String).alias('__s__')))
+                for _raw_, _s_ in _u_.iter_rows():
+                    if _s_ in _xpos_: continue
+                    _v_ = self.pos.get(_raw_)
+                    if _v_ is None: _v_ = _pos_str_.get(_s_)
+                    if _v_ is None:
+                        _v_ = self.pos[_raw_] = (random.random(), random.random())  # nosec B311 - non-cryptographic initial layout jitter
+                        _pos_str_[_s_] = _v_
+                    _xpos_[_s_], _ypos_[_s_] = float(_v_[0]), float(_v_[1])
+        return _xpos_, _ypos_
+
+    #
     # __calculateGeometry__()
     # - map node names to world coordinates using pos dict (via replace_strict for O(n) lookup)
     # - compute world bounds and coordinate transform lambdas
@@ -978,13 +1009,25 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
             self.all_nodes |= set(self.df[_rel_[0]].drop_nulls().unique().to_list())
             self.all_nodes |= set(self.df[_rel_[1]].drop_nulls().unique().to_list())
 
-        # Assign random positions for any node not in pos
-        for _node_ in self.all_nodes - self.pos.keys():
-            self.pos[_node_] = (random.random(), random.random())  # nosec B311 - non-cryptographic initial layout jitter
+        # Node keys of more than one type (a string column linked to an integer one, a tuple
+        # endpoint against an integer column, or a positions file's string keys on an
+        # integer graph) cannot be one replace_strict literal, so those graphs look their
+        # positions up by node name as a string -- the name __nm__ already draws them by.
+        # Same-type graphs keep the raw lookup.  PLANNING.md §5 C-linkp-mixed-endpoint-dtypes.
+        _by_str_ = len({type(_k_) for _k_ in self.all_nodes} | {type(_k_) for _k_ in self.pos}) > 1
+        if _by_str_:
+            _xpos_, _ypos_ = self.__positionsByNodeString__()
+        else:
+            # Assign random positions for any node not in pos
+            for _node_ in self.all_nodes - self.pos.keys():
+                self.pos[_node_] = (random.random(), random.random())  # nosec B311 - non-cryptographic initial layout jitter
 
-        # Shadow pos as float dicts for replace_strict compatibility
-        _xpos_ = {k: float(v[0]) for k, v in self.pos.items()}
-        _ypos_ = {k: float(v[1]) for k, v in self.pos.items()}
+            # Shadow pos as float dicts for replace_strict compatibility
+            _xpos_ = {k: float(v[0]) for k, v in self.pos.items()}
+            _ypos_ = {k: float(v[1]) for k, v in self.pos.items()}
+
+        def _name_(col: str) -> pl.Expr:
+            return pl.col(col).cast(pl.String) if _by_str_ else pl.col(col)
 
         # Batch: map all from/to node columns to world x/y coordinates
         _operations_, self.xcols, self.ycols = [], [], []
@@ -992,10 +1035,10 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
             _fmx_, _fmy_ = f'__rel{i}_fm_wx__', f'__rel{i}_fm_wy__'
             _tox_, _toy_ = f'__rel{i}_to_wx__', f'__rel{i}_to_wy__'
             _operations_ += [
-                pl.col(_rel_[0]).replace_strict(_xpos_, default=None).alias(_fmx_),
-                pl.col(_rel_[0]).replace_strict(_ypos_, default=None).alias(_fmy_),
-                pl.col(_rel_[1]).replace_strict(_xpos_, default=None).alias(_tox_),
-                pl.col(_rel_[1]).replace_strict(_ypos_, default=None).alias(_toy_),
+                _name_(_rel_[0]).replace_strict(_xpos_, default=None).alias(_fmx_),
+                _name_(_rel_[0]).replace_strict(_ypos_, default=None).alias(_fmy_),
+                _name_(_rel_[1]).replace_strict(_xpos_, default=None).alias(_tox_),
+                _name_(_rel_[1]).replace_strict(_ypos_, default=None).alias(_toy_),
             ]
             self.xcols += [_fmx_, _tox_]
             self.ycols += [_fmy_, _toy_]

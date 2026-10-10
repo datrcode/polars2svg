@@ -8,8 +8,8 @@ authors:
 license: Apache-2.0
 repository-code: "https://github.com/datrcode/polars2svg"
 url: "https://github.com/datrcode/polars2svg"
-version: 0.4.2
-date-released: '2026-10-06'
+version: 0.5.0
+date-released: '2026-10-10'
 abstract: >-
   A Polars-native SVG visualization framework: histograms, temporal bar charts,
   scatterplots, pie charts, node-link graphs, chord diagrams, small multiples,

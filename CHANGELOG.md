@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-10-10
+
 ### Added
 
 - **Your selection comes back to Python.** The layout `panelize()` returns, and every
@@ -107,6 +109,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   other view let it through over its configuration panel and help. The wheel is now
   consumed anywhere in every interactive view. Only `linkpi` acts on it (zoom); on the
   others it does nothing.
+
+### Known issues
+
+- **`linkp` fails when its two endpoint columns have different types.** A string
+  column linked to an integer one (`[('host', 'port')]` with `port` an integer) raises
+  a `TypeError` while laying out. So does a tuple endpoint against an integer column.
+  Cast both endpoints to one type, e.g. `pl.col('port').cast(pl.String)`. Present since
+  0.1.0.
+
+- **`save('.png')` still leaves out labels that follow a path.** It warns, but the
+  labels are not drawn: `chordp` with `label_style='circular'` and `linkp` curve link
+  labels. The SVG is correct. Carried from 0.3.0.
+
+- **`histop` / `timep`: a bar's smallest segments can draw in the `(other)` colour
+  with no `(other)` legend entry.** A segment under 3 px is drawn as the bar's
+  remainder, in `(other)`'s colour. The legend lists `(other)` only when some value was
+  pooled into it, so when none was, that sliver's colour is unnamed. Carried from 0.4.0.
 
 ## [0.4.2] — 2026-10-06
 
@@ -4622,7 +4641,8 @@ large frames.
 - **SECURITY.md** documenting the SVG-injection threat model (row-data label text
   is HTML-escaped; component configuration is trusted).
 
-[Unreleased]: https://github.com/datrcode/polars2svg/compare/v0.4.2...HEAD
+[Unreleased]: https://github.com/datrcode/polars2svg/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/datrcode/polars2svg/compare/v0.4.2...v0.5.0
 [0.4.2]: https://github.com/datrcode/polars2svg/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/datrcode/polars2svg/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/datrcode/polars2svg/compare/v0.3.1...v0.4.0

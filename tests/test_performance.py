@@ -47,6 +47,14 @@ _N_CHORD_NODES_ = 20
 _DENSE_WXH_       = (4096, 4096)
 _N_DENSE_LK_NODES_ = 20_000
 
+# A categorical axis over many rows: xyp's axis-label pass groups every row by
+# (pixel, category), so its cost follows the rows while the rest of a low-cardinality
+# render does not.  4b70cab made that group_by 2.5x slower on a 46M-row netflow and no
+# workload above could see it (their xyp axes are numeric); G5 found it (PLANNING.md §5
+# C-xyp-set-label-groupby-cost).  At 1M rows the regression read 1.3x, under
+# WARN_THRESHOLD; at 5M it reads 2.0x (50 vs 25 ms), so this frame is 5M rows.
+_N_XY_CAT_ROWS_ = 5_000_000
+
 # Accelerated-layout workloads. Sized so a single run lands in the tens-to-hundreds
 # of milliseconds on the GPU path — big enough that the kernels dominate interpreter
 # overhead, small enough that 3 runs stay cheap.
@@ -272,8 +280,16 @@ def _make_frames():
         'to': pl.Series(rng.integers(0, _N_DENSE_LK_NODES_, N_ROWS)).cast(pl.Utf8),
     })
 
+    # Its own generator, so adding it moved none of the frames above, nor any platform's
+    # baseline of them.  Netflow-shaped: three protocols, heavy-tailed ports.
+    _rng_cat_ = np.random.default_rng(2)
+    df_xy_cat = pl.DataFrame({
+        'proto': pl.Series(_rng_cat_.choice(['tcp', 'udp', 'icmp'], _N_XY_CAT_ROWS_, p=[0.8, 0.18, 0.02])),
+        'dport': pl.Series((_rng_cat_.zipf(1.3, _N_XY_CAT_ROWS_) % 4000).astype(np.int32)),
+    })
+
     return (df_histo, df_time, df_xy, df_link, df_chord, df_spread,
-            df_xy_dense, df_link_dense)
+            df_xy_dense, df_link_dense, df_xy_cat)
 
 
 def _fmt_ms(seconds):
@@ -306,7 +322,7 @@ class TestPerformanceRegression(unittest.TestCase):
     def _make_workloads(self):
         p2s = Polars2SVG()
         (df_histo, df_time, df_xy, df_link, df_chord, df_spread,
-         df_xy_dense, df_link_dense) = _make_frames()
+         df_xy_dense, df_link_dense, df_xy_cat) = _make_frames()
 
         # webgpu(): time only the payload build (buffers + base64), not the render
         class _TimedResult_:
@@ -342,6 +358,9 @@ class TestPerformanceRegression(unittest.TestCase):
         workloads["linkp_dense"] = lambda: p2s.linkp(df=df_link_dense,
                                                      relationships=[('fm', 'to')],
                                                      pos=_pos_dense_)
+
+        # --- a categorical axis over many rows (see _N_XY_CAT_ROWS_) --------------
+        workloads["xyp_cat_axis"] = lambda: p2s.xyp(df_xy_cat, 'proto', 'dport')
 
         # --- composition ---------------------------------------------------------
         # tile() places finished renderings, so its children are rendered once here and

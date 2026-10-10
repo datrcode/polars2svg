@@ -6,7 +6,7 @@ from panel.custom import JSComponent
 from .p2s_esm import esm
 
 from . import od_flow_layout as _ofl_
-from .interactive_controller import _helpSubRow_, _keyboardHelpSvg_
+from .interactive_controller import SelectionAPIMixin, _helpSubRow_, _keyboardHelpSvg_
 
 
 # _mlxCudaStatus_() - (mlx_available, cuda_available) for the header indicators below.
@@ -189,7 +189,7 @@ _STACK_CONTROL_ESM_ = esm('fragments/p2s_dom.js',
                           'p2s_stack_control.js')
 
 
-class STACKCONTROLI(JSComponent):
+class STACKCONTROLI(SelectionAPIMixin, JSComponent):
     """Stack navigator widget.
 
     One static class for every widget size: ``svg_w`` / ``svg_h`` are params the ESM

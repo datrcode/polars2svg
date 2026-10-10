@@ -3530,5 +3530,57 @@ class TestLINKPIGPUSelectionLabels(unittest.TestCase):
             self.assertTrue(has_script(LINKPI_GPU, _s_))
 
 
+
+@unittest.skipUnless(PANEL_AVAILABLE, 'panel not installed')
+class TestPanelizeSeedsTheStackFromViews(unittest.TestCase):
+    """panelize() of views that are already interactive -- the README's own example --
+    seeded the shared stack with None, so popping back to the base drew an empty view and
+    'q' raised (PLANNING.md §5 C-panelize-views-none-base)."""
+
+    def setUp(self):
+        self.p2s = Polars2SVG()
+        self.df  = pl.DataFrame({'x': [1, 2, 3, 4, 5, 6], 'y': [3, 1, 4, 1, 5, 9],
+                                 'group': ['a', 'b', 'a', 'b', 'a', 'b']})
+
+    def _views_(self):
+        xi = self.p2s.xypi(self.p2s.xyp(self.df, 'x', 'y', color='group', wxh=(400, 300)))
+        hi = self.p2s.histopi(self.p2s.histop(self.df, 'group', wxh=(400, 300)))
+        return xi, hi
+
+    def test_the_base_is_the_views_input_frame(self):
+        xi, hi = self._views_()
+        layout = self.p2s.panelize([[xi, hi]])
+        self.assertIs(layout.mvc.stacks['default']['dfs'][0], self.df)
+
+    def test_popping_back_to_the_base_redraws_what_was_there(self):
+        xi, hi = self._views_()
+        _before_ = (xi.mod_inner, hi.mod_inner)
+        layout = self.p2s.panelize([[xi, hi]])
+        asyncio.run(layout.mvc.pushStack(xi, self.df.head(2)))
+        self.assertNotEqual(xi.mod_inner, _before_[0])
+        asyncio.run(layout.mvc.popStack(xi))
+        # The same render as before the drag (it was 592 characters of empty frame, not 4,052).
+        self.assertEqual(len(xi.mod_inner), len(_before_[0]))
+        self.assertEqual(len(hi.mod_inner), len(_before_[1]))
+
+    def test_q_subtracts_from_the_input_frame(self):
+        xi, hi = self._views_()
+        layout = self.p2s.panelize([[xi, hi]])
+        asyncio.run(layout.mvc.pushStack(xi, self.df.head(2)))
+        asyncio.run(layout.mvc.subtractCurrentStackFromTop(xi))
+        s = layout.mvc.stacks['default']
+        self.assertEqual(s['dfs'][s['index']]['x'].to_list(), [3, 4, 5, 6])
+
+    def test_a_linkpi_view_seeds_it_too(self):
+        df = pl.DataFrame({'s': ['a', 'b'], 'd': ['b', 'c']})
+        lv = self.p2s.linkpi(self.p2s.linkp(df, [('s', 'd')], wxh=(128, 128)))
+        layout = self.p2s.panelize([[lv]])
+        self.assertIs(layout.mvc.stacks['default']['dfs'][0], df)
+
+    def test_a_static_component_still_seeds_it(self):
+        layout = self.p2s.panelize([[self.p2s.xyp(self.df, 'x', 'y', wxh=(128, 128))]])
+        self.assertIs(layout.mvc.stacks['default']['dfs'][0], self.df)
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -1,6 +1,7 @@
 import asyncio
 import contextlib
 import copy
+import inspect
 import logging
 import re
 import signal
@@ -440,6 +441,8 @@ class InteractionController:
         self.view_refs  = {}   # {id(view): view} — reverse lookup for brush propagation
         # T4b bound on stack growth; raise it on the instance for a workflow that needs more.
         self.max_stack_depth = _MAX_STACK_DEPTH_
+        # F3: callables told about every selection change -- see onSelection().
+        self.selection_callbacks: list = []
     # addStack()
     def addStack(self, name, df):
         self.stacks[name] = {'dfs': [df], 'index': 0}
@@ -462,6 +465,77 @@ class InteractionController:
     def stackCurrentDataFrame(self, caller):
         s = self.stacks[self.view_stack[id(caller)]]
         return s['dfs'][s['index']]
+    #
+    # selectedDataFrame() / onSelection() -- the selection, read from Python (PLANNING.md §7 F3)
+    #
+    # The selection is the frame the views are showing: the current stack level.  Before
+    # any drill-down that is the whole input frame, by DT's decision (2026-10-09) -- it is
+    # never None.  Its columns are the input frame's: a component may add an internal
+    # column (chordp's and histop's __p2s_index__) to the frames it pushes, and the user
+    # handed in neither that nor anything else this would return.
+    #
+    def __stackName__(self, stack: str | None) -> str:
+        if stack is not None:
+            if stack not in self.stacks:
+                raise ValueError(f'selectedDataFrame(): no stack named {stack!r}; have {sorted(self.stacks)}')
+            return stack
+        if len(self.stacks) == 1:
+            return next(iter(self.stacks))
+        raise ValueError(f'selectedDataFrame(): {len(self.stacks)} stacks, so name one: {sorted(self.stacks)}')
+
+    #
+    # A linkpi's node selection narrows it to the rows touching a selected node (DT,
+    # 2026-10-09): each view on the stack that can say which rows those are
+    # (_selectionRowMask_(), LINKPI's) contributes, and several are unioned -- linked
+    # linkpis share one selection anyway.  Read at call time, so a selection made by any
+    # path is reflected, notified or not.
+    #
+    def selectedDataFrame(self, stack: str | None = None) -> pl.DataFrame:
+        _sn_  = self.__stackName__(stack)
+        s     = self.stacks[_sn_]
+        _df_  = s['dfs'][s['index']]
+        _mask_: Any = None
+        for _vid_, _vsn_ in self.view_stack.items():
+            _fn_ = getattr(self.view_refs.get(_vid_), '_selectionRowMask_', None)
+            if _vsn_ != _sn_ or _fn_ is None: continue
+            _m_ = _fn_(_df_)
+            if _m_ is not None: _mask_ = _m_ if _mask_ is None else (_mask_ | _m_)
+        if _mask_ is not None: _df_ = _df_.filter(_mask_)
+        _cols_ = [_c_ for _c_ in s['dfs'][0].columns if _c_ in _df_.columns]
+        return _df_.select(_cols_) if _cols_ != _df_.columns else _df_
+
+    #
+    # onSelection(callback) -- callback(df) after every selection change: a stack push,
+    # pop or jump, a replaced base frame, and a linkpi node selection.  Not a brush:
+    # brushing is a preview that changes on every mouse move, and it moves no stack.  A
+    # plain function or a coroutine function; one that raises is logged and the views
+    # carry on, because the caller is a Panel watcher, where an exception would wedge the
+    # widget.  stack= limits it to one stack's changes (a view registers with its own);
+    # None hears every stack.  Returns the callback, so it also works as a decorator.
+    #
+    def onSelection(self, callback: Any, stack: str | None = None) -> Any:
+        if not callable(callback):
+            raise TypeError(f'onSelection(): expected a callable, got {type(callback).__name__}')
+        if stack is not None: self.__stackName__(stack)            # a named stack must exist
+        self.selection_callbacks.append((stack, callback))
+        return callback
+
+    async def __notifySelection__(self, stack: str) -> None:
+        _cbs_ = [_cb_ for _sn_, _cb_ in self.selection_callbacks if _sn_ is None or _sn_ == stack]
+        if not _cbs_:
+            return
+        _df_ = self.selectedDataFrame(stack)
+        for _cb_ in _cbs_:
+            try:
+                _r_ = _cb_(_df_)
+                if inspect.isawaitable(_r_):
+                    await _r_
+            except (MemoryError, KeyboardInterrupt):
+                raise
+            except Exception:
+                logging.getLogger('polars2svg_logger').exception(
+                    'onSelection(): callback %r raised; the views carry on', _cb_)
+
     # Stack control
     # subtractCurrentStackFromTop()
     async def subtractCurrentStackFromTop(self, caller):
@@ -478,6 +552,7 @@ class InteractionController:
             _targets_ = self.links.get((id(caller), 'stack'), [])
             for view in ([caller] + [v for v in _targets_ if v is not caller]):
                 await view.display(s['dfs'][s['index']], s['dfs'], s['index'])
+            await self.__notifySelection__(self.view_stack[id(caller)])
     # pushStack()
     # Refuses at max_stack_depth (T4b) rather than growing forever: every level holds a
     # whole DataFrame, levels are pushed one per keystroke, and nothing above ever pops
@@ -497,15 +572,18 @@ class InteractionController:
         _targets_ = self.links.get((id(caller), 'stack'), [])
         for view in ([caller] + [v for v in _targets_ if v is not caller]):
             await view.display(s['dfs'][s['index']], s['dfs'], s['index'])
+        await self.__notifySelection__(self.view_stack[id(caller)])
         return True
     # setStackIndex()
     async def setStackIndex(self, caller, index):
         s = self.stacks[self.view_stack[id(caller)]]
         if index >= 0 and index < len(s['dfs']):
+            _moved_ = index != s['index']
             s['index'] = index
             _targets_ = self.links.get((id(caller), 'stack'), [])
             for view in ([caller] + [v for v in _targets_ if v is not caller]):
                 await view.display(s['dfs'][s['index']], s['dfs'], s['index'])
+            if _moved_: await self.__notifySelection__(self.view_stack[id(caller)])
     # replaceStack() — replace the entire stack with a new base dataframe and re-render all views
     # caller may be a registered view object or a stack name string (e.g. 'default')
     async def replaceStack(self, caller, df):
@@ -520,6 +598,7 @@ class InteractionController:
                         await view.replaceBaseDataframe(df)
                     else:
                         await view.display(df, [df], 0)
+        await self.__notifySelection__(sn)
     # Brush control — auto-discovers all stack peers, no explicit 'brush' links needed
     # brushUpdate() — broadcast brushed df to all peers on the same stack
     async def brushUpdate(self, caller, df):
@@ -548,6 +627,9 @@ class InteractionController:
         for view in _targets_:
             if hasattr(view, 'receiveSelection'):
                 await view.receiveSelection(entities)
+        # F3: after the targets, so a linked linkpi already holds the new selection.
+        _sn_ = self.view_stack.get(id(caller))
+        if _sn_ in self.stacks: await self.__notifySelection__(_sn_)
     # selectionClear()
     async def selectionClear(self, caller):
         await self.selectionUpdate(caller, set())
@@ -570,6 +652,41 @@ class InteractionController:
         _loop_.create_task(_fan_out_())
 
 _BRUSH_MODE_NAMES_ = ['', 'circ r=5', 'circ r=15', 'vert r=1', 'vert r=3', 'horiz r=1', 'horiz r=3']
+
+
+class SelectionAPIMixin:
+    """The selection, read from Python, on every interactive view (PLANNING.md §7 F3).
+
+    ``panelize()``'s container carries the same two methods, for the whole layout.
+
+    - ``selectedDataFrame()`` -- the rows the view is showing: the current level of its
+      stack, which is the whole input frame until something is dragged, picked or
+      filtered.  When a linkpi on the same stack has nodes selected, only the rows with a
+      selected node at either end.  In the input frame's columns.
+    - ``onSelection(callback)`` -- ``callback(df)`` after every change to that: a drag, a
+      pop, a stack-control jump, a linkpi node selection.  Not a brush.  A plain or async
+      function; one that raises is logged and the view carries on.  Returns the callback,
+      so it can decorate.
+    """
+
+    mvc: Any
+
+    def __selectionStack__(self) -> tuple[Any, str]:
+        _mvc_ = getattr(self, 'mvc', None)
+        _sn_  = None if _mvc_ is None else _mvc_.view_stack.get(id(self))
+        if _sn_ is None:
+            raise RuntimeError(f'{type(self).__name__}: this view is not on a stack -- '
+                               'build it with p2s.panelize() or its own interactive call')
+        return _mvc_, _sn_
+
+    def selectedDataFrame(self) -> pl.DataFrame:
+        _mvc_, _sn_ = self.__selectionStack__()
+        _df_: pl.DataFrame = _mvc_.selectedDataFrame(_sn_)
+        return _df_
+
+    def onSelection(self, callback: Any) -> Any:
+        _mvc_, _sn_ = self.__selectionStack__()
+        return _mvc_.onSelection(callback, stack=_sn_)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # F1 -- per-element hover tooltips (PLANNING.md section 7)
@@ -982,7 +1099,7 @@ _INTERACTIVEP_GPU_ESM_ = esm('fragments/p2s_dom.js',
 
 
 
-class _InteractivePBase(_TooltipMixin_, JSComponent):
+class _InteractivePBase(SelectionAPIMixin, _TooltipMixin_, JSComponent):
     """Shared behaviour for the five generic interactive components.
 
     One compiled class per *kind* (XYPI, HISTOPI, ...), not per view: size and
@@ -1652,7 +1769,7 @@ _SMALLPI_GPU_ESM_ = esm('fragments/p2s_dom.js',
                         'p2s_smallpi.js')
 
 
-class SMALLPI(JSComponent):
+class SMALLPI(SelectionAPIMixin, JSComponent):
     """Panel view for Smallp -- one static class for every size / render mode."""
 
     # The Python-side palette, read in JS as model.palette (see p2sInk() in
@@ -2058,12 +2175,30 @@ def _warnOversizePanelPayload_(views: Sequence[Any],
     )
 
 
+#
+# _baseFrame_() -- the input frame of one panelize() leaf, which seeds the shared stack.
+# A static component has it as df_orig.  An interactive view (p2s.xypi(...), as the README
+# composes them) has none: its input is the base of the stack it was built with.  Reading
+# only df_orig seeded the stack with None whenever every leaf was a view, so popping back
+# to the base drew an empty view and 'q' / 'u' / 'e' raised (PLANNING.md §5
+# C-panelize-views-none-base).
+#
+def _baseFrame_(leaf: Any) -> Any:
+    if hasattr(leaf, 'df_orig'):
+        return leaf.df_orig
+    _mvc_ = getattr(leaf, 'mvc', None)
+    if _mvc_ is None:
+        return None
+    _sn_ = _mvc_.view_stack.get(id(leaf))
+    return _mvc_.stacks[_sn_]['dfs'][0] if _sn_ in _mvc_.stacks else None
+
+
 def panelize(layout: Any, stack: str = 'default', use_webgpu: bool = False,
              websocket_max_message_size: int | None = None) -> Any:
     pn.extension()
     plots = _collect_leaves(layout)
     mvc   = InteractionController()
-    _init_df_ = next((p.df_orig for p in plots if hasattr(p, 'df_orig')), None)
+    _init_df_ = next((_d_ for _d_ in map(_baseFrame_, plots) if _d_ is not None), None)
     mvc.addStack(stack, _init_df_)
     views = []
     for p in plots:
@@ -2111,6 +2246,9 @@ def panelize(layout: Any, stack: str = 'default', use_webgpu: bool = False,
                 mvc.link(view, pos_targets, on='positions', stack=stack)
     _container_ = _build_interactive(layout, {id(p): v for p, v in zip(plots, views)})
     _container_.mvc = mvc
+    # F3: the layout's selection, as each view's own (SelectionAPIMixin) -- one stack here.
+    _container_.selectedDataFrame = mvc.selectedDataFrame
+    _container_.onSelection       = mvc.onSelection
     _container_._websocket_max_message_size_ = websocket_max_message_size
     _warnOversizePanelPayload_(views, websocket_max_message_size)
     return _container_
@@ -2343,7 +2481,7 @@ _LINKPI_GPU_ESM_ = esm('fragments/p2s_dom.js',
 
 
 
-class LINKPI(_TooltipMixin_, JSComponent):
+class LINKPI(SelectionAPIMixin, _TooltipMixin_, JSComponent):
     """Panel view for LinkP.
 
     One static class for every graph, size and render mode.  This used to be
@@ -3282,6 +3420,28 @@ class LINKPI(_TooltipMixin_, JSComponent):
         # nx.spring_layout() output (numpy array values), so no skip is attempted.
         self.previous_layouts.append(_copy_)
         while len(self.previous_layouts) > self.max_undo_levels: self.previous_layouts.pop(0)
+
+    #
+    # _selectionRowMask_() -- F3: which rows of df touch a selected node, for
+    # InteractionController.selectedDataFrame(); None when nothing is selected.  A node
+    # is named as createNetworkXGraph() names it: the column's value, or a tuple
+    # endpoint's values joined with '|'.  Compared as strings, since that is how a tuple
+    # endpoint's name is built and how an integer column's node prints.
+    #
+    def _selectionRowMask_(self, df: pl.DataFrame) -> pl.Series | None:
+        if not self.selected_entities: return None
+        _names_ = [str(_n_) for _n_ in self.selected_entities]
+        _work_  = df
+        _mask_  = pl.lit(False)
+        for _i_, _rel_ in enumerate(self.ln_params['relationships']):
+            for _j_, _end_ in enumerate(_rel_[:2]):
+                if isinstance(_end_, tuple) and len(_end_) > 1:
+                    _col_  = f'__sel{_i_}_{_j_}__'
+                    _work_ = self.rt_self.createConcatColumn(_work_, _end_, _col_)
+                else:
+                    _col_ = _end_[0] if isinstance(_end_, tuple) else _end_
+                _mask_ = _mask_ | pl.col(_col_).cast(pl.String).is_in(_names_)
+        return _work_.select(_mask_.alias('__sel__'))['__sel__']
 
     #
     # setSelectedEntitiesAndNotifyOthers() - set the selected entities & notify via mvc

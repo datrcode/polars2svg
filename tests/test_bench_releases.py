@@ -71,6 +71,28 @@ class TestBenchReleasesReport(unittest.TestCase):
         self.assertEqual(out['sip_net'].to_list(), ['10.1', '10.1'])
         self.assertEqual(out['dip_net'].to_list(), ['10.2', '10.2'])
 
+    def test_import_data_concatenates_csv_chunks_parses_dates_and_matches_the_worker_schema(self):
+        # The VAST 2013 capture is three CSV chunks with a 'YYYY-MM-DD HH:MM:SS' date column.
+        b    = _load_()
+        rows = ['T,S,D,SP,DP,P,B,K',
+                '2013-04-01 07:50:16,172.20.0.3,172.255.255.255,137,137,UDP,1104,12',
+                '2013-04-01 07:50:21,172.10.0.40,10.0.0.1,138,80,TCP,184,2']
+        with tempfile.TemporaryDirectory() as d:
+            chunks = []
+            for i, body in enumerate((rows[:2], [rows[0], rows[2]])):
+                f = Path(d) / f'chunk{i}.csv'
+                f.write_text('\n'.join(body) + '\n')
+                chunks.append(f)
+            n = b.import_data(chunks, dict(ts='T', sip='S', dip='D', sport='SP', dport='DP',
+                                           proto='P', bytes='B', pkts='K'), Path(d) / 'data')
+            out = pl.read_parquet(Path(d) / 'data' / f'netflow_{n}.parquet')
+        self.assertEqual(n, 2)
+        self.assertEqual(out.schema, b._worker_module_().make_netflow(1).schema)
+        self.assertEqual(out['sip'].to_list(), ['172.20.0.3', '172.10.0.40'])     # chunk order kept
+        self.assertEqual(out['ts'][1].isoformat(), '2013-04-01T07:50:21')
+        self.assertEqual(out['sip_net'].to_list(), ['172.20', '172.10'])
+        self.assertEqual(out['bytes'].to_list(), [1104.0, 184.0])
+
 
 if __name__ == '__main__':
     unittest.main()

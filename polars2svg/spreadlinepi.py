@@ -26,7 +26,7 @@ from panel.custom import JSComponent
 
 from .p2s_esm import esm
 
-from .interactive_controller import InteractionController, _gpu_error_overlay
+from .interactive_controller import InteractionController, SelectionAPIMixin, _gpu_error_overlay
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -154,7 +154,7 @@ _SLPI_GPU_ESM_ = esm('fragments/p2s_dom.js',
 # Interactive wrapper
 # ─────────────────────────────────────────────────────────────────────────────
 
-class SLPI(JSComponent):
+class SLPI(SelectionAPIMixin, JSComponent):
     """Panel view for SpreadLinesP.
 
     A single static class: size and GPU mode are ordinary params, so one

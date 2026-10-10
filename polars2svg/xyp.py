@@ -2698,8 +2698,14 @@ class XYp(P2SBackgroundMixin, ExportMixin):
         # (__xi__/__yi__, one per category) is the third key, taken in the same reading
         # direction as the pixel: ascending on x, descending on y, where a higher slot
         # sits higher up.  PLANNING.md §5 C-xyp-set-gridline-label-ties.
-        _df_ = (self.df_flat.group_by([px_col, axis_col, slot_col], maintain_order=True)
-                            .len()
+        #
+        # The slot is a sort key, never a group key.  It is one per category, so grouping
+        # on it splits nothing, but df_flat is every row: as a third hashed key it made
+        # xyp(df, 'proto', 'dport') on the 46M-row VAST 2013 netflow 2.5x slower (213 ->
+        # 543 ms).  first() carries it through at a fraction of that.  PLANNING.md §5
+        # C-xyp-set-label-groupby-cost.
+        _df_ = (self.df_flat.group_by([px_col, axis_col], maintain_order=True)
+                            .agg(pl.len(), pl.col(slot_col).first())
                             .sort(['len', px_col, slot_col], descending=[True, False, not x_axis]))
 
         # Limit the number of labels based on the pixel goal and the dimension

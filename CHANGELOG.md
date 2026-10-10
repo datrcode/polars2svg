@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Your selection comes back to Python.** The layout `panelize()` returns, and every
+  interactive view, now has `selectedDataFrame()`: the rows the views are showing, with
+  your input columns. That is the whole frame until you drag, pick or filter, then that
+  subset. On `linkpi`, selected nodes narrow it to the rows with a selected node at either
+  end. `onSelection(callback)` calls `callback(df)` after every change: a drag, a pop, a
+  stack-control jump, a node selection. Brushing does not count, since it is only a
+  preview. The callback can be a plain or an `async` function. If it raises, the error is
+  logged and the view keeps working.
+
 - **`histop` bins by a t-field.** `p2s.histop(df, p2s.tField('ts', p2s.PT_DoWp))` draws
   one bar per day of the week, as xyp, timep and smallp already allowed. It used to
   raise and point at `timep`. Bars are still ranked by count, which answers "which days
@@ -51,6 +60,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   other views with their zoom.
 
 ### Fixed
+
+- **`panelize()` of interactive views keeps your data at the bottom of the stack.** Built
+  from views (`p2s.panelize([[p2s.xypi(...), p2s.histopi(...)]])`, as in the README), the
+  layout had no frame at its base: after a drag, popping back drew an empty view, and `q`
+  and the time keys `u` / `e` raised an error. A layout with a static component first was
+  unaffected.
+
+- **`xyp` with a categorical axis is fast on large frames again.** 0.4.1 made the
+  axis-label pass over every row 2.5x slower: `xyp(df, 'proto', 'dport')` on a 46M-row
+  netflow took 0.55 s in 0.4.2, against 0.22 s in 0.4.0. The labels it draws are
+  unchanged, including the 0.4.1 fix for which category labels a gridline two categories
+  share.
 
 - **`histop`'s selected records come back with your columns only.** With a t-field as
   `count=` or `color=`, the records from a search, a selection or a filter also carried

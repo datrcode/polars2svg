@@ -223,6 +223,24 @@ Tooltips are off until you turn them on: open the panel with `a` and cycle the
 `tooltip` row with `space` (`off -> text -> icon`; `icon` is offered only when you
 passed one). Hovering never changes the selection, the stack or any linked view.
 
+What you have selected comes back to Python as a DataFrame. Read it from the layout
+`panelize()` returns, or from any one view:
+
+```python
+layout = p2s.panelize([[xi, hi]])
+layout                                  # display it, drag in a view, then:
+layout.selectedDataFrame()              # the rows the views are showing
+
+@layout.onSelection
+def picked(df):                         # called after every selection change
+    print(df.height, "rows selected")
+```
+
+The selection is what the views show: the whole frame until you drag, pick or filter,
+then that subset, and back as you pop the stack. On `linkpi`, selected nodes narrow it to
+the rows with a selected node at either end. Brushing is a preview and changes nothing
+here. The DataFrame has your input columns.
+
 Finished renderings compose into a single static SVG with `p2s.tile(...)` — the one
 method that takes renderings rather than a DataFrame:
 

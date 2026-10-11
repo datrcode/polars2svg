@@ -10,6 +10,7 @@ from polars2svg.export import ExportMixin
 from polars2svg.p2s_bin_component_mixin import P2SBinComponentMixin
 from polars2svg.p2s_enums import BarStyleP, SelectShapeP, TimeLinearTypeP, TimePeriodicTypeP
 from polars2svg.exceptions import InvalidSpecError
+from polars2svg.p2s_render_mixin import OTHER_LABEL
 
 #: Seconds in one bin of each linear truncation -- enough to size a spine from a frame's
 #: span without building it.
@@ -772,6 +773,7 @@ class Timep(P2SBinComponentMixin, ExportMixin):
         self.df_swarm           = None
         self._df_agg_unpooled_: pl.DataFrame | None = None
         self._pool_bin_col_:    str | None          = None
+        self._legend_misc_n_:   float               = 0.0
         self._numeric_field_    = None
         self._color_categories_: list = []
 
@@ -1038,6 +1040,8 @@ class Timep(P2SBinComponentMixin, ExportMixin):
             # df_agg carries the rendered categories (post-'(other)' collapse for
             # stacked); weight by the aggregated count so order matches bar area
             _vc_ = self.p2s.legendCategoricalValueCounts(self.df_agg, self._color_field_, weight='__count__')
+            # the columns' misc, when nothing was pooled to name it (__nameTheMisc__)
+            if self._legend_misc_n_ > 0: _vc_.append((OTHER_LABEL, self._legend_misc_n_, None))
             self.legend_info = self.p2s.legendInfoCategorical(_spec_, _vc_, _title_)
         else:
             self.legend_info = self.p2s.legendInfoColorbar(_title_)
@@ -1085,10 +1089,24 @@ class Timep(P2SBinComponentMixin, ExportMixin):
         _span_ = max(float(self._count_max_) - float(self._count_min_), 1e-9)
         _new_  = self.__poolThinColors__(self._df_agg_unpooled_, self._pool_bin_col_, float(self._plot_h_) / _span_)
         _cf_   = self._color_field_
-        if set(_new_[_cf_].cast(pl.String).to_list()) == set(self.df_agg[_cf_].cast(pl.String).to_list()): return
-        self.df_agg = _new_
-        self._color_categories_ = _sortedCategories_(self.df_agg[_cf_].unique().to_list())
-        self.__constructGeometry__()
+        if set(_new_[_cf_].cast(pl.String).to_list()) != set(self.df_agg[_cf_].cast(pl.String).to_list()):
+            self.df_agg = _new_
+            self._color_categories_ = _sortedCategories_(self.df_agg[_cf_].unique().to_list())
+            self.__constructGeometry__()
+        self.__nameTheMisc__(self._pool_bin_col_)
+
+    #
+    # __nameTheMisc__() - a column's misc is drawn in '(other)''s colour, but the legend
+    # lists '(other)' only when something was pooled into it.  When a column has a misc and
+    # nothing was, give the legend an '(other)' row and rebuild the geometry around it
+    # (PLANNING.md §5 C-stacked-misc-unnamed).  The longer legend never gives the bars more
+    # room, so every misc stays a misc and one rebuild settles it.
+    #
+    def __nameTheMisc__(self, bin_col: str) -> None:
+        if self.legend_info is None or self.legend_info.kind != 'categorical': return
+        self._legend_misc_n_ = self.__unnamedMiscCount__(self.df_agg, bin_col, float(self._plot_h_),
+                                                         self._count_min_, self._count_max_)
+        if self._legend_misc_n_ > 0: self.__constructGeometry__()
 
     def __constructGeometry__(self) -> None:
         w, h         = self.wxh

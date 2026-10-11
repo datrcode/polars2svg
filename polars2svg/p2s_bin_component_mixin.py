@@ -98,3 +98,21 @@ class P2SBinComponentMixin:
                 .agg(pl.col('__count__').sum())
                 .sort([bin_col, _cf_]))
 
+    #
+    # __unnamedMiscCount__() - the count the stacked bars draw as their misc, in '(other)''s
+    # colour, when nothing was pooled into '(other)' for the legend to name it.  Pooling
+    # keeps a value that is wide enough in *some* bar, so its share of another can still be
+    # too thin to draw (PLANNING.md §5 C-stacked-misc-unnamed).  0 when no bar draws a misc,
+    # or when df_agg already holds an '(other)'.  extent / count_min / count_max are the
+    # scale the bars are drawn at; df_agg holds only the bars that are drawn.
+    #
+    def __unnamedMiscCount__(self, df_agg: pl.DataFrame, bin_col: str, extent: float,
+                             count_min: float, count_max: float) -> float:
+        _cf_ = self._color_field_
+        if (df_agg[_cf_].cast(pl.String) == OTHER_LABEL).any(): return 0.0
+        _px_ = self.p2s.stackedSegmentPx(bin_col, extent, count_min, count_max).alias('__px__')
+        # a segment of no pixels is in no misc: the renderers drop a misc of nothing
+        _misc_ = df_agg.with_columns(_px_).filter(self.p2s.__miscMask__(_cf_, '__px__', self.remainder_threshold) &
+                                                  (pl.col('__px__') > 0))
+        return float(_misc_['__count__'].sum())
+

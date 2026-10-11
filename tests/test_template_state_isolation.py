@@ -121,8 +121,14 @@ class TestTemplateStateIsolation(unittest.TestCase):
             with self.subTest(component=name):
                 tmpl  = make()
                 clone = self._clone(name, tmpl)
-                tmpl.sm_shared.add('__poisoned_by_template__')
-                self.assertNotIn('__poisoned_by_template__', clone.sm_shared)
+                # spreadlinesp takes no sm_shared (smallp has no spreadlinesp mode); its
+                # anno dict is the mutable container a template hands its clone.
+                if name == 'spreadlinesp':
+                    tmpl.anno['__poisoned_by_template__'] = 'x'
+                    self.assertNotIn('__poisoned_by_template__', clone.anno)
+                else:
+                    tmpl.sm_shared.add('__poisoned_by_template__')
+                    self.assertNotIn('__poisoned_by_template__', clone.sm_shared)
                 def extra_metric(): return 42
                 clone.gatherMetrics(extra_metric)
                 self.assertIn('extra_metric', clone.timing_metrics)

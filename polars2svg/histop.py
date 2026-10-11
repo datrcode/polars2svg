@@ -8,6 +8,7 @@ from polars2svg.p2s_displaylist import DisplayList
 from polars2svg.export import ExportMixin
 from polars2svg.p2s_bin_component_mixin import P2SBinComponentMixin
 from polars2svg.p2s_enums import BarStyleP, SelectShapeP
+from polars2svg.p2s_render_mixin import OTHER_LABEL
 
 #: Space between the bars (or the more-rows indicator under them) and the distribution strip.
 _STRIP_GAP_ = 3
@@ -551,6 +552,7 @@ class Histop(P2SBinComponentMixin, ExportMixin):
         self._agg_type_      = 'simple'
         self.df_swarm        = None
         self._df_agg_unpooled_: pl.DataFrame | None = None
+        self._legend_misc_n_: float = 0.0
         self._numeric_field_ = None
 
         # ── BOXPLOT ───────────────────────────────────────────────────────
@@ -719,6 +721,8 @@ class Histop(P2SBinComponentMixin, ExportMixin):
             # df_agg carries the rendered categories (post-'(other)' collapse for
             # stacked); weight by the aggregated count so order matches bar area
             _vc_ = self.p2s.legendCategoricalValueCounts(self.df_agg, self._color_field_, weight='__count__')
+            # the bars' misc, when nothing was pooled to name it (__nameTheMisc__)
+            if self._legend_misc_n_ > 0: _vc_.append((OTHER_LABEL, self._legend_misc_n_, None))
             _enum_ = self._tfield_enums_.get(self._color_field_)
             _lfn_  = None if _enum_ is None else (lambda _v_: self.p2s.timeFieldHumanReadable(_v_, _enum_))
             self.legend_info = self.p2s.legendInfoCategorical(_spec_, _vc_, _title_, label_fn=_lfn_)
@@ -754,9 +758,24 @@ class Histop(P2SBinComponentMixin, ExportMixin):
         _span_ = max(float(self._count_max_) - float(self._count_min_), 1e-9)
         _new_  = self.__poolThinColors__(self._df_agg_unpooled_, self._bin_col_, float(self._plot_w_) / _span_)
         _cf_   = self._color_field_
-        if set(_new_[_cf_].cast(pl.String).to_list()) == set(self.df_agg[_cf_].cast(pl.String).to_list()): return
-        self.df_agg = _new_
-        self.__constructGeometry__()
+        if set(_new_[_cf_].cast(pl.String).to_list()) != set(self.df_agg[_cf_].cast(pl.String).to_list()):
+            self.df_agg = _new_
+            self.__constructGeometry__()
+        self.__nameTheMisc__()
+
+    #
+    # __nameTheMisc__() - a bar's misc is drawn in '(other)''s colour, but the legend lists
+    # '(other)' only when something was pooled into it.  When a drawn bar has a misc and
+    # nothing was, give the legend an '(other)' row and rebuild the geometry around it
+    # (PLANNING.md §5 C-stacked-misc-unnamed).  The longer legend never gives the bars more
+    # room, so every misc stays a misc and one rebuild settles it.
+    #
+    def __nameTheMisc__(self) -> None:
+        if self.legend_info is None or self.legend_info.kind != 'categorical': return
+        _drawn_ = self.df_agg.filter(pl.col(self._bin_col_).is_in(self._sorted_bins_[:self.__visibleBinCount__()], nulls_equal=True))
+        self._legend_misc_n_ = self.__unnamedMiscCount__(_drawn_, self._bin_col_, float(self._plot_w_),
+                                                         self._count_min_, self._count_max_)
+        if self._legend_misc_n_ > 0: self.__constructGeometry__()
 
     def __constructGeometry__(self) -> None:
         w, h         = self.wxh

@@ -58,9 +58,7 @@ class SpreadLinesPKwargs(TypedDict, total=False):
     channel_inter_d:         Any
     circle_inter_d:          Any
     circle_spacer:           Any
-    color_stat_range_shared: Any
     count:                   Any
-    count_range_shared:      Any
     df:                      pl.DataFrame | None
     draw_border:             bool
     draw_context:            bool
@@ -75,18 +73,14 @@ class SpreadLinesPKwargs(TypedDict, total=False):
     max_rings:               Any
     min_channel_w:           Any
     node_color:              Any
-    node_labels:             Any
     r_min:                   Any
     r_pref:                  Any
     relationships:           Any
-    sm_shared:               set
     template:                'SpreadLinesP | None'
     time:                    Any
     time_order:              Any
     txt_h:                   Any
     wxh:                     Any
-    x_ins:                   Any
-    y_ins:                   Any
 
 
 class SpreadLinesP(ExportMixin):
@@ -109,11 +103,7 @@ class SpreadLinesP(ExportMixin):
         'min_channel_w', 'max_channel_w', 'channel_inter_d',
         # output / labels
         'draw_labels',
-        'node_labels',
         'wxh',
-        'x_ins', 'y_ins',
-        'sm_shared',
-        'count_range_shared', 'color_stat_range_shared',
         'draw_border', 'draw_context', 'txt_h', 'legend',
         'highlight_nodes',            # set/frozenset of node names to visually highlight
     })
@@ -141,9 +131,7 @@ class SpreadLinesP(ExportMixin):
     channel_inter_d:         int
     circle_inter_d:          float
     circle_spacer:           int
-    color_stat_range_shared: Any
     count:                   Any
-    count_range_shared:      Any
     draw_border:             bool
     draw_context:            bool
     draw_labels:             bool
@@ -156,14 +144,10 @@ class SpreadLinesP(ExportMixin):
     max_rings:               int
     min_channel_w:           int
     node_color:              Any
-    node_labels:             Any
     r_min:                   float
     r_pref:                  float
-    sm_shared:               set
     time_order:              Any
     txt_h:                   int
-    x_ins:                   int
-    y_ins:                   int
 
     # --- state built during __init__/render, not passed in --------------
     # Initialised to None and filled once the frame is resolved, so a checker
@@ -291,13 +275,7 @@ class SpreadLinesP(ExportMixin):
             'channel_inter_d':        4,
             # output
             'draw_labels':            False,
-            'node_labels':            None,
             'wxh':                    (800, 400),
-            'x_ins':                  32,
-            'y_ins':                  8,
-            'sm_shared':              set(),
-            'count_range_shared':     None,
-            'color_stat_range_shared': None,
             'draw_border':            True,
             'draw_context':           True,
             'txt_h':                  12,

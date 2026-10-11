@@ -897,6 +897,14 @@ class Polars2SVG(P2SColorsMixin,
 
         dot_size_range = (0.5, 4.0)                     # (min, max) radius when dot_size is field-driven
 
+        An integer dot_size snaps every dot to a grid of dot_size cells.  To place dots more
+        finely while still drawing them dot_size wide:
+
+        dot_size_supersample = 1                        # default -- dots snap to whole dot_size cells
+                             = <n>                      # a positive integer: dots snap to steps of dot_size / n
+                                                        # (2 -> half-cell positions).  Integer dot_size only; set
+                                                        # above 1 with any other dot_size, it warns and does nothing
+
         === %< === %< === %< === %< === %< === %< === %< === %< === %< === %< === %< === %< === %< === %<
 
         dot opacity is specified as follows:
@@ -1020,6 +1028,9 @@ class Polars2SVG(P2SColorsMixin,
         txt_h          = label text height
         x_range        = (min, max)           # clip the x axis to this window (default: the data extent)
         y_range        = (min, max)           # clip the y axis to this window (default: the data extent)
+        x_time_expand_perc = 0.1 (default)    # interactive, time x-axis only: the 'e' key widens the visible
+                                              # timeframe by this fraction of its span on each side (shift+'e'
+                                              # earlier only, ctrl+'e' later only), pulling the rows back in
         aspect         = None (default)       # each axis independently fills its own pixel extent
                        = 'equal'              # one world unit is the same length on both axes
                        = 'geo'                # x is degrees longitude, y is degrees latitude
@@ -1428,9 +1439,32 @@ class Polars2SVG(P2SColorsMixin,
                                                             # name, an edge by its label value (a '*' edge survives if any of
                                                             # the values behind the '*' is in the set).  Tested against the raw
                                                             # value, before node_labels / link_labels rename it for display.
+        label_line_width = 32                              # node labels word-wrap at this many CHARACTERS per line; a
+                                                            # longer word is split across lines.  Edge labels are not
+                                                            # wrapped; the interactive view's selection labels wrap
+                                                            # but are never cut
+        label_max_lines  = 4                               # a node label longer than this many lines is cut to it
+        label_ellipsis   = True                            # end a cut node label with '…'
+                         = False                           # cut it with no mark
 
         link_size      = 'small'                           # 'nil' | 'small' | 'medium' | 'large' | 'vary' | None | float
         link_shape     = 'line'                            # 'line' | 'curve' | 'flowmap' (force-directed OD flow layout, Jenny et al. 2017)
+        flowmap_max_flows   = None                         # link_shape='flowmap': lay out every flow (default)
+                            = <n>                          # lay out only the n largest flows by count; the rest are
+                                                            # drawn as plain curves.  The layout's cost grows faster
+                                                            # than the square of the flow count, so this is the
+                                                            # setting that buys back the most time
+        flowmap_iterations  = 100                          # force iterations (the paper's default); cost is linear in it
+        flowmap_samples     = 15                           # sample points per flow (the paper's default); cost goes as
+                                                            # (flows x samples)^2, so 15 -> 8 is about 3.5x faster
+        flowmap_time_budget = None                         # run every iteration (default) -- reproducible
+                            = <seconds>                    # stop the force iteration when this much wall-clock time is
+                                                            # spent and use the flow map found so far: less relaxed,
+                                                            # not broken, and no longer reproducible run to run
+        flowmap_backend     = 'auto'                       # the MLX GPU when it is installed and usable, else NumPy
+                            = 'numpy' | 'mlx'              # pin one.  MLX computes in float32 and NumPy in float64,
+                                                            # and the curves differ by pixels between them: pin it when
+                                                            # a render is compared against a stored one
         link_arrows    = False                             # draw arrowheads at link destinations
         draw_link_labels = False                           # label each edge with the relationship tuple's third
                                                             # element -- or, for a two-part tuple, with the field
@@ -1538,6 +1572,11 @@ class Polars2SVG(P2SColorsMixin,
 
                        ** - note that "use_pos_for_bounds" when True will override SM_X and SM_Y
 
+        count_range_shared      = (min, max)               # count range node_size='vary' / link_size='vary' scale over
+                                                            # (set automatically by smallp under SM_COUNT)
+        color_stat_range_shared = (min, max)               # shared spectrum range across small multiples
+                                                            # (set automatically by smallp under SM_COLOR)
+
         legend = False (default)                        # no legend -- output identical to pre-legend renders
                = True                                   # same as 'right'
                = 'right' | 'left' | 'top' | 'bottom'    # position of the legend strip
@@ -1620,6 +1659,11 @@ class Polars2SVG(P2SColorsMixin,
         node_labels    = None                              # {node_value: label_str} — display labels for nodes
         label_only     = set()                             # restrict labels to these node values
         order          = None                              # explicit node ordering list; None → auto via hierarchical clustering
+        pos            = {} (default)                      # no positions: order= or clustering decides the ring
+                       = {node_name: [x, y], ...}          # a networkx-style layout (may be passed positionally): with
+                                                            # order=None the ring follows each node's angle around the
+                                                            # layout's centre, each connected component kept together;
+                                                            # nodes absent from pos go last, sorted
 
         === %< === %< === %< === %< === %< === %< === %< === %< === %< === %< === %< ===
 
@@ -1632,6 +1676,8 @@ class Polars2SVG(P2SColorsMixin,
         bundle_strength = 0.85                             # bundled routing tension: 0.0 = straight chord, 1.0 = full skeleton
         bundle_rings   = 4                                 # hex mesh density: hex edge = r / bundle_rings
         skeleton_algorithm = 'hexagonal'                   # 'hexagonal' | 'radial' | 'kmeans'
+        render_skeleton = False                            # True draws the routing skeleton faintly under the links
+                                                            # (for seeing what link_shape='bundled' routes along)
 
         === %< === %< === %< === %< === %< === %< === %< === %< === %< === %< === %< ===
 
@@ -1653,6 +1699,11 @@ class Polars2SVG(P2SColorsMixin,
                        = {p2s.SM_Y}                        # share bundled-edge routing skeleton (link_shape='bundled' only)
                        = {p2s.SM_COUNT}                    # share count normalization range
                        = {p2s.SM_COLOR}                    # share color-stat normalization range
+
+        count_range_shared      = (min, max)               # count range link_size='vary' widths scale over
+                                                            # (set automatically by smallp under SM_COUNT)
+        color_stat_range_shared = (min, max)               # shared spectrum range across small multiples
+                                                            # (set automatically by smallp under SM_COLOR)
 
         legend = False (default)                        # no legend -- output identical to pre-legend renders
                = True                                   # same as 'right'
@@ -1750,6 +1801,11 @@ class Polars2SVG(P2SColorsMixin,
                              (default 3.0); segments below this are collapsed into an "(other)" bucket
         date_range_shared  = (min_date, max_date)                  # shared x-axis date range for small multiples (set automatically by smallp w/ SM_X)
         min_label_spacing  = minimum pixel gap between adjacent tick labels on the time axis (default 15)
+        x_time_expand_perc = 0.1 (default)                         # interactive, linear time only: the 'e' key widens
+                                                                   # the visible timeframe on each side (shift+'e'
+                                                                   # earlier only, ctrl+'e' later only) by this
+                                                                   # fraction of the bars showing, rounded to whole
+                                                                   # bars and at least one
 
         legend = False (default)                        # no legend -- output identical to pre-legend renders
                = True                                   # same as 'right'
@@ -1882,6 +1938,49 @@ class Polars2SVG(P2SColorsMixin,
         count          = p2s.ROW_COUNTp                        # default — count rows
                        = 'field'                               # numeric → sum; non-numeric → count-distinct
                        = ('field', p2s.SETp)                   # force count-distinct
+
+        max_rings      = 2 (default)                           # the ego's contacts and their contacts
+                       = 1                                     # the ego's direct contacts only
+
+        time_order     = None (default)                        # every bin, sorted by its label
+                       = ['label', ...]                        # these bins, in this order -- labels as .ts_list shows
+                                                                #   them (compared as strings); a bin left out is not
+                                                                #   drawn, and a label where the ego has no activity
+                                                                #   counts as a gap
+
+        anno           = {} (default)                          # no annotations
+                       = {'label': 'text', ...}                # a dashed vertical line through that bin, captioned
+                                                                #   with the text; keys are bin labels as .ts_list
+                                                                #   shows them (strings -- other keys match nothing)
+
+        highlight_nodes = set() (default)                      # no emphasis
+                        = {'node_name', ...}                   # draw these nodes with a heavier ring and an opaque
+                                                                #   fill (names are compared as strings)
+
+        Layout geometry.  These are in layout units: the finished drawing is scaled to fit
+        wxh, so they set proportions rather than pixels.
+
+        r_pref         = 7.0 (default)                         # largest circle radius, and the ego circle's radius
+        r_min          = 4.0 (default)                         # smallest circle radius before an alter section
+                                                                #   packs into more columns, then collapses to clouds
+        circle_inter_d = 2.0 (default)                         # vertical gap between circles in a column
+        circle_spacer  = 3 (default)                           # horizontal gap between columns of circles
+        alter_inter_d  = 96 (default)                          # horizontal gap between bins; time= auto-granularity
+                                                                #   also allows at most wxh[0] / alter_inter_d bins
+        alter_separation_h = 32 (default)                      # vertical gap between the contacts' section and
+                                                                #   their contacts' section (max_rings=2)
+        max_bin_w      = 64 (default)                          # widest a bin's circle columns may spread
+        max_bin_h      = 400 (default)                         # a bin's height budget; each alter section gets a fifth
+        h_collapsed_sections = 16 (default)                    # height of a cloud row, which stands in for the nodes
+                                                                #   that did not fit as circles
+
+        A node absent from the bins between two appearances is carried by a channel, a
+        line labelled with how many nodes it carries.
+        min_channel_w  = 8 (default)                           # space a channel takes when it carries the fewest nodes
+        max_channel_w  = 16 (default)                          # space a channel takes when it carries the most nodes;
+                                                                #   others scale between the two
+        channel_inter_d = 4 (default)                          # clearance between channels, and between a channel
+                                                                #   and a bin
 
         template       = None                                  # another SpreadLinesP instance; copies all settings, then applies overrides
 

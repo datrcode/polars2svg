@@ -109,6 +109,26 @@ class TestTimepColor(TimepAssertions, unittest.TestCase):
                 _t_ = self.p2s.timep(_TWO_REMAINDERS_, _time_, color='clr', wxh=(128, 256))
                 self.assertIn(self.p2s.color('c').lower(), {f for _, segs in timepColumns(_t_)[2] for _, f in segs})
 
+    def test_a_misc_with_nothing_pooled_is_named_in_the_legend(self):
+        '''A column's misc is drawn in the '(other)' colour.  When nothing had been pooled
+        into '(other)' the legend had no row for it, and named nothing (PLANNING.md §5
+        C-stacked-misc-unnamed).  Whatever side the legend is on, it names every colour
+        drawn; on a canvas tall enough for A's 2 'b' rows there is no misc to name.'''
+        # Column A: 280 'a' and 2 'b'.  'b' is tall in B, so nothing is pooled, but its share
+        # of A is under 3px and A draws it as its misc.
+        _df_ = pl.DataFrame([(_A_, 'a')] * 280 + [(_A_, 'b')] * 2 + [(_B_, 'b')] * 120, schema=['ts', 'clr'], orient='row')
+        for _time_ in ('ts', ('ts', self.p2s.PT_dp)):
+            for _pos_ in ('right', 'left', 'top', 'bottom'):
+                with self.subTest(time=str(_time_), legend=_pos_):
+                    _t_ = self.p2s.timep(_df_, _time_, color='clr', wxh=(128, 256), legend=_pos_)
+                    self.assertEqual([v for v, _ in _t_.legend_info.entries], ['a', 'b', '(other)'])
+                    self.assertEqual({c.lower() for _, c in _t_.legend_info.entries},
+                                     {f for _, segs in timepColumns(_t_)[2] for _, f in segs})
+            with self.subTest(time=str(_time_), wxh=(128, 1024)):
+                _t_ = self.p2s.timep(_df_, _time_, color='clr', wxh=(128, 1024), legend=True)
+                self.assertEqual([v for v, _ in _t_.legend_info.entries], ['a', 'b'])
+                self.assertNotIn(self.p2s.color('(other)').lower(), {f for _, segs in timepColumns(_t_)[2] for _, f in segs})
+
     # ── numeric color (spectrum) ─────────────────────────────────────────────
 
     def test_color_numeric_int_field(self):

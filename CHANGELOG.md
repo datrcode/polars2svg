@@ -7,7 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`p2s.help('spreadlinesp', …)` documents its layout keywords.** `max_rings`,
+  `time_order`, `anno`, `highlight_nodes` and the twelve geometry settings (circle
+  radii and gaps, bin and channel sizes) had no entry `help()` could find. Each one now
+  has an entry. The geometry entries note that their values are layout units, which
+  the finished drawing is scaled to fit `wxh`. `anno=` keys and `time_order=` values are
+  matched against a bin's label as `.ts_list` shows it, so `anno={1: …}` on an integer
+  time column draws nothing and `{'1': …}` is needed. That is a known issue.
+
+- **`p2s.help('linkp', …)` documents the flow-map and label settings.** The five
+  `flowmap_*` settings for `link_shape='flowmap'` (how many flows to lay out, iterations,
+  samples per flow, a time budget, and the backend) and the three node-label settings
+  (`label_line_width`, `label_max_lines`, `label_ellipsis`) now have entries, as do
+  `count_range_shared` and `color_stat_range_shared`, which `smallp` sets.
+
+- **`p2s.help()` documents the remaining xyp, timep and chordp keywords.** These are
+  xyp's `dot_size_supersample`, the `x_time_expand_perc` setting behind the interactive
+  `e` key on xyp and timep, and chordp's `pos`, `render_skeleton` and two
+  small-multiples ranges.
+
+### Removed
+
+- **Seven keywords that were accepted and never used.** On `spreadlinesp`: `x_ins`,
+  `y_ins`, `node_labels`, `sm_shared`, `count_range_shared` and
+  `color_stat_range_shared`. On `chordp`: `bounds_percent`. None of them changed the
+  drawing. spreadlinesp draws at layout scale and fits the result to `wxh`, so it has
+  no insets, and `smallp` does not take a spreadlinesp template. Passing one of them
+  now raises `TypeError`, like any unknown keyword, instead of being silently ignored.
+  Delete the argument; the picture is the same without it.
+
 ### Fixed
+
+- **Interactive views ignore a brush or node size the browser cannot have meant.** A
+  page left open across an upgrade can send values the new version never offers. An
+  out-of-range brush setting either picked the wrong brush with no sign of it or stopped
+  the view responding; it now turns the brush off. An unknown node size made interactive
+  `linkp` stop redrawing; it is now ignored and the current size kept. Values the
+  views' own menus send behave exactly as before.
 
 - **`linkp` draws a graph whose two endpoint columns have different types.** Linking a
   string column to an integer one (`[('host', 'port')]` with `port` an integer), or a
@@ -22,6 +60,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `TypeError` when given them for integer nodes. The nodes now go back where they were
   saved. `loadPositions(filename, linkp)` also stopped warning that every node differs
   between the file and such a graph.
+
+- **`histop` / `timep`: the legend names every colour a stacked bar draws.** A segment
+  under 3 px is drawn as its bar's remainder, in `(other)`'s colour, but the legend
+  listed `(other)` only when some value had been pooled into it. When none had, the
+  remainder's colour went unnamed. The legend now lists `(other)` whenever a bar on the
+  plot draws a remainder. Charts with no remainder on the plot, and charts whose legend
+  already listed `(other)`, are drawn exactly as before. A known issue since 0.4.0.
+
+- **Interactive `linkp` stops re-sending every node's hit-test outline after a
+  selection.** The outline was rebuilt in arbitrary node order, so the same positions
+  usually produced a different string, and the view sent all of it to the browser
+  again on refreshes that moved nothing: a search, a selection arriving from a linked
+  view, a link or node size change. Each node's outline is
+  now built in a fixed order, so it is sent only when a node actually moves. What the
+  view draws and which node a click hits are unchanged. This was also the cause of the
+  intermittent `test_linkpi_search_parity` failure. The two earlier fixes for that
+  failure addressed timing, which was not the cause.
 
 ## [0.5.0] — 2026-10-10
 

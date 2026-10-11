@@ -7,7 +7,7 @@ import re
 import signal
 import threading
 import time
-from math import sqrt
+from math import isfinite, sqrt
 from collections.abc import Collection, Sequence
 from typing import Any
 
@@ -1470,7 +1470,9 @@ class _InteractivePBase(SelectionAPIMixin, _TooltipMixin_, JSComponent):
         # fresh update and wiped it, leaving linked views showing the wrong records
         # (PLANNING.md U7).  Each op takes a ticket; only the newest may broadcast.
         async with self.lock:
-            _state_ = self.brush_state
+            _state_ = _coerced_('brush_state', self.brush_state)
+            # Written back so applyBrushLeave and the browser's own cycle see it too.
+            if _state_ != self.brush_state: self.brush_state = _state_
             _xy_    = (self.x_mouse, self.y_mouse)
             self._brush_seq_ = _seq_ = getattr(self, '_brush_seq_', 0) + 1
         if _state_ == 0:
@@ -2288,6 +2290,38 @@ def _build_size_menu(current):
         if cur not in _NAMED_SIZES_:
             items.append(['#', cur])
     return items, cur
+
+# ── browser-written params that are not safe by construction (PLANNING.md §12 A1) ──
+# A stale browser after a redeploy can write anything into a synchronised param.  Most of
+# that surface is inert by how it is consumed -- layout_operation / background_operation
+# are registry lookups that return on a miss, key_op_finished is an if/elif over
+# literals, select_shape and drag coordinates fall through as no-ops -- and those get no
+# entry here on purpose: a check where the construction already holds hides which of the
+# two is doing the work.  (link_size_choice is inert too: LinkP's link-size lookups
+# default on an unknown name.)  The entries are the values that are NOT inert.  Each
+# coercer returns the value the watcher should use, or _REJECT_ to drop the write.
+_REJECT_ = object()
+
+def _coerce_brush_state_(v: object) -> object:
+    # BRUSH_STATES is indexed directly: 99 raises inside the watcher, and -1 is worse --
+    # it raises nothing and selects the last brush.  Out of range means off.
+    return v if isinstance(v, int) and 0 <= v < len(BRUSH_STATES) else 0
+
+def _coerce_size_label_(v: object) -> object:
+    # A named size or a number, i.e. any label _build_size_menu can produce.  Anything
+    # else reaches LinkP as a size name it compares against numbers, and every render
+    # after that raises.
+    if v in _NAMED_SIZES_: return v
+    try:                            return v if isfinite(float(v)) else _REJECT_  # type: ignore[arg-type]
+    except (TypeError, ValueError): return _REJECT_
+
+_BROWSER_PARAM_COERCIONS_ = {
+    'brush_state':      _coerce_brush_state_,
+    'node_size_choice': _coerce_size_label_,
+}
+
+def _coerced_(name: str, value: object) -> object:
+    return _BROWSER_PARAM_COERCIONS_[name](value)
 
 _link_opacity_items_ = [[str((p // 10) % 10), str(p)] for p in range(10, 101, 10)]
 
@@ -4790,7 +4824,9 @@ class LINKPI(SelectionAPIMixin, _TooltipMixin_, JSComponent):
         # fresh update and wiped it, leaving linked views showing the wrong records
         # (PLANNING.md U7).  Each op takes a ticket; only the newest may broadcast.
         async with self.lock:
-            _state_ = self.brush_state
+            _state_ = _coerced_('brush_state', self.brush_state)
+            # Written back so applyBrushLeave and the browser's own cycle see it too.
+            if _state_ != self.brush_state: self.brush_state = _state_
             _xy_    = (self.x_mouse, self.y_mouse)
             self._brush_seq_ = _seq_ = getattr(self, '_brush_seq_', 0) + 1
         if _state_ == 0:
@@ -4931,6 +4967,7 @@ class LINKPI(SelectionAPIMixin, _TooltipMixin_, JSComponent):
         elif event.name == 'link_size_choice':
             self.updateLinkNodeParam('link_size', self.__sizeLabelToValue__(event.new))
         elif event.name == 'node_size_choice':
+            if _coerced_('node_size_choice', event.new) is _REJECT_: return
             self.updateLinkNodeParam('node_size', self.__sizeLabelToValue__(event.new))
         elif event.name == 'link_shape_choice':
             # The gate belongs here rather than in linkp: a refusal needs someone to ask,

@@ -2785,9 +2785,13 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
         return (self.df_node.explode('__nm__', empty_as_null=False)
                             .filter(pl.col('__nm__').is_in(_strs_)))
 
+    # maintain_order=True on both path builders below: without it Polars returns the unique
+    # rows in arbitrary order, so the same positions produced a different string on each
+    # call.  The view's param only pushes a *changed* value to the browser, so a refresh
+    # that moved nothing re-sent every node's path segment, or did not, at random.
     def __createPathDescriptionForAllEntities__(self) -> str:
         return ' '.join(
-            self.df_node.unique(['__sx__', '__sy__'])
+            self.df_node.unique(['__sx__', '__sy__'], maintain_order=True)
                         .with_columns(pl.concat_str(*self._NODE_PATH_OPS_).alias('__svg__'))
                         ['__svg__']
         )
@@ -2800,7 +2804,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
         if len(_df_) == 0:
             return _fallback_
         return ' '.join(
-            _df_.unique(['__sx__', '__sy__'])
+            _df_.unique(['__sx__', '__sy__'], maintain_order=True)
                 .with_columns(pl.concat_str(*self._NODE_PATH_OPS_).alias('__svg__'))
                 ['__svg__']
         )

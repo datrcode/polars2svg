@@ -115,6 +115,21 @@ class P2SRenderMixin:
         return (pl.col(size_col) < remainder_threshold) | (pl.col(color).cast(pl.String) == OTHER_LABEL).fill_null(False)
 
     #
+    # stackedSegmentPx() - a stacked segment's length in px: its share of its bar, the bar
+    # being its bin's total on the count_min..count_max scale over extent px.  df has one
+    # row per (bin_col, colour) with a '__count__'.  The renderers below draw with it and
+    # the components' legends ask it which bars draw a misc, so the two cannot disagree
+    # (PLANNING.md §5 C-stacked-misc-unnamed).
+    #
+    @staticmethod
+    def stackedSegmentPx(bin_col: str, extent: float, count_min: float, count_max: float) -> pl.Expr:
+        _span_  = max(float(count_max) - float(count_min), 1e-9)
+        _total_ = pl.col('__count__').sum().over(bin_col).cast(pl.Float64)
+        _bar_   = (_total_ - float(count_min)).clip(lower_bound=0.0) / _span_ * extent
+        # a bar of nothing (every segment zero, e.g. clamped negatives) is 0/0 -- NaN in the SVG
+        return pl.when(_total_ > 0).then(pl.col('__count__').cast(pl.Float64) / _total_ * _bar_).otherwise(0.0)
+
+    #
     # __roundSegments__() - segment edges to 0.1 px, at the column (PLANNING.md S1), each
     # size then the difference of its rounded edges -- so rounding opens no gap and no
     # overlap between neighbours.  start_col is the segment's left (or top) edge.  They used
@@ -277,9 +292,6 @@ class P2SRenderMixin:
                                 plot_h: int, count_min: int, count_max: float, color: Any,
                                 color_order: list | None = None, remainder_threshold: float = 3.0,
                                 hexcolor_col: str | None = None, dl: Any = None) -> str:
-        _span_        = max(float(count_max) - float(count_min), 1e-9)
-        _count_min_f_ = float(count_min)
-
         # 1. Attach a sort rank to every row (one join over the full df, not per-bin)
         if color_order is not None:
             _n_colors_ = len(color_order)
@@ -296,19 +308,8 @@ class P2SRenderMixin:
             df = df.join(_totals_, on=color, how='left', nulls_equal=True) \
                    .with_columns(pl.col('__rank__').fill_null(_n_colors_))
 
-        # 2. Per-bin total → per-bin bar height → per-segment pixel height  (all window ops)
-        df = df.with_columns(pl.col('__count__').sum().over(bin_col).cast(pl.Float64).alias('__bin_total__')) \
-               .with_columns(
-                   ((pl.col('__bin_total__') - _count_min_f_).clip(lower_bound=0.0) / _span_ * plot_h)
-                   .alias('__bar_h__')
-               ) \
-               .with_columns(
-                   # a bar of nothing (every segment zero, e.g. clamped negatives) is 0/0 -- NaN in the SVG
-                   pl.when(pl.col('__bin_total__') > 0)
-                     .then(pl.col('__count__').cast(pl.Float64) / pl.col('__bin_total__') * pl.col('__bar_h__'))
-                     .otherwise(0.0)
-                   .alias('__h_in_px__')
-               )
+        # 2. Per-segment pixel height  (window ops over the bin)
+        df = df.with_columns(self.stackedSegmentPx(bin_col, plot_h, count_min, count_max).alias('__h_in_px__'))
 
         # 3. Split above/below remainder threshold; assign segment colors
         # each bar's misc -- its segments too thin to draw, with its '(other)' -- is one
@@ -370,9 +371,6 @@ class P2SRenderMixin:
                                   plot_w: int, count_min: int, count_max: float, color: str,
                                   color_order: list | None = None, remainder_threshold: float = 3.0,
                                   hexcolor_col: str | None = None, dl: Any = None) -> str:
-        _span_        = max(float(count_max) - float(count_min), 1e-9)
-        _count_min_f_ = float(count_min)
-
         # 1. Attach a sort rank to every row (one join over the full df, not per-bin)
         if color_order is not None:
             _n_colors_ = len(color_order)
@@ -389,19 +387,8 @@ class P2SRenderMixin:
             df = df.join(_totals_, on=color, how='left', nulls_equal=True) \
                    .with_columns(pl.col('__rank__').fill_null(_n_colors_))
 
-        # 2. Per-bin total → per-bin bar width → per-segment pixel width  (all window ops)
-        df = df.with_columns(pl.col('__count__').sum().over(bin_col).cast(pl.Float64).alias('__bin_total__')) \
-               .with_columns(
-                   ((pl.col('__bin_total__') - _count_min_f_).clip(lower_bound=0.0) / _span_ * plot_w)
-                   .alias('__bar_w__')
-               ) \
-               .with_columns(
-                   # a bar of nothing (every segment zero, e.g. clamped negatives) is 0/0 -- NaN in the SVG
-                   pl.when(pl.col('__bin_total__') > 0)
-                     .then(pl.col('__count__').cast(pl.Float64) / pl.col('__bin_total__') * pl.col('__bar_w__'))
-                     .otherwise(0.0)
-                   .alias('__w_in_px__')
-               )
+        # 2. Per-segment pixel width  (window ops over the bin)
+        df = df.with_columns(self.stackedSegmentPx(bin_col, plot_w, count_min, count_max).alias('__w_in_px__'))
 
         # 3. Split above/below remainder threshold; assign segment colors
         # each bar's misc -- its segments too thin to draw, with its '(other)' -- is one

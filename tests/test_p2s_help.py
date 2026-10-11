@@ -123,23 +123,14 @@ class TestEveryParameterIsDocumented(unittest.TestCase):
     exempt.  chordp is checked only where its optional dependencies import.'''
 
     _UNDOCUMENTED_ = {
-        'xyp':          {'dot_size_supersample', 'x_time_expand_perc'},
+        'xyp':          set(),
         'histop':       set(),
-        'timep':        {'x_time_expand_perc'},
+        'timep':        set(),
         'piep':         {'count_range'},
-        'linkp':        {'color_stat_range_shared', 'count_range_shared', 'flowmap_backend',
-                         'flowmap_iterations', 'flowmap_max_flows', 'flowmap_samples',
-                         'flowmap_time_budget', 'label_ellipsis', 'label_line_width',
-                         'label_max_lines'},
-        'chordp':       {'bounds_percent', 'color_stat_range_shared', 'count_range_shared',
-                         'pos', 'render_skeleton'},
+        'linkp':        set(),
+        'chordp':       set(),
         'smallp':       set(),
-        'spreadlinesp': {'alter_inter_d', 'alter_separation_h', 'anno', 'channel_inter_d',
-                         'circle_inter_d', 'circle_spacer', 'color_stat_range_shared',
-                         'count_range_shared', 'h_collapsed_sections', 'highlight_nodes',
-                         'max_bin_h', 'max_bin_w', 'max_channel_w', 'max_rings', 'min_channel_w',
-                         'node_labels', 'r_min', 'r_pref', 'sm_shared', 'time_order', 'x_ins',
-                         'y_ins'},
+        'spreadlinesp': set(),
         'tile':         set(),
     }
 

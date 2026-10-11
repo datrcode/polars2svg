@@ -279,7 +279,6 @@ class ChPKwargs(TypedDict, total=False):
     """
     _shared_view_x_:         list | None
     _shared_view_y_:         Any
-    bounds_percent:          Any
     bundle_rings:            int
     bundle_strength:         Any
     color:                   Any
@@ -329,7 +328,7 @@ class ChP(P2SComponentColorMixin, ExportMixin):
         'node_labels', 'label_only', 'node_selection',
         'link_size', 'link_shape', 'link_opacity', 'link_size_range',
         'bundle_strength', 'bundle_rings', 'skeleton_algorithm', 'render_skeleton',
-        'wxh', 'insets', 'bounds_percent',
+        'wxh', 'insets',
         'sm_shared', '_shared_view_x_', '_shared_view_y_',
         'count_range_shared', 'color_stat_range_shared',
         'draw_border', 'txt_h', 'legend',
@@ -353,7 +352,6 @@ class ChP(P2SComponentColorMixin, ExportMixin):
     # is declared here too.
     # ---------------------------------------------------------------------
     _shared_view_x_:         list | None
-    bounds_percent:          float
     color:                   Any
     color_stat_range_shared: Any
     count:                   Any
@@ -644,7 +642,6 @@ class ChP(P2SComponentColorMixin, ExportMixin):
             # Geometry (p2s style)
             'wxh':                    (256, 256),
             'insets':                 (3, 3),
-            'bounds_percent':         0.05,
             # Small multiples
             'sm_shared':              set(),
             '_shared_view_x_':        None,

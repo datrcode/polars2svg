@@ -31,15 +31,12 @@ def _type_search(ip, text, budget_s=8.0):
     `press()` already waits for the controller to go idle, but the harness documents
     (fact D4) that a key arriving while an operation still holds the lock is *silently
     dropped* rather than queued -- no error, no effect.  Under the sustained load of the
-    full interaction suite that window widens, and `test_linkpi_search_parity` was seen
-    to fail once in a whole-suite run while passing 12/12 in isolation and in 3 runs of
-    this file alone.
+    full interaction suite that window widens, and the parity goldens record exact
+    values, which makes them stricter than the surrounding tests about it.  Waiting for
+    the on-screen echo to catch up removes the race and costs nothing when idle.
 
-    The diff from that run was not captured, so a dropped keystroke is the *inferred*
-    cause, not a confirmed one -- it is the only mechanism in this gesture that is
-    load-sensitive, and the parity goldens record exact values, which makes them stricter
-    than the surrounding tests about it.  Waiting for the on-screen echo to catch up
-    removes the race whether or not it was the culprit, and costs nothing when idle.
+    (This was added for a flake it turned out not to cause -- see PLANNING.md §5
+    C-linkpi-search-parity-flake -- and kept because the race it closes is real.)
     '''
     _buf_ = ''
     for _ch_ in text:

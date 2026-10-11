@@ -3582,5 +3582,59 @@ class TestPanelizeSeedsTheStackFromViews(unittest.TestCase):
         self.assertIs(layout.mvc.stacks['default']['dfs'][0], self.df)
 
 
+@unittest.skipUnless(PANEL_AVAILABLE, 'panel not installed')
+class TestBrowserParamCoercion(unittest.TestCase):
+    """PLANNING.md §12 A1: the browser-written params that are not safe by construction
+    go through one table at their watchers.  A stale browser after a redeploy is the
+    case: brush_state=-1 used to select the last brush silently and 99 raised inside the
+    watcher; node_size_choice='bogus' reached LinkP and every render after it raised."""
+
+    def _linkpi(self):
+        from polars2svg.interactive_controller import linkpi
+        p2s = Polars2SVG()
+        return linkpi(p2s.linkp(_make_link_df(), relationships=[('fm', 'to')], pos=_make_pos()))
+
+    def _brush_calls(self, view):
+        """Run applyBrushOp and return which of brushClear / brushUpdate it reached."""
+        calls = []
+        async def _clear(src):          calls.append('clear')
+        async def _update(src, df):     calls.append('update')
+        view.mvc.brushClear, view.mvc.brushUpdate = _clear, _update
+        asyncio.run(view.applyBrushOp(None))
+        return calls
+
+    def test_table_holds_only_the_values_that_are_not_inert(self):
+        # The four safe by construction stay out: a check there hides which mechanism
+        # is doing the work (the entry's own warning).
+        self.assertEqual(set(ic._BROWSER_PARAM_COERCIONS_), {'brush_state', 'node_size_choice'})
+
+    def test_brush_state_out_of_range_turns_the_brush_off(self):
+        for _bad_ in (-1, 99):
+            with self.subTest(brush_state=_bad_):
+                for _view_ in (self._linkpi(), Polars2SVG().xypi(Polars2SVG().xyp(_make_df(), 'x', 'y'))):
+                    _view_.brush_state = _bad_
+                    self.assertEqual(self._brush_calls(_view_), ['clear'])
+                    self.assertEqual(_view_.brush_state, 0)
+
+    def test_brush_state_in_range_is_untouched(self):
+        for _state_ in range(1, len(ic.BRUSH_STATES)):
+            self.assertEqual(ic._coerced_('brush_state', _state_), _state_)
+
+    def test_bogus_node_size_is_dropped_and_the_view_still_renders(self):
+        ctrl = self._linkpi()
+        before = [ln.node_size for ln in ctrl.dfs_layout]
+        ctrl.node_size_choice = 'bogus'
+        self.assertEqual([ln.node_size for ln in ctrl.dfs_layout], before)
+        self.assertTrue(ctrl.dfs_layout[ctrl.df_level].renderSVG().startswith('<svg'))
+
+    def test_node_size_accepts_any_label_the_menu_builder_can_produce(self):
+        # Not a whitelist of THIS view's menu: a number from another build's menu is
+        # still a valid size.
+        for _label_ in ('none', 'vary', 'large', '3', '4.5'):
+            self.assertEqual(ic._coerced_('node_size_choice', _label_), _label_)
+        for _label_ in ('bogus', '', 'inf', 'nan'):
+            self.assertIs(ic._coerced_('node_size_choice', _label_), ic._REJECT_)
+
+
 if __name__ == '__main__':
     unittest.main()

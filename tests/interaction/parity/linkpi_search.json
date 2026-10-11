@@ -291,11 +291,6 @@
       "gesture": "search-commit",
       "writes": [
         [
-          "allentitiespath",
-          "str:written",
-          1
-        ],
-        [
           "search_op_finished",
           true,
           1

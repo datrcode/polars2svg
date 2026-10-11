@@ -229,21 +229,21 @@ class ParityTrace:
     def _wait_for_write_quiescence(self, counts: dict) -> None:
         '''Wait until the gesture has stopped provoking param writes.
 
-        `wait_until_idle()` is not sufficient on its own, and this is the fix for a flake
-        that took three sightings to pin down.  It waits for the controller lock to be
-        free -- but a keystroke whose Python operation has not *yet* acquired the lock
-        leaves it trivially free, so the gesture returns, the watcher is removed, and the
-        writes land where nothing is listening.  They then go missing from the recording,
-        or (for a non-final gesture) turn up attributed to the next one.
-
-        Observed on `test_linkpi_search_parity` in roughly one whole-suite run in three,
-        never in isolation: the commit keystroke starts a search whose writes arrive a
-        few milliseconds after the lock check. The first attempt at a fix -- confirming
-        each typed character reached the on-screen echo -- addressed a different,
-        inferred cause and did not stop it.
+        `wait_until_idle()` is not sufficient on its own.  It waits for the controller
+        lock to be free -- but a keystroke whose Python operation has not *yet* acquired
+        the lock leaves it trivially free, so the gesture returns, the watcher is
+        removed, and the writes land where nothing is listening.  They then go missing
+        from the recording, or (for a non-final gesture) turn up attributed to the next
+        one.
 
         Watching the write stream itself is the general form: whatever the gesture sets
         off, this waits for it to finish rather than for a proxy.
+
+        This was once credited with fixing the `test_linkpi_search_parity` flake.  It did
+        not: that write was absent because the value had not changed (a payload built in
+        nondeterministic order, PLANNING.md §5 C-linkpi-search-parity-flake).  A write
+        that is missing while later writes from the same Python call are present is
+        that case, not a race.
         '''
         _seen_ = -1
         _deadline_ = time.monotonic() + self.WRITE_BUDGET_S

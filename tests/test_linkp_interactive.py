@@ -273,6 +273,19 @@ class TestLinkPInteractive(unittest.TestCase):
         m_count = path.count('M ')
         self.assertGreaterEqual(m_count, 3)  # one per distinct node position
 
+    def test_path_all_entities_is_deterministic(self):
+        # LINKPI pushes allentitiespath only when the string changes, so unmoved nodes
+        # must give the same string every time (C-linkpi-search-parity-flake).  Three
+        # nodes in arbitrary order repeat a string 1 time in 6; fifty calls cannot all
+        # agree by chance.
+        paths = {self.lp.__createPathDescriptionForAllEntities__() for _ in range(50)}
+        self.assertEqual(len(paths), 1)
+
+    def test_path_selected_is_deterministic(self):
+        paths = {self.lp.__createPathDescriptionOfSelectedEntities__({'a', 'b', 'c'})
+                 for _ in range(50)}
+        self.assertEqual(len(paths), 1)
+
     # -------------------------------------------------------------------------
     # __createPathDescriptionOfSelectedEntities__()
     # -------------------------------------------------------------------------

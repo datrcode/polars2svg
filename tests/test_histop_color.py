@@ -163,6 +163,39 @@ class TestHistopColor(HistopAssertions, unittest.TestCase):
         _h_ = self.p2s.histop(self._TWO_REMAINDERS_, 'bin', color='clr', wxh=(256, 128))
         self.assertIn(self.p2s.color('c').lower(), {f for _, segs in histopRows(_h_) for _, _, f in segs})
 
+    # Bar A: 280 'a' and 2 'b'.  'b' is wide in B, so nothing is pooled, but its share of A
+    # is under 3px and A draws it as its misc.
+    _MISC_ONLY_ = pl.DataFrame([('A', 'a')] * 280 + [('A', 'b')] * 2 + [('B', 'b')] * 120,
+                               schema=['bin', 'clr'], orient='row')
+
+    def test_a_misc_with_nothing_pooled_is_named_in_the_legend(self):
+        '''A bar's misc is drawn in the '(other)' colour.  When nothing had been pooled into
+        '(other)' the legend had no row for it, and named nothing (PLANNING.md §5
+        C-stacked-misc-unnamed).  Whatever side the legend is on, it names every colour drawn.'''
+        for _pos_ in ('right', 'left', 'top', 'bottom'):
+            with self.subTest(legend=_pos_):
+                _h_ = self.p2s.histop(self._MISC_ONLY_, 'bin', color='clr', wxh=(256, 128), legend=_pos_)
+                self.assertEqual([v for v, _ in _h_.legend_info.entries], ['a', 'b', '(other)'])
+                self.assertEqual({c.lower() for _, c in _h_.legend_info.entries},
+                                 {f for _, segs in histopRows(_h_) for _, _, f in segs})
+
+    def test_the_legend_names_a_misc_only_when_a_drawn_bar_has_one(self):
+        '''No '(other)' row for a misc that is not drawn: on a canvas wide enough for A's 2
+        'b' rows, or when the only bar with a misc is past the bottom of the plot.'''
+        _h_ = self.p2s.histop(self._MISC_ONLY_, 'bin', color='clr', wxh=(1024, 128), legend=True)
+        self.assertEqual([v for v, _ in _h_.legend_info.entries], ['a', 'b'])
+        self.assertNotIn(self.p2s.color('(other)').lower(), {f for _, segs in histopRows(_h_) for _, _, f in segs})
+        # C (100 'a', 1 'b') has a misc, but only A and B fit
+        _df_ = pl.DataFrame([('A', 'a')] * 280 + [('B', 'b')] * 270 + [('C', 'a')] * 100 + [('C', 'b')],
+                            schema=['bin', 'clr'], orient='row')
+        _h_ = self.p2s.histop(_df_, 'bin', color='clr', wxh=(256, 72), legend=True)
+        self.assertEqual([lbl for lbl, _ in histopRows(_h_)], ['A', 'B'])
+        self.assertEqual([v for v, _ in _h_.legend_info.entries], ['a', 'b'])
+        # with room for C, its misc is drawn and named
+        _h_ = self.p2s.histop(_df_, 'bin', color='clr', wxh=(256, 128), legend=True)
+        self.assertEqual([lbl for lbl, _ in histopRows(_h_)], ['A', 'B', 'C'])
+        self.assertEqual([v for v, _ in _h_.legend_info.entries], ['a', 'b', '(other)'])
+
     def test_color_cset_tuple_agg_type_stacked(self):
         t = self.p2s.histop(self.df, 'cat', color=('value', self.p2s.CSETp))
         self.assertEqual(t._agg_type_, 'stacked')

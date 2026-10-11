@@ -131,12 +131,11 @@ class TestLinkPLinkLabelGolden(unittest.TestCase):
     canonicalized onto one baseline and pushed to opposite sides of it rather than
     overprinting.
 
-    Read the two PNG goldens differently.  svglib 1.6.0 implements no <textPath> at all
-    (there is no such branch in convertText), so the curve PNG shows the graph and its
-    node labels but *not* its link labels -- the SVG golden is the load-bearing check
-    there, and the bitmap only covers what surrounds them.  The line PNG does show its
-    labels, and is the one that actually rasterizes this feature.  That gap is a real
-    one in save('.png'), not merely a test artifact; see PLANNING.md V5.
+    Both PNG goldens show their link labels, by different routes.  svglib 1.6.0
+    implements no <textPath> at all, so svgToPNGBytes() flattens each curve label into
+    per-glyph rotated <text> along the same path before rendering (PLANNING.md
+    C-textpath-png); the curve PNG therefore covers that flattening, and the line PNG
+    the plain rotated text.
     '''
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)

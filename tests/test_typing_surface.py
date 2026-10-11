@@ -368,7 +368,6 @@ class TestMypyErrorRatchet(unittest.TestCase):
         'udist_scatterplots_via_sectors_tile_opt':   2,
         'p2s_glyph_atlas':                           2,
         'p2s_colors_mixin':                          2,
-        'export':                                    1,
     }
 
     _ERR_RE_ = re.compile(r'^polars2svg/(?P<mod>[^:/]+)\.py:\d+:(?:\d+:)? error:')

@@ -624,8 +624,14 @@ class Smallp(ExportMixin):
         tmpl_w, tmpl_h = self.sm_template.wxh
         tmpl_h_adj = tmpl_h + self.txt_h + 3 if self.draw_labels else tmpl_h
 
-        _width_fit_  = _tiles_across_ * tmpl_w     + (_tiles_across_ + 1) * self.insets[0]
-        _height_fit_ = _tiles_down_   * tmpl_h_adj + (_tiles_down_   + 1) * self.insets[1]
+        # The width that holds every needed tile in the rows the grid has, and the
+        # height that holds them in its columns -- each the dimension to pass in wxh
+        # for an exact fit with the other one kept.  Sizing the grid that wxh already
+        # produced instead just reported the width minus its leftover.
+        _cols_fit_   = -(-_tiles_needed_ // _tiles_down_)
+        _rows_fit_   = -(-_tiles_needed_ // _tiles_across_)
+        _width_fit_  = _cols_fit_ * tmpl_w     + (_cols_fit_ + 1) * self.insets[0]
+        _height_fit_ = _rows_fit_ * tmpl_h_adj + (_rows_fit_ + 1) * self.insets[1]
         _width_fit_str_  = f'Width Fit:       {_width_fit_}'
         _height_fit_str_ = f'Height Fit:      {_height_fit_}'
 

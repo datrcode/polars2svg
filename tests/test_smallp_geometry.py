@@ -1,4 +1,7 @@
+import contextlib
 import datetime
+import io
+import re
 import unittest
 import polars as pl
 from polars2svg import Polars2SVG
@@ -76,6 +79,28 @@ class TestSmallpGeometry(unittest.TestCase):
         # 4 slots → 3 visible + remainder
         self.assertEqual(len(smp.category_to_xy), 4)
         self.assertIn('<svg', smp.svg)
+
+    def _sketch_fit(self, **kwargs):
+        '''Run a sketch and read Width Fit / Height Fit back off its printout.'''
+        _out_ = io.StringIO()
+        with contextlib.redirect_stdout(_out_):
+            self.p2s.smallp(self.df, 'cat', self.xyp, sketch_only=True, **kwargs)
+        _fit_ = dict(re.findall(r'(Width Fit|Height Fit):\s+(\d+)', _out_.getvalue()))
+        return int(_fit_['Width Fit']), int(_fit_['Height Fit'])
+
+    def test_sketch_fit_holds_every_tile(self):
+        '''Width Fit / Height Fit size all the needed tiles, not the grid wxh produced.
+
+        6 cats, 128x143 tiles (labels on):
+          (900,500): 7 across x 3 down → 2 columns fit in 3 rows, 1 row in 7 columns
+          (256,286): 2 x 2 → 3 columns fit in 2 rows, 3 rows in 2 columns
+          (300,290): leftover on both sides changes nothing → same as (256,286)
+        '''
+        self.assertEqual(self._sketch_fit(wxh=(900, 500)), (256, 143))
+        self.assertEqual(self._sketch_fit(wxh=(256, 286)), (384, 429))
+        self.assertEqual(self._sketch_fit(wxh=(300, 290)), (384, 429))
+        # insets: 3 columns → 3*128 + 4*10; 3 rows → 3*143 + 4*10
+        self.assertEqual(self._sketch_fit(wxh=(296, 316), insets=(10, 10)), (424, 469))
 
     # ── draw_labels=False ────────────────────────────────────────────────────
 

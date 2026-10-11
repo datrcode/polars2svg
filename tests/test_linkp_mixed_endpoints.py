@@ -96,7 +96,10 @@ class TestMixedEndpointsRender(_MixedEndpointsBase):
                 self.assertEqual(lp.svg.count('<circle'), 6)
 
     def test_link_labels_on_mixed_endpoints(self):
-        lp = self.p2s.linkp(_mixed_df(), [('h', 'd', 'lbl')], draw_link_labels=True)
+        # Pinned: the default layout is random, and when two linked nodes land ~20px
+        # apart the edge is too short for its label, which is then dropped by design.
+        _pos_ = {'a': (0.0, 0.0), 'b': (1.0, 0.0), 'c': (0.0, 1.0), 1: (1.0, 1.0), 2: (0.25, 0.75), 3: (0.75, 0.25)}
+        lp = self.p2s.linkp(_mixed_df(), [('h', 'd', 'lbl')], pos=_pos_, draw_link_labels=True)
         self.assertEveryEndpointPlaced(lp)
         for _lbl_ in ('l1', 'l2', 'l3', 'l4'):
             self.assertIn(f'>{_lbl_}<', lp.svg)

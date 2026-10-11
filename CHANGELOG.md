@@ -70,6 +70,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`smallp(sketch_only=True)`: "Width Fit" and "Height Fit" give the size that fits
+  every tile.** They were meant to give the `wxh` to pass so that every tile fits
+  exactly. Instead they gave the size of the grid that your `wxh` already made, which
+  is just your width or height minus the leftover. Now "Width Fit" is the width that
+  holds every tile in the grid's rows, and "Height Fit" is the height that holds them
+  in its columns. For example, 6 tiles of 128×143 with `wxh=(900, 500)` now give 256
+  and 143, where they used to give 896 and 429.
+
 - **`piep` small multiples: a slice a panel has no rows for keeps its colour.** Under
   `SM_PARTOFWHOLEp` a panel draws every slice's faded base, including slices it has no
   rows for. Those took one shared fallback colour, so they looked different from panel

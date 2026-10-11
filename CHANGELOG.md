@@ -110,6 +110,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   plot draws a remainder. Charts with no remainder on the plot, and charts whose legend
   already listed `(other)`, are drawn exactly as before. A known issue since 0.4.0.
 
+- **`save('.png')` draws labels that follow a path.** `chordp` with
+  `label_style='circular'` and `linkp` curve link labels were missing from a PNG, with
+  a warning since 0.4.1, because the PNG renderer cannot draw text along a path. Each
+  such label is now laid out letter by letter along its path before rendering, so it
+  curves in the PNG as it does in the SVG. The warning remains only for a path the
+  package cannot lay out, which nothing in the package emits. SVG output is unchanged.
+  Known issue since 0.3.0.
+
 - **Interactive `linkp` stops re-sending every node's hit-test outline after a
   selection.** The outline was rebuilt in arbitrary node order, so the same positions
   usually produced a different string, and the view sent all of it to the browser

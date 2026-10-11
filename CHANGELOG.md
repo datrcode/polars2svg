@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] — 2026-10-11
+
 ### Added
 
 - **`piep` small multiples: `sm_shared={SM_COUNT}` draws one base pie for every panel.**
@@ -135,6 +137,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   view draws and which node a click hits are unchanged. This was also the cause of the
   intermittent `test_linkpi_search_parity` failure. The two earlier fixes for that
   failure addressed timing, which was not the cause.
+
+### Known issues
+
+- **`save('.png')` draws all text at three quarters of its size.** The PNG renderer
+  converts a font's pixel size to points but keeps the canvas in pixels, so every label
+  in a PNG is a quarter smaller than in the SVG, while the drawing around it is not. The
+  SVG is correct.
+
+- **`save('.png')` draws translucent marks opaque.** The PNG renderer ignores `opacity`
+  and `fill-opacity`, so xyp `opacity=`, linkp's node, link and hull opacity, background
+  fills and piep's faded small-multiples base all come out solid. The SVG is correct.
+
+- **`spreadlinesp`: `anno=` and `time_order=` match a time bin only by its label.** Each
+  key is compared with the bin's label as `.ts_list` shows it. `anno={1: …}` on an integer
+  time column draws nothing, where `{'1': …}` draws the line. A `datetime` key matches no
+  bin, and a `time_order=` list of `datetime` values matches none either, so no bin is
+  drawn and no error is raised. Use the labels from `.ts_list`.
 
 ## [0.5.0] — 2026-10-10
 
@@ -4770,7 +4789,8 @@ large frames.
 - **SECURITY.md** documenting the SVG-injection threat model (row-data label text
   is HTML-escaped; component configuration is trusted).
 
-[Unreleased]: https://github.com/datrcode/polars2svg/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/datrcode/polars2svg/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/datrcode/polars2svg/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/datrcode/polars2svg/compare/v0.4.2...v0.5.0
 [0.4.2]: https://github.com/datrcode/polars2svg/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/datrcode/polars2svg/compare/v0.4.0...v0.4.1

@@ -34,7 +34,7 @@ jobs:
         with:
           python-version: '3.13'
       - name: Install docs tooling
-        run: pip install --no-cache-dir mkdocs-material "mkdocstrings[python]"
+        run: pip install --no-cache-dir "mkdocs-material==9.7.7" "mkdocstrings[python]==1.0.7" "mkdocstrings-python==2.0.9" "pymdown-extensions==12.2"
       - name: Build site
         run: mkdocs build --strict
       - uses: actions/configure-pages@v6

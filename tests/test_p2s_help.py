@@ -116,23 +116,12 @@ class TestHelpOnTheRealDocstrings(unittest.TestCase):
 
 
 class TestEveryParameterIsDocumented(unittest.TestCase):
-    '''A ratchet, not a rule: every public keyword a component accepts should have a
-    definition line its help() can find.  These did not on 2026-10-03.  A NEW name
-    missing documentation fails; a name documented since must come off the list, so
-    the list only shrinks.  `df` (the positional frame) and `_private_` keywords are
-    exempt.  chordp is checked only where its optional dependencies import.'''
-
-    _UNDOCUMENTED_ = {
-        'xyp':          set(),
-        'histop':       set(),
-        'timep':        set(),
-        'piep':         {'count_range'},
-        'linkp':        set(),
-        'chordp':       set(),
-        'smallp':       set(),
-        'spreadlinesp': set(),
-        'tile':         set(),
-    }
+    '''Every public keyword a component accepts has a definition line its help() can find:
+    `name = form   # comment` in the component's Polars2SVG docstring.  A ratchet from
+    2026-10-03 (41 names) until the list emptied on 2026-10-11 (PLANNING.md §7 F16); now
+    a rule, so a keyword added without documentation fails.  `df` (the positional frame)
+    and `_private_` keywords are exempt.  chordp is checked only where its optional
+    dependencies import.'''
 
     def _classes_(self):
         _out_ = {'xyp': XYp, 'histop': Histop, 'timep': Timep, 'piep': Piep, 'linkp': LinkP,
@@ -144,19 +133,20 @@ class TestEveryParameterIsDocumented(unittest.TestCase):
             pass
         return _out_
 
-    def test_the_undocumented_list_is_exact(self):
-        self.assertEqual(set(self._UNDOCUMENTED_), set(Polars2SVG._HELP_COMPONENTS_))
+    def test_every_help_component_is_checked(self):
+        self.assertEqual(set(self._classes_()) | {'chordp'}, set(Polars2SVG._HELP_COMPONENTS_))
+
+    def test_every_public_keyword_is_documented(self):
         for _name_, _cls_ in self._classes_().items():
             with self.subTest(component=_name_):
                 _public_ = {_k_ for _k_ in getattr(_cls_, '_VALID_KWARGS', frozenset())
                             if _k_ != 'df' and not (_k_.startswith('_') and _k_.endswith('_'))}
+                self.assertTrue(_public_, f'{_name_}: no _VALID_KWARGS to check')
                 _missing_ = _public_ - documentedParameters(Polars2SVG._helpDoc_(Polars2SVG(), _name_))
                 self.assertEqual(
-                    _missing_, self._UNDOCUMENTED_[_name_],
-                    f'{_name_}: newly undocumented {sorted(_missing_ - self._UNDOCUMENTED_[_name_])}; '
-                    f'documented now, remove from the list: '
-                    f'{sorted(self._UNDOCUMENTED_[_name_] - _missing_)}.  Document a parameter '
-                    f"with a `name = form   # comment` line in Polars2SVG.{_name_}'s docstring.")
+                    _missing_, set(),
+                    f'{_name_}: undocumented {sorted(_missing_)}.  Document a parameter with a '
+                    f"`name = form   # comment` line in Polars2SVG.{_name_}'s docstring.")
 
 
 if __name__ == '__main__':

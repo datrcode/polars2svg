@@ -1313,12 +1313,23 @@ class Polars2SVG(P2SColorsMixin,
                                                                    # combined total (0 disables); in small multiples
                                                                    # the "all rows" reference decides the fold so every
                                                                    # panel shows the same slices
-        count_range_shared = (min, max)                            # whole-total, shared across small multiples (set by smallp)
-        color_stat_range_shared = (min, max)                       # shared spectrum range across small multiples (set by smallp)
-        sm_shared          = {p2s.SM_SLICE_ORDERp | p2s.SM_PARTOFWHOLEp | p2s.SM_COLOR}
+        base_opacity       = 0.22 (default)                        # small multiples (SM_PARTOFWHOLEp / SM_COUNT): opacity of the
+                                                                   # faded base pie each panel fills its share into
+        color_stat_range_shared = (min, max)                       # shared spectrum range across small multiples (set by smallp under SM_COLOR)
+        sm_shared          = {p2s.SM_SLICE_ORDERp | p2s.SM_PARTOFWHOLEp | p2s.SM_COUNT | p2s.SM_COLOR}
                              # SM_SLICE_ORDERp  → identical slice order & colors in every panel
+                             # SM_COLOR         → the same, plus one spectrum range, so a value is one
+                             #                    colour in every panel
                              # SM_PARTOFWHOLEp  → fade the "all rows" chart behind each panel and fill in this
-                             #                    panel's share of every slice (implies SM_SLICE_ORDERp)
+                             #                    panel's share of every slice (implies SM_SLICE_ORDERp):
+                             #                    a pie fills by area, a donut by arc, a waffle by cells
+                             # SM_COUNT         → the same faded base and fill, with one base pie for every
+                             #                    panel: each slice as large as the largest count it has
+                             #                    in any panel, which that panel fills.  With smallp's
+                             #                    include_all=True the "all" panel holds every largest
+                             #                    count, so the base is all rows, as for SM_PARTOFWHOLEp.
+                             #                    A pie's filled area is then its count over one constant,
+                             #                    so it compares across panels.  Not with SM_PARTOFWHOLEp
         use_lazy_execution = True (default) | False
 
         legend = False (default)                        # no legend -- output identical to pre-legend renders

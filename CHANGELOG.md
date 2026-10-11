@@ -7,7 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`piep` small multiples: `sm_shared={SM_COUNT}` draws one base pie for every panel.**
+  Each panel draws the same faded base pie and fills in its share of every slice. Each
+  slice in the base is as large as the largest count it has in any panel, so that panel
+  fills it and the others fill part of it. A pie's filled area is then proportional to
+  its count, on one scale across the whole grid. With `smallp(include_all=True)` the
+  "all" panel holds every largest count, so the base is all rows, the same base as
+  `SM_PARTOFWHOLEp`. Combining `SM_COUNT` with `SM_PARTOFWHOLEp` raises `ValueError`,
+  since each sets the base.
+
+- **`piep(base_opacity=)`: how faded the base pie is behind a small-multiples panel.**
+  Under `sm_shared={SM_PARTOFWHOLEp}` each panel draws the "all rows" pie faded and fills
+  in its own share. The fade was fixed at 0.22. It is now this setting, from 0 to 1,
+  defaulting to 0.22, so existing charts are unchanged.
+
 ### Changed
+
+- **For contributors: every public keyword must be documented.** The check added in
+  0.5.0 listed 41 keywords that `help()` could not find and allowed no new ones. That
+  list is now empty, so the check is a plain rule.
+
+- **`piep` small multiples: a donut fills its share by arc.** Under
+  `sm_shared={SM_PARTOFWHOLEp}` a donut panel filled the whole sweep of each slice with a
+  thinner ring, and a thinner ring understates its share. It now fills that share of the
+  slice's arc at full ring thickness, so a quarter of the slice reads as a quarter. Pies
+  (filled by area) and waffles (by cells) are unchanged.
 
 - **`p2s.help('spreadlinesp', …)` documents its layout keywords.** `max_rings`,
   `time_order`, `anno`, `highlight_nodes` and the twelve geometry settings (circle
@@ -38,7 +64,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   now raises `TypeError`, like any unknown keyword, instead of being silently ignored.
   Delete the argument; the picture is the same without it.
 
+- **`piep(count_range=)` and `piep(count_range_shared=)`.** Neither changed the pie. They
+  set a range that nothing drew from, and `sm_shared={SM_COUNT}` passed only that range
+  on, so it did nothing either. Passing either keyword now raises `TypeError`.
+
 ### Fixed
+
+- **`piep` small multiples: a slice a panel has no rows for keeps its colour.** Under
+  `SM_PARTOFWHOLEp` a panel draws every slice's faded base, including slices it has no
+  rows for. Those took one shared fallback colour, so they looked different from panel
+  to panel and absent slices could share a colour. They now take the colour the slice
+  has over all rows.
+
+- **`piep` small multiples: `SM_COLOR` gives a value one colour in every panel.** With a
+  spectrum `color=` (a magnitude, a stretched statistic or a row count), each panel
+  coloured against its own range, so one value took a different colour in each panel.
+  The range was shared only under `SM_COUNT`, which is about counts. It is now shared
+  under `SM_COLOR`, as in every other component, and no longer under `SM_COUNT`.
 
 - **Interactive views ignore a brush or node size the browser cannot have meant.** A
   page left open across an upgrade can send values the new version never offers. An

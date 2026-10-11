@@ -35,13 +35,13 @@ class PiepKwargs(TypedDict, total=False):
     state across small-multiple panels; callers have no reason to pass them.
     """
     _base_slices_:           list | None
+    _counts_only_:           bool
     _shared_order_:          list | None
+    base_opacity:            float
     bin_by:                  str | tuple | None
     color:                   Any
     color_stat_range_shared: Any
     count:                   Any
-    count_range:             Any
-    count_range_shared:      Any
     descending:              bool
     df:                      pl.DataFrame | None
     donut_ratio:             float
@@ -73,14 +73,14 @@ class Piep(ExportMixin):
 
     _VALID_KWARGS = frozenset({
         'template', 'df',
-        'bin_by', 'count', 'count_range', 'count_range_shared',
+        'bin_by', 'count',
         'color', 'descending', 'style',
         'wxh', 'insets', 'draw_context', 'draw_labels', 'draw_border', 'txt_h',
-        'start_angle', 'donut_ratio', 'waffle_n', 'min_slice_deg',
+        'start_angle', 'donut_ratio', 'waffle_n', 'min_slice_deg', 'base_opacity',
         'sm_shared', 'use_lazy_execution', 'color_stat_range_shared',
         'legend',
         # internal (set by smallp small-multiple sharing) -----------------------
-        '_shared_order_', '_base_slices_',
+        '_shared_order_', '_base_slices_', '_counts_only_',
     })
 
     # ---------------------------------------------------------------------
@@ -100,11 +100,10 @@ class Piep(ExportMixin):
     # block against _VALID_KWARGS, so a new parameter fails the suite until it
     # is declared here too.
     # ---------------------------------------------------------------------
+    base_opacity:            float
     color:                   Any
     color_stat_range_shared: Any
     count:                   Any
-    count_range:             Any
-    count_range_shared:      Any
     descending:              bool
     donut_ratio:             float
     draw_border:             bool
@@ -125,6 +124,8 @@ class Piep(ExportMixin):
     # polars frames, display lists and cached statistics whose concrete types
     # this class does not otherwise name.
     _base_slices_:    list | None
+    _counts_only_:    bool
+    _raw_count_lu_:   dict
     _color_agg_:      str | None
     _color_field_:    Any
     _color_stat_max_: Any
@@ -157,8 +158,9 @@ class Piep(ExportMixin):
             rand_id = random.randint(0, 2**32)  # nosec B311 - non-cryptographic SVG id scoping, see SECURITY.md
             self.gatherMetrics(self.__addColumnsToDataFrame__)
             self.gatherMetrics(self.__computeAggregates__)
-            self.gatherMetrics(self.__constructGeometry__)
-            self.gatherMetrics(self.__renderSVG__, rand_id)
+            if not self._counts_only_:
+                self.gatherMetrics(self.__constructGeometry__)
+                self.gatherMetrics(self.__renderSVG__, rand_id)
         self.t_end     = time.time()
         self.t_overall = self.t_end - self.t_start
 
@@ -196,8 +198,6 @@ class Piep(ExportMixin):
         _defaults_: dict = {
             'bin_by':                  None,
             'count':                   self.p2s.ROW_COUNTp,
-            'count_range':             None,
-            'count_range_shared':      None,
             'color':                   None,
             'descending':              True,
             'style':                   self.p2s.PIEp,
@@ -211,12 +211,14 @@ class Piep(ExportMixin):
             'donut_ratio':             0.55,
             'waffle_n':                10,
             'min_slice_deg':           3.0,
+            'base_opacity':            0.22,     # the faded base pie behind a small-multiples panel
             'sm_shared':               set(),
             'use_lazy_execution':      True,
             'color_stat_range_shared': None,
             'legend':                  False,
             '_shared_order_':          None,
             '_base_slices_':           None,
+            '_counts_only_':           False,
         }
         self.p2s.assertParamSpecMatches('Piep', self._VALID_KWARGS, _defaults_)
 
@@ -241,6 +243,7 @@ class Piep(ExportMixin):
         # the caller explicitly re-supplies it.
         self._shared_order_ = None
         self._base_slices_  = None
+        self._counts_only_  = False
 
         # Extract DataFrame
         _new_df_ = None
@@ -311,10 +314,22 @@ class Piep(ExportMixin):
         # Resolve + validate color (mirrors xyp's color model)
         self.__resolveColor__()
 
+        # base_opacity: the faded base pie in small multiples (SM_PARTOFWHOLEp / SM_COUNT)
+        _bo_ = self.base_opacity
+        if isinstance(_bo_, bool) or not isinstance(_bo_, (int, float)) or not 0.0 <= float(_bo_) <= 1.0:
+            raise ValueError(f'Piep.__validateInput__(): base_opacity must be a number from 0 to 1, got {_bo_!r}')
+
         # Validate style
         _valid_styles_ = set(self.p2s.PieStyleP)
         if self.style not in _valid_styles_:
             raise ValueError(f'Piep.__validateInput__(): style must be one of {_valid_styles_}')
+
+        # SM_COUNT and SM_PARTOFWHOLEp each fix the base pie, to different counts
+        if {self.p2s.SM_COUNT, self.p2s.SM_PARTOFWHOLEp} <= set(self.sm_shared):
+            raise ValueError('Piep.__validateInput__(): sm_shared cannot hold both SM_COUNT and '
+                             'SM_PARTOFWHOLEp -- each sets the base pie, SM_COUNT to the largest count '
+                             'a slice has in any panel and SM_PARTOFWHOLEp to the "all rows" count.  '
+                             'smallp(include_all=True) with SM_COUNT draws the "all rows" base too.')
 
         # Warn on SM_* values that Piep does not support
         _supported_sm_   = {self.p2s.SM_SLICE_ORDERp, self.p2s.SM_PARTOFWHOLEp,
@@ -578,6 +593,7 @@ class Piep(ExportMixin):
                                                          else float(row['__color_stat__']))
                                    for row in self.df_agg.iter_rows(named=True)}
 
+        self._raw_count_lu_ = dict(_raw_count_)   # before any "(other)" fold; see binCounts()
         _total_ = sum(v for v in _raw_count_.values() if v > 0) or 1.0
         self._whole_total_ = _total_
 
@@ -638,15 +654,15 @@ class Piep(ExportMixin):
                     self._color_stat_min_ = round(min(_vals_), 3)
                     self._color_stat_max_ = round(max(_vals_), 3)
 
-        # ── COUNT RANGE (mostly for smallp SM_COUNT parity) ────────────────
-        if self.count_range_shared is not None:
-            self._count_min_, self._count_max_ = self.count_range_shared
-        elif self.count_range is not None:
-            self._count_min_, self._count_max_ = self.count_range
-        else:
-            _cvals_ = [v for v in self._count_lu_.values()]
-            self._count_min_ = 0.0
-            self._count_max_ = max(_cvals_) if _cvals_ else 1.0
+        # A base slice this panel has no rows for is still drawn, faded, and takes the colour
+        # the slice has over all rows.  It had no colour entry here and fell back to the
+        # "(set)" / bottom-of-spectrum colour, so the shared base looked different in every
+        # panel.  Filled in after the range above, which stays this panel's own.
+        if self._base_slices_ is not None:
+            for _s_ in self._base_slices_:
+                if _s_['bin'] in self._raw_count_lu_ or _s_['bin'] == '(other)': continue
+                if 'cset'  in _s_: self._colorset_lu_ .setdefault(_s_['bin'], _s_['cset'])
+                if 'cstat' in _s_: self._colorstat_lu_.setdefault(_s_['bin'], _s_['cstat'])
 
     # ── Color resolution ─────────────────────────────────────────────────────
 
@@ -940,8 +956,8 @@ class Piep(ExportMixin):
         _part_of_whole_ = self._base_slices_ is not None
         _bins_          = [s['bin'] for s in self._slices_]
         _color_lu_      = self.__sliceColors__(_bins_) if _bins_ else {}
-        # Faded opacity for the "all rows" backdrop in part-of-whole mode
-        _fade_ = 0.22
+        # Faded opacity for the base pie behind a small-multiples panel
+        _fade_ = float(self.base_opacity)
 
         if self.style == self.p2s.WAFFLEp:
             self.__renderWaffle__(_dl_, _color_lu_, _part_of_whole_, _fade_, _label_color_)
@@ -980,9 +996,14 @@ class Piep(ExportMixin):
                 # this panel's share of the slice's total
                 _f_ = 0.0 if s['count_all'] <= 0 else min(max(s['count'] / s['count_all'], 0.0), 1.0)
                 if _f_ > 0:
-                    if r0 > 0.0:   _fill_r_ = r0 + (r1 - r0) * _f_          # donut: fill ring thickness
-                    else:          _fill_r_ = r1 * sqrt(_f_)                 # pie: area-proportional radius
-                    self.__wedge__(_dl_, r0, _fill_r_, s['a0'], s['a1'], fill=_c_,
+                    if r0 > 0.0:
+                        # donut: fill that share of the slice's arc, at full ring thickness --
+                        # area is then proportional too, which a thinner ring is not
+                        _fill_r_, _fill_a1_ = r1, s['a0'] + (s['a1'] - s['a0']) * _f_
+                    else:
+                        # pie: the whole sweep, at an area-proportional radius
+                        _fill_r_, _fill_a1_ = r1 * sqrt(_f_), s['a1']
+                    self.__wedge__(_dl_, r0, _fill_r_, s['a0'], _fill_a1_, fill=_c_,
                                    stroke=_bg_, stroke_w=0.1, stroke_in_svg=False)
             else:
                 self.__wedge__(_dl_, r0, r1, s['a0'], s['a1'], fill=_c_,
@@ -1154,6 +1175,15 @@ class Piep(ExportMixin):
 
     # ── smallp integration ───────────────────────────────────────────────────
 
+    #
+    # binCounts() - each bin's count= total in df under this component's bin_by= / count=,
+    # without laying out or drawing a pie: the aggregation runs and construction stops
+    # there.  Raw, i.e. before any "(other)" fold.  smallp's SM_COUNT pass reads every
+    # panel's counts this way to build the shared base without rendering each panel twice.
+    #
+    def binCounts(self, df: pl.DataFrame) -> dict:
+        return dict(Piep(df=df, template=self, p2s=self.p2s, _counts_only_=True)._raw_count_lu_)
+
     def render_with(self, df: pl.DataFrame, **overrides: Any) -> 'Piep':
         # `overrides` cannot be Unpack[PiepKwargs]: PEP 692 rejects a TypedDict
         # that repeats a named parameter, and `df` is both.
@@ -1163,9 +1193,15 @@ class Piep(ExportMixin):
     # renderSmallMultiples() - smallp integration
     #   SM_SLICE_ORDERp / SM_COLOR : identical slice order (and therefore stable colors)
     #                                in every panel, taken from the "all rows" reference
+    #   SM_COLOR                   : also the spectrum range, so a value takes one colour in
+    #                                every panel (PLANNING.md §5 C-piep-sm-color-range)
     #   SM_PARTOFWHOLEp            : fade the "all rows" chart behind each panel and fill in
     #                                each slice's share (implies a shared order)
-    #   SM_COUNT                  : share the spectrum/count normalization range
+    #   SM_COUNT                   : the same faded base and fill, but the base is the panels'
+    #                                own: each slice as large as the largest count it has in any
+    #                                panel rendered.  With include_all the "all" panel is one of
+    #                                them and holds every largest count, so the base is "all
+    #                                rows" (DT 2026-10-11) -- one base for every panel either way.
     #
     def renderSmallMultiples(self, df_all: Any, df_lu: dict, all_key: Any,
                              category_fields: list[str] | None = None) -> dict:
@@ -1177,18 +1213,53 @@ class Piep(ExportMixin):
         _want_count_   = self.p2s.SM_COUNT        in self.sm_shared
         if _want_order_ or _want_pow_ or _want_count_:
             _ref_ = Piep(df=df_all, template=self, p2s=self.p2s)
-            if _want_count_ and _ref_._color_stat_min_ is not None:
+            if self.p2s.SM_COLOR in self.sm_shared and _ref_._color_stat_min_ is not None:
                 _kwargs_['color_stat_range_shared'] = (_ref_._color_stat_min_, _ref_._color_stat_max_)
-            if _want_count_:
-                _kwargs_['count_range_shared'] = (_ref_._count_min_, _ref_._count_max_)
-            if _want_pow_:
+            if _want_pow_ or (_want_count_ and all_key in df_lu):
                 _kwargs_['_base_slices_'] = [
                     {'bin': s['bin'], 'count_all': s['count'], 'a0': s['a0'], 'a1': s['a1']}
                     for s in _ref_._slices_
                 ]
+            elif _want_count_:
+                _kwargs_['_base_slices_'] = self.__largestCountBase__(
+                    [self.binCounts(v) for v in df_lu.values() if v is not None])
             elif _want_order_:
                 _kwargs_['_shared_order_'] = list(_ref_._sorted_bins_)
+            # the colour a base slice takes in a panel that has no rows for it
+            for _s_ in _kwargs_.get('_base_slices_', []):
+                _s_['cset']  = _ref_._colorset_lu_ .get(_s_['bin'])
+                _s_['cstat'] = _ref_._colorstat_lu_.get(_s_['bin'])
         return {k: Piep(df=v, template=self, p2s=self.p2s, **_kwargs_) for k, v in df_lu.items()}
+
+    #
+    # __largestCountBase__() - SM_COUNT's base pie when no "all" panel is drawn: each slice
+    # as large as the largest count it has in any panel, laid out as a standalone pie lays
+    # out its own counts (order by count= with the bin as tie-break, then the min_slice_deg
+    # fold).  The folded slices' base is the largest TOTAL any one panel has for them, not
+    # the sum of each member's largest count: the "(other)" a panel fills is its own sum.
+    # Returns the _base_slices_ records the panels lay themselves out from.
+    #
+    def __largestCountBase__(self, panel_counts: list[dict]) -> list[dict]:
+        _base_: dict = {}
+        for _lu_ in panel_counts:
+            for _b_, _c_ in _lu_.items():
+                if _c_ > _base_.get(_b_, 0.0): _base_[_b_] = float(_c_)
+        _bins_  = sorted(_base_, key=lambda b: str(b))
+        _bins_  = sorted(_bins_, key=lambda b: _base_[b], reverse=bool(self.descending))
+        _total_ = sum(_base_.values()) or 1.0
+        _min_deg_ = float(self.min_slice_deg) if self.min_slice_deg else 0.0
+        _folded_  = [b for b in _bins_ if _min_deg_ > 0.0 and _base_[b] / _total_ * 360.0 < _min_deg_]
+        _layout_  = [(b, _base_[b]) for b in _bins_ if b not in _folded_]
+        if _folded_:
+            _layout_.append(('(other)', max(sum(_lu_.get(b, 0.0) for b in _folded_ if _lu_.get(b, 0.0) > 0)
+                                            for _lu_ in panel_counts)))
+        _total_ = sum(_c_ for _, _c_ in _layout_) or 1.0
+        _out_, _a_ = [], float(self.start_angle)
+        for _b_, _c_ in _layout_:
+            _sweep_ = _c_ / _total_ * 360.0
+            _out_.append({'bin': _b_, 'count_all': _c_, 'a0': _a_, 'a1': _a_ + _sweep_})
+            _a_ += _sweep_
+        return _out_
 
     # ── Interactivity (panelize / brushing) ──────────────────────────────────
 

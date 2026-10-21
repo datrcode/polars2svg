@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`spreadlinesp(time_order=)`: dates and datetimes name their bins.** Each value was
+  turned into a string and compared with the bin labels, and a Python datetime's string
+  (`2024-01-01 00:00:00`) never matches a bin label (`2024-01-01 00:00:00.000000`). So
+  a list of dates or datetimes matched no bin, and nothing was drawn, with no error. A
+  value is now placed in the bin it falls in: `datetime(2024, 1, 3, 13)` names the
+  2024-01-03 bin when the bins are days. On a time-zone-aware column, a datetime with no
+  time zone is read as that column's local time. Values that fall in the same bin count
+  once, where a repeated bin used to be drawn twice. Label strings, and ints, work as
+  before.
+
 ## [0.5.1] — 2026-10-11
 
 ### Added

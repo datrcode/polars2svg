@@ -1958,6 +1958,10 @@ class Polars2SVG(P2SColorsMixin,
                                                                 #   them (compared as strings); a bin left out is not
                                                                 #   drawn, and a label where the ego has no activity
                                                                 #   counts as a gap
+                       = [value, ...]                          # the same, naming each bin by a value of the time
+                                                                #   column's type (int, date, datetime) that falls in
+                                                                #   it; values in one bin count once.  A naive datetime
+                                                                #   on a time-zone-aware column is local time
 
         anno           = {} (default)                          # no annotations
                        = {'label': 'text', ...}                # a dashed vertical line through that bin, captioned

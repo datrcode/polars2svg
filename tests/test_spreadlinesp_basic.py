@@ -1,3 +1,4 @@
+import datetime
 import re
 import unittest
 import polars as pl
@@ -214,6 +215,111 @@ class TestSpreadLinesPIdScoping(unittest.TestCase):
                     self.assertNotEqual(_used_, set(), 'no references emitted')
                     self.assertEqual(sorted(_used_ - _known_), [],
                                      'reference to an id this figure does not define')
+
+
+def _make_day_df(dtype=None):
+    # The ego 'a' talks on each of three days, at hours that differ from the bin start,
+    # so a value only matches its bin if it is truncated the way the bins are.
+    _df_ = pl.DataFrame({
+        'fm':   ['a', 'b', 'a', 'c', 'a', 'd'],
+        'to':   ['b', 'a', 'c', 'a', 'd', 'a'],
+        'time': [datetime.datetime(2024, 1, _d_, _h_)
+                 for _d_, _h_ in ((1, 9), (1, 17), (2, 9), (2, 17), (3, 9), (3, 17))],
+    })
+    return _df_ if dtype is None else _df_.with_columns(pl.col('time').cast(dtype))
+
+
+class TestSpreadLinesPTimeOrder(unittest.TestCase):
+    """time_order= values that are not strings name the bin they fall in.
+
+    They used to be str()'d, which never matches a polars bin label for a date or
+    datetime, so every bin went undrawn (PLANNING.md §5 C-spreadlinesp-anno-key).
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.p2s = Polars2SVG()
+
+    def _sp(self, df, **kwargs):
+        return self.p2s.spreadlinesp(df, _rels(), ego='a',
+                                     time=('time', self.p2s.LT_Y_m_dp), **kwargs)
+
+    def _drawn(self, sp):
+        return [sp.bin_to_timestamps[_b_] for _b_ in sorted(sp.bin_to_timestamps)]
+
+    def test_datetimes_give_the_default_bins(self):
+        _default_ = self._sp(_make_day_df())
+        _ordered_ = self._sp(_make_day_df(), time_order=[datetime.datetime(2024, 1, _d_)
+                                                         for _d_ in (1, 2, 3)])
+        self.assertEqual(_ordered_.ts_list, _default_.ts_list)
+        self.assertEqual(self._drawn(_ordered_), self._drawn(_default_))
+        self.assertEqual(len(self._drawn(_ordered_)), 3)
+
+    def test_a_datetime_inside_a_bin_names_that_bin_in_the_given_order(self):
+        _sp_ = self._sp(_make_day_df(), time_order=[datetime.datetime(2024, 1, 3, 13),
+                                                    datetime.datetime(2024, 1, 1, 2)])
+        self.assertEqual(self._drawn(_sp_), ['2024-01-03 00:00:00.000000',
+                                             '2024-01-01 00:00:00.000000'])
+
+    def test_values_in_one_bin_collapse_to_one_entry(self):
+        _sp_ = self._sp(_make_day_df(), time_order=[datetime.datetime(2024, 1, 1, 1),
+                                                    datetime.datetime(2024, 1, 1, 5),
+                                                    datetime.datetime(2024, 1, 2)])
+        self.assertEqual(_sp_.ts_list, ['2024-01-01 00:00:00.000000',
+                                        '2024-01-02 00:00:00.000000'])
+        self.assertEqual(len(self._drawn(_sp_)), 2)
+
+    def test_dates_on_a_date_column(self):
+        _sp_ = self._sp(_make_day_df(pl.Date), time_order=[datetime.date(2024, 1, 2),
+                                                           datetime.date(2024, 1, 1)])
+        self.assertEqual(self._drawn(_sp_), ['2024-01-02', '2024-01-01'])
+
+    def test_datetime_on_a_date_column(self):
+        _sp_ = self._sp(_make_day_df(pl.Date), time_order=[datetime.datetime(2024, 1, 2, 5)])
+        self.assertEqual(self._drawn(_sp_), ['2024-01-02'])
+
+    def test_time_units_other_than_microseconds(self):
+        for _unit_, _label_ in (('ms', '2024-01-02 00:00:00.000'),
+                                ('ns', '2024-01-02 00:00:00.000000000')):
+            with self.subTest(unit=_unit_):
+                _sp_ = self._sp(_make_day_df(pl.Datetime(_unit_)),
+                                time_order=[datetime.datetime(2024, 1, 2, 12)])
+                self.assertEqual(self._drawn(_sp_), [_label_])
+
+    def test_naive_datetime_on_a_tz_aware_column_is_local_time(self):
+        # Cast straight to the column's type, midnight would be read as UTC and land in
+        # New York's previous day -- a bin that does not exist here, so nothing drawn.
+        _df_ = _make_day_df(pl.Datetime('us', 'America/New_York'))
+        _sp_ = self._sp(_df_, time_order=[datetime.datetime(2024, 1, 1)])
+        self.assertEqual(self._drawn(_sp_), ['2024-01-01 00:00:00.000000-05:00'])
+
+    def test_aware_datetime_is_converted_to_the_column_zone(self):
+        # 03:00 UTC on the 2nd is 22:00 on the 1st in New York.
+        _df_ = _make_day_df(pl.Datetime('us', 'America/New_York'))
+        _sp_ = self._sp(_df_, time_order=[datetime.datetime(2024, 1, 2, 3,
+                                                            tzinfo=datetime.UTC)])
+        self.assertEqual(self._drawn(_sp_), ['2024-01-01 00:00:00.000000-05:00'])
+
+    def test_labels_are_still_taken_as_given(self):
+        _sp_ = self._sp(_make_day_df(), time_order=['2024-01-02 00:00:00.000000'])
+        self.assertEqual(self._drawn(_sp_), ['2024-01-02 00:00:00.000000'])
+
+    def test_ints_on_an_int_column(self):
+        _sp_ = self.p2s.spreadlinesp(_make_df(), _rels(), ego='a', time='time', time_order=[2, 1])
+        self.assertEqual(_sp_.ts_list, ['2', '1'])
+        self.assertEqual(self._drawn(_sp_), ['2', '1'])
+
+    def test_ints_on_a_string_column_keep_their_str(self):
+        _df_ = _make_df().with_columns(pl.col('time').cast(pl.String))
+        _sp_ = self.p2s.spreadlinesp(_df_, _rels(), ego='a', time='time', time_order=[2, 1])
+        self.assertEqual(self._drawn(_sp_), ['2', '1'])
+
+    def test_a_float_is_not_truncated_into_an_int_bin(self):
+        # Cast without strict, 2.5 would become 2 and draw bin 2.
+        _sp_ = self.p2s.spreadlinesp(_make_df(), _rels(), ego='a', time='time',
+                                     time_order=[2.5, 1])
+        self.assertEqual(_sp_.ts_list, ['2.5', '1'])
+        self.assertEqual(self._drawn(_sp_), ['1'])
 
 
 if __name__ == '__main__':

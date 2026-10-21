@@ -489,6 +489,40 @@ class SpreadLinesP(ExportMixin):
             p.LT_Y_m_d_H_M_Sp:    '1s',
         }
 
+    def __binLabel__(self, value: Any, trunc: str | None) -> str:
+        """The label of the bin `value` falls in, as `.ts_list` shows it.
+
+        A string is taken to be a label already.  Anything else is a value of the time
+        column: it is given the column's type and truncation, then cast to a string, the
+        same steps that name the bins.  A bare str() of a datetime ('2024-01-01 00:00:00')
+        never matches a polars label ('2024-01-01 00:00:00.000000'), so every bin went
+        undrawn (PLANNING.md §5 C-spreadlinesp-anno-key).  A value that cannot take the
+        column's type keeps its str(), which matches no bin unless the column holds
+        strings, so an int still names a bin of a string column.
+        """
+        if self.df is None or value is None or isinstance(value, str): return str(value)
+        _dtype_ = self.df.schema[self._ts_field_]
+        try:
+            if isinstance(_dtype_, pl.Datetime) and _dtype_.time_zone is not None:
+                # A naive time is the column's local time, and an aware one is converted
+                # to it.  Casting either straight to the column's type reads it as UTC,
+                # which moves midnight in New York into the previous day's bin.
+                _s_  = pl.Series([value], strict=True)
+                if _s_.dtype == pl.Date: _s_ = _s_.cast(pl.Datetime(_dtype_.time_unit))
+                _sd_ = _s_.dtype
+                if not isinstance(_sd_, pl.Datetime): return str(value)
+                _s_  = (_s_.dt.convert_time_zone(_dtype_.time_zone) if _sd_.time_zone is not None
+                        else _s_.dt.replace_time_zone(_dtype_.time_zone)).cast(_dtype_)
+            else:
+                # strict: a float such as 2.5 is refused by an integer column rather than
+                # truncated into the wrong bin.  The second cast is not redundant: polars
+                # builds a datetime given dtype=Date as a Datetime series.
+                _s_ = pl.Series([value], dtype=_dtype_, strict=True).cast(_dtype_)
+            if trunc is not None: _s_ = _s_.dt.truncate(trunc)
+        except (TypeError, ValueError, OverflowError, pl.exceptions.PolarsError):
+            return str(value)
+        return str(_s_.cast(pl.String)[0])
+
     def __linearEnumOrder__(self) -> list:
         """Return enums coarsest → finest."""
         p = self.p2s
@@ -699,7 +733,10 @@ class SpreadLinesP(ExportMixin):
 
         # ── Sorted timestamps ──────────────────────────────────────────────────
         if self.time_order is not None:
-            _ts_list_ = [str(t) for t in self.time_order]
+            # Each value becomes the label of the bin it falls in.  Truncation can put
+            # two values in one bin, and a repeated label would build that bin twice.
+            _ts_list_ = list(dict.fromkeys(self.__binLabel__(t, _ts_trunc_)
+                                           for t in self.time_order))
         else:
             _ts_list_ = sorted(_df_all_['__ts__'].unique().to_list())
         self.ts_list = _ts_list_

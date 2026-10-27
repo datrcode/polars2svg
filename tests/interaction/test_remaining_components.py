@@ -238,7 +238,7 @@ def test_stack_control_renders_beside_its_component(stack_control_page):
     expect(_ct_.root).to_be_visible()
     _p_, _c_ = _xy_.root.bounding_box(), _ct_.root.bounding_box()
     assert (round(_p_['width']), round(_p_['height'])) == (256, 256), _p_
-    assert (round(_c_['width']), round(_c_['height'])) == (160, 340), _c_
+    assert (round(_c_['width']), round(_c_['height'])) == (160, 420), _c_
     assert _c_['x'] >= _p_['x'] + _p_['width'] - 0.5, f'the control overlaps the plot: {_p_} {_c_}'
     assert abs(_c_['y'] - _p_['y']) < 1.0, f'the two are not on one row: {_p_} {_c_}'
 

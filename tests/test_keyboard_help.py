@@ -98,9 +98,14 @@ class TestStackControlHelp(unittest.TestCase):
         return STACKCONTROLI.param['kbd_help_svg'].default
 
     def test_the_key_column_lines_up(self):
-        self.assertEqual([_ln_.index('|') for _ln_ in self._lines_()], [4, 4, 4])
+        self.assertEqual({_ln_.index('|') for _ln_ in self._lines_()}, {4})
         self.assertRegex(self._lines_()[2], _SUB_ROW_)
         self.assertTrue(self._lines_()[2].endswith('| current -> base'))
+        # F18's mouse rows: sub-rows, with their second '|' in one column too.
+        _subs_ = [_ln_ for _ln_ in self._lines_() if _ln_.startswith(' .. |')]
+        self.assertEqual(len(_subs_), 5)
+        self.assertEqual(len({_ln_.index('|', 5) for _ln_ in _subs_}), 1)
+        self.assertTrue(any(_ln_.startswith('s . | shelve current') for _ln_ in self._lines_()))
 
     def test_every_space_survives_into_the_svg(self):
         _root_  = ET.fromstring(f'<svg xmlns="http://www.w3.org/2000/svg">{self._svg_()}</svg>')

@@ -43,6 +43,7 @@ from shapely.geometry import Polygon
 
 from .mds_at_scale                  import LandmarkMDSLayout, PivotMDSLayout
 from .p2s_graph_mixin               import ipv4NodeFraction, nodeSubnet
+from .stack_shelf                   import StackShelfMixin
 from .layout_budget                 import Budget
 from .interactive_treatments        import (Treatment, RegistryEntry, CHEAP, ASSUMED_CHEAP,
                                             FLOWMAP, treatment_for,
@@ -462,9 +463,9 @@ BRUSH_STATES = [
     ('SELECT_HORIZONTALp',  3),    # 6 horizontal band, radius=3
 ]
 
-class InteractionController:
+class InteractionController(StackShelfMixin):
     # Constructor
-    def __init__(self):
+    def __init__(self) -> None:
         self.stacks     = {}   # {'name': {'dfs': [df], 'index': 0}}
         self.view_stack = {}   # {id(view): 'stack_name'}
         self.links      = {}   # {(id(source), event_type): [target_views]}
@@ -473,6 +474,9 @@ class InteractionController:
         self.max_stack_depth = _MAX_STACK_DEPTH_
         # F3: callables told about every selection change -- see onSelection().
         self.selection_callbacks: list = []
+        # F18: the per-stack shelf of named frames and the labels stack frames carry --
+        # see stack_shelf.py.
+        self._initShelf_()
     # addStack()
     def addStack(self, name, df):
         self.stacks[name] = {'dfs': [df], 'index': 0}
@@ -504,14 +508,14 @@ class InteractionController:
     # column (chordp's and histop's __p2s_index__) to the frames it pushes, and the user
     # handed in neither that nor anything else this would return.
     #
-    def __stackName__(self, stack: str | None) -> str:
+    def __stackName__(self, stack: str | None, who: str = 'selectedDataFrame') -> str:
         if stack is not None:
             if stack not in self.stacks:
-                raise ValueError(f'selectedDataFrame(): no stack named {stack!r}; have {sorted(self.stacks)}')
+                raise ValueError(f'{who}(): no stack named {stack!r}; have {sorted(self.stacks)}')
             return stack
         if len(self.stacks) == 1:
             return next(iter(self.stacks))
-        raise ValueError(f'selectedDataFrame(): {len(self.stacks)} stacks, so name one: {sorted(self.stacks)}')
+        raise ValueError(f'{who}(): {len(self.stacks)} stacks, so name one: {sorted(self.stacks)}')
 
     #
     # A linkpi's node selection narrows it to the rows touching a selected node (DT,
@@ -2262,6 +2266,13 @@ def panelize(layout: Any, stack: str = 'default', use_webgpu: bool = False,
         if _wxh_ is not None:
             v.width  = _wxh_[0]
             v.height = _wxh_[1]
+    # F18: a stack control is built before this controller exists, so the shelf size it
+    # was built with travels here.  Several on one layout: the smallest, so every one of
+    # them can draw the whole shelf.
+    _shelf_sizes_ = [v.max_shelf for v in views
+                     if callable(getattr(v, 'refreshShelf', None)) and isinstance(getattr(v, 'max_shelf', None), int)]
+    if _shelf_sizes_:
+        mvc.max_shelf = min(_shelf_sizes_)
     for view in views:
         others = [v for v in views if v is not view]
         mvc.link(view, others, on='stack', stack=stack)
@@ -2276,11 +2287,22 @@ def panelize(layout: Any, stack: str = 'default', use_webgpu: bool = False,
             pos_targets = [v for v in others if hasattr(v, 'receivePositions')]
             if pos_targets:
                 mvc.link(view, pos_targets, on='positions', stack=stack)
+    # A stack control drew itself before it had a controller; now that it has one, draw
+    # what the controller holds (and what `s` may do with it).
+    for view in views:
+        _refresh_ = getattr(view, 'refreshShelf', None)
+        if callable(_refresh_):
+            _refresh_()
     _container_ = _build_interactive(layout, {id(p): v for p, v in zip(plots, views)})
     _container_.mvc = mvc
     # F3: the layout's selection, as each view's own (SelectionAPIMixin) -- one stack here.
     _container_.selectedDataFrame = mvc.selectedDataFrame
     _container_.onSelection       = mvc.onSelection
+    # F18: the stack's shelf of named frames, from Python.
+    _container_.pinFrame          = mvc.pinFrame
+    _container_.unpinFrame        = mvc.unpinFrame
+    _container_.shelf             = mvc.shelf
+    _container_.onShelve          = mvc.onShelve
     _container_._websocket_max_message_size_ = websocket_max_message_size
     _warnOversizePanelPayload_(views, websocket_max_message_size)
     return _container_
@@ -2994,6 +3016,14 @@ class LINKPI(SelectionAPIMixin, _TooltipMixin_, JSComponent):
                 if _diverged_:
                     _self_._reconcileStack(dfs, dfs_index)
                 else:
+                    # Every level the prefix check covered is already held, so move up
+                    # to the highest of them rather than re-pushing it: a push from below
+                    # cuts the levels above and re-renders the ones walked through,
+                    # losing their arranged layouts.  F18's pushes go on top of the whole
+                    # stack while a lower frame is displayed, so this is their path.
+                    _held_ = min(dfs_index, len(_self_.dfs) - 1)
+                    if _self_.df_level < _held_:
+                        _self_.setStackPostion(_held_)
                     while _self_.df_level < dfs_index:
                         # enforce_limit=False: the MVC stack already bounded itself, this
                         # level exists on it, and a refusal here would never terminate.

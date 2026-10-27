@@ -21,6 +21,7 @@ so the boundary tests below size their component from headerHeight() instead of 
 literal -- adding a third indicator row shifts them automatically.
 """
 import asyncio
+import json
 import re
 import unittest
 
@@ -29,7 +30,7 @@ from view_js_utils import component_markup
 
 from polars2svg import Polars2SVG
 from polars2svg.interactive_controller import InteractionController
-from polars2svg.stack_control import headerHeight, _placement
+from polars2svg.stack_control import _CONFIRM_S_, headerHeight, shelfHeight, _placement
 
 _HGAP_  = 4
 _TXT_H_ = 10
@@ -101,6 +102,9 @@ class _StackControlBase(unittest.TestCase):
         return [df.head(len(df) - i) for i in range(n)]
 
     def _make_sc(self, dfs=None, index=0, component=None, **kwargs):
+        # The frame-stack geometry below is calibrated without a shelf; the shelf has its
+        # own tests (TestStackControlShelf), which pass max_shelf explicitly.
+        kwargs.setdefault('max_shelf', 0)
         component = component or self._component()
         if dfs is None:
             return self.p2s.stack_controli(component, **kwargs)
@@ -480,11 +484,19 @@ class TestStackControlMinimumSize(_StackControlBase):
     def test_does_not_raise_at_the_minimum(self):
         component = self.p2s.xyp(_make_df(), 'x', 'y', wxh=(120, 32))
         ell_h    = _ELL_H_
-        min_h    = 2 * 2 + headerHeight(_TXT_H_) + 32 + 2 * ell_h
-        # the minimum builds, at the size asked for; one pixel less does not
-        self.assertEqual(self.p2s.stack_controli(component, wxh=(160, min_h)).svg_h, min_h)
-        with self.assertRaises(ValueError):
-            self.p2s.stack_controli(component, wxh=(160, min_h - 1))
+        for _rows_ in (0, 4):
+            min_h = 2 * 2 + headerHeight(_TXT_H_) + shelfHeight(_TXT_H_, _rows_, _HGAP_) + 32 + 2 * ell_h
+            # the minimum builds, at the size asked for; one pixel less does not
+            self.assertEqual(self.p2s.stack_controli(component, wxh=(160, min_h), max_shelf=_rows_).svg_h,
+                             min_h)
+            with self.assertRaisesRegex(ValueError, 'smaller max_shelf'):
+                self.p2s.stack_controli(component, wxh=(160, min_h - 1), max_shelf=_rows_)
+
+    def test_max_shelf_must_be_a_count(self):
+        component = self.p2s.xyp(_make_df(), 'x', 'y', wxh=(120, 32))
+        for _bad_ in (-1, 2.0, True, '4'):
+            with self.assertRaisesRegex(ValueError, 'max_shelf must be an int', msg=repr(_bad_)):
+                self.p2s.stack_controli(component, max_shelf=_bad_)
 
 
 class TestStackControlAlwaysRendersCurrent(_StackControlBase):
@@ -508,6 +520,273 @@ class TestStackControlAlwaysRendersCurrent(_StackControlBase):
         sc, _ = self._sc(4, 2)
         for m in re.finditer(r'<text x="([-\d.]+)"[^>]*font-style="italic"', sc.mod_inner):
             self.assertGreaterEqual(float(m.group(1)), 0)
+
+
+class TestStackControlShelf(_StackControlBase):
+    """F18 (PLANNING.md §7): the shelf area, stack-row labels, trashcans, the status row,
+    and clicks that carry x and modifiers.  The operations themselves are tested on the
+    controller in test_stack_shelf.py; these test the widget's routing and drawing."""
+
+    _WXH_ = (160, 320)
+
+    def _sc(self, n=3, index=1, max_shelf=4):
+        dfs = self._stack_of(n)
+        # A thumbnail-sized component, as in real use, so the labels have room.
+        _icon_  = self.p2s.xyp(_make_df(), 'x', 'y', wxh=(48, 40))
+        sc, mvc = self._make_sc(dfs=dfs, index=index, component=_icon_,
+                                wxh=self._WXH_, max_shelf=max_shelf)
+        return sc, mvc, dfs
+
+    def _click(self, sc, x, y, mods=''):
+        sc.click_x, sc.click_y, sc.click_mods = int(x), int(y), mods
+        asyncio.run(sc.applyClickOp(None))
+
+    def _rowY(self, sc, name):
+        _y0_, _y1_, _ = next(_r_ for _r_ in sc._shelf_map_ if _r_[2] == name)
+        return (_y0_ + _y1_) // 2
+
+    def _frameY(self, sc, idx):
+        _y0_, _y1_, _ = next(_r_ for _r_ in sc._frame_map_ if _r_[2] == idx)
+        return (_y0_ + _y1_) // 2
+
+    def _trashcans(self, sc):
+        return sc.mod_inner.count('<path d="M0.5 2 H8.5')
+
+    def test_the_shelf_is_drawn_in_the_order_shelved(self):
+        # A new entry fills the first free row; the ones already there do not move.
+        sc, mvc, dfs = self._sc()
+        mvc.pinFrame('old', dfs[2])
+        _old_row_ = sc._shelf_map_[0]
+        mvc.pinFrame('new', dfs[0].head(5))
+        self.assertEqual([_r_[2] for _r_ in sc._shelf_map_], ['old', 'new'])
+        self.assertEqual(sc._shelf_map_[0], _old_row_)
+        self.assertLess(sc.mod_inner.index('>old<'), sc.mod_inner.index('>new<'))
+        self.assertIn('>5 Rows<', sc.mod_inner)
+        # the shelf sits above every frame
+        self.assertLess(max(_r_[1] for _r_ in sc._shelf_map_), min(_r_[0] for _r_ in sc._frame_map_))
+
+    def test_no_shelf_draws_no_shelf(self):
+        sc, mvc, dfs = self._sc(max_shelf=0)
+        self.assertEqual(mvc.max_shelf, 0)
+        self.assertEqual(sc._shelf_map_, [])
+        self.assertNotIn('p2s-shelf-rule', sc.mod_inner)
+
+    def test_only_the_displayed_frame_has_no_trashcan(self):
+        sc, mvc, dfs = self._sc(n=3, index=1)
+        mvc.pinFrame('n', dfs[0].head(2))
+        self.assertEqual(self._trashcans(sc), 1 + 2)       # one shelf row, two frames
+
+    def test_a_plain_click_on_a_shelf_row_pushes_it_labelled(self):
+        sc, mvc, dfs = self._sc()
+        _n_ = mvc.pinFrame('Named 1', dfs[0].head(3))
+        self._click(sc, 10, self._rowY(sc, 'Named 1'))
+        self.assertIs(mvc.stacks['default']['dfs'][-1], _n_)
+        self.assertEqual(len(mvc.stacks['default']['dfs']), 4)      # nothing cut
+        self.assertIn('>Named 1<', sc.mod_inner.split('p2s-shelf-rule')[1])  # on the stack row too
+
+    def test_modifiers_pick_the_set_operation(self):
+        sc, mvc, dfs = self._sc(n=2, index=1)                       # displayed: 11 rows
+        mvc.pinFrame('n', dfs[0].tail(3))                           # rows 9-11 of the base
+        self._click(sc, 10, self._rowY(sc, 'n'), 'cs')
+        _top_ = mvc.stacks['default']['dfs'][-1]
+        self.assertEqual(len(_top_), 2)
+        self.assertEqual(mvc.frameLabel('default', _top_), '\u2229 n')
+        self.assertIn('\u2229 n', sc.mod_inner)
+
+    def test_a_stack_trashcan_deletes_at_once_and_ignores_modifiers(self):
+        sc, mvc, dfs = self._sc(n=3, index=1)
+        self._click(sc, sc._tc_x0_ + 3, self._frameY(sc, 0), 's')
+        self.assertEqual(mvc.stacks['default']['dfs'], [dfs[1], dfs[2]])
+        self.assertEqual(mvc.stacks['default']['index'], 0)
+
+    def test_the_displayed_frame_trashcan_strip_is_just_a_click(self):
+        sc, mvc, dfs = self._sc(n=3, index=1)
+        self._click(sc, sc._tc_x0_ + 3, self._frameY(sc, 1))
+        self.assertEqual(len(mvc.stacks['default']['dfs']), 3)
+        self.assertEqual(sc._status_, '')
+
+    def test_a_shelf_trashcan_asks_twice(self):
+        # Q14: the first click arms it (red), the second within _CONFIRM_S_ deletes.
+        sc, mvc, dfs = self._sc()
+        mvc.pinFrame('keep me', dfs[2])
+        _x_ = sc._tc_x0_ + 3
+        self._click(sc, _x_, self._rowY(sc, 'keep me'))
+        self.assertEqual(list(mvc.shelf()), ['keep me'])
+        self.assertIn('click again to delete', sc.mod_inner)
+        self.assertIn('stroke="#cc3333"', sc.mod_inner)
+        self._click(sc, _x_, self._rowY(sc, 'keep me'))
+        self.assertEqual(mvc.shelf(), {})
+        self.assertNotIn('click again', sc.mod_inner)
+
+    def test_an_armed_trashcan_times_out(self):
+        sc, mvc, dfs = self._sc()
+        mvc.pinFrame('n', dfs[2])
+        _x_, _y_ = sc._tc_x0_ + 3, self._rowY(sc, 'n')
+        self._click(sc, _x_, _y_)
+        sc._armed_ = (sc._armed_[0], sc._armed_[1] - _CONFIRM_S_ - 1)   # the time passed
+        self._click(sc, _x_, _y_)
+        self.assertEqual(list(mvc.shelf()), ['n'])                      # re-armed, not deleted
+        sc._disarm_(sc._armed_)                                         # the timer firing
+        self.assertIsNone(sc._armed_)
+        self.assertNotIn('click again', sc.mod_inner)
+        self.assertNotIn('stroke="#cc3333"', sc.mod_inner)
+
+    def test_another_click_disarms(self):
+        sc, mvc, dfs = self._sc()
+        mvc.pinFrame('n', dfs[2])
+        self._click(sc, sc._tc_x0_ + 3, self._rowY(sc, 'n'))
+        self._click(sc, 10, self._frameY(sc, 0))
+        self.assertIsNone(sc._armed_)
+
+    def test_a_refusal_is_shown_and_the_next_action_clears_it(self):
+        # Q6 / diagram 8: ctrl-click the displayed frame changes nothing, visibly.
+        sc, mvc, dfs = self._sc(n=3, index=1)
+        self._click(sc, 10, self._frameY(sc, 1), 'c')
+        self.assertIn('>no change<', sc.mod_inner)
+        self.assertEqual(len(mvc.stacks['default']['dfs']), 3)
+        self._click(sc, 10, self._frameY(sc, 0))
+        self.assertNotIn('>no change<', sc.mod_inner)
+        self.assertEqual(mvc.stacks['default']['index'], 0)
+
+    def test_an_incompatible_entry_is_grayed_and_refuses(self):
+        # Q18 (Claude, for DT to confirm).
+        sc, mvc, dfs = self._sc()
+        mvc.pinFrame('old', dfs[2])
+        asyncio.run(mvc.replaceStack('default', dfs[0].with_columns(z=pl.lit(1))))
+        self.assertRegex(sc.mod_inner, r'fill="#cccccc" font-size="8px">old<')
+        self._click(sc, 10, self._rowY(sc, 'old'))
+        self.assertEqual(mvc.entryRefusal('default', dfs[2]), 'columns no longer match: z')
+        self.assertIn('columns no longer', sc.mod_inner)
+
+    def test_a_long_name_is_cut_and_shown_whole_on_hover(self):
+        sc, mvc, dfs = self._sc()
+        _long_ = 'a rather long name for a shelf entry, far too wide'
+        mvc.pinFrame(_long_, dfs[2])
+        self.assertNotIn(_long_, sc.mod_inner)
+        self.assertIn('\u2026', sc.mod_inner)
+        # Shelving a frame on the stack labels its row too, so both are cut.
+        _regions_ = json.loads(sc.hover_regions)
+        self.assertEqual([_r_[4] for _r_ in _regions_], [_long_, _long_])
+        _y_ = self._rowY(sc, _long_)
+        self.assertTrue(any(_r_[1] <= _y_ < _r_[3] for _r_ in _regions_))
+
+    def test_more_entries_than_slots(self):
+        sc, mvc, dfs = self._sc(max_shelf=2)
+        mvc.max_shelf = 3                                     # a controller bigger than this widget
+        for _i_ in range(3):
+            mvc.pinFrame(f'n{_i_}', dfs[0].head(_i_ + 1))
+        self.assertEqual([_r_[2] for _r_ in sc._shelf_map_], ['n0'])
+        self.assertIn('... 2 more on the shelf ...', sc.mod_inner)
+
+    def test_a_label_replaces_the_position_line(self):
+        # Q2: line 1 stays the row count; line 2 is the label, else the position.
+        sc, mvc, dfs = self._sc(n=3, index=1)
+        self.assertIn('>2 of 3<', sc.mod_inner)
+        mvc.pinFrame('mine')
+        _stack_part_ = sc.mod_inner.split('p2s-shelf-rule')[1]
+        self.assertIn('>mine<', _stack_part_)
+        self.assertNotIn('>2 of 3<', _stack_part_)
+
+    def test_the_constructor_hands_its_size_to_the_controller(self):
+        sc, mvc, dfs = self._sc(max_shelf=2)
+        self.assertEqual(mvc.max_shelf, 2)
+
+    def test_panelize_hands_the_size_on(self):
+        _comp_ = self._component(h=40)
+        sc     = self.p2s.stack_controli(_comp_, wxh=self._WXH_, max_shelf=2)
+        layout = self.p2s.panelize([[self.p2s.xyp(_make_df(), 'x', 'y', wxh=(120, 120)), sc]])
+        self.assertEqual(layout.mvc.max_shelf, 2)
+        layout.pinFrame('from python')
+        self.assertIn('>from python<', sc.mod_inner)
+
+
+class TestStackControlNamingDialog(_StackControlBase):
+    """F18 step 5: `s` shelves the displayed frame under a typed name (diagram 5, Q11).
+    The browser half of the dialog is tests/interaction/test_stack_shelf_browser.py."""
+
+    def _sc(self, max_shelf=4):
+        dfs  = self._stack_of(3)
+        _icon_ = self.p2s.xyp(_make_df(), 'x', 'y', wxh=(48, 40))
+        sc, mvc = self._make_sc(dfs=dfs, index=1, component=_icon_, wxh=(160, 320), max_shelf=max_shelf)
+        return sc, mvc, dfs
+
+    def _key(self, sc, op, name=None):
+        if name is not None:
+            sc.shelf_name = name
+        sc.key_op_finished = op
+        asyncio.run(sc.applyKeyOp(None))
+
+    def test_shelve_puts_the_displayed_frame_on_the_shelf(self):
+        sc, mvc, dfs = self._sc()
+        self._key(sc, 'shelve', '  scan\t1 ')
+        self.assertIs(mvc.shelf()['scan 1'], dfs[1])
+        self.assertEqual(mvc.frameLabel('default', dfs[1]), 'scan 1')
+        self.assertIn('>scan 1<', sc.mod_inner)
+        self.assertEqual(sc.key_op_finished, '')
+
+    def test_a_refused_name_says_why(self):
+        sc, mvc, dfs = self._sc()
+        mvc.pinFrame('taken', dfs[2])
+        self._key(sc, 'shelve', 'taken')
+        self.assertEqual(sc._status_, '"taken" is already on the shelf')
+        self.assertIn('already on the shelf', sc.mod_inner)
+        self._key(sc, 'shelve', '\x07  ')
+        self.assertEqual(sc._status_, 'a shelf name cannot be empty')
+
+    def test_shelve_blocked_follows_the_state(self):
+        sc, mvc, dfs = self._sc()
+        self.assertEqual(sc.shelve_blocked, '')
+        mvc.pinFrame('mine')                                   # the displayed frame
+        self.assertEqual(sc.shelve_blocked, 'already shelved as "mine"')
+        asyncio.run(mvc.jumpTo('default', 0))
+        self.assertEqual(sc.shelve_blocked, '')
+        for _i_ in range(3):
+            mvc.pinFrame(f'n{_i_}', dfs[0].head(_i_ + 1))
+        self.assertEqual(sc.shelve_blocked, 'shelf is full (4)')
+
+    def test_shelve_blocked_shows_the_reason(self):
+        sc, mvc, dfs = self._sc()
+        mvc.pinFrame('mine')
+        self._key(sc, 'shelve_blocked')
+        self.assertIn('already shelved as', sc.mod_inner)
+
+    def test_no_shelf_blocks_and_has_no_dialog(self):
+        sc, mvc, dfs = self._sc(max_shelf=0)
+        self.assertEqual(sc.shelve_blocked, 'shelf is off')
+        self.assertEqual(sc.shelf_dialog_box, '')
+
+    def test_the_dialog_box_is_the_first_free_row(self):
+        # Where the new entry will be drawn, so it covers no existing name (DT, 2026-10-27).
+        sc, mvc, dfs = self._sc()
+        _x_, _y_, _w_, _h_ = json.loads(sc.shelf_dialog_box)
+        mvc.pinFrame('first', dfs[2])
+        self.assertEqual((_y_, _y_ + _h_), sc._shelf_map_[0][:2])     # empty shelf: row 0
+        _x_, _y_, _w_, _h_ = json.loads(sc.shelf_dialog_box)
+        self.assertEqual(_y_, sc._shelf_map_[0][1])                    # now: just below it
+        self.assertGreater(_w_, 100)
+        self._key(sc, 'shelve', 'second')
+        self.assertEqual(sc._shelf_map_[1][:2], (_y_, _y_ + _h_))     # drawn where it was named
+
+    def test_the_default_name_skips_taken_ones(self):
+        sc, mvc, dfs = self._sc()
+        self.assertEqual(sc.shelf_default_name, 'frame 1')
+        mvc.pinFrame('frame 1', dfs[2])
+        mvc.pinFrame('frame 2', dfs[0].head(2))
+        self.assertEqual(sc.shelf_default_name, 'frame 3')
+
+    def test_onShelve_hears_the_widget(self):
+        sc, mvc, dfs = self._sc()
+        _got_ = []
+        mvc.onShelve(lambda name, df: _got_.append((name, df)))
+        self._key(sc, 'shelve', 'heard')
+        self.assertEqual(_got_, [('heard', dfs[1])])
+
+    def test_panelize_lets_s_work_straight_away(self):
+        # Built with no controller, the widget cannot shelve; panelize() redraws it.
+        sc = self.p2s.stack_controli(self.p2s.xyp(_make_df(), 'x', 'y', wxh=(48, 40)), wxh=(160, 320))
+        self.assertEqual(sc.shelve_blocked, 'not on a stack yet')
+        self.p2s.panelize([[self.p2s.xyp(_make_df(), 'x', 'y', wxh=(120, 120)), sc]])
+        self.assertEqual(sc.shelve_blocked, '')
 
 
 if __name__ == '__main__':

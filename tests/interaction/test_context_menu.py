@@ -36,6 +36,15 @@ def test_the_generic_components_suppress_the_context_menu(request, fixture):
     assert _ip_.context_menu_prevented()
 
 
+def test_the_stack_control_suppresses_the_context_menu(stack_shelf_page):
+    """F18's set operations are ctrl and ctrl-shift clicks on the stack control, which
+    macOS turns into secondary clicks."""
+    _xy_, _ct_, _sc_ = stack_shelf_page
+    assert _ct_.context_menu_prevented(), (
+        'the stack control let the browser context menu through -- a ctrl-click set '
+        'operation will raise the popup')
+
+
 def test_a_ctrl_drag_survives_the_secondary_click(quad_page):
     """The gesture the guard exists for, end to end.
 

@@ -789,9 +789,9 @@ class TestP2SInteractiveMethods(unittest.TestCase):
         self.assertEqual(type(result).__name__, 'HTML')
 
     # xyp_obj is 256x256; stack_controli's default wxh (160, 256) is too short
-    # to hold that icon plus the MLX/CUDA header and two skip labels, so these
+    # to hold that icon plus the header, the shelf and two skip labels, so these
     # give it a taller widget explicitly.
-    _STACK_WXH_ = (160, 340)
+    _STACK_WXH_ = (160, 400)
 
     def test_sketch_includes_interactive_only_stack_control(self):
         # stack_controli is interactive-only (no static twin / _repr_svg_); the

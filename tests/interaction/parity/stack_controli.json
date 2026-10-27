@@ -1,12 +1,19 @@
 {
   "params_watched": [
+    "click_mods",
     "click_op_finished",
+    "click_x",
     "click_y",
     "help_display",
+    "hover_regions",
     "kbd_help_svg",
     "key_op_finished",
     "mod_inner",
     "name",
+    "shelf_default_name",
+    "shelf_dialog_box",
+    "shelf_name",
+    "shelve_blocked",
     "svg_h",
     "svg_w"
   ],
@@ -23,7 +30,7 @@
       "dom": {
         "svgstackcontrol": {
           "tag": "svg",
-          "kids": 3,
+          "kids": 5,
           "text": "MLX: unavailableCUDA: unavailable20 Rowsbase .rect-group-N rect { width: 1px; height: 1px; } 10x9010y902040608020406080 "
         },
         "mod": {
@@ -43,12 +50,22 @@
         },
         "keyboardhelp": {
           "tag": "g",
-          "kids": 4,
-          "text": "h . | toggle helpc . | keep base + current .. | ctrl-shift-c .. | current -> base"
+          "kids": 10,
+          "text": "h . | toggle helpc . | keep base + current .. | ctrl-shift-c .. | current -> bases . | shelve current: type a name, ente"
         },
         "screen": {
           "tag": "rect",
           "kids": 0,
+          "text": ""
+        },
+        "stacktip": {
+          "tag": "g",
+          "kids": 2,
+          "text": ""
+        },
+        "shelfname": {
+          "tag": "g",
+          "kids": 2,
           "text": ""
         }
       }
@@ -65,7 +82,7 @@
       "dom": {
         "svgstackcontrol": {
           "tag": "svg",
-          "kids": 3,
+          "kids": 5,
           "text": "MLX: unavailableCUDA: unavailable20 Rowsbase .rect-group-N rect { width: 1px; height: 1px; } 10x9010y902040608020406080 "
         },
         "mod": {
@@ -85,12 +102,22 @@
         },
         "keyboardhelp": {
           "tag": "g",
-          "kids": 4,
-          "text": "h . | toggle helpc . | keep base + current .. | ctrl-shift-c .. | current -> base"
+          "kids": 10,
+          "text": "h . | toggle helpc . | keep base + current .. | ctrl-shift-c .. | current -> bases . | shelve current: type a name, ente"
         },
         "screen": {
           "tag": "rect",
           "kids": 0,
+          "text": ""
+        },
+        "stacktip": {
+          "tag": "g",
+          "kids": 2,
+          "text": ""
+        },
+        "shelfname": {
+          "tag": "g",
+          "kids": 2,
           "text": ""
         }
       }
@@ -104,6 +131,11 @@
           1
         ],
         [
+          "click_x",
+          80,
+          1
+        ],
+        [
           "click_y",
           170,
           1
@@ -112,7 +144,7 @@
       "dom": {
         "svgstackcontrol": {
           "tag": "svg",
-          "kids": 3,
+          "kids": 5,
           "text": "MLX: unavailableCUDA: unavailable20 Rowsbase .rect-group-N rect { width: 1px; height: 1px; } 10x9010y902040608020406080 "
         },
         "mod": {
@@ -132,12 +164,22 @@
         },
         "keyboardhelp": {
           "tag": "g",
-          "kids": 4,
-          "text": "h . | toggle helpc . | keep base + current .. | ctrl-shift-c .. | current -> base"
+          "kids": 10,
+          "text": "h . | toggle helpc . | keep base + current .. | ctrl-shift-c .. | current -> bases . | shelve current: type a name, ente"
         },
         "screen": {
           "tag": "rect",
           "kids": 0,
+          "text": ""
+        },
+        "stacktip": {
+          "tag": "g",
+          "kids": 2,
+          "text": ""
+        },
+        "shelfname": {
+          "tag": "g",
+          "kids": 2,
           "text": ""
         }
       }

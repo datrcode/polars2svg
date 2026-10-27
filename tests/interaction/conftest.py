@@ -561,7 +561,7 @@ if _PLAYWRIGHT_AVAILABLE_:
 
         The control is an *interactive-only* leaf -- it has no static twin -- so it is
         built explicitly and placed in the layout rather than being wrapped from a
-        plain component.  It needs to be tall enough for the MLX/CUDA header, the
+        plain component.  It needs to be tall enough for the header, the shelf, the
         current icon and two skip labels, or it refuses to build.
 
         Returns (xy_page, control_page); the control acts on the plot's stack, so both
@@ -573,13 +573,35 @@ if _PLAYWRIGHT_AVAILABLE_:
                               'cat': ['a', 'b', 'c', 'd'] * 5})
         _xyp_ = _p2s_.xyp(_df_, 'x', 'y', color='cat', wxh=(256, 256))
         _xyp_._repr_svg_()
-        _sc_  = _p2s_.stack_controli(_xyp_, wxh=(160, 340))
+        _sc_  = _p2s_.stack_controli(_xyp_, wxh=(160, 420))
         _app_ = served([[_xyp_, _sc_]])
         page.goto(_app_.url, wait_until='load')
         _xy_ = InteractivePage(page, _xyp_, root_id='svgparentxypi')
         _ct_ = InteractivePage(page, _xyp_, root_id='svgstackcontrol')
         _xy_.app = _ct_.app = _app_
         return _xy_, _ct_
+
+    @pytest.fixture
+    def stack_shelf_page(page: Any, served: Callable[..., Any]) -> Any:
+        """An xy plot with a stack control built from a thumbnail-sized icon, as in real
+        use, so several stack frames fit under the shelf (PLANNING.md §7 F18).
+
+        Returns (xy_page, control_page, control_view).
+        """
+        _p2s_ = Polars2SVG()
+        _df_  = pl.DataFrame({'x':   [float(_i_) for _i_ in range(20)],
+                              'y':   [float(_i_ % 7) for _i_ in range(20)],
+                              'cat': ['a', 'b', 'c', 'd'] * 5})
+        _xyp_  = _p2s_.xyp(_df_, 'x', 'y', color='cat', wxh=(256, 256))
+        _xyp_._repr_svg_()
+        _icon_ = _p2s_.xyp(_df_, 'x', 'y', wxh=(48, 40), draw_context=False)
+        _sc_   = _p2s_.stack_controli(_icon_, wxh=(160, 420))
+        _app_  = served([[_xyp_, _sc_]])
+        page.goto(_app_.url, wait_until='load')
+        _xy_ = InteractivePage(page, _xyp_, root_id='svgparentxypi')
+        _ct_ = InteractivePage(page, _xyp_, root_id='svgstackcontrol')
+        _xy_.app = _ct_.app = _app_
+        return _xy_, _ct_, _sc_
 
     # ── WebGPU (PLANNING.md V2) ───────────────────────────────────────────────
     #

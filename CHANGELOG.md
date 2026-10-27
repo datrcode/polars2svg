@@ -40,6 +40,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `subnet regions`, so the two can be shown together. Nodes stacked at one position
   still each take their own subnet's colour. `z` then selects a whole subnet.
 
+- **Stack control: a shelf of named frames, frame deletion, and set operations.** Above
+  the frame stack, `stack_controli` now draws a shelf of named frames that no push, pop,
+  `c` collapse, `ctrl-shift-c` rebase or `replaceStack` touches. A filter in a view still
+  cuts every frame above the one shown, so the shelf is where to keep a result.
+  - `s` shelves the shown frame under a name typed into a small dialog. Enter keeps it,
+    and Esc or a click cancels.
+  - Clicking a shelf entry pushes it on top of the stack, or shows it if it is already on
+    the stack.
+  - ctrl / shift / ctrl-shift clicks on a frame or a shelf entry add it to the shown
+    frame, subtract it, or intersect with it. The shown frame's duplicate rows are kept.
+  - Pushes from the shelf and set-operation results go on top of the whole stack, so
+    nothing above the shown frame is lost. A result that would change nothing, or would
+    be empty, is refused.
+  - Every frame except the shown one has a trashcan. A shelf entry asks for a second
+    click before it is deleted. Deleting the base makes the next frame the base.
+  - A frame from the shelf shows its name in its stack row, and a set-operation result
+    shows the operator and its operand, such as `∩ scan 1`. A name too long for its row
+    is cut off and shown whole on hover.
+  - A status row under the MLX / CUDA indicators says why an action was refused. The
+    shelf holds `max_shelf=` entries (default 4; 0 for no shelf).
+  - From Python, the `panelize()` result has `pinFrame(name, df=None)` (with `df=None`
+    it shelves the shown frame), `shelf()`, `unpinFrame(name)` and
+    `onShelve(callback)`.
+
+### Changed
+
+- **`stack_controli` needs more height for its shelf.** The minimum height now includes
+  the shelf (about 60px at the default four entries) and a status row. A widget built at
+  the old minimum raises a `ValueError` that names the fix: make it taller, or pass a
+  smaller `max_shelf`, down to `max_shelf=0` for no shelf.
+- **Stack control clicks now notify `onSelection` callbacks** when they show a different
+  frame, as the documentation already said they did.
+
 ### Fixed
 
 - **`spreadlinesp(time_order=)`: dates and datetimes name their bins.** Each value was

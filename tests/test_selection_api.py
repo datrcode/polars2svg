@@ -313,7 +313,7 @@ class TestOnEveryViewAndTheLayout(unittest.TestCase):
             mvc.onSelection(print, stack='c')
 
     def test_a_view_on_no_stack_says_so(self):
-        sc = self.p2s.stack_controli(self.p2s.xyp(self.df, 'x', 'y', wxh=(128, 128)))
+        sc = self.p2s.stack_controli(self.p2s.xyp(self.df, 'x', 'y', wxh=(128, 128)), wxh=(160, 300))
         self.assertIsNone(sc.mvc)
         with self.assertRaisesRegex(RuntimeError, 'STACKCONTROLI: this view is not on a stack'):
             sc.selectedDataFrame()

@@ -151,4 +151,16 @@ class P2SInteractiveMixin:
         return _importSpreadLinePI_().spreadlinepi(_spread_, **kwargs)
 
     def stack_controli(self, component: Any, stack_name: str = 'default', **kwargs: Any) -> Any:
+        '''A navigator for the dataframe stack the interactive views share, drawn with
+        ``component`` (a small static view) as each frame's thumbnail.  Pass the result to
+        ``panelize()`` beside the views.
+
+        Click a frame to show it.  Above the frames is a shelf of named frames that no
+        push, pop or collapse touches: ``s`` shelves the shown frame under a typed name,
+        and clicking an entry pushes it on top of the stack.  ctrl / shift / ctrl-shift
+        clicks add, subtract and intersect the clicked frame with the shown one, pushing
+        the result; trashcans delete.  ``max_shelf=`` (default 4, 0 for none) is how many
+        shelf entries it draws and holds.  From Python, the ``panelize()`` result has
+        ``pinFrame(name, df=None)``, ``shelf()``, ``unpinFrame(name)`` and
+        ``onShelve(callback)``.'''
         return _importStackControl_().stack_controli(component, stack_name, **kwargs)

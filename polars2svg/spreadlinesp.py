@@ -5,9 +5,8 @@ import time
 
 import polars2svg
 from polars2svg.export import ExportMixin
-from polars2svg.p2s_displaylist import (CLOUD_ICON_H, CLOUD_ICON_RX, CLOUD_ICON_W,
-                                        cloudIconDef, pathToDL, roundedRectPoints,
-                                        strokePolylineDL)
+from polars2svg.p2s_displaylist import (CLOUD_ICON_UNIT, cloudIconDef, cloudIconToDL,
+                                        pathToDL, roundedRectPoints, strokePolylineDL)
 from polars2svg.p2s_enums import TimeLinearTypeP
 
 #
@@ -1015,12 +1014,14 @@ class SpreadLinesP(ExportMixin):
     # GPU recording helpers
     #
     # The component records its own primitives as it renders (rather than parsing its
-    # finished SVG back), so both representations come from one set of numbers.  Two
+    # finished SVG back), so both representations come from one set of numbers.  Three
     # shapes need help because the display list has no direct equivalent:
     #   - a *stroked* rounded rect: rect() is fill-only, so the outline is a polyline
     #     through roundedRectPoints() -- four straight edges would cut the corners off
     #   - a path 'd' string: handed to the shared pathToDL(), the same flattener
     #     svgToDisplayList() uses, so a curve cannot land in two different places
+    #   - the cloud icon (<use href="#cloud_...">) and its selection rings: the shared
+    #     cloudIconToDL(), the silhouette linkp and the parser draw too
     # -------------------------------------------------------------------------
 
     def __roundedRectToDL__(self, dl: Any, x: float, y: float, w: float, h: float, rx: float, fill: str | None = None, fill_opacity: float = 1.0,
@@ -1031,14 +1032,6 @@ class SpreadLinesP(ExportMixin):
             _pts_ = roundedRectPoints(x, y, w, h, rx)
             strokePolylineDL(dl, _pts_ + [_pts_[0]], stroke, width=stroke_w,
                              opacity=stroke_opacity, scissor=scissor)
-
-    # The selection ring around a collapsed ego: the SVG strokes the cloud outline,
-    # so on the GPU it rings the cloud's rounded-rect stand-in, 2px outside the
-    # silhouette.  scissor reproduces the partial-selection clip window.
-    def __selectionRingToDL__(self, dl: Any, x: float, y: float, color: str, scissor: tuple | None = None) -> None:
-        self.__roundedRectToDL__(dl, x - CLOUD_ICON_W / 2.0 - 2, y - CLOUD_ICON_H / 2.0 - 2,
-                                 CLOUD_ICON_W + 4, CLOUD_ICON_H + 4, CLOUD_ICON_RX + 2,
-                                 stroke=color, stroke_w=2.0, scissor=scissor)
 
     # -------------------------------------------------------------------------
     # renderAlter() — render circles (or clouds) for one alter group
@@ -1496,18 +1489,19 @@ class SpreadLinesP(ExportMixin):
                 f' fill="{_ego_co_}" stroke="{_axis_co_}" stroke-width="0.5"/>'
             )
             if dl is not None:
-                # The cloud glyph has no GPU primitive; both this component and linkp
-                # approximate it with the shared CLOUD_ICON_* rounded rect.
-                self.__roundedRectToDL__(dl, x - CLOUD_ICON_W / 2.0, y - CLOUD_ICON_H / 2.0,
-                                         CLOUD_ICON_W, CLOUD_ICON_H, CLOUD_ICON_RX,
-                                         fill=_ego_co_, stroke=_axis_co_, stroke_w=0.5)
+                # The outline is the definition's ink, not the <use>'s _axis_co_: a stroke
+                # on the referenced path wins over one the <use> passes down.  Widths on a
+                # <use> are in icon units (CLOUD_ICON_UNIT); the clipped <path> below is
+                # in ours.
+                cloudIconToDL(dl, x, y, fill=_ego_co_, stroke=self.p2s.colorTyped('label', 'defaultfg'),
+                              stroke_w=0.5 * CLOUD_ICON_UNIT)
             if _n_sel_focal_ == _n_ego_total_ and _n_ego_total_ > 0:
                 svg.append(
                     f'<use href="#cloud_outline_{self._rand_id_}" x="{x:.1f}" y="{y:.1f}"'
                     f' fill="none" stroke="{_sel_co_}" stroke-width="2.0"/>'
                 )
                 if dl is not None:
-                    self.__selectionRingToDL__(dl, x, y, _sel_co_)
+                    cloudIconToDL(dl, x, y, stroke=_sel_co_, stroke_w=2.0 * CLOUD_ICON_UNIT)
             elif _n_sel_focal_ > 0:
                 _clip_id_ = f'ccl_{self._rand_id_}_{b}'
                 svg.append(
@@ -1521,8 +1515,8 @@ class SpreadLinesP(ExportMixin):
                 if dl is not None:
                     # partial selection: the SVG shows the ring through a clip window,
                     # which the display list expresses as a per-op scissor
-                    self.__selectionRingToDL__(dl, x, y, _sel_co_,
-                                               scissor=(x, y - 10, 15, 20))
+                    cloudIconToDL(dl, x, y, stroke=_sel_co_, stroke_w=2.0,
+                                  scissor=(x, y - 10, 15, 20))
         elif _n_focal_ == 1:
             _n_sel_focal_ = sum(1 for n in _focal_nodes_ if n in self.highlight_nodes)
             svg.append(
@@ -2033,7 +2027,7 @@ class SpreadLinesP(ExportMixin):
         svg.insert(1, (f'<rect x="{self.vx0:.1f}" y="{self.vy0:.1f}"'
                        f' width="{_vw_:.1f}" height="{_vh_:.1f}" fill="{_bg_co_}"/>'))
         if self.ego_is_set:
-            # Cloud symbols -- the shared definition beside CLOUD_ICON_* in
+            # Cloud symbols -- the shared definition beside CLOUD_ICON_UNIT in
             # p2s_displaylist, the same one linkp emits.  #cloud_outline_ is the
             # unstroked variant, drawn under the ego node's own outline.
             #

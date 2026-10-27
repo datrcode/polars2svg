@@ -5,8 +5,7 @@ import time
 
 import polars2svg
 from polars2svg.p2s_displaylist import (DisplayList, hexToRGBA, cubicBezierSegmentsTable,
-                                        CLOUD_ICON_W, CLOUD_ICON_H, CLOUD_ICON_RX,
-                                        cloudIconDef)
+                                        CLOUD_ICON_UNIT, cloudIconDef, cloudsToDL)
 from polars2svg.export import ExportMixin
 from polars2svg.p2s_component_color_mixin import P2SComponentColorMixin
 from polars2svg.p2s_background_mixin import P2SBackgroundMixin
@@ -246,8 +245,8 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
     #
     # webgpu() - WebGPU payload of the same render, extracted from the retained
     # df_link / df_node tables (no recompute of the polars pipelines).  Curve links
-    # are flattened to line segments; collapsed-node clouds approximate as rounded
-    # rects (the shared CLOUD_ICON_* shape).  Lazy + cached; invalidated by __renderSVG__.
+    # are flattened to line segments; collapsed-node clouds draw as the icon's own
+    # silhouette (cloudsToDL).  Lazy + cached; invalidated by __renderSVG__.
     #
     def webgpu(self) -> dict | None:
         # Honor a pending relayout the same way renderSVG() does, so the
@@ -357,16 +356,16 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
                 _dl_.circles_table(_singles_, '__sx__', '__sy__', _sz_,
                                    ('__r_f__', '__g_f__', '__b_f__'), opacity=self.node_opacity,
                                    stroke=hexToRGBA(_node_stroke_, self.node_opacity), stroke_w=_sw_, svg_col=None)
-                # Collapsed nodes (<use href="#cloud"> in SVG) -- the same rounded-rect
-                # approximation svgToDisplayList() applies to that element, so a collapsed
-                # node reads identically here and in spreadlinesp's parsed GPU path
-                _multis_ = _dfn_.filter(pl.col('__nodes__') > 1).with_columns(
-                    (pl.col('__sx__') - CLOUD_ICON_W / 2.0).alias('__cloud_x__'),
-                    (pl.col('__sy__') - CLOUD_ICON_H / 2.0).alias('__cloud_y__'),
-                )
-                _dl_.rects_table(_multis_, '__cloud_x__', '__cloud_y__', CLOUD_ICON_W, CLOUD_ICON_H,
-                                 ('__r_f__', '__g_f__', '__b_f__'), rx=CLOUD_ICON_RX,
-                                 opacity=self.node_opacity, svg_col=None)
+                # Collapsed nodes (<use href="#cloud"> in SVG) -- the icon's own silhouette,
+                # outlined in the ink its definition strokes with, at the <g>'s
+                # stroke-width="0.5" in icon units.  The shared cloudsToDL() is what
+                # spreadlinesp and svgToDisplayList() draw it with too.
+                _multis_ = _dfn_.filter(pl.col('__nodes__') > 1)
+                cloudsToDL(_dl_, _multis_['__sx__'].to_numpy(), _multis_['__sy__'].to_numpy(),
+                           fill_rgba=_multis_.select('__r_f__', '__g_f__', '__b_f__',
+                                                     pl.lit(float(self.node_opacity))).to_numpy(),
+                           stroke_rgba=hexToRGBA(_node_stroke_, self.node_opacity),
+                           stroke_w=0.5 * CLOUD_ICON_UNIT)
         # Node labels (info recorded during __renderNodes__)
         # _node_label_info_ carries the label as the caller wrote it -- __renderNodes__
         # escapes only on its way into markup (p2s_text_mixin.svgEscape), so there is no
@@ -2245,8 +2244,8 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
                 pl.lit('" />'),
             ]
             # The cloud glyph is drawn centered on the node: <use> translates a 100x50
-            # viewport that the <g> re-centers, so its box is +/-50 x +/-25 (the 28x14 the
-            # GPU path approximates is the ink inside that box, not its extent).
+            # viewport that the <g> re-centers, so its box is +/-50 x +/-25 (the ink inside
+            # that box is only about 20x13, but the cull pads by the box).
             _df_multis_ = self.df_node.filter(
                 (pl.col('__nodes__') > 1) &
                 self.__onCanvasExpr__(['__sx__'], ['__sy__'], pad=50.0, pad_y=25.0)
@@ -2506,7 +2505,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
         # render has one -- 657 bytes off every ordinary linkp.  __renderNodes__ decides
         # that per render (collapsing is a group_by on screen coordinates, so it follows
         # the zoom), which is why the flag is read here rather than resolved once in
-        # __init__.  The definition itself lives beside CLOUD_ICON_* in p2s_displaylist,
+        # __init__.  The definition itself lives beside CLOUD_ICON_UNIT in p2s_displaylist,
         # shared with spreadlinesp's two copies.
         # Scoped per render (cloud_<rand_id>) because the stroke is now the palette's
         # ink, which makes this definition render-dependent -- see cloudIconDef().

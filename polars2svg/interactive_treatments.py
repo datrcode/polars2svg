@@ -65,6 +65,12 @@ class RegistryEntry:
     '''
     handler:   Callable
     treatment: Treatment = field(default_factory=Treatment)
+    #: Whether linkpi merges nodes stacked at one position into a representative before
+    #: the handler runs (__contractCollapsedGraph__), which stops a geometric layout
+    #: tripping over coincident sites.  False for a layout that places each node by an
+    #: attribute of its own -- the subnet treemap -- where a merged stack would put every
+    #: member in the representative's cell.
+    contract:  bool = True
 
 
 # Shared declarations, so the registries read as a table rather than a wall of kwargs.

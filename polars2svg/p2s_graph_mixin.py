@@ -40,6 +40,41 @@ def _requireGraphLayoutDeps_() -> None:
     if not _HAS_GRAPH_LAYOUT_DEPS_:
         raise ImportError(_GRAPH_LAYOUT_DEPS_MSG_)
 
+#
+# nodeIPv4() - the IPv4 address a graph node names, or None
+# - accepts a bare address ("10.0.0.5") or one carrying a port / CIDR suffix
+#   ("10.0.0.5:443", "10.0.0.5/24") by parsing the leading dotted-quad token
+# - the one parser behind the subnet layouts and linkpi's IP-graph detection, so the
+#   two cannot disagree about which nodes are addresses
+#
+def nodeIPv4(node: Any) -> ipaddress.IPv4Address | None:
+    _s_ = str(node)
+    for _candidate_ in (_s_, _s_.split(':', 1)[0], _s_.split('/', 1)[0]):
+        try:
+            return ipaddress.IPv4Address(_candidate_)
+        except ipaddress.AddressValueError:
+            continue
+    return None
+
+#
+# nodeSubnet() - the CIDR of a node's IPv4 network under subnet_mask ('10.0.0.0/24'), or
+# 'non-IPv4' -- the name a subnet region is keyed by, and the key its colour is hashed
+# from, so subnet-coloured nodes and their regions agree
+#
+def nodeSubnet(node: Any, subnet_mask: int) -> str:
+    _ip_ = nodeIPv4(node)
+    return str(ipaddress.ip_network(f'{_ip_}/{subnet_mask}', strict=False)) if _ip_ is not None else 'non-IPv4'
+
+#
+# ipv4NodeFraction() - the share of nodes that nodeIPv4() reads as an address; 0.0 for none
+#
+def ipv4NodeFraction(nodes: Iterable) -> float:
+    _n_, _ip_ = 0, 0
+    for _node_ in nodes:
+        _n_ += 1
+        if nodeIPv4(_node_) is not None: _ip_ += 1
+    return _ip_ / _n_ if _n_ > 0 else 0.0
+
 class P2SGraphMixin:
     # ---------------------------------------------------------------------
     # Host-class attributes this mixin reads off `self`.
@@ -60,6 +95,7 @@ class P2SGraphMixin:
     SETp:                          FieldTypeP
     closestPointOnSegment:         Any
     colorTyped:                    Any
+    colors:                        Any
     createConcatColumn:            Any
     flattenTuple:                  Any
     logDtypeKeyedCount:            Any
@@ -520,21 +556,9 @@ class P2SGraphMixin:
         _OTHER_       = '__non_ipv4__'
         _OTHER_LABEL_ = 'non-IPv4'
 
-        def _toIPv4_(_node_: str) -> Any:
-            # Accept a bare address ("10.0.0.5") or one carrying a port / CIDR
-            # suffix ("10.0.0.5:443", "10.0.0.5/24") by parsing the leading
-            # dotted-quad token. Returns an IPv4Address or None.
-            _s_ = str(_node_)
-            for _candidate_ in (_s_, _s_.split(':', 1)[0], _s_.split('/', 1)[0]):
-                try:
-                    return ipaddress.IPv4Address(_candidate_)
-                except ipaddress.AddressValueError:
-                    continue
-            return None
-
         _group_to_nodes_: dict = {}
         for _node_ in g.nodes():
-            _ip_  = _toIPv4_(_node_)
+            _ip_  = nodeIPv4(_node_)
             _key_ = str(ipaddress.ip_network(f'{_ip_}/{subnet_mask}', strict=False)) if _ip_ is not None else _OTHER_
             if _key_ not in _group_to_nodes_: _group_to_nodes_[_key_] = set()
             _group_to_nodes_[_key_].add(_node_)
@@ -638,24 +662,12 @@ class P2SGraphMixin:
 
         _OTHER_ = '__non_ipv4__'
 
-        def _toIPv4_(_node_: str) -> Any:
-            # Accept a bare address ("10.0.0.5") or one carrying a port / CIDR
-            # suffix ("10.0.0.5:443", "10.0.0.5/24") by parsing the leading
-            # dotted-quad token. Returns an IPv4Address or None.
-            _s_ = str(_node_)
-            for _candidate_ in (_s_, _s_.split(':', 1)[0], _s_.split('/', 1)[0]):
-                try:
-                    return ipaddress.IPv4Address(_candidate_)
-                except ipaddress.AddressValueError:
-                    continue
-            return None
-
         # Bucket every node into its subnet representative and keep the inverse
         # mapping so member nodes can be placed around their rep afterwards.
         _node_to_rep_          = {}
         _rep_to_nodes_ : dict  = {}
         for _node_ in g.nodes():
-            _ip_  = _toIPv4_(_node_)
+            _ip_  = nodeIPv4(_node_)
             _key_ = str(ipaddress.ip_network(f'{_ip_}/{subnet_mask}', strict=False)) if _ip_ is not None else _OTHER_
             _node_to_rep_[_node_] = _key_
             _rep_to_nodes_.setdefault(_key_, set()).add(_node_)
@@ -712,6 +724,48 @@ class P2SGraphMixin:
                 self.sunflowerSeedLayout(g, _nodes_, pos=pos, xy=(_cx_, _cy_), r_max=_radius_)
 
         return (pos, _rep_pos_) if return_rep_pos else pos
+
+    def ipSubnetBackground(self,
+                           g            : nx.Graph,
+                           pos          : dict,
+                           subnet_mask  : int   = 24,
+                           fill_opacity : float = 0.15,
+                           cell_pad     : float = 0.05) -> dict:
+        """Subnet regions around the nodes where they already are -- no node moves.
+
+        Each positioned node is labelled with its IPv4 network under ``subnet_mask``
+        (e.g. ``'10.0.0.0/24'``), or ``'non-IPv4'`` when it is not an address; the nodes'
+        Voronoi cells are then merged per label, as :meth:`neighborhoodLayout`'s spatial
+        mode merges them per neighborhood.  So the regions never overlap and between them
+        cover the layout.
+
+        A layout that does not group by subnet scatters a subnet's nodes, and its region
+        then comes back in several pieces.  Each piece is its own record, filled in the
+        subnet's colour (``colors()`` of the CIDR, at ``fill_opacity``) so the pieces of
+        one subnet read as one.  Only the largest piece carries the CIDR as its label --
+        it is keyed by the CIDR itself, the rest ``'<cidr> [2]'``, ``'<cidr> [3]'`` ... by
+        falling area with ``label=None`` -- because one label for the whole set would sit
+        at the centre of its bounding box, nowhere near any of them.
+
+        ``cell_pad`` pads the bounding box the cells are clipped to, as a fraction of the
+        layout's extent.  Returns ``{name: BackgroundShape}`` in ``pos`` coordinates, ready
+        for linkp's ``background=``; nodes without a position are left out.
+        """
+        _requireGraphLayoutDeps_()
+        from .p2s_background_mixin import BackgroundShape
+        _labels_ = {_node_: nodeSubnet(_node_, subnet_mask) for _node_ in g.nodes() if _node_ in pos}
+        _cells_  = self.__p2sg_voronoiNeighborhoodCells__(pos, _labels_, pad=cell_pad)
+        _colors_ = self.colors(sorted(_cells_))
+        _out_: dict = {}
+        for _cidr_ in sorted(_cells_):
+            _parts_ = sorted((_p_ for _p_ in getattr(_cells_[_cidr_], 'geoms', [_cells_[_cidr_]])
+                              if _p_.geom_type == 'Polygon' and not _p_.is_empty),
+                             key=lambda _p_: -_p_.area)
+            for _i_, _part_ in enumerate(_parts_):
+                _out_[_cidr_ if _i_ == 0 else f'{_cidr_} [{_i_ + 1}]'] = BackgroundShape(
+                    _part_, fill=_colors_[_cidr_], fill_opacity=fill_opacity,
+                    **({} if _i_ == 0 else {'label': None}))
+        return _out_
 
     def neighborhoodLayout(self,
                            g: Any,

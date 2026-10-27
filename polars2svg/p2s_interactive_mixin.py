@@ -113,7 +113,13 @@ class P2SInteractiveMixin:
 
     def linkpi(self, _linkp_: Any, mvc: Any = None, **kwargs: Any) -> Any:
         '''Wrap a static ``linkp`` graph as an interactive, cross-linkable panel
-        (node/edge selection). Pass the result to ``panelize()``.'''
+        (node/edge selection). Pass the result to ``panelize()``.
+
+        ``ip_layouts=`` controls the subnet operations: ``subnet treemap /24`` and ``/16``
+        in the ``shift-w`` layout menu, ``subnet regions /24`` and ``/16`` in the
+        ``shift-b`` background menu, and ``subnet /24`` and ``/16`` in the ``shift-d``
+        colouring menu. ``None``, the default, offers them when at least half of the
+        graph's nodes are IPv4 addresses; ``True`` / ``False`` force them on or off.'''
         return _importInteractiveController_().linkpi(_linkp_, mvc=mvc, **kwargs)
 
     def smallpi(self, _smallp_: Any, **kwargs: Any) -> Any:

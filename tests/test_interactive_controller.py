@@ -2025,6 +2025,200 @@ class TestLINKPIPickerMenu(unittest.TestCase):
 
 
 @unittest.skipUnless(PANEL_AVAILABLE, 'panel not installed')
+class TestLINKPISubnetLayouts(unittest.TestCase):
+    """The subnet treemap layout operations: offered only for a graph of IPv4 addresses
+    (ip_layouts=None detects, True / False force), and laying each node into its own
+    subnet's cell with the cells as the background (20261024_ip_subnet_linkpi_plan.md)."""
+
+    _IP_DF_ = pl.DataFrame({'fm': ['10.0.0.1', '10.0.0.2', '10.0.1.5', '192.168.1.9', '10.0.0.1'],
+                            'to': ['10.0.1.7', '10.0.0.3', '192.168.1.10', '10.0.0.2', 'host-x']})
+    _LABELS_ = ['subnet treemap /24', 'subnet treemap /16']
+
+    def _make_ctrl(self, df=None, pos=None, **kwargs):
+        from polars2svg.interactive_controller import linkpi
+        _lp_ = Polars2SVG().linkp(self._IP_DF_ if df is None else df,
+                                  relationships=[('fm', 'to')], **({} if pos is None else {'pos': pos}))
+        return linkpi(_lp_, **kwargs)
+
+    def _offered_(self, ctrl):
+        return {'operations': [_l_ for _l_ in ctrl.layout_operations if _l_ in self._LABELS_],
+                'menu':       [_i_[1] for _i_ in ctrl.menu_items['operation'] if _i_[1] in self._LABELS_],
+                'registry':   [_l_ for _l_ in ctrl._layout_registry if _l_ in self._LABELS_]}
+
+    # ── when they are offered ────────────────────────────────────────────────
+    def test_an_ip_graph_is_detected(self):
+        ctrl = self._make_ctrl()
+        self.assertTrue(ctrl.ip_layouts)
+        self.assertEqual(self._offered_(ctrl), {_k_: self._LABELS_ for _k_ in ('operations', 'menu', 'registry')})
+
+    def test_a_graph_of_names_is_not(self):
+        ctrl = self._make_ctrl(df=_make_link_df())
+        self.assertFalse(ctrl.ip_layouts)
+        self.assertEqual(self._offered_(ctrl), {'operations': [], 'menu': [], 'registry': []})
+
+    def test_detection_needs_half_the_nodes_to_be_addresses(self):
+        _half_  = pl.DataFrame({'fm': ['10.0.0.1', 'a'], 'to': ['10.0.0.2', 'b']})          # 2 of 4
+        _under_ = pl.DataFrame({'fm': ['10.0.0.1', 'a', 'c'], 'to': ['b', 'd', 'e']})        # 1 of 6
+        self.assertTrue(self._make_ctrl(df=_half_).ip_layouts)
+        self.assertFalse(self._make_ctrl(df=_under_).ip_layouts)
+
+    def test_the_override_wins_both_ways(self):
+        self.assertEqual(self._offered_(self._make_ctrl(df=_make_link_df(), ip_layouts=True))['menu'],
+                         self._LABELS_)
+        self.assertEqual(self._offered_(self._make_ctrl(ip_layouts=False))['menu'], [])
+
+    def test_a_bad_override_is_refused(self):
+        with self.assertRaisesRegex(ValueError, 'ip_layouts='):
+            self._make_ctrl(ip_layouts='auto')
+
+    def test_mnemonics_stay_unique_and_off_the_navigation_keys(self):
+        from polars2svg.interactive_controller import _IP_LAYOUT_OP_MENU_, _LAYOUT_OP_MENU_
+        _m_ = [_k_ for _k_, _ in _LAYOUT_OP_MENU_ + _IP_LAYOUT_OP_MENU_]
+        self.assertEqual(len(_m_), len(set(_m_)))
+        self.assertFalse(set(_m_) & TestLINKPIPickerMenu._MENU_NAV_KEYS_)
+
+    # ── what they do ─────────────────────────────────────────────────────────
+    def test_each_node_lands_in_its_own_subnet_cell(self):
+        from shapely.geometry import Point
+        from polars2svg.p2s_graph_mixin import nodeIPv4
+        import ipaddress
+        for _label_, _mask_ in zip(self._LABELS_, (24, 16)):
+            ctrl = self._make_ctrl()
+            self.assertTrue(ctrl.apply_layout_operation(_label_))
+            _cells_ = ctrl.layout_background
+            self.assertEqual(ctrl.background_provenance, 'layout')
+            for _node_, _xy_ in ctrl.dfs_layout[0].pos.items():
+                _ip_  = nodeIPv4(_node_)
+                _key_ = 'non-IPv4' if _ip_ is None else str(ipaddress.ip_network(f'{_ip_}/{_mask_}', strict=False))
+                self.assertTrue(_cells_[_key_].contains(Point(_xy_)), f'{_label_}: {_node_} not in {_key_}')
+
+    def test_stacked_nodes_from_different_subnets_are_separated(self):
+        # Every node starts at one point.  The usual pre-layout merge of a stack into one
+        # representative would put them all in that representative's cell; contract=False
+        # is what places each by its own address.
+        from shapely.geometry import Point
+        _nodes_ = sorted(set(self._IP_DF_['fm']) | set(self._IP_DF_['to']))
+        ctrl = self._make_ctrl(pos={_n_: (0.5, 0.5) for _n_ in _nodes_})
+        self.assertFalse(ctrl._layout_registry['subnet treemap /24'].contract)
+        ctrl.apply_layout_operation('subnet treemap /24')
+        _pos_ = ctrl.dfs_layout[0].pos
+        self.assertTrue(ctrl.layout_background['192.168.1.0/24'].contains(Point(_pos_['192.168.1.9'])))
+        self.assertEqual(len({tuple(_pos_[_n_]) for _n_ in _nodes_}), len(_nodes_))
+
+    def test_with_a_selection_it_does_nothing(self):
+        ctrl = self._make_ctrl()
+        ctrl.selected_entities = {'10.0.0.1'}
+        _before_ = dict(ctrl.dfs_layout[0].pos)
+        self.assertFalse(ctrl.apply_layout_operation('subnet treemap /24'))
+        self.assertEqual(dict(ctrl.dfs_layout[0].pos), _before_)
+        self.assertIsNone(ctrl.layout_background)
+
+    # ── the background producers: subnet regions, nothing moves ──────────────
+    _BG_LABELS_ = ['subnet regions /24', 'subnet regions /16']
+
+    def test_the_region_producers_follow_the_same_decision(self):
+        def _bg_(ctrl):
+            return {'operations': [_l_ for _l_ in ctrl.background_operations if _l_ in self._BG_LABELS_],
+                    'menu':       [_i_[1] for _i_ in ctrl.menu_items['background'] if _i_[1] in self._BG_LABELS_],
+                    'registry':   [_l_ for _l_ in ctrl._background_registry if _l_ in self._BG_LABELS_]}
+        self.assertEqual(_bg_(self._make_ctrl()), {_k_: self._BG_LABELS_ for _k_ in ('operations', 'menu', 'registry')})
+        self.assertEqual(_bg_(self._make_ctrl(df=_make_link_df())), {'operations': [], 'menu': [], 'registry': []})
+        self.assertEqual(_bg_(self._make_ctrl(df=_make_link_df(), ip_layouts=True))['menu'], self._BG_LABELS_)
+
+    def test_region_mnemonics_stay_unique_and_off_the_navigation_keys(self):
+        from polars2svg.interactive_controller import _BACKGROUND_OP_MENU_, _IP_BACKGROUND_OP_MENU_
+        _m_ = [_k_ for _k_, _ in _BACKGROUND_OP_MENU_ + _IP_BACKGROUND_OP_MENU_]
+        self.assertEqual(len(_m_), len(set(_m_)))
+        self.assertFalse(set(_m_) & TestLINKPIPickerMenu._MENU_NAV_KEYS_)
+
+    def test_regions_move_nothing_and_outlive_a_later_layout(self):
+        ctrl = self._make_ctrl()
+        _before_ = dict(ctrl.dfs_layout[0].pos)
+        self.assertTrue(ctrl.applyBackgroundOperation('subnet regions /24'))
+        self.assertEqual(dict(ctrl.dfs_layout[0].pos), _before_)
+        self.assertEqual(ctrl.background_provenance, 'context')
+        self.assertTrue({'10.0.0.0/24', '10.0.1.0/24', '192.168.1.0/24', 'non-IPv4'} <= set(ctrl.layout_background))
+        ctrl.apply_layout_operation(ctrl.SPRING_NX)
+        self.assertEqual(ctrl.background_provenance, 'context')
+        self.assertIn('10.0.0.0/24', ctrl.layout_background)
+
+    def test_each_region_is_labelled_once(self):
+        from polars2svg.interactive_controller import _BACKGROUND_STATES_
+        ctrl = self._make_ctrl()
+        ctrl.applyBackgroundOperation('subnet regions /16')
+        _commit_config(ctrl, 'background_state_choice', _BACKGROUND_STATES_[2])    # background + labels
+        for _cidr_ in ('10.0.0.0/16', '192.168.0.0/16', 'non-IPv4'):
+            self.assertEqual(ctrl.mod_inner.count(f'>{_cidr_}<'), 1, _cidr_)
+
+    # ── colour by subnet (the shift-d picker) ────────────────────────────────
+    _CO_LABELS_ = ['subnet /24', 'subnet /16']
+
+    def test_subnet_colouring_follows_the_same_decision(self):
+        def _menu_(ctrl):
+            return [_i_[1] for _i_ in ctrl.menu_items['community'] if _i_[1] in self._CO_LABELS_]
+        self.assertEqual(_menu_(self._make_ctrl()), self._CO_LABELS_)
+        _off_ = self._make_ctrl(df=_make_link_df())
+        self.assertEqual(_menu_(_off_), [])
+        with self.assertRaisesRegex(ValueError, 'unknown community algorithm'):
+            _off_.apply_community_detection('subnet /24')
+        self.assertIsNotNone(self._make_ctrl(df=_make_link_df(), ip_layouts=True).apply_community_detection('subnet /24'))
+
+    def test_subnet_mnemonics_stay_unique_and_off_the_navigation_keys(self):
+        from polars2svg.interactive_controller import _COMMUNITY_MENU_, _IP_COMMUNITY_MENU_
+        _m_ = [_k_ for _k_, _ in _COMMUNITY_MENU_ + _IP_COMMUNITY_MENU_]
+        self.assertEqual(len(_m_), len(set(_m_)))
+        self.assertFalse(set(_m_) & TestLINKPIPickerMenu._MENU_NAV_KEYS_)
+
+    def test_each_node_takes_its_own_subnets_colour(self):
+        from polars2svg.p2s_graph_mixin import nodeSubnet
+        for _label_, _mask_ in zip(self._CO_LABELS_, (24, 16)):
+            _colors_ = self._make_ctrl().apply_community_detection(_label_)
+            _by_subnet_: dict = {}
+            for _node_, _co_ in _colors_.items():
+                _by_subnet_.setdefault(nodeSubnet(_node_, _mask_), set()).add(_co_)
+            self.assertTrue(all(len(_cos_) == 1 for _cos_ in _by_subnet_.values()), _label_)
+            self.assertEqual(len({next(iter(_c_)) for _c_ in _by_subnet_.values()}), len(_by_subnet_), _label_)
+
+    def test_node_colours_match_the_region_tints(self):
+        from polars2svg.p2s_graph_mixin import nodeSubnet
+        ctrl = self._make_ctrl()
+        _colors_ = ctrl.apply_community_detection('subnet /24')
+        ctrl.applyBackgroundOperation('subnet regions /24')
+        for _node_, _co_ in _colors_.items():
+            self.assertEqual(ctrl.layout_background[nodeSubnet(_node_, 24)].fill, _co_, _node_)
+
+    def test_stacked_nodes_keep_their_own_subnets_colour(self):
+        # the graph algorithms merge a stack into one member first; a subnet must not
+        _nodes_ = sorted(set(self._IP_DF_['fm']) | set(self._IP_DF_['to']))
+        ctrl = self._make_ctrl(pos={_n_: (0.5, 0.5) for _n_ in _nodes_})
+        _colors_ = ctrl.apply_community_detection('subnet /24')
+        self.assertNotEqual(_colors_['10.0.0.1'], _colors_['192.168.1.9'])
+
+    def test_d_colours_by_subnet_and_ctrl_d_restores(self):
+        ctrl = self._make_ctrl()
+        _orig_ = ctrl.dfs_layout[0].node_color
+        ctrl.community_algorithm = 'subnet /16'
+        def _press_(ctrlkey):
+            async def _go_():
+                ctrl.ctrlkey, ctrl.key_op_finished = ctrlkey, 'd'
+                await ctrl.applyKeyOp(None)
+            asyncio.run(_go_())
+        _press_(False)
+        self.assertEqual(ctrl.dfs_layout[0].node_color, ctrl.community_colors)
+        self.assertEqual(len(set(ctrl.community_colors.values())), 3)    # 10.0/16, 192.168/16, non-IPv4
+        _press_(True)
+        self.assertIsNone(ctrl.community_colors)
+        self.assertEqual(ctrl.dfs_layout[0].node_color, _orig_)
+
+    def test_the_cells_are_drawn_with_their_cidr(self):
+        from polars2svg.interactive_controller import _BACKGROUND_STATES_
+        ctrl = self._make_ctrl()
+        ctrl.apply_layout_operation('subnet treemap /24')
+        _commit_config(ctrl, 'background_state_choice', _BACKGROUND_STATES_[2])    # background + labels
+        for _cidr_ in ('10.0.0.0/24', '10.0.1.0/24', '192.168.1.0/24'):
+            self.assertIn(f'>{_cidr_}<', ctrl.mod_inner)
+
+
 class TestLINKPICircleByColorLayout(unittest.TestCase):
     """The 'circle (color)' layout mode: same circular drag shape as 'circle',
     but the nodes are grouped by color around the circumference."""

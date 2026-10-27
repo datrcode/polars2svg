@@ -8,7 +8,7 @@ import signal
 import threading
 import time
 from math import isfinite, sqrt
-from collections.abc import Collection, Sequence
+from collections.abc import Callable, Collection, Sequence
 from typing import Any
 
 # re's pattern parser is private -- it was the public `sre_parse` until 3.11 -- and is
@@ -42,6 +42,7 @@ from .interactive_render_rows import (ChordpRenderRows, HistopRenderRows, PiepRe
 from shapely.geometry import Polygon
 
 from .mds_at_scale                  import LandmarkMDSLayout, PivotMDSLayout
+from .p2s_graph_mixin               import ipv4NodeFraction, nodeSubnet
 from .layout_budget                 import Budget
 from .interactive_treatments        import (Treatment, RegistryEntry, CHEAP, ASSUMED_CHEAP,
                                             FLOWMAP, treatment_for,
@@ -116,6 +117,17 @@ if _TFDP_AVAILABLE:
 if _NCP_AVAILABLE:
     _LAYOUT_OP_MENU_.append(('P', 'ncp pack'))
 
+# Layout operations for a graph whose nodes are IPv4 addresses.  Appended per view, not
+# here: whether they apply depends on the data, so linkpi decides at construction --
+# ip_layouts=None detects it (at least _IP_DETECT_FRACTION_ of the base graph's nodes
+# parse as addresses), True / False force it.  A graph without addresses never sees
+# them, which keeps the base menus general (20261024_ip_subnet_linkpi_plan.md).
+_IP_LAYOUT_OP_MENU_ = [
+    ('i', 'subnet treemap /24'),
+    ('I', 'subnet treemap /16'),
+]
+_IP_DETECT_FRACTION_ = 0.5
+
 # (mnemonic, label) for the shift-b background-producer picker (and the settings
 # panel's 'background producer' row).  A background OPERATION is not a layout
 # operation: it moves no nodes, so it does not go through apply_layout_operation()
@@ -128,6 +140,13 @@ _BACKGROUND_OP_MENU_ = [
     ('s', 'flow field (streamlines)'),
     ('f', 'flow field (2 layers)'),
     ('F', 'flow field (3 layers)'),
+]
+# Background producers for a graph of IPv4 addresses -- appended per view under the same
+# ip_layouts= decision as _IP_LAYOUT_OP_MENU_.  They outline each subnet around the nodes
+# where they already are, so they are the no-movement counterpart of the subnet treemap.
+_IP_BACKGROUND_OP_MENU_ = [
+    ('i', 'subnet regions /24'),
+    ('I', 'subnet regions /16'),
 ]
 
 # (mnemonic, label) for the shift-d community-algorithm picker (and the settings panel's
@@ -165,6 +184,17 @@ _COMMUNITY_ALGORITHMS_: dict[str, Any] = {
     'greedy modularity':    lambda g: list(nx.community.greedy_modularity_communities(g, weight='weight')),
     'connected components': lambda g: list(nx.connected_components(g)),
 }
+
+# Colour by subnet -- appended per view under the same ip_layouts= decision as
+# _IP_LAYOUT_OP_MENU_.  Not in _COMMUNITY_ALGORITHMS_: a subnet is read off each node's
+# own address, so it skips the merge of stacked nodes that the graph algorithms get, and
+# its colour is hashed off the CIDR (nodeSubnet) rather than off a member, which is what
+# makes it match the 'subnet regions' background's tints.
+_IP_COMMUNITY_MENU_ = [
+    ('i', 'subnet /24'),
+    ('I', 'subnet /16'),
+]
+_IP_COMMUNITY_MASKS_ = {'subnet /24': 24, 'subnet /16': 16}
 
 # ---------------------------------------------------------------------------
 # Bounds on work a keystroke can start
@@ -2437,7 +2467,7 @@ _LINKPI_KEYBOARD_COMMANDS_ = """
  .. | [[p(cs)^2]] plain replaces | ctrl adds | shift removes | ctrl-shift intersects
  .. | [[selected matters]] acts on the selection if there is one, otherwise on everything
  .. |
-/ . | search: type substring + Enter (prefix +add -remove &intersect); esc to cancel
+/ . | search: type substring or /regex/ + Enter (prefix +add -remove &intersect); esc to cancel
 a . | settings panel: a/shift-a/arrows/[key] select; space/shift-space/[key] again/enter modify; esc closes
 b . | run the background producer | ctrl-b clears the background
  .. | shift-b ........ | select the background producer (also in the settings panel)
@@ -2633,6 +2663,12 @@ class LINKPI(SelectionAPIMixin, _TooltipMixin_, JSComponent):
         # browser.  Popped here for the same reason mvc is.
         _icon_kw_   = kwargs.pop('icon', None)
         _fields_kw_ = kwargs.pop('tooltip_fields', None)
+        # None detects an IP graph, True / False force the subnet operations on or off
+        # (see _IP_LAYOUT_OP_MENU_).  Popped for the same reason: it configures this
+        # view, it is not browser state.
+        _ip_layouts_kw_ = kwargs.pop('ip_layouts', None)
+        if _ip_layouts_kw_ not in (None, True, False):
+            raise ValueError(f'linkpi(): ip_layouts= takes None (detect), True or False, not {_ip_layouts_kw_!r}')
         _w_, _h_ = _linkp_.wxh
         # Picker menus depend on how this LinkP was built, so they are per view;
         # the JS reads them from data.menu_items rather than from baked-in JSON.
@@ -2756,7 +2792,21 @@ class LINKPI(SelectionAPIMixin, _TooltipMixin_, JSComponent):
         self.EVEN_DISTRIBUTION    = 'even distribution'
         self.TFDP_LAYOUT          = 't-fdp'
         self.NCP_PACK             = 'ncp pack'
+        self.SUBNET_TREEMAP_24    = 'subnet treemap /24'
+        self.SUBNET_TREEMAP_16    = 'subnet treemap /16'
         self.layout_operations    = [label for _, label in _LAYOUT_OP_MENU_]
+        # Decided once, on the base frame: the menus are serialised into the browser at
+        # construction, as their cost annotations are.  The detector and the subnet
+        # layouts share nodeIPv4(), so "this graph has addresses" and "the treemap can
+        # place them" cannot disagree.
+        self.ip_layouts = (ipv4NodeFraction(self.graphs[0].nodes()) >= _IP_DETECT_FRACTION_
+                           if _ip_layouts_kw_ is None else _ip_layouts_kw_)
+        if self.ip_layouts:
+            self.layout_operations += [label for _, label in _IP_LAYOUT_OP_MENU_]
+            self.menu_items = {**self.menu_items,
+                               'operation':  _annotate_(_LAYOUT_OP_MENU_ + _IP_LAYOUT_OP_MENU_, treatment_for),
+                               'background': [[m, _lbl_] for m, _lbl_ in _BACKGROUND_OP_MENU_ + _IP_BACKGROUND_OP_MENU_],
+                               'community':  _annotate_(_COMMUNITY_MENU_ + _IP_COMMUNITY_MENU_, community_treatment_for)}
         self.layout_mode          = self.GRID
         self.layout_operation     = self.SPRING_NX
 
@@ -2816,7 +2866,8 @@ class LINKPI(SelectionAPIMixin, _TooltipMixin_, JSComponent):
         # repositioning nodes in response to it is the point.  Only an explicit
         # clear or another background supersedes it.
         self.background_provenance = None
-        self.background_operations = [label for _, label in _BACKGROUND_OP_MENU_]
+        self.background_operations = [label for _, label in _BACKGROUND_OP_MENU_
+                                      + (_IP_BACKGROUND_OP_MENU_ if self.ip_layouts else [])]
         self._bg_op_label_         = None
 
         # Community detection (the 'd' key): the LinkP's node_color spec as authored,
@@ -3625,6 +3676,22 @@ class LINKPI(SelectionAPIMixin, _TooltipMixin_, JSComponent):
                     self._last_cost_note_ = f'ncp pack: {_l_.budget_note}'
                 return _l_.results()
             registry[self.NCP_PACK] = RegistryEntry(_ncp_pack_, _NCP_TREATMENT_)
+        if self.ip_layouts:
+            # One treemap cell per subnet, sized by its node count, with the nodes inset
+            # inside it; the cells -- keyed by their CIDR, which the 'background + labels'
+            # state draws -- become the layout's background.  Lays out the whole graph,
+            # like circle pack: a subnet's cell is sized by all of its members.
+            # contract=False: a node's cell depends on its own address, and a merged stack
+            # of nodes from several subnets would all land in one representative's cell.
+            # CHEAP: 5 ms on VAST's 1,298 hosts, 0.76 s at ~200k (PLANNING.md G5).
+            def _subnet_treemap_(mask: int) -> Callable[[Any, Any, Any], Any]:
+                def _handler_(ln: Any, g: Any, sel: Any) -> Any:
+                    if len(sel) > 0:
+                        return None
+                    return rt.ipSubnetTreeMapLayout(g, subnet_mask=mask, cell_inset=0.2, return_cells=True)
+                return _handler_
+            registry[self.SUBNET_TREEMAP_24] = RegistryEntry(_subnet_treemap_(24), CHEAP, contract=False)
+            registry[self.SUBNET_TREEMAP_16] = RegistryEntry(_subnet_treemap_(16), CHEAP, contract=False)
         return registry
 
     #
@@ -3663,12 +3730,25 @@ class LINKPI(SelectionAPIMixin, _TooltipMixin_, JSComponent):
         # cost budget in the codebase and the model the rest of this work follows.
         _FLOW_TREATMENT_ = Treatment(truncatable=False, killable=False,
                                      levers=('support_budget', 'min_grid_res'))
-        return {
+        registry = {
             'flow field (2 layers)':      RegistryEntry(_flow_(2), _FLOW_TREATMENT_),
             'flow field (3 layers)':      RegistryEntry(_flow_(3), _FLOW_TREATMENT_),
             'flow field (streamlines)':   RegistryEntry(_flow_(2, glyph='streamline'), _FLOW_TREATMENT_),
             'neighborhood (spatial)':     RegistryEntry(_neighborhood_spatial_, CHEAP),
         }
+        if self.ip_layouts:
+            # Each subnet outlined around its nodes where they already are (ipSubnetBackground:
+            # Voronoi cells merged per CIDR, so the regions never overlap and a scattered
+            # subnet shows as several pieces).  Like 'neighborhood (spatial)' it describes
+            # the whole embedding, so the selection is not forwarded.  CHEAP: 0.05 s at
+            # 1.3k nodes, 0.11 s at 3.8k, 0.6-0.8 s at 16k (2026-10-24, random positions).
+            def _subnet_regions_(mask: int) -> Callable[[Any, Any, Any], Any]:
+                def _handler_(ln: Any, g: Any, sel: Any) -> Any:
+                    return self.rt_self.ipSubnetBackground(g, ln.pos, subnet_mask=mask)
+                return _handler_
+            registry['subnet regions /24'] = RegistryEntry(_subnet_regions_(24), CHEAP)
+            registry['subnet regions /16'] = RegistryEntry(_subnet_regions_(16), CHEAP)
+        return registry
 
     #
     # applyBackgroundOperation() - run a background producer and adopt its cells.
@@ -3873,7 +3953,7 @@ class LINKPI(SelectionAPIMixin, _TooltipMixin_, JSComponent):
         handler = _entry_.handler
         # Collapse exactly-coincident nodes into representatives so the
         # algorithm treats each stacked group as a single node (with its edges).
-        _contracted_ = self.__contractCollapsedGraph__(_ln_, _g_, _sel_)
+        _contracted_ = self.__contractCollapsedGraph__(_ln_, _g_, _sel_) if _entry_.contract else None
         if _contracted_ is None:
             _result_ = handler(_ln_, _g_, _sel_)
         else:
@@ -4604,11 +4684,20 @@ class LINKPI(SelectionAPIMixin, _TooltipMixin_, JSComponent):
         {node: '#rrggbb'} map, or None when there is nothing to color or the
         confirmation gate asked first."""
         _algo_ = self.community_algorithm if algorithm is None else algorithm
-        if _algo_ not in _COMMUNITY_ALGORITHMS_:
-            raise ValueError(f'linkpi: unknown community algorithm {_algo_!r} '
-                             f'(one of {list(_COMMUNITY_ALGORITHMS_)})')
+        _subnet_mask_ = _IP_COMMUNITY_MASKS_.get(_algo_) if self.ip_layouts else None
+        if _algo_ not in _COMMUNITY_ALGORITHMS_ and _subnet_mask_ is None:
+            _known_ = list(_COMMUNITY_ALGORITHMS_) + (list(_IP_COMMUNITY_MASKS_) if self.ip_layouts else [])
+            raise ValueError(f'linkpi: unknown community algorithm {_algo_!r} (one of {_known_})')
         _ln_, _g_ = self.dfs_layout[self.df_level], self.graphs[self.df_level]
         if _g_ is None or _g_.number_of_nodes() == 0: return None
+
+        # Colour by subnet: every node by its own address (no merge of stacked nodes, no
+        # gate -- one pass over the nodes), keyed by the CIDR the regions are keyed by.
+        if _subnet_mask_ is not None:
+            _subnet_of_ = {_n_: nodeSubnet(_n_, _subnet_mask_) for _n_ in _g_.nodes()}
+            _key_hex_   = self.rt_self.colors(sorted(set(_subnet_of_.values())))
+            self.community_colors = {_n_: _key_hex_[_s_] for _n_, _s_ in _subnet_of_.items()}
+            return self.community_colors
         # Only greedy modularity is declared to ask (interactive_treatments); the rest are
         # cheap at every size measured and are gated anyway, so no keystroke is the one
         # nothing can see.  The key is the algorithm, so confirming one cannot be

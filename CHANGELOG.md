@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **linkpi: subnet treemap layouts for a graph of IP addresses.** `shift-w` now offers
+  `subnet treemap /24` (`i`) and `subnet treemap /16` (`I`). Each lays the graph out as
+  one treemap cell per subnet, sized by node count, with every node inside its own
+  subnet's cell. Nodes that are not addresses share one `non-IPv4` cell. The cells become
+  the layout's background, so the settings panel's background row shows them, and
+  `background + labels` names each one by its CIDR. Nodes stacked at one position are
+  still placed by their own addresses. The operations lay out the whole graph and do
+  nothing while a selection is active, as `circle pack` does.
+
+  They are offered only where they apply. With `linkpi(..., ip_layouts=None)`, the
+  default, they appear when at least half of the graph's nodes are IPv4 addresses;
+  `True` or `False` forces them on or off. A node counts as an address in the forms the
+  subnet layouts already read: `10.0.0.5`, `10.0.0.5:443` or `10.0.0.5/24`.
+
+- **linkpi: subnet regions that leave the layout alone.** Under the same `ip_layouts=`
+  decision, `shift-b` offers `subnet regions /24` (`i`) and `subnet regions /16` (`I`).
+  They outline each subnet around its nodes where they already are; no node moves, and
+  no undo step is used. Like the other `shift-b` backgrounds, the regions stay through
+  later layouts until cleared. The regions never overlap and together cover the layout.
+  In a layout that does not group by subnet, a subnet's region comes in several pieces.
+  Every piece is tinted in the subnet's colour, and only the largest carries the CIDR
+  label. The same regions are available for a static linkp as
+  `p2s.ipSubnetBackground(g, pos, subnet_mask=24)`, which returns a `background=` dict.
+
+- **linkpi: colour nodes by subnet.** Under the same `ip_layouts=` decision, the `shift-d`
+  algorithm picker offers `subnet /24` (`i`) and `subnet /16` (`I`). `d` colours each
+  node by its own subnet, and `ctrl-d` restores the original colours, as with the
+  community algorithms. A subnet's colour is the one its region gets under
+  `subnet regions`, so the two can be shown together. Nodes stacked at one position
+  still each take their own subnet's colour. `z` then selects a whole subnet.
+
 ### Fixed
 
 - **`spreadlinesp(time_order=)`: dates and datetimes name their bins.** Each value was
@@ -18,6 +51,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   time zone is read as that column's local time. Values that fall in the same bin count
   once, where a repeated bin used to be drawn twice. Label strings, and ints, work as
   before.
+
+- **WebGPU: a collapsed node is drawn as the outlined cloud, not a blank pill.** On the
+  GPU path (`panelize(..., use_webgpu=True)`, `.webgpu()`), linkp drew a collapsed node
+  as a 28×14 rounded rectangle with no outline. With linkp's default white fill, that
+  was a white blob covering the edge ends with nothing drawn around it. It now draws the
+  cloud icon's own shape, about 20×13 as in the SVG, outlined in the palette's ink at
+  the SVG's width. spreadlinesp's ego clouds and their selection rings use the same
+  shape, so a ring now follows the cloud instead of a box around it. The ego cloud's
+  outline is now the ink the SVG draws rather than the axis gray. The
+  `CLOUD_ICON_W` / `CLOUD_ICON_H` / `CLOUD_ICON_RX` constants in `p2s_displaylist` are
+  gone; `cloudsToDL()` / `cloudIconToDL()` draw the cloud instead.
+
+- **linkpi's `h` help now mentions regex search.** Typing a pattern between slashes in
+  the `/` search box (`/^10\.0\./`) has always matched it as a regex: case-insensitive,
+  against node names and labels, and with the same `+` / `-` / `&` prefixes as a
+  substring search. The help only said "type substring", so nobody could find it.
 
 ## [0.5.1] — 2026-10-11
 

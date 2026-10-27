@@ -121,6 +121,44 @@ def test_the_gpu_draws_marks_where_the_svg_puts_them(webgpu_page, gpu_xyp):
         f'the SVG renderer computed -- the picture and the display list disagree')
 
 
+def test_a_collapsed_node_is_an_outlined_cloud(webgpu_page):
+    """A collapsed linkp node draws as the cloud icon on the GPU too: outlined, and the
+    icon's own shape.
+
+    It used to be a 28x14 rounded rect with no outline -- with linkp's default white
+    fill, a white blob over the edge ends with nothing drawn around it (DT,
+    20261021_user_feedback.md).  Three probes: the outline is ink, the inside is the
+    node colour, and a point inside the old rect but outside the cloud is untouched.
+    """
+    import polars as pl
+    from polars2svg import Polars2SVG
+    from polars2svg.p2s_displaylist import _cloudIconOutline_
+    _lp_ = Polars2SVG().linkp(pl.DataFrame({'fm': ['a', 'b'], 'to': ['b', 'a']}),
+                              relationships=[('fm', 'to')], pos={'a': (0.5, 0.5), 'b': (0.5, 0.5)},
+                              node_color='#ff0000', wxh=(200, 150))
+    _lp_._repr_svg_()
+    _page_, _view_, _canvas_ = webgpu_page(_lp_)
+    assert _view_.gpu_error == '', f'the GPU runtime reported: {_view_.gpu_error!r}'
+    _node_ = _lp_.df_node.filter(pl.col('__nodes__') > 1).row(0, named=True)
+    _cx_, _cy_ = float(_node_['__sx__']), float(_node_['__sy__'])
+    _img_ = _canvas_image(_canvas_)
+    _bg_  = max(_img_.getcolors(maxcolors=1 << 20))[1]
+
+    def _dark_near_(x, y):
+        _r_ = range(-1, 2)
+        return any(max(_img_.getpixel((int(round(x)) + _dx_, int(round(y)) + _dy_))[:3]) < 128
+                   for _dx_ in _r_ for _dy_ in _r_)
+    _ring_ = _cloudIconOutline_()[::4]
+    _missed_ = [(round(_px_, 1), round(_py_, 1)) for _px_, _py_ in _ring_
+                if not _dark_near_(_cx_ + _px_, _cy_ + _py_)]
+    assert not _missed_, f'no outline ink at {len(_missed_)} of {len(_ring_)} points on the silhouette: {_missed_}'
+
+    _r_, _g_, _b_, _ = _img_.getpixel((int(_cx_), int(_cy_) + 2))
+    assert _r_ > 200 and _g_ < 80 and _b_ < 80, f'the cloud is not filled with the node colour: {(_r_, _g_, _b_)}'
+    assert not _painted_near(_img_, _cx_ + 13, _cy_ - 6, _bg_, radius=1), \
+        'paint where the old 28x14 stand-in reached but the cloud does not'
+
+
 def _painted_near(img, x, y, bg, radius=4):
     """Is anything non-background within a few pixels of (x, y)?
 

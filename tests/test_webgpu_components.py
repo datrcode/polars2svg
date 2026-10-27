@@ -13,10 +13,14 @@ import polars as pl
 from view_js_utils import component_js, component_markup, component_node_ids, has_script
 
 import polars2svg
-from polars2svg.p2s_displaylist import (CLOUD_ICON_H, CLOUD_ICON_RX, CLOUD_ICON_W,
-                                        DisplayList, cubicBezierSegmentsTable,
+import numpy as np
+
+from polars2svg.p2s_displaylist import (CLOUD_ICON_UNIT, DisplayList, cloudIconDef,
+                                        cloudIconToDL, cubicBezierSegmentsTable,
                                         flattenPathD, svgToDisplayList,
+                                        _cloudIconMesh_, _cloudIconOutline_,
                                         _rootViewBoxTransform_)
+from polars2svg.spreadlinesp import SpreadLinesP
 from webgpu_test_utils import (decode_buffer, hex_to_rgb01, manifest_count,
                                parse_svg_fill_rects)
 
@@ -276,19 +280,107 @@ class TestLinkPWebGPU(unittest.TestCase):
                 self.assertGreaterEqual(float(row[5 + ch]), val - 0.5 / 255.0 - 1e-4, hx)
                 self.assertLessEqual(float(row[5 + ch]), val + 0.5 / 255.0 + 1e-4, hx)
 
-    def test_collapsed_nodes_emit_cloud_rects(self):
-        # every node at one position -> a single collapsed node, drawn as the shared
-        # rounded-rect cloud approximation rather than a circle
+    def test_collapsed_nodes_draw_the_outlined_cloud(self):
+        # every node at one position -> a single collapsed node.  Under WebGPU it used to
+        # be a 28x14 rounded rect with no outline: with linkp's default white node fill,
+        # a white blob over the edge ends (DT, 20261021_user_feedback.md)
         _pos_ = {n: (0.5, 0.5) for n in _NODES_}
         lp = _P2S_.linkp(df=_DF_, relationships=[('fm', 'to')], pos=_pos_)
         self.assertRegex(lp.svg, r'<use href="#cloud_\d+"')
         payload = lp.webgpu()
         self.assertEqual(manifest_count(payload, 'circle'), 0)
-        rects = decode_buffer(payload, 'rect')
-        _clouds_ = [r for r in rects if abs(float(r[2]) - CLOUD_ICON_W) < 1e-4
-                                    and abs(float(r[3]) - CLOUD_ICON_H) < 1e-4]
-        self.assertEqual(len(_clouds_), len(lp.df_node))
-        self.assertAlmostEqual(float(_clouds_[0][4]), CLOUD_ICON_RX, places=5)
+        self.assertEqual(manifest_count(payload, 'rect'), 1)       # the canvas background only
+        _node_ = lp.df_node.row(0, named=True)
+        _v_    = _tri_vertices_(payload)
+        def _colored_(hx):
+            return _v_[np.all(np.abs(_v_[:, 2:5] - hex_to_rgb01(hx)) < 1e-3, axis=1)]
+        _m_    = len(_cloudIconOutline_())
+        _fill_ = _colored_(_node_['__nc_hex__'])
+        _band_ = _colored_(lp.p2s.colorTyped('label', 'defaultfg'))   # the definition's stroke
+        self.assertEqual((len(_fill_), len(_band_)), (_m_, 2 * _m_))
+        # the silhouette (about 20x13), centred where the SVG's <use> puts it
+        _lo_, _hi_ = _fill_[:, :2].min(axis=0), _fill_[:, :2].max(axis=0)
+        np.testing.assert_allclose(_hi_ - _lo_, [20.0, 12.86], atol=0.05)
+        np.testing.assert_allclose(_lo_ - [_node_['__sx__'], _node_['__sy__']], [-10.0, -7.14], atol=0.05)
+        # the outline straddles it by half the SVG's stroke-width="0.5" icon units
+        _half_ = 0.25 * CLOUD_ICON_UNIT
+        np.testing.assert_allclose(_band_[:, :2].min(axis=0), _lo_ - _half_, atol=0.05)
+        np.testing.assert_allclose(_band_[:, :2].max(axis=0), _hi_ + _half_, atol=0.05)
+
+
+def _tri_vertices_(payload):
+    '''(n, 6) x, y, r, g, b, a for every triangle vertex in a payload.'''
+    if 'tri_v' not in payload['buffers']: return np.zeros((0, 6), dtype=np.float32)
+    import base64
+    return np.frombuffer(base64.b64decode(payload['buffers']['tri_v']), dtype='<f4').reshape(-1, 6)
+
+
+class TestCloudIcon(unittest.TestCase):
+    '''The GPU cloud is the SVG icon's own silhouette (cloudsToDL / cloudIconToDL).'''
+
+    def test_the_outline_is_the_icon_cloudicondef_draws(self):
+        # spreadlinesp keeps a hand-converted copy of the same path for its clipped
+        # selection ring; both must describe one shape
+        (_ref_, _), = flattenPathD(SpreadLinesP._cloud_outline_d_(0.0, 0.0), 8)
+        np.testing.assert_allclose(np.asarray(_ref_[:-1]), np.asarray(_cloudIconOutline_()), atol=0.02)
+
+    def test_the_fill_covers_the_silhouette_exactly(self):
+        _xy_, _idx_, _, _ = _cloudIconMesh_(1.0)
+        _t_ = _xy_[_idx_.reshape(-1, 3)]
+        _tri_area_ = 0.5 * np.abs((_t_[:, 1, 0] - _t_[:, 0, 0]) * (_t_[:, 2, 1] - _t_[:, 0, 1])
+                                  - (_t_[:, 2, 0] - _t_[:, 0, 0]) * (_t_[:, 1, 1] - _t_[:, 0, 1])).sum()
+        _poly_area_ = 0.5 * abs(np.sum(_xy_[:, 0] * np.roll(_xy_[:, 1], -1) - np.roll(_xy_[:, 0], -1) * _xy_[:, 1]))
+        self.assertAlmostEqual(_tri_area_, _poly_area_, places=6)
+
+    def test_the_band_is_the_stroke_width_and_capped_at_the_cusps(self):
+        _xy_, _, _band_, _ = _cloudIconMesh_(2.0)
+        _w_ = np.linalg.norm(_band_[:len(_xy_)] - _band_[len(_xy_):], axis=1)
+        self.assertAlmostEqual(float(_w_.min()), 2.0, places=3)
+        self.assertLessEqual(float(_w_.max()), 4.0 + 1e-9)          # a miter limit of 2
+
+    def test_each_cloud_is_filled_then_outlined_before_the_next(self):
+        # the SVG paints a cloud's outline before the next cloud's fill, so where two
+        # overlap the later one covers the earlier one's outline -- in one draw call
+        dl = DisplayList(100, 100)
+        from polars2svg.p2s_displaylist import cloudsToDL
+        cloudsToDL(dl, [30.0, 40.0], [50.0, 50.0], fill_rgba=[(1, 1, 1, 1), (1, 1, 1, 1)],
+                   stroke_rgba=(0, 0, 0, 1), stroke_w=1.0)
+        self.assertEqual([k for k, _, _ in dl._ops_], ['tri'])
+        _verts_, _idx_ = dl._ops_[0][1]
+        _per_ = len(_verts_) // 2
+        _first_, _second_ = _idx_[:len(_idx_) // 2], _idx_[len(_idx_) // 2:]
+        self.assertLess(int(_first_.max()), _per_)
+        self.assertGreaterEqual(int(_second_.min()), _per_)
+        # within a cloud: fill vertices (white) are indexed before the band (black)
+        _white_ = np.all(_verts_[_first_, 2:5] == 1.0, axis=1)
+        _k_ = int(np.argmin(_white_))
+        self.assertTrue(_white_[:_k_].all() and not _white_[_k_:].any())
+
+    def test_an_outline_only_ring_has_no_fill(self):
+        dl = DisplayList(100, 100)
+        cloudIconToDL(dl, 50.0, 50.0, stroke='#ff0000', stroke_w=2.0)
+        _verts_, _ = dl._ops_[0][1]
+        self.assertEqual(len(_verts_), 2 * len(_cloudIconOutline_()))
+        self.assertTrue(np.all(_verts_[:, 2:5] == [1.0, 0.0, 0.0]))
+
+    def test_the_parser_takes_the_outline_from_the_definition(self):
+        # a stroke on the referenced path wins over the <use>'s; an unstroked definition
+        # (spreadlinesp's cloud_outline_) inherits the <use>'s
+        _svg_ = ('<svg width="100" height="100"><defs>'
+                 + cloudIconDef('cloud_1', stroke='#123456') + cloudIconDef('cloud_outline_1', stroke=None)
+                 + '</defs><use href="#cloud_1" x="30" y="50" fill="#abcdef" stroke="#ff0000"/>'
+                 '<use href="#cloud_outline_1" x="70" y="50" fill="none" stroke="#00ff00"/>'
+                 '<path d="M 0 0 L 10 10" stroke="#0000ff"/></svg>')
+        dl = DisplayList(100, 100)
+        svgToDisplayList(_svg_, dl, _P2S_)
+        _tris_ = [p for k, p, _ in dl._ops_ if k == 'tri']
+        self.assertEqual(len(_tris_), 2)
+        def _colors_(verts):
+            return sorted({tuple(round(float(c), 3) for c in _rgb_) for _rgb_ in verts[:, 2:5]})
+        def _expect_(*hexes):
+            return sorted({tuple(round(float(c), 3) for c in hex_to_rgb01(h)) for h in hexes})
+        self.assertEqual(_colors_(_tris_[0][0]), _expect_('#abcdef', '#123456'))
+        self.assertEqual(_colors_(_tris_[1][0]), _expect_('#00ff00'))
 
 
 class TestChPWebGPU(unittest.TestCase):
@@ -361,6 +453,17 @@ class TestSpreadLinesPWebGPU(unittest.TestCase):
         self.assertAlmostEqual(float(_bg_[2]), (sl.vx1 - sl.vx0) * _s_, places=2)
         self.assertAlmostEqual(float(_bg_[3]), (sl.vy1 - sl.vy0) * _s_, places=2)
 
+    def test_the_ego_cloud_is_outlined_in_the_ink_the_svg_draws(self):
+        # the <use> says stroke=axis, but the definition's path strokes with the ink, and
+        # a stroke on the referenced element wins -- the GPU used to draw the axis gray
+        sl = _P2S_.spreadlinesp(_DF_, [('fm', 'to')], ego=[_NODES_[0], _NODES_[1]], time='ts')
+        _clouds_ = len(re.findall(r'<use href="#cloud_\d+"', sl.svg))
+        self.assertGreater(_clouds_, 0)
+        _v_ = _tri_vertices_(sl.webgpu())
+        def _n_(hx): return int(np.all(np.abs(_v_[:, 2:5] - hex_to_rgb01(hx)) < 1e-3, axis=1).sum())
+        self.assertEqual(_n_(sl.p2s.colorTyped('label', 'defaultfg')), _clouds_ * 2 * len(_cloudIconOutline_()))
+        self.assertEqual(_n_(sl.p2s.colorTyped('axis', 'default')), 0)
+
     def test_selection_ring_is_drawn_and_clipped(self):
         # the parse route lost this both ways: a full selection drew an alpha-0 rect
         # (invisible) and a partial one drew the ring unclipped (looked fully selected)
@@ -370,7 +473,7 @@ class TestSpreadLinesPWebGPU(unittest.TestCase):
                                     highlight_nodes=set(_egos_))
         _part_ = _P2S_.spreadlinesp(_DF_, [('fm', 'to')], ego=_egos_, time='ts',
                                     highlight_nodes={_egos_[0]})
-        def _n_(sl): return manifest_count(sl.webgpu(), 'line')
+        def _n_(sl): return manifest_count(sl.webgpu(), 'tri')   # the ring is the cloud's outline band
         self.assertGreater(_n_(_full_), _n_(_none_))          # a ring is actually drawn
         self.assertEqual(_n_(_part_), _n_(_full_))            # same ring, different clip
         def _scissored_(sl): return [m for m in sl.webgpu()['manifest'] if 'scissor' in m]

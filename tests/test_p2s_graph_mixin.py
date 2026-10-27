@@ -15,6 +15,7 @@ import networkx as nx
 import polars as pl
 
 from polars2svg import Polars2SVG, InvalidSpecError
+from polars2svg.p2s_background_mixin import INHERIT
 
 
 def _make_df():
@@ -866,6 +867,84 @@ class TestLoadPositions(unittest.TestCase):
         linkp = _make_linkp_stub(self.pos)  # no all_nodes attribute
         result = self.p2s.loadPositions(fname, linkp)
         self.assertIsInstance(result, dict)
+
+
+class TestNodeIPv4(unittest.TestCase):
+    '''The one IPv4 parser behind the subnet layouts and linkpi's IP-graph detection.'''
+
+    def test_bare_port_and_cidr_forms_parse(self):
+        from polars2svg.p2s_graph_mixin import nodeIPv4
+        for _node_ in ('10.0.0.5', '10.0.0.5:443', '10.0.0.5/24'):
+            self.assertEqual(str(nodeIPv4(_node_)), '10.0.0.5', _node_)
+
+    def test_non_addresses_are_none(self):
+        # '|' is how a tuple endpoint joins its columns; that is not an address form
+        from polars2svg.p2s_graph_mixin import nodeIPv4
+        for _node_ in ('example.com', '10.0.0', '10.0.0.256', '10.0.0.5|443', 'fe80::1', 42):
+            self.assertIsNone(nodeIPv4(_node_), _node_)
+
+    def test_subnet_names(self):
+        # the key both a region and a subnet-coloured node hash their colour from
+        from polars2svg.p2s_graph_mixin import nodeSubnet
+        self.assertEqual(nodeSubnet('10.1.2.3:443', 24), '10.1.2.0/24')
+        self.assertEqual(nodeSubnet('10.1.2.3', 16), '10.1.0.0/16')
+        self.assertEqual(nodeSubnet('example.com', 24), 'non-IPv4')
+
+    def test_fraction(self):
+        from polars2svg.p2s_graph_mixin import ipv4NodeFraction
+        self.assertEqual(ipv4NodeFraction(['10.0.0.1', '10.0.0.2', 'host', 'x']), 0.5)
+        self.assertEqual(ipv4NodeFraction([]), 0.0)
+        self.assertEqual(ipv4NodeFraction(iter(['1.2.3.4'])), 1.0)
+
+
+class TestIpSubnetBackground(unittest.TestCase):
+    '''Subnet regions around nodes that stay where they are.'''
+
+    @classmethod
+    def setUpClass(cls):
+        cls.p2s = Polars2SVG()
+
+    def _graph_(self, pos):
+        g = nx.Graph()
+        g.add_nodes_from(pos)
+        return g
+
+    def test_regions_cover_their_own_nodes_and_never_overlap(self):
+        from shapely.geometry import Point
+        from shapely.ops import unary_union
+        _rng_ = random.Random(5)
+        _pos_ = {f'10.0.{_rng_.randrange(3)}.{_i_}': (_rng_.random(), _rng_.random()) for _i_ in range(60)}
+        _pos_['example.com'] = (0.5, 0.5)
+        _before_ = dict(_pos_)
+        _bg_ = self.p2s.ipSubnetBackground(self._graph_(_pos_), _pos_)
+        self.assertEqual(_pos_, _before_)                              # nothing moves
+        _shapes_ = [_r_.shape for _r_ in _bg_.values()]
+        self.assertAlmostEqual(sum(_s_.area for _s_ in _shapes_), unary_union(_shapes_).area, places=9)
+        for _node_, _xy_ in _pos_.items():
+            _cidr_ = 'non-IPv4' if _node_ == 'example.com' else '.'.join(_node_.split('.')[:3]) + '.0/24'
+            _mine_ = [_r_.shape for _k_, _r_ in _bg_.items() if _k_.split(' [')[0] == _cidr_]
+            self.assertTrue(any(_s_.buffer(1e-9).contains(Point(_xy_)) for _s_ in _mine_), _node_)
+
+    def test_a_scattered_subnet_is_tinted_alike_and_labelled_once(self):
+        # 10.0.0.x on two far corners with 10.0.1.x between them: two pieces of /24 one
+        _pos_ = {'10.0.0.1': (0.0, 0.0), '10.0.0.2': (0.05, 0.0), '10.0.0.3': (1.0, 1.0),
+                 '10.0.1.1': (0.5, 0.5), '10.0.1.2': (0.45, 0.55), '10.0.1.3': (0.55, 0.45)}
+        _bg_ = self.p2s.ipSubnetBackground(self._graph_(_pos_), _pos_, fill_opacity=0.3)
+        _pieces_ = {_k_: _r_ for _k_, _r_ in _bg_.items() if _k_.startswith('10.0.0.0/24')}
+        self.assertEqual(sorted(_pieces_), ['10.0.0.0/24', '10.0.0.0/24 [2]'])
+        _main_, _other_ = _pieces_['10.0.0.0/24'], _pieces_['10.0.0.0/24 [2]']
+        self.assertGreaterEqual(_main_.shape.area, _other_.shape.area)   # the label goes on the largest
+        self.assertIs(_main_.label, INHERIT)                               # -> its key, the CIDR
+        self.assertIsNone(_other_.label)
+        _co_ = self.p2s.colors(['10.0.0.0/24'])['10.0.0.0/24']
+        self.assertEqual({_main_.fill, _other_.fill}, {_co_})
+        self.assertEqual({_main_.fill_opacity, _other_.fill_opacity}, {0.3})
+
+    def test_nodes_without_a_position_are_left_out(self):
+        _pos_ = {'10.0.0.1': (0.0, 0.0), '10.0.1.1': (1.0, 0.0), '10.0.2.1': (0.0, 1.0), '10.0.3.1': (1.0, 1.0)}
+        g = self._graph_(_pos_)
+        g.add_node('192.168.0.1')
+        self.assertNotIn('192.168.0.0/24', self.p2s.ipSubnetBackground(g, _pos_))
 
 
 class TestIpSubnetTreeMapLayout(unittest.TestCase):

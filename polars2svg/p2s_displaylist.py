@@ -12,7 +12,9 @@ from typing import Any
 # webgpu_payload(), so the SVG-only render path pays almost nothing.
 #
 import base64
+import functools
 import math
+import re
 
 import numpy as np
 import polars as pl
@@ -26,11 +28,11 @@ FLOATS_PER_INSTANCE = {
     'tri':    6,    # per-VERTEX: x, y, r, g, b, a (separate u32 index buffer)
 }
 
-# The collapsed-node cloud icon (<use href="#cloud">) has no GPU primitive.  Both the
-# svgToDisplayList() parser and LinkP's instrumented path approximate it with this
-# rounded rect, centered on the icon's anchor point -- shared here so linkp and
-# spreadlinesp cannot drift on what a collapsed node looks like under GPU.
-CLOUD_ICON_W, CLOUD_ICON_H, CLOUD_ICON_RX = 28.0, 14.0, 6.0
+# One unit of the cloud icon's own coordinates (its viewBox), in the coordinates its
+# <use> is placed in.  cloudIconDef() fits a 35-unit square viewBox into a 100x50
+# viewport, so the shorter side decides the scale: 50/35.  A stroke-width written on the
+# <use>, or inherited by it, is in icon units too -- linkp's 0.5 draws 0.71 px.
+CLOUD_ICON_UNIT = 10.0 / 7.0
 
 # The <defs> definition of that same icon, as it is written into the SVG.  linkp emits
 # one copy and spreadlinesp two (a stroked and an unstroked variant); those were three
@@ -276,6 +278,120 @@ def pathToDL(dl: Any, d: str, fill: str | None = None, stroke: str | None = None
 
 
 #
+# _cloudIconOutline_() - the cloud icon's silhouette as one closed ring of points,
+# relative to the <use> anchor, exactly where cloudIconDef() puts it
+#
+# Derived from _CLOUD_ICON_D_ rather than kept as a second copy of the shape.  The
+# definition's translate(-50,-25), the viewport's 25 px centring in x and the viewBox
+# scale combine to  x = (10*vx - 125)/7,  y = (10*vy - 120)/7.  The asset uses H, which
+# flattenPathD() does not read, so its tokens are rewritten to M/L/C/Z first.  The ring
+# comes back without its closing duplicate point.
+#
+@functools.cache
+def _cloudIconOutline_(samples_per_curve: int = 8) -> tuple:
+    _tok_ = re.findall(r'[A-Za-z]|-?\d*\.?\d+', _CLOUD_ICON_D_)
+    _out_ : list = []
+    _y_   = '0'
+    i     = 0
+    while i < len(_tok_):
+        _c_ = _tok_[i]
+        if   _c_ == 'H': _out_ += ['L', _tok_[i + 1], _y_]; i += 2
+        elif _c_ == 'Z': _out_.append('Z');                i += 1
+        else:
+            _n_    = {'M': 2, 'L': 2, 'C': 6}[_c_]
+            _out_ += _tok_[i:i + 1 + _n_]
+            _y_    = _tok_[i + _n_]
+            i     += 1 + _n_
+    (_pts_, _), = flattenPathD(' '.join(_out_), samples_per_curve)
+    _pts_ = [((10.0 * vx - 125.0) / 7.0, (10.0 * vy - 120.0) / 7.0) for vx, vy in _pts_]
+    if _pts_[0] == _pts_[-1]: _pts_ = _pts_[:-1]
+    return tuple(_pts_)
+
+
+#
+# _cloudIconMesh_() - one cloud as triangles, relative to its anchor
+# - returns (fill_xy (m,2), fill_idx, band_xy (2m,2), band_idx), all read-only
+# - the band is the outline: stroke_w wide, centred on the silhouette as an SVG stroke
+#   is.  Each vertex moves along the bisector of its two edge normals, lengthened so the
+#   band keeps its width through a bend and capped at 2x, as a miter limit caps a spike
+#   at the cusps where two lobes meet.
+#
+@functools.lru_cache(maxsize=16)
+def _cloudIconMesh_(stroke_w: float) -> tuple:
+    _pts_ = np.asarray(_cloudIconOutline_(), dtype=np.float64)
+    _m_   = len(_pts_)
+    _fill_idx_ = np.asarray(triangulatePolygon([tuple(p) for p in _pts_]), dtype=np.uint32).reshape(-1)
+
+    def _edgeNormals_(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+        _d_ = b - a
+        _n_ = np.stack([_d_[:, 1], -_d_[:, 0]], axis=1)
+        return _n_ / np.linalg.norm(_n_, axis=1, keepdims=True)
+    # (dy, -dx) points outward on a ring of positive signed area, inward otherwise
+    _area_ = float(np.sum(_pts_[:, 0] * np.roll(_pts_[:, 1], -1) - np.roll(_pts_[:, 0], -1) * _pts_[:, 1]))
+    _n_in_  = _edgeNormals_(np.roll(_pts_, 1, axis=0), _pts_)
+    _n_out_ = _edgeNormals_(_pts_, np.roll(_pts_, -1, axis=0))
+    _bis_   = _n_in_ + _n_out_
+    _bis_  /= np.maximum(np.linalg.norm(_bis_, axis=1, keepdims=True), 1e-12)
+    _cos_   = np.maximum(np.sum(_bis_ * _n_out_, axis=1, keepdims=True), 0.5)
+    _off_   = _bis_ * (0.5 * float(stroke_w) / _cos_) * (1.0 if _area_ > 0.0 else -1.0)
+    _band_xy_ = np.vstack([_pts_ + _off_, _pts_ - _off_])
+    _o_  = np.arange(_m_, dtype=np.uint32)
+    _o1_ = np.roll(_o_, -1)
+    _band_idx_ = np.stack([_o_, _o1_, _o1_ + _m_, _o_, _o1_ + _m_, _o_ + _m_], axis=1).reshape(-1)
+
+    _mesh_ = (_pts_, _fill_idx_, _band_xy_, _band_idx_)
+    for _a_ in _mesh_: _a_.flags.writeable = False
+    return _mesh_
+
+
+#
+# cloudsToDL() - record n cloud icons centred on (cx[i], cy[i]) as ONE tri op
+# - fill_rgba is (n, 4) floats per cloud, or None for an outline-only cloud
+# - stroke_rgba is one (r, g, b, a) for every outline, or None for no outline;
+#   stroke_w is in the coordinates being recorded (multiply an icon-unit width by
+#   CLOUD_ICON_UNIT)
+#
+# The SVG paints each cloud's fill, then its outline, then the next cloud.  Triangles
+# draw in index order, so writing every cloud's fill and outline into one index buffer,
+# cloud by cloud, keeps that overlap order in a single draw call -- which a fill op
+# followed by an outline op could not.  The mesh is the icon's real silhouette
+# (_cloudIconMesh_), so the GPU and SVG views cover the same pixels.
+#
+def cloudsToDL(dl: Any, cx: Any, cy: Any, fill_rgba: Any = None, stroke_rgba: tuple | None = None,
+               stroke_w: float = 0.0, scissor: Any = None) -> None:
+    _cx_ = np.asarray(cx, dtype=np.float64).reshape(-1)
+    _cy_ = np.asarray(cy, dtype=np.float64).reshape(-1)
+    _n_  = len(_cx_)
+    _fill_xy_, _fill_idx_, _band_xy_, _band_idx_ = _cloudIconMesh_(float(stroke_w))
+    _parts_ : list = []          # (xy relative to the anchor, indices, per-cloud rgba (n, 4))
+    if fill_rgba is not None:
+        _parts_.append((_fill_xy_, _fill_idx_, np.asarray(fill_rgba, dtype=np.float64).reshape(_n_, 4)))
+    if stroke_rgba is not None and stroke_w > 0.0 and stroke_rgba[3] > 0.0:
+        _parts_.append((_band_xy_, _band_idx_, np.tile(np.asarray(stroke_rgba, dtype=np.float64), (_n_, 1))))
+    if _n_ == 0 or not _parts_: return
+    _xy_   = np.vstack([_p_[0] for _p_ in _parts_])                                   # (v, 2)
+    _v_    = len(_xy_)
+    _idx_  = np.concatenate([_p_[1] + np.uint32(sum(len(_q_[0]) for _q_ in _parts_[:_k_]))
+                             for _k_, _p_ in enumerate(_parts_)])                     # one cloud
+    _rgba_ = np.concatenate([np.repeat(_p_[2][:, None, :], len(_p_[0]), axis=1)
+                             for _p_ in _parts_], axis=1)                             # (n, v, 4)
+    _all_xy_  = _xy_[None, :, :] + np.stack([_cx_, _cy_], axis=1)[:, None, :]          # (n, v, 2)
+    _all_idx_ = _idx_[None, :] + (np.arange(_n_, dtype=np.uint32) * np.uint32(_v_))[:, None]
+    dl.tris(_all_xy_.reshape(-1, 2), _all_idx_.reshape(-1), _rgba_.reshape(-1, 4), svg='', scissor=scissor)
+
+
+#
+# cloudIconToDL() - one cloud icon centred on (cx, cy); the scalar form of cloudsToDL()
+#
+def cloudIconToDL(dl: Any, cx: float, cy: float, fill: str | None = None, stroke: str | None = None, stroke_w: float = 0.0,
+                  opacity: float = 1.0, stroke_opacity: float | None = None, scissor: Any = None) -> None:
+    _fill_   = None if fill is None or fill == 'none' else [hexToRGBA(fill, opacity)]
+    _stroke_ = (None if stroke is None or stroke == 'none'
+                else hexToRGBA(stroke, opacity if stroke_opacity is None else stroke_opacity))
+    cloudsToDL(dl, [cx], [cy], _fill_, _stroke_, stroke_w, scissor=scissor)
+
+
+#
 # cubicBezierSegmentsTable() - flatten cubic beziers into line segments, polars-side
 # - df has one row per curve with endpoint/control-point columns (names passed in)
 # - returns one row per segment with __bx__/__by__ -> __bx2__/__by2__ endpoints;
@@ -337,7 +453,9 @@ def _rootViewBoxTransform_(svg_str: str) -> tuple:
 # new component.  The document's root viewBox is honored (coordinates, lengths,
 # and font sizes are mapped into canvas pixels), so viewBox-scaled views convert
 # at the correct size.  <defs> blocks are skipped; every <use> (in practice only the
-# linkp/spreadlines cloud icon) approximates as a rounded rect.
+# linkp/spreadlines cloud icon) draws as that icon's silhouette (cloudIconToDL).
+# Inherited attributes are not tracked, here or anywhere in this parser: a stroke-width
+# the <use> takes from an enclosing <g> reads as the default 1.
 # Gradients/clip-paths are ignored -- a component needing a clip should record a
 # per-op scissor instead.
 #
@@ -349,6 +467,11 @@ def svgToDisplayList(svg_str: str, dl: Any, p2s: Any) -> None:
     def _TY_(y: float) -> float: return y * _scale_ + _ty_
     def _TL_(v: float) -> float: return v * _scale_
     def _TDASH_(d: tuple | None) -> tuple | None: return None if d is None else (d[0] * _scale_, d[1] * _scale_)
+    # A cloud definition's path carries its own stroke, and SVG gives that precedence over
+    # the stroke on the <use> -- so read it before the <defs> go.
+    _def_strokes_ = {_m_.group(1): _m_.group(2) for _m_ in
+                     re.finditer(r'<g id="([^"]+)"[^>]*>(?:(?!</g>).)*?<path\b[^>]*?\sstroke="([^"]*)"',
+                                 svg_str, flags=re.DOTALL)}
     _s_ = re.sub(r'<defs>.*?</defs>', '', svg_str, flags=re.DOTALL)
     _elem_re_ = re.compile(r'<(rect|circle|line|polygon|path|text|use)\b([^>]*?)(/>|>)', re.DOTALL)
     _attr_re_ = re.compile(r'([\w-]+)="([^"]*)"')
@@ -409,10 +532,9 @@ def svgToDisplayList(svg_str: str, dl: Any, p2s: Any) -> None:
                      fill_opacity=_fill_op_, stroke_opacity=_stroke_op_, dash=_dash_,
                      xform=lambda px, py: (_TX_(px), _TY_(py)))
         elif tag == 'use':
-            # cloud icon approximation: rounded rect centered on (x, y)
-            dl.rect(_TX_(_f_('x') - CLOUD_ICON_W / 2.0), _TY_(_f_('y') - CLOUD_ICON_H / 2.0),
-                    _TL_(CLOUD_ICON_W), _TL_(CLOUD_ICON_H),
-                    _fill_ or '#ffffff', rx=_TL_(CLOUD_ICON_RX), opacity=_opacity_)
+            _use_stroke_ = _def_strokes_.get(a.get('href', '').lstrip('#'), _stroke_)
+            cloudIconToDL(dl, _TX_(_f_('x')), _TY_(_f_('y')), fill=_fill_ or '#ffffff', stroke=_use_stroke_,
+                          stroke_w=_stroke_w_ * CLOUD_ICON_UNIT, opacity=_fill_op_, stroke_opacity=_stroke_op_)
         elif tag == 'text' and close == '>':
             _end_ = _s_.find('</text>', pos)
             if _end_ < 0: continue

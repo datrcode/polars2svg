@@ -24,8 +24,10 @@ keywords        = ["polars", "svg", "visualization", "jupyter", "dataframe", "ch
 # versions pinned in uv.lock (the known-good set). They guard against an install
 # resolving an ancient release while staying wide enough to avoid downstream
 # dependency conflicts. Exception: pillow's floor is security-driven, not a
-# compatibility floor — 12.3 is the first release fixing PYSEC-2026-2253..2257,
-# so it sits at the locked version with no headroom on purpose.  polars is the
+# compatibility floor — 13.0 is the first release fixing the 38 advisories
+# published in October 2026 (PYSEC-2026-4326..4328, GHSA-78g4-xqwv-q3g8 and 34
+# CVEs), on top of 12.3's PYSEC-2026-2253..2257, so it sits at the locked
+# version with no headroom on purpose.  polars is the
 # other exception: 1.36 is a *measured* minimum, not a floor with headroom.  The
 # suite was stepped across releases against the declared floors (PLANNING.md R8,
 # 2026-09-17) and fails 95 tests at 1.25-1.33 and 6 at 1.35.2, reaching 0 only at
@@ -54,7 +56,7 @@ dependencies    = [
   "numpy>=1.26",
   "polars>=1.36",
   "pyarrow>=16",
-  "pillow>=12.3",
+  "pillow>=13.0",
   "platformdirs>=4.0",
 ]
 

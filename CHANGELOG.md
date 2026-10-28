@@ -72,6 +72,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   smaller `max_shelf`, down to `max_shelf=0` for no shelf.
 - **Stack control clicks now notify `onSelection` callbacks** when they show a different
   frame, as the documentation already said they did.
+- **The minimum pillow is now 13.0** (was 12.3). 13.0 is the first release that fixes
+  the 38 advisories published against pillow in October 2026 (PYSEC-2026-4326..4328,
+  GHSA-78g4-xqwv-q3g8 and 34 CVEs). The lock also moves certifi to 2026.10.23 for
+  PYSEC-2026-4320.
 
 ### Fixed
 

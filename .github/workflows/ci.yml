@@ -33,8 +33,8 @@ jobs:
   #
   # The extras are load-bearing, not belt-and-braces: with base dependencies
   # alone the count is 724 in 14 files, because export.py, p2s_reactive_base.py
-  # and the colour/atlas helpers only resolve once svglib, param and friends are
-  # installed. They are named one by one rather than --all-extras for the same
+  # and the colour/atlas helpers only resolve once svglib (export's rasterizer
+  # then; cairosvg now), param and friends are installed. They are named one by one rather than --all-extras for the same
   # reason pip-audit names them below: --all-extras pulls mlx-cuda's Linux-only
   # NVIDIA wheels onto this runner.
   type-check:
@@ -56,23 +56,12 @@ jobs:
         # this job runs. `uvx mypy` resolved whatever was newest that morning --
         # the local .ruff_cache had collected nine ruff versions the same way.
         #
-        # rlPyCairo and pycairo are excluded, and BOTH names are needed.  pycairo
-        # publishes no Linux wheel, so it compiles from its sdist against cairo's
-        # headers, which this runner does not carry -- `uv sync` died as
-        # `Dependency "cairo" not found`, which reads like a network flake and is a
-        # compile.  ci.yml has warned about this since the pip-audit step was written;
-        # that step dodges it with --no-deps --disable-pip.
-        #
-        # Naming fewer extras does not help: rlPyCairo is in [dependency-groups] dev
-        # itself, not only in [export].  Excluding rlpycairo alone is also not enough --
-        # pycairo stays in the resolution and still builds.
-        #
-        # Safe to skip here: rlPyCairo is reportlab's renderPM backend, used only to
-        # rasterize SVG->PNG in the golden-image tests.  These jobs type-check and lint;
-        # they never rasterize.  Verified the mypy count is identical without it.
+        # Every package in the lock installs from a wheel, so the sync needs no
+        # compiler and no system headers.  (Until 2026-10-28 [export] chained
+        # rlPyCairo -> pycairo, which has no Linux wheel, and this sync had to exclude
+        # both by name; PNG export is cairosvg now, pure Python over cairocffi.)
         run: |
-          uv sync --extra layouts --extra interactive --extra export --group dev \
-                  --no-install-package rlpycairo --no-install-package pycairo
+          uv sync --extra layouts --extra interactive --extra export --group dev
 
       - name: Run mypy against a ceiling
         # 60 errors stand today and are burned down by module; until that
@@ -145,23 +134,12 @@ jobs:
         # runs.  bandit and pip-audit below are still `uvx` and still unpinned --
         # they read the repo and an exported requirements file, not the venv.
         #
-        # rlPyCairo and pycairo are excluded, and BOTH names are needed.  pycairo
-        # publishes no Linux wheel, so it compiles from its sdist against cairo's
-        # headers, which this runner does not carry -- `uv sync` died as
-        # `Dependency "cairo" not found`, which reads like a network flake and is a
-        # compile.  ci.yml has warned about this since the pip-audit step was written;
-        # that step dodges it with --no-deps --disable-pip.
-        #
-        # Naming fewer extras does not help: rlPyCairo is in [dependency-groups] dev
-        # itself, not only in [export].  Excluding rlpycairo alone is also not enough --
-        # pycairo stays in the resolution and still builds.
-        #
-        # Safe to skip here: rlPyCairo is reportlab's renderPM backend, used only to
-        # rasterize SVG->PNG in the golden-image tests.  These jobs type-check and lint;
-        # they never rasterize.  Verified the mypy count is identical without it.
+        # Every package in the lock installs from a wheel, so the sync needs no
+        # compiler and no system headers.  (Until 2026-10-28 [export] chained
+        # rlPyCairo -> pycairo, which has no Linux wheel, and this sync had to exclude
+        # both by name; PNG export is cairosvg now, pure Python over cairocffi.)
         run: |
-          uv sync --extra layouts --extra interactive --extra export --group dev \
-                  --no-install-package rlpycairo --no-install-package pycairo
+          uv sync --extra layouts --extra interactive --extra export --group dev
 
       - name: bandit (static security scan)
         # Findings are either fixed or annotated in-line with a justified
@@ -197,12 +175,12 @@ jobs:
         # --no-deps AND --disable-pip, and it takes both. pip-audit's default path for
         # a requirements file is to shell out to
         # `pip install --dry-run --report -r ...` inside a throwaway virtualenv, and
-        # --dry-run still builds an sdist to read its metadata. `export` brings
-        # rlPyCairo -> pycairo, which publishes no Linux wheel, so that build wants
-        # cairo's headers -- which this job does not carry (the clean-room job
-        # installs libcairo2-dev; this one had never needed a toolchain). It failed as
+        # --dry-run still builds an sdist to read its metadata. When `export` still
+        # brought rlPyCairo -> pycairo, which publishes no Linux wheel, that build
+        # wanted cairo's headers, which this job does not carry. It failed as
         # `Dependency "cairo" not found` on all three attempts, which reads like a
-        # flaky network and is a compile.
+        # flaky network and is a compile. The flags stay: whatever the lock holds, an
+        # audit should look names up, not build anything.
         #
         # --no-deps alone does NOT avoid that: it skips dependency *resolution* while
         # still invoking pip. --disable-pip is the flag that keeps pip out entirely,
@@ -212,8 +190,8 @@ jobs:
         # database and takes ~2s instead of ~60s.
         #
         # Coverage is unchanged and was checked rather than assumed: 75 packages
-        # audited (the two short of the file are Windows/emscripten-marker-only),
-        # pycairo, lxml, tornado, urllib3, reportlab and svglib among them, and a
+        # audited then (the two short of the file are Windows/emscripten-marker-only),
+        # tornado and urllib3 among them, and a
         # vulnerable pin is still reported -- verified against tornado 6.5.7's three
         # advisories. pip-audit warns it would rather have hashes; that is expected,
         # and uv.lock is what pins us here.
@@ -254,10 +232,9 @@ jobs:
         # including an F821 (an undefined name) that sat behind `if False` in the
         # opt-in interaction suite, where no test run would reach it either.
         #
-        # --no-sync is load-bearing: a bare `uv run` re-syncs the project environment
-        # first and does NOT inherit the --no-install-package flags from the sync step
-        # above, so it reinstalls rlPyCairo/pycairo and dies compiling them.  Verified:
-        # after the sync neither package is present; one plain `uv run` puts both back.
+        # --no-sync keeps ruff on the environment the sync step built; a bare `uv run`
+        # re-syncs first.  It was load-bearing while that sync excluded rlPyCairo and
+        # pycairo by name, which a re-sync put back and then failed to compile.
         run: uv run --no-sync ruff check .
 
   linux-cleanroom:
@@ -291,13 +268,17 @@ jobs:
     container: python:${{ matrix.python }}-slim
     steps:
       # git lets actions/checkout use a fast clone instead of the REST tarball.
-      # The rest are pycairo's build dependencies: pycairo publishes Windows-only
-      # wheels, so on Linux the rlPyCairo -> pycairo chain compiles from the sdist
-      # and needs a C toolchain plus cairo's headers. slim ships neither.
-      - name: Install git and pycairo's build dependencies
+      # libcairo2 is the library cairosvg ([export]) loads at run time; without it
+      # every PNG test skips.  slim ships no fonts at all, so the bundled Noto Sans
+      # that export.py registers through fontconfig is the only face text can use --
+      # which makes this the job that checks that registration.  fonts-dejavu-core
+      # covers what the subset lacks (test_a_glyph_outside_the_bundled_subset_still_draws).
+      # No compiler or headers: until 2026-10-28 [export] chained rlPyCairo -> pycairo,
+      # which has no Linux wheel and needed build-essential, libcairo2-dev and pkg-config.
+      - name: Install git, cairo and a fallback font
         run: |
           apt-get update && apt-get install -y --no-install-recommends \
-            git build-essential libcairo2-dev pkg-config
+            git libcairo2 fonts-dejavu-core
 
       - uses: actions/checkout@v7
 
@@ -325,10 +306,9 @@ jobs:
         # mlx is deliberately absent: the suite is meant to run without it, which is
         # what exercises tfdp_layout.py's import guard.
         #
-        # export brings svglib+reportlab+rlPyCairo. rlPyCairo is reportlab 5.x's
-        # renderPM backend on Linux (macOS has its own); without it svglib
-        # rasterization errors out. The PNG-RMS golden tests skip off macOS
-        # regardless, but the backend is needed for any that force-run.
+        # export brings cairosvg, which loads the libcairo2 installed above. The
+        # PNG-RMS golden tests skip off macOS regardless, but test_export_save.py's
+        # rasterizing tests run here, and skip if cairo cannot be loaded.
         #
         # fonttools is hand-listed for the same reason it isn't in an extra: it
         # is build-time-only (it backs tools/gen_font_metrics.py), so there is no
@@ -400,12 +380,12 @@ jobs:
     timeout-minutes: 25
     container: python:3.12-slim
     steps:
-      # Same as the clean-room job: pycairo has no Linux wheel, and rlPyCairo at its
-      # floor still pulls it in through [export].
-      - name: Install git and pycairo's build dependencies
+      # Same as the clean-room job: cairosvg loads libcairo2 at run time, and the
+      # fallback-glyph test needs a face with Cyrillic.
+      - name: Install git, cairo and a fallback font
         run: |
           apt-get update && apt-get install -y --no-install-recommends \
-            git build-essential libcairo2-dev pkg-config
+            git libcairo2 fonts-dejavu-core
 
       - uses: actions/checkout@v7
 
@@ -489,11 +469,9 @@ jobs:
         # then drifted itself: it held 6.5.8 after uv.lock moved to 6.5.10 to clear
         # pip-audit advisories.  The lock now decides every version here.
         #
-        # `export` is deliberately absent. It is the svglib/reportlab/rlPyCairo
-        # rasterization chain, which nothing here uses.  The dev group carries the
-        # same chain, so rlpycairo and pycairo are excluded by name, as the mypy and
-        # lint jobs do: pycairo has no Linux wheel and would compile against cairo's
-        # headers, which this runner lacks.  Pillow, which the WebGPU pixel
+        # `export` is deliberately absent: it is the PNG rasterizer (cairosvg), which
+        # nothing here uses.  The dev group still brings cairosvg, a pure-Python wheel
+        # that installs without cairo and is never imported here.  Pillow, which the WebGPU pixel
         # assertions do need, is a *core* dependency and arrives regardless; if that
         # ever changes, test_webgpu_render.py's `importorskip('PIL')` would skip all
         # 16 of its tests silently rather than failing.
@@ -504,8 +482,7 @@ jobs:
         # is run with locally, and added after the sync.  Every later step runs
         # `uv run --no-sync`, because a syncing `uv run` would remove them again.
         run: |
-          uv sync --extra layouts --extra interactive --group dev \
-                  --no-install-package rlpycairo --no-install-package pycairo
+          uv sync --extra layouts --extra interactive --group dev
           uv pip install "pytest-playwright==0.9.0" "playwright==1.62.0"
 
       - name: Install chromium

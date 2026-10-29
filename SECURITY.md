@@ -2,14 +2,14 @@
 
 ## Supported Versions
 
-`polars2svg` is pre-1.0 (currently `0.5.x`). Only the latest released version
+`polars2svg` is pre-1.0 (currently `0.6.x`). Only the latest released version
 on PyPI is supported — there are no maintained backport branches. Please
 upgrade to the latest release before reporting an issue.
 
 | Version | Supported |
 | ------- | --------- |
-| 0.5.x   | ✅        |
-| < 0.5   | ❌        |
+| 0.6.x   | ✅        |
+| < 0.6   | ❌        |
 
 ## Reporting a Vulnerability
 

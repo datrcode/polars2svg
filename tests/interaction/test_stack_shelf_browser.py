@@ -109,8 +109,19 @@ def test_a_cut_off_name_is_shown_whole_on_hover(stack_shelf_page):
     _sc_.mvc.pinFrame(_long_, _stack(_sc_)['dfs'][0].head(3))
     _tip_ = _ct_.page.locator('#svgstackcontrol #stacktip')
     expect(_tip_).to_have_attribute('display', 'none')
-    _ct_.hover(*_rowXY(_sc_, _long_))
-    expect(_tip_).to_have_attribute('display', 'inline')
+    # pinFrame() returns before hover_regions reaches the browser, and the widget reads
+    # them on mousemove, so a single hover that lands first shows nothing until the
+    # pointer moves again.  A real pointer does; one hover() does not, and CI lost that
+    # race on every run (2026-10-27 and -29).  Reproduced by holding the regions back:
+    # one move leaves display="none", the next shows the tip.  So keep moving.
+    _x_, _y_ = _rowXY(_sc_, _long_)
+    _moves_ = [0]
+    def _shown_():
+        _moves_[0] += 1
+        _ct_.hover(_x_ + _moves_[0] % 2, _y_)
+        return _tip_.get_attribute('display') == 'inline'
+    assert_eventually(_shown_, lambda: f'tooltip display={_tip_.get_attribute("display")!r} '
+                                       f'after {_moves_[0]} moves')
     assert _tip_.text_content() == _long_
 
 

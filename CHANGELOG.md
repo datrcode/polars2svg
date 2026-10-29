@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-10-29
+
 ### Added
 
 - **linkpi: subnet treemap layouts for a graph of IP addresses.** `shift-w` now offers
@@ -196,6 +198,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the `/` search box (`/^10\.0\./`) has always matched it as a regex: case-insensitive,
   against node names and labels, and with the same `+` / `-` / `&` prefixes as a
   substring search. The help only said "type substring", so nobody could find it.
+
+### Known issues
+
+- **`spreadlinesp(anno=)` matches a time bin only by its label.** Each key is compared
+  with the bin's label as `.ts_list` shows it, so `anno={1: …}` on an integer time column
+  draws nothing, where `{'1': …}` draws the line, and a `datetime` key matches no bin.
+  `anno=` is deprecated and will be replaced by instance-level annotations rather than
+  fixed. `time_order=`, which had the same limit, takes the time column's own values as
+  of this release.
 
 ## [0.5.1] — 2026-10-11
 
@@ -4979,7 +4990,8 @@ large frames.
 - **SECURITY.md** documenting the SVG-injection threat model (row-data label text
   is HTML-escaped; component configuration is trusted).
 
-[Unreleased]: https://github.com/datrcode/polars2svg/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/datrcode/polars2svg/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/datrcode/polars2svg/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/datrcode/polars2svg/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/datrcode/polars2svg/compare/v0.4.2...v0.5.0
 [0.4.2]: https://github.com/datrcode/polars2svg/compare/v0.4.1...v0.4.2

@@ -73,6 +73,12 @@ pip install polars2svg[all]         # all of the above, plus the MLX GPU layout
 Calling a component that needs an extra you haven't installed (e.g. `chordp()`
 or `panelize()`) raises a clear `ImportError` naming the extra to install.
 
+`[export]` rasterizes with cairosvg, which loads the cairo graphics library at
+run time. Most Linux systems already have it (`apt install libcairo2` if not); on
+macOS, `brew install cairo`. Windows has no cairo of its own, so install a cairo
+runtime first, for example GTK's. Without one, `save('chart.png')` raises an
+`ImportError` that says so. SVG export needs none of this.
+
 The GPU-accelerated `TFDPLayout` has its own extras, and on Linux `[all]` alone
 leaves it unable to load. See [GPU-accelerated layouts](#gpu-accelerated-layouts)
 before installing on Linux or Windows.
@@ -306,13 +312,19 @@ The aggregation rule is shared by every component that takes `count=`:
 What `count=` visibly does depends on the component. At default settings it is
 the primary size knob for **histop** (bar length) and **timep** (bar height); it
 nudges the derived node order in **chordp**; and for **linkp**/**chordp** it only
-drives geometry once you opt into `node_size='vary'` / `link_size='vary'`.
+drives geometry once you opt into `node_size='vary'` / `link_size='vary'`. linkp's
+`'vary'` sizes are proportional from zero: a link twice the count is twice as wide,
+a node twice the count has twice the area, and `node_size_range` /
+`link_size_range` give the smallest size drawn and the size of the largest count.
 
 **Negative counts.** A bar in histop or timep grows from zero, so a bin whose
 `count=` sums below zero is drawn as zero — an empty slot, not a bar running the
 other way. In a stacked bar each colour's segment is clamped on its own, so a
 negative segment draws as nothing and the rest of the bar is unaffected. Either
 way a warning names the component, the count field and the bins, once per case.
+chordp does the same per edge: an edge whose `count=` sums below zero counts as
+zero for the node order and for `'vary'` sizes. linkp's `'vary'` sizes draw a
+negative count at the floor of the size range.
 
 ### `color=` — "what color is this element?"
 

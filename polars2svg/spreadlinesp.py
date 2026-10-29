@@ -442,6 +442,11 @@ class SpreadLinesP(ExportMixin):
     def __validateInput__(self) -> None:
         # Normalize legend= eagerly so a bad spec fails fast (raises InvalidSpecError).
         self.legend_spec = self.p2s.legendResolveSpec(self.legend)
+        # anno= is to be replaced by the instance-level annotations, not fixed (PLANNING.md
+        # §5 C-spreadlinesp-anno-key), so until it goes it keeps its string-only keys.
+        if self.anno:
+            self.p2s.logger.warning("SpreadLinesP: anno= is deprecated and will be removed when instance-level "
+                                    "annotations replace it; until then its keys must be bin labels as .ts_list shows them")
         if self.df is None: return
         self.p2s.checkReservedColumns(self.df, 'SpreadLinesP')
         if self.relationships is None or len(self.relationships) == 0:

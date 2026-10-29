@@ -6,7 +6,7 @@ import ipaddress
 import json
 import random
 from math import sqrt, cos, sin, acos, atan2, pi, ceil, inf
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 
 import polars as pl
 
@@ -19,7 +19,7 @@ import numpy as np
 # neighborhood clustering, ...) but not the base render path shared by every
 # component (xyp, histop, ...), so they are an optional 'layouts' extra rather
 # than a core dependency. Guard the import the same way export.py guards
-# svglib/reportlab: load if present, otherwise raise a clear ImportError only
+# cairosvg: load if present, otherwise raise a clear ImportError only
 # when a graph-layout method is actually called.
 try:
     import networkx as nx
@@ -293,10 +293,19 @@ class P2SGraphMixin:
             for _nbor_ in g.neighbors(_node_):
                 edges.add((_node_, _nbor_))
 
+        # Membership is decided in Python, against the same set and with the same equality
+        # as before, but once per distinct (fm, to) pair rather than once per group of a
+        # group_by() iteration: that iteration materialises every group as its own
+        # DataFrame, ~100us each, so a frame thinned to one row per edge (ctrl-shift-x)
+        # spent seconds there on ~30k edges. The kept pairs come from df itself, so the
+        # semi-join matches them exactly (a null endpoint never passes: networkx refuses
+        # None as a node). Rows keep their order in df.
         _dfs_ = []
         for _relationship_ in new_relationships:
-            for k, k_df in df.group_by(_relationship_):
-                if k in edges: _dfs_.append(k_df)
+            _keys_  = list(_relationship_)
+            _pairs_ = df.select(_keys_).unique()
+            _pairs_ = _pairs_.filter(pl.Series([_k_ in edges for _k_ in _pairs_.iter_rows()], dtype=pl.Boolean))
+            _dfs_.append(df.join(_pairs_, on=_keys_, how='semi', maintain_order='left'))
 
         if   len(_dfs_) == 0: return pl.DataFrame(schema=df.schema)
         else:                 return pl.concat(_dfs_)
@@ -1000,6 +1009,110 @@ class P2SGraphMixin:
             _radius_ = r_max * np.sqrt(i) / r_max_formula
             pos[_sorter_[i][1]] = (xy[0] + _radius_ * np.cos(_angle_),
                                    xy[1] + _radius_ * np.sin(_angle_))
+        return pos
+
+    def leafReattachLayout(self, g: Any, core_layout: Callable[[Any], dict],
+                           radius_frac: float = 0.5, leaf_gap: float = 0.15) -> dict:
+        """Lay out ``g`` with its degree-1 nodes held back, then fan them around their parents.
+
+        A force layout handles a leaf badly: one spring pulls it toward its parent while
+        every other node in the graph repels it, so leaves are flung to the periphery or
+        piled on top of each other around a hub.  Here the leaves are removed and
+        ``core_layout`` places everything else -- with each parent keeping a few *proxy*
+        leaves, so the layout still reserves room for the leaves and decides which way they
+        face.  The real leaves are then put back deterministically:
+
+        - at ``radius_frac`` of the core's median edge length from the parent,
+        - spread across the angular gap between the parent's core edges that the proxies
+          settled in, so a leaf edge crosses none of them (all the way round when the parent
+          has no core edges);
+        - and, once that arc would put neighbouring leaves closer than ``leaf_gap`` edge
+          lengths, as a sunflower (Vogel spiral) disc at that spacing, set just beyond the
+          parent in the proxies' direction -- or as a ring of them around a parent with no
+          core edges, so none lands on the parent itself.
+
+        A parent keeps one proxy per edge-length-squared of area its leaves will cover
+        (``k * leaf_gap**2``, at least one), the area a force layout gives a node.  A leaf
+        whose only neighbour is also a leaf (an isolated edge) stays in the core: it has
+        nothing to hang from.  Directed graphs are read as undirected.  Returns an ``(x, y)``
+        float tuple for every node of ``g``.
+        """
+        _requireGraphLayoutDeps_()
+        _u_ = g.to_undirected(as_view=True) if g.is_directed() else g
+        _parent_: dict = {}
+        for _n_ in _u_.nodes():
+            if _u_.degree(_n_) != 1: continue
+            _p_ = next(iter(_u_[_n_]))
+            if _u_.degree(_p_) == 1: continue
+            _parent_[_n_] = _p_
+        if not _parent_:
+            return {_n_: (float(_xy_[0]), float(_xy_[1])) for _n_, _xy_ in core_layout(g).items()}
+
+        _kids_: dict = {}
+        for _n_, _p_ in _parent_.items(): _kids_.setdefault(_p_, []).append(_n_)
+        # A fresh object() per proxy cannot collide with any node of g.
+        _core_   = g.subgraph([_n_ for _n_ in g.nodes() if _n_ not in _parent_]).copy()
+        _proxy_: dict = {}
+        for _p_, _leaves_ in _kids_.items():
+            _proxy_[_p_] = [object() for _ in range(ceil(sqrt(len(_leaves_))))]
+            _core_.add_edges_from((_p_, _x_) for _x_ in _proxy_[_p_])
+        _laid_ = core_layout(_core_)
+        pos    = {_n_: (float(_xy_[0]), float(_xy_[1])) for _n_, _xy_ in _laid_.items() if _n_ in g}
+
+        # The unit everything below is measured in.  With no core edges (every component a
+        # star) fall back to the layout's mean spacing: its diagonal over sqrt(n).
+        _lens_ = [float(np.hypot(pos[_a_][0] - pos[_b_][0], pos[_a_][1] - pos[_b_][1]))
+                  for _a_, _b_ in _core_.edges() if _a_ != _b_ and _a_ in pos and _b_ in pos]
+        if _lens_:
+            _edge_ = float(np.median(_lens_))
+        else:
+            _xy_   = np.array(list(pos.values()))
+            _edge_ = float(np.hypot(*(_xy_.max(axis=0) - _xy_.min(axis=0)))) / sqrt(len(_xy_))
+        if _edge_ <= 0.0: _edge_ = 1.0
+        _r_, _sep_ = radius_frac * _edge_, leaf_gap * _edge_
+        _c_        = _sep_ / sqrt(pi)        # Vogel spacing: seed i at c*sqrt(i), ~c*sqrt(pi) apart
+        _golden_   = pi * (3.0 - sqrt(5.0))  # the golden angle
+
+        for _p_, _leaves_ in _kids_.items():
+            _leaves_.sort(key=str)
+            _px_, _py_ = pos[_p_]
+            _k_        = len(_leaves_)
+            _qx_       = sum(float(_laid_[_x_][0]) for _x_ in _proxy_[_p_]) / len(_proxy_[_p_])
+            _qy_       = sum(float(_laid_[_x_][1]) for _x_ in _proxy_[_p_]) / len(_proxy_[_p_])
+            _face_     = atan2(_qy_ - _py_, _qx_ - _px_)
+            _angs_     = sorted(atan2(pos[_q_][1] - _py_, pos[_q_][0] - _px_)
+                                for _q_ in _u_[_p_] if _q_ != _p_ and _q_ not in _parent_)
+            if _angs_:
+                # The gap the proxies settled in: the last core edge at or before _face_,
+                # wrapping round to the last one when _face_ precedes them all.
+                _i_      = max((_j_ for _j_, _a_ in enumerate(_angs_) if _a_ <= _face_), default=len(_angs_) - 1)
+                _start_  = _angs_[_i_]
+                _span_   = (_angs_[_i_ + 1] if _i_ + 1 < len(_angs_) else _angs_[0] + 2 * pi) - _start_
+                _fan_    = _r_ * _span_ / (_k_ + 1) >= _sep_
+            else:
+                _start_, _span_ = _face_, 2 * pi
+                _fan_           = _r_ * _span_ / _k_ >= _sep_
+
+            if _fan_:
+                # (j + 1) / (k + 1) keeps a margin from the core edges at both ends of the
+                # gap; a full circle has no ends, so it is divided evenly.
+                for _j_, _leaf_ in enumerate(_leaves_):
+                    _t_ = _start_ + _span_ * ((_j_ + 1) / (_k_ + 1) if _angs_ else _j_ / _k_)
+                    pos[_leaf_] = (_px_ + _r_ * cos(_t_), _py_ + _r_ * sin(_t_))
+            elif _angs_:
+                # Centred where the proxies settled -- the room the layout made -- but never
+                # so close that the disc would cover its own parent.
+                _d_        = max(_r_ + _c_ * sqrt(_k_), float(np.hypot(_qx_ - _px_, _qy_ - _py_)))
+                _cx_, _cy_ = _px_ + _d_ * cos(_face_), _py_ + _d_ * sin(_face_)
+                for _j_, _leaf_ in enumerate(_leaves_):
+                    _rr_ = _c_ * sqrt(_j_ + 0.5)
+                    pos[_leaf_] = (_cx_ + _rr_ * cos(_j_ * _golden_), _cy_ + _rr_ * sin(_j_ * _golden_))
+            else:
+                # Seeds from i0 on fill an annulus whose inner edge is at the fan radius.
+                _i0_ = (_r_ / _c_) ** 2
+                for _j_, _leaf_ in enumerate(_leaves_):
+                    _rr_ = _c_ * sqrt(_i0_ + _j_)
+                    pos[_leaf_] = (_px_ + _rr_ * cos(_j_ * _golden_), _py_ + _rr_ * sin(_j_ * _golden_))
         return pos
 
     def linearOptimizedLayout(self, g: Any, nodes: list, pos: dict, segment: tuple = ((0.0, 0.0), (1.0, 1.0))) -> dict:

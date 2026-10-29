@@ -282,10 +282,10 @@ class Tile(ExportMixin):
     #   <svg viewBox=...>: scale uniformly by whichever side binds first (so the whole
     #   tiling stays visible and undistorted) and center the result in the canvas.
     # - it is computed here and emitted as a transform rather than left to a viewBox
-    #   because svglib -- the rasterizer behind savePNG()/save('.png') -- does not
-    #   honor a viewBox on a *nested* <svg>: it scaled x and y independently and
-    #   clipped the overflow, so a tile that looked right in a browser exported wrong.
-    #   A translate+scale transform renders identically in both.
+    #   because svglib -- the rasterizer behind savePNG()/save('.png') until 2026-10-28,
+    #   now cairosvg -- did not honor a viewBox on a *nested* <svg>: it scaled x and y
+    #   independently and clipped the overflow, so a tile that looked right in a browser
+    #   exported wrong.  A translate+scale transform renders identically in all three.
     #
     def __viewportTransform__(self) -> tuple:
         _ow_, _oh_ = self.wxh_actual

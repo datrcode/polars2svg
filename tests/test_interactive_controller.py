@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import math
 import re
 import signal
 import threading
@@ -7,6 +8,8 @@ import time
 import unittest
 from datetime import datetime, timedelta
 
+import networkx as nx
+import numpy as np
 import param
 import polars as pl
 from view_js_utils import (component_js, component_markup, component_script,
@@ -1114,11 +1117,12 @@ class TestLINKPILayoutRegistry(unittest.TestCase):
         # T2 work would later trip over.
         import inspect, networkx as nx
         _known_ = {
-            'spring nx': nx.spring_layout,
+            'spring nx':   nx.spring_layout,
+            'forceatlas2': getattr(nx, 'forceatlas2_layout', None),
         }
         for _label_, _fn_ in _known_.items():
             _entry_ = self.linkpi_instance._layout_registry.get(_label_)
-            if _entry_ is None:
+            if _entry_ is None or _fn_ is None:
                 continue
             _params_ = set(inspect.signature(_fn_).parameters)
             for _lever_ in _entry_.treatment.levers:
@@ -1173,6 +1177,23 @@ class TestLINKPILayoutRegistry(unittest.TestCase):
         result  = handler(ln, g, set())
         self.assertIsInstance(result, dict)
 
+    def test_spring_nx_handler_reattaches_leaves_without_a_selection(self):
+        # The geometry is TestLeafReattachLayout's; this checks the wiring, and that the
+        # leaves come back fanned at one radius about their parent rather than wherever
+        # spring would have flung them.
+        from unittest.mock import patch
+        ln = self.linkpi_instance.dfs_layout[0]
+        g  = nx.Graph([('a', 'b'), ('b', 'c'), ('c', 'a'), ('a', 'l0'), ('a', 'l1'), ('a', 'l2')])
+        rt = self.linkpi_instance.rt_self
+        handler = self.linkpi_instance._layout_registry[self.linkpi_instance.SPRING_NX].handler
+        with patch.object(rt, 'leafReattachLayout', wraps=rt.leafReattachLayout) as _spy_:
+            result = handler(ln, g, set())
+        self.assertEqual(_spy_.call_count, 1)
+        self.assertEqual(set(result), set(g.nodes()))
+        _d_ = [math.dist(result[_l_], result['a']) for _l_ in ('l0', 'l1', 'l2')]
+        for _x_ in _d_[1:]:
+            self.assertAlmostEqual(_x_, _d_[0], places=9)
+
     def test_spring_nx_handler_moves_selection_and_pins_the_rest(self):
         # 0.2.0: spring nx absorbed the job the removed PolarsForceDirectedLayout existed
         # for -- with a selection it lays out those nodes and pins the rest via networkx's
@@ -1199,6 +1220,37 @@ class TestLINKPILayoutRegistry(unittest.TestCase):
         g       = self.linkpi_instance.graphs[0]
         handler = self.linkpi_instance._layout_registry[self.linkpi_instance.SPRING_NX].handler
         self.assertIsNone(handler(ln, g, {'not-a-node-in-this-graph'}))
+
+    def test_forceatlas2_present_iff_networkx_has_it(self):
+        from polars2svg.interactive_controller import _FA2_AVAILABLE, _LAYOUT_OP_MENU_
+        self.assertEqual(_FA2_AVAILABLE, hasattr(nx, 'forceatlas2_layout'))
+        _key_ = self.linkpi_instance.FORCEATLAS2
+        for _where_ in (self.linkpi_instance._layout_registry,
+                        self.linkpi_instance.layout_operations,
+                        [_l_ for _, _l_ in _LAYOUT_OP_MENU_]):
+            if _FA2_AVAILABLE: self.assertIn(_key_, _where_)
+            else:              self.assertNotIn(_key_, _where_)
+
+    def test_forceatlas2_handler_lays_out_the_whole_graph(self):
+        from polars2svg.interactive_controller import _FA2_AVAILABLE
+        if not _FA2_AVAILABLE:
+            self.skipTest('networkx has no forceatlas2_layout')
+        ln      = self.linkpi_instance.dfs_layout[0]
+        handler = self.linkpi_instance._layout_registry[self.linkpi_instance.FORCEATLAS2].handler
+        for g in (self.linkpi_instance.graphs[0], nx.DiGraph([('a', 'b'), ('b', 'c'), ('c', 'd')])):
+            result = handler(ln, g, set())
+            self.assertEqual(set(result), set(g.nodes()))
+            self.assertTrue(all(np.isfinite(result[_n_]).all() for _n_ in result))
+
+    def test_forceatlas2_handler_declines_with_a_selection(self):
+        # networkx's forceatlas2_layout has no fixed=, so it cannot leave the rest alone.
+        from polars2svg.interactive_controller import _FA2_AVAILABLE
+        if not _FA2_AVAILABLE:
+            self.skipTest('networkx has no forceatlas2_layout')
+        ln      = self.linkpi_instance.dfs_layout[0]
+        g       = self.linkpi_instance.graphs[0]
+        handler = self.linkpi_instance._layout_registry[self.linkpi_instance.FORCEATLAS2].handler
+        self.assertIsNone(handler(ln, g, {'a'}))
 
     def test_removed_layout_operations_are_absent(self):
         # 0.2.0 removed both from linkpi (CHANGELOG). They were the two slowest operations

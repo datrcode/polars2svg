@@ -1442,7 +1442,9 @@ class Polars2SVG(P2SColorsMixin,
 
         node_size      = 'medium'                          # 'nil' | 'small' | 'medium' | 'large' | 'vary' | None | float
         node_opacity   = 1.0
-        node_size_range = (0.3, 4)                         # (min, max) radius for node_size='vary'
+        node_size_range = (0.3, 4)                         # (floor, max) radius for node_size='vary': node *area* is
+                                                            #   proportional to count, the largest node gets max, and no
+                                                            #   node is drawn below floor
         draw_node_labels = False                           # when True, draw text labels on non-collapsed nodes
         node_labels    = None                              # {node_name: label_str}; a node absent from the dict is not labeled
         label_only     = set()                             # restrict labels to these NAMES (list or str also accepted); if
@@ -1488,7 +1490,9 @@ class Polars2SVG(P2SColorsMixin,
         link_labels    = None                              # {label_value: label_str} -- the link-side node_labels; an edge
                                                             # whose value is absent from the dict is not labeled
         link_opacity   = 1.0
-        link_size_range = (0.25, 4)                        # (min, max) stroke width for link_size='vary'
+        link_size_range = (0.25, 4)                        # (floor, max) stroke width for link_size='vary': width is
+                                                            #   proportional to count, the largest link (across every
+                                                            #   relationship) gets max, and no link is drawn below floor
 
         time           = None                              # timing marks OFF (default). When set, draws short colored ticks
                                                             # along each edge: position + spectrum color encode each record's
@@ -1583,8 +1587,9 @@ class Polars2SVG(P2SColorsMixin,
 
                        ** - note that "use_pos_for_bounds" when True will override SM_X and SM_Y
 
-        count_range_shared      = (min, max)               # count range node_size='vary' / link_size='vary' scale over
-                                                            # (set automatically by smallp under SM_COUNT)
+        count_range_shared      = (min, max)               # 'vary' sizes take max as the largest count (min is unused;
+                                                            #   sizes are proportional from zero).  Under SM_COUNT, smallp
+                                                            #   shares the largest link and the largest node separately
         color_stat_range_shared = (min, max)               # shared spectrum range across small multiples
                                                             # (set automatically by smallp under SM_COLOR)
 
@@ -1681,7 +1686,8 @@ class Polars2SVG(P2SColorsMixin,
         link_shape     = 'curve'                           # 'curve'    — bezier curves with arc-length-aware attachment
                        = 'bundled'                         # 'bundled'  — edges routed through a geometric skeleton
         link_size      = 'small'                           # 'small' | 'medium' | 'large' | 'vary'
-        link_size_range = (0.25, 4.0)                      # (min, max) stroke-width in pixels
+        link_size_range = (0.25, 4.0)                      # (floor, max) stroke width in pixels for link_size='vary':
+                                                            #   width proportional to count, the largest chord at max
         link_opacity   = 1.0                               # opacity for all link paths (0.0–1.0)
 
         bundle_strength = 0.85                             # bundled routing tension: 0.0 = straight chord, 1.0 = full skeleton
@@ -1711,8 +1717,8 @@ class Polars2SVG(P2SColorsMixin,
                        = {p2s.SM_COUNT}                    # share count normalization range
                        = {p2s.SM_COLOR}                    # share color-stat normalization range
 
-        count_range_shared      = (min, max)               # count range link_size='vary' widths scale over
-                                                            # (set automatically by smallp under SM_COUNT)
+        count_range_shared      = (min, max)               # link_size='vary' takes max as the largest count (min is
+                                                            #   unused); smallp sets it to the largest drawn chord under SM_COUNT
         color_stat_range_shared = (min, max)               # shared spectrum range across small multiples
                                                             # (set automatically by smallp under SM_COLOR)
 
@@ -1964,9 +1970,11 @@ class Polars2SVG(P2SColorsMixin,
                                                                 #   on a time-zone-aware column is local time
 
         anno           = {} (default)                          # no annotations
-                       = {'label': 'text', ...}                # a dashed vertical line through that bin, captioned
-                                                                #   with the text; keys are bin labels as .ts_list
-                                                                #   shows them (strings -- other keys match nothing)
+                       = {'label': 'text', ...}                # DEPRECATED, and logs a warning: to be replaced by
+                                                                #   instance-level annotations.  A dashed vertical line
+                                                                #   through that bin, captioned with the text; keys are
+                                                                #   bin labels as .ts_list shows them (strings -- other
+                                                                #   keys match nothing)
 
         highlight_nodes = set() (default)                      # no emphasis
                         = {'node_name', ...}                   # draw these nodes with a heavier ring and an opaque

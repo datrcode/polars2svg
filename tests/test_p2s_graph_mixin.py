@@ -273,6 +273,28 @@ class TestFilterDataFrameByGraph(unittest.TestCase):
         result = self.p2s.filterDataFrameByGraph(df, self.rels, g)
         self.assertEqual(len(result), 2)
 
+    def test_keeps_every_row_of_an_edge_in_dataframe_order(self):
+        # The group_by() iteration this replaced returned rows bunched by edge in hash
+        # order, which moved from run to run.
+        g = nx.Graph([('a', 'b'), ('c', 'd')])
+        df = pl.DataFrame({'fm': ['c', 'a', 'x', 'a', 'd', 'b'],
+                           'to': ['d', 'b', 'y', 'b', 'c', 'a'],
+                           'n':  [0, 1, 2, 3, 4, 5]})
+        result = self.p2s.filterDataFrameByGraph(df, self.rels, g)
+        self.assertEqual(result['n'].to_list(), [0, 1, 3, 4, 5])
+
+    def test_digraph_matches_only_the_edge_direction(self):
+        g = nx.DiGraph([('a', 'b')])
+        df = pl.DataFrame({'fm': ['a', 'b'], 'to': ['b', 'a']})
+        result = self.p2s.filterDataFrameByGraph(df, self.rels, g)
+        self.assertEqual(result.rows(), [('a', 'b')])
+
+    def test_mixed_dtype_endpoints_match_by_value(self):
+        g = nx.Graph([(1, 'a'), ('b', 2)])
+        df = pl.DataFrame({'fm': [1, 2, 3, 1], 'to': ['a', 'b', 'c', 'b']})
+        result = self.p2s.filterDataFrameByGraph(df, self.rels, g)
+        self.assertEqual(result.rows(), [(1, 'a'), (2, 'b')])
+
 
 class TestLayoutMethods(unittest.TestCase):
 
@@ -1265,6 +1287,117 @@ class TestNeighborhoodLayout(unittest.TestCase):
         svg = ln._repr_svg_()
         self.assertIn('<svg', svg)
 
+
+
+def _fixed_core_(placed, face=(0.0, -1.0), seen=None):
+    """A core_layout for leafReattachLayout: the named nodes go where ``placed`` says, and
+    every other node -- a proxy leaf -- one unit from its parent along ``face``.  ``seen``,
+    when given, collects the nodes each call was handed."""
+    def _layout_(core):
+        if seen is not None: seen.append(set(core.nodes()))
+        out = {n: placed[n] for n in core.nodes() if n in placed}
+        for n in core.nodes():
+            if n not in placed:
+                p = next(iter(nx.all_neighbors(core, n)))
+                out[n] = (out[p][0] + face[0], out[p][1] + face[1])
+        return out
+    return _layout_
+
+
+class TestLeafReattachLayout(unittest.TestCase):
+    """leafReattachLayout(): degree-1 nodes held out of the core layout, then put back."""
+
+    # A right-angled triangle: 'a' has core edges at 0 and 90 degrees, a 270-degree gap
+    # beyond them, and a median core edge length of 1.
+    _TRI_ = {'a': (0.0, 0.0), 'b': (1.0, 0.0), 'c': (0.0, 1.0)}
+
+    @classmethod
+    def setUpClass(cls):
+        cls.p2s = Polars2SVG()
+
+    def _triangle_(self, leaves, g=None):
+        g = g if g is not None else nx.Graph()
+        g.add_edges_from([('a', 'b'), ('b', 'c'), ('c', 'a')])
+        g.add_edges_from(('a', f'l{i}') for i in range(leaves))
+        return g
+
+    def _angle_(self, pos, n, about='a'):
+        return math.atan2(pos[n][1] - pos[about][1], pos[n][0] - pos[about][0]) % (2 * math.pi)
+
+    def test_without_leaves_the_core_layout_sees_the_whole_graph(self):
+        g, seen = self._triangle_(0), []
+        pos = self.p2s.leafReattachLayout(g, _fixed_core_(self._TRI_, seen=seen))
+        self.assertEqual(seen, [{'a', 'b', 'c'}])
+        self.assertEqual(pos, self._TRI_)
+
+    def test_every_node_is_placed_and_the_core_keeps_its_layout(self):
+        g   = self._triangle_(3)
+        pos = self.p2s.leafReattachLayout(g, _fixed_core_(self._TRI_))
+        self.assertEqual(set(pos), set(g.nodes()))
+        for n, xy in self._TRI_.items():
+            self.assertEqual(pos[n], xy)
+
+    def test_the_core_layout_sees_proxies_not_leaves(self):
+        # Nine leaves keep ceil(sqrt(9)) = 3 proxies, so the layout reserves room for them.
+        seen = []
+        self.p2s.leafReattachLayout(self._triangle_(9), _fixed_core_(self._TRI_, seen=seen))
+        self.assertEqual(len(seen), 1)
+        self.assertTrue({'a', 'b', 'c'} <= seen[0])
+        self.assertFalse(any(isinstance(n, str) and n.startswith('l') for n in seen[0]))
+        self.assertEqual(len(seen[0]), 3 + 3)
+
+    def test_a_fan_sits_in_the_gap_the_proxies_face(self):
+        # Facing down puts the proxies in the 270-degree gap; facing the diagonal, in the
+        # 90-degree one.  Either way the fan stays out of the other gap, at half an edge.
+        for face, lo, hi in (((0.0, -1.0), math.pi / 2, 2 * math.pi),
+                             ((0.7, 0.7),  0.0,         math.pi / 2)):
+            pos = self.p2s.leafReattachLayout(self._triangle_(3), _fixed_core_(self._TRI_, face=face))
+            for i in range(3):
+                self.assertAlmostEqual(math.dist(pos[f'l{i}'], pos['a']), 0.5, places=9)
+                self.assertTrue(lo < self._angle_(pos, f'l{i}') < hi, (face, self._angle_(pos, f'l{i}')))
+
+    def test_an_isolated_edge_stays_in_the_core(self):
+        g, seen = self._triangle_(0), []
+        g.add_edge('x', 'y')
+        placed = {**self._TRI_, 'x': (5.0, 5.0), 'y': (6.0, 5.0)}
+        pos = self.p2s.leafReattachLayout(g, _fixed_core_(placed, seen=seen))
+        self.assertEqual(seen, [{'a', 'b', 'c', 'x', 'y'}])
+        self.assertEqual(pos['x'], (5.0, 5.0))
+        self.assertEqual(pos['y'], (6.0, 5.0))
+
+    def assertLeavesSpread(self, pos, leaves, parent, r, sep):
+        xy = [pos[n] for n in leaves]
+        for p in xy:
+            self.assertGreaterEqual(math.dist(p, pos[parent]), r * (1 - 1e-9))
+        _min_ = min(math.dist(p, q) for p, q in itertools.combinations(xy, 2))
+        self.assertGreaterEqual(_min_, 0.8 * sep)
+
+    def test_a_crowded_parent_gets_a_disc_clear_of_itself(self):
+        g      = self._triangle_(40)
+        pos    = self.p2s.leafReattachLayout(g, _fixed_core_(self._TRI_))
+        leaves = [f'l{i}' for i in range(40)]
+        self.assertLeavesSpread(pos, leaves, 'a', r=0.5, sep=0.15)
+        # The disc faces the proxies: every leaf is below the parent.
+        self.assertTrue(all(pos[n][1] < 0.0 for n in leaves))
+
+    def test_a_star_fans_all_the_way_round(self):
+        g = nx.star_graph(5)
+        pos = self.p2s.leafReattachLayout(g, _fixed_core_({0: (0.0, 0.0)}))
+        _angles_ = sorted(self._angle_(pos, n, about=0) for n in range(1, 6))
+        for a, b in zip(_angles_, _angles_[1:]):
+            self.assertAlmostEqual(b - a, 2 * math.pi / 5, places=9)
+
+    def test_a_crowded_star_gets_a_ring_not_its_own_centre(self):
+        g   = nx.star_graph(60)
+        pos = self.p2s.leafReattachLayout(g, _fixed_core_({0: (0.0, 0.0)}))
+        # A one-node core has no edges and no extent, so the unit is 1.
+        self.assertLeavesSpread(pos, list(range(1, 61)), 0, r=0.5, sep=0.15)
+
+    def test_a_directed_graph_is_read_as_undirected(self):
+        g   = self._triangle_(3, g=nx.DiGraph())
+        pos = self.p2s.leafReattachLayout(g, _fixed_core_(self._TRI_))
+        for i in range(3):
+            self.assertAlmostEqual(math.dist(pos[f'l{i}'], pos['a']), 0.5, places=9)
 
 if __name__ == '__main__':
     unittest.main()

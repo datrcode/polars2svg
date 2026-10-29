@@ -480,12 +480,20 @@ class TestLinkLabelShapes(_LinkLabelTestBase_):
         self.assertEqual(_a_ & _b_, set())
 
     def test_curve_bidirectional_dy_opposes(self):
-        '''dy runs along the path's own +y, so the two directions take opposite signs.'''
+        '''dy runs along the path's own +y, so the two directions take opposite signs.
+        It sits on a <tspan> inside the <textPath>, never on the <text>: browsers draw the
+        two alike, and cairosvg (save('.png')) ignores a dy on the <text>.'''
         _df_ = pl.DataFrame({'fm': ['a', 'b'], 'to': ['b', 'a'], 'dsc': ['calls', 'answers']})
         _lp_ = self.p2s.linkp(_df_, relationships=[('fm', 'to', 'dsc')],
                               pos={'a': (0.0, 0.0), 'b': (1.0, 0.0)}, wxh=(400, 200),
                               draw_link_labels=True, link_shape='curve')
-        _dy_ = {t[0]: float(t[1]['dy']) for t in _texts(_lp_.svg)}
+        _dy_ = {}
+        for _t_ in ET.fromstring(_lp_.svg).iter(f'{_SVG_NS_}text'):
+            _ts_ = _t_.find(f'{_SVG_NS_}textPath/{_SVG_NS_}tspan')
+            self.assertIsNotNone(_ts_)
+            self.assertNotIn('dy', _t_.attrib)
+            _dy_[''.join(_t_.itertext())] = float(_ts_.get('dy'))
+        self.assertEqual(set(_dy_), {'calls', 'answers'})
         self.assertLess(_dy_['calls'] * _dy_['answers'], 0.0)
 
     def test_flowmap_is_not_labeled(self):

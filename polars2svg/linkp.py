@@ -30,6 +30,7 @@ class LinkPKwargs(TypedDict, total=False):
     Keys wrapped in underscores are internal -- smallp sets them when it shares
     state across small-multiple panels; callers have no reason to pass them.
     """
+    _shared_vary_max_:        Any
     _shared_view_x_:          Any
     _shared_view_y_:          Any
     background:               Any
@@ -107,7 +108,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
         'convex_hull_lu', 'convex_hull_opacity', 'convex_hull_labels', 'convex_hull_stroke_width',
         'background', 'background_label_color', 'background_opacity',
         'background_fill', 'background_stroke_w', 'background_stroke',
-        'sm_shared', '_shared_view_x_', '_shared_view_y_',
+        'sm_shared', '_shared_view_x_', '_shared_view_y_', '_shared_vary_max_',
         'count_range_shared', 'color_stat_range_shared',
         'draw_border', 'txt_h', 'legend',
     })
@@ -136,6 +137,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
     # block against _VALID_KWARGS, so a new parameter fails the suite until it
     # is declared here too.
     # ---------------------------------------------------------------------
+    _shared_vary_max_:        Any
     _shared_view_x_:          Any
     _shared_view_y_:          Any
     bounds_percent:           float
@@ -184,8 +186,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
     # this class does not otherwise name.
     _color_stat_max_:       float | None
     _color_stat_min_:       float | None
-    _count_max_:            float | None
-    _count_min_:            float | None
+    _node_count_max_:       float | None
     _dl_legend_:            DisplayList | None
     _flowmap_cache_:        tuple | None
     _flowmap_note_:         str | None
@@ -194,6 +195,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
     _legend_region_:        tuple | None
     _legend_stat_max_:      float | None
     _legend_stat_min_:      float | None
+    _link_count_scale_:     tuple | None
     _time_enum_:            Any
     _time_field_:           Any
     _timing_mark_dl_table_: pl.DataFrame | None
@@ -288,8 +290,10 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
                 if len(_sub_) == 0: continue
                 _sub_ = _sub_.with_columns(self.p2s.rgbFromHexPolarsOperations('__lc_hex__', '__r_f__', '__g_f__', '__b_f__'))
                 if self.link_size == 'vary':
-                    _lc_min_, _lc_max_ = self.__countMinMax__(_sub_['__count__'])
-                    _sub_  = _sub_.with_columns(self.__interpolatedSizeExpr__(self.link_size_range, _lc_min_, _lc_max_).alias('__w_f__'))
+                    # the scale the SVG drew with: __renderLinks__ sets it before df_link
+                    # exists, so the fallback is only for a checker's benefit
+                    _lc_max_ = (self._link_count_scale_ or self.__countMinMax__(_sub_['__count__']))[1]
+                    _sub_  = _sub_.with_columns(self.__varySizeExpr__(self.link_size_range, _lc_max_).alias('__w_f__'))
                     _w_arg_: str | float = '__w_f__'
                 else:
                     _w_arg_ = _lk_w_
@@ -517,6 +521,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
             'sm_shared':              set(),
             '_shared_view_x_':        None,
             '_shared_view_y_':        None,
+            '_shared_vary_max_':      None,     # (link max, node max) under SM_COUNT
             'count_range_shared':     None,
             'color_stat_range_shared': None,
             # Context
@@ -537,16 +542,16 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
             _template_copy_ = self.template
             self.p2s._clone_template_state(self, _template_copy_)
             self.template = _template_copy_
-            self._count_min_      = None
-            self._count_max_      = None
+            self._node_count_max_ = None
+            self._link_count_scale_ = None
             self._color_stat_min_ = None
             self._color_stat_max_ = None
         else:
             self.p2s.assignScratchDefaults(self, _defaults_)
             # Internal (non-parameter) state — not part of the kwarg spec
             self._view_window_user_set_ = False
-            self._count_min_            = None
-            self._count_max_            = None
+            self._node_count_max_       = None
+            self._link_count_scale_     = None
             self._color_stat_min_       = None
             self._color_stat_max_       = None
             self.color_nodes_final: dict      = {}
@@ -1151,13 +1156,51 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
         lo, hi = cast('float | None', col.min()), cast('float | None', col.max())
         return (float(lo) if lo is not None else 0.0, float(hi) if hi is not None else 1.0)
 
-    def __interpolatedSizeExpr__(self, size_range: tuple, lo: float, hi: float) -> pl.Expr:
-        return (
-            size_range[0] +
-            (size_range[1] - size_range[0]) *
-            (pl.col('__count__').cast(pl.Float64) - lo) /
-            (0.01 + hi - lo)
-        )
+    #
+    # __linkCountScale__() - the (lo, hi) every 'vary' link width is scaled against
+    # - one scale for the whole picture (PLANNING.md §5 C-linkp-vary-minmax, D1): every
+    #   relationship's links together, so a width means the same count anywhere in it
+    # - drawn links only: a relationship's table also holds the group of rows whose
+    #   endpoints are null for it, which set the SVG's scale while gpuDisplayList()
+    #   dropped it, so the two drew different widths (C-linkp-vary-scale-parity)
+    #
+    def __linkCountScale__(self, rel_tables: list) -> tuple:
+        _counts_ = [_t_.drop_nulls(subset=[f'__rel{i}_fm_sx__', f'__rel{i}_to_sx__'])['__count__'].cast(pl.Float64)
+                    for i, _t_ in enumerate(rel_tables)]
+        _all_ = pl.concat(_counts_) if _counts_ else pl.Series([], dtype=pl.Float64)
+        if self.link_size == 'vary': self.__warnNegativeVaryCounts__(_all_, 'link')
+        _lo_, _hi_ = self.__countMinMax__(_all_)
+        # SM_COUNT: every panel takes the largest link of the whole frame (D3)
+        _sh_ = self._shared_vary_max_
+        if _sh_ is not None and _sh_[0] is not None: _hi_ = float(_sh_[0])
+        return (_lo_, _hi_)
+
+    #
+    # __warnNegativeVaryCounts__() - a 'vary' size is proportional to its count from zero, so
+    # a negative count draws at the floor; say so once (PLANNING.md §5 C-negative-counts, D5)
+    #
+    def __warnNegativeVaryCounts__(self, counts: pl.Series, what: str) -> None:
+        _n_ = int((counts.cast(pl.Float64) < 0).sum())
+        if _n_:
+            self.p2s.logger.warning(
+                f"LinkP: count={self.count!r} is below zero for {_n_:,} {what}{'s' if _n_ != 1 else ''}; "
+                f"'vary' draws a negative count at the size range's floor")
+
+    #
+    # __varySizeExpr__() - a 'vary' node radius or link width from '__count__'
+    # - proportional from zero (PLANNING.md §5 C-linkp-vary-minmax, rule C): the largest
+    #   count `hi` gets size_range[1], half that count half the width -- or, with area=True
+    #   (nodes), the radius that gives half the area
+    # - size_range[0] is a floor, so a small count stays visible; a count at or below zero
+    #   (clamped) draws at it, and so does everything when hi is not above zero
+    # - a count above hi (a count_range_shared narrower than the data) draws at size_range[1]
+    #
+    def __varySizeExpr__(self, size_range: tuple, hi: float, area: bool = False) -> pl.Expr:
+        _floor_, _top_ = float(size_range[0]), float(size_range[1])
+        if hi <= 0.0: return pl.lit(_floor_)
+        _frac_ = (pl.col('__count__').cast(pl.Float64) / hi).clip(0.0, 1.0)
+        if area: _frac_ = _frac_.sqrt()
+        return pl.max_horizontal(pl.lit(_floor_), pl.lit(_top_) * _frac_)
 
     #
     # __nodeRadiusEstimate__() - representative node-symbol radius in pixels;
@@ -1487,7 +1530,10 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
                         f'{_r2_(_row_["__ll_q2x__"])} {_r2_(_row_["__ll_q2y__"])} '
                         f'{_r2_(_row_["__ll_q3x__"])} {_r2_(_row_["__ll_q3y__"])}')
                 # <textPath> dy runs along the path's own +y (right of travel) and the path
-                # runs sigma-ward, so -side*sigma*k lands the baseline on the label's side
+                # runs sigma-ward, so -side*sigma*k lands the baseline on the label's side.
+                # The dy sits on a <tspan> inside the <textPath>, not on the <text>: browsers
+                # draw the two identically (checked in Chrome, 2026-10-28), and cairosvg, the
+                # PNG rasterizer, ignores a dy on a <text> that holds a <textPath>.
                 _dy_  = _r2_(-_side_ * _sig_ * _k_)
                 _key_ = (_pd_, _esc_, _dy_, _co_)
                 if _key_ in self._link_label_seen_: continue
@@ -1495,8 +1541,8 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
                 _pid_ = f'p2sll{self._rand_id_}_{len(self._link_label_defs_)}'
                 self._link_label_defs_.append(f'<path id="{_pid_}" fill="none" stroke="none" d="{_pd_}" />')
                 self._link_label_svg_.append(
-                    f'<text font-size="{self.txt_h}px" fill="{_co_}" text-anchor="middle" dy="{_dy_}">'
-                    f'<textPath href="#{_pid_}" startOffset="50%">{_esc_}</textPath></text>'
+                    f'<text font-size="{self.txt_h}px" fill="{_co_}" text-anchor="middle">'
+                    f'<textPath href="#{_pid_}" startOffset="50%"><tspan dy="{_dy_}">{_esc_}</tspan></textPath></text>'
                 )
             else:
                 _x_, _y_ = _r2_(_cx_), _r2_(_cy_)
@@ -1803,6 +1849,9 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
         # combined flow set of all relationships (Jenny et al. 2017).  Stored on self
         # so __renderTimingMarks__ can reuse the same control points.
         self._flowmap_cp_ = self.__flowmapControlPoints__(_rel_tables_) if self.link_shape == 'flowmap' else None
+        # One 'vary' scale for every relationship, read again by gpuDisplayList()
+        _link_scale_ = self.__linkCountScale__(_rel_tables_)
+        self._link_count_scale_ = _link_scale_
 
         # Pass 2: shape-specific geometry + SVG string assembly
         for i, _rel_ in enumerate(self.relationships):
@@ -1826,8 +1875,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
             def _r2_(c: str) -> pl.Expr: return pl.col(c).round(2)
 
             if self.link_size == 'vary':
-                _lc_min_, _lc_max_ = self.__countMinMax__(_df_link_['__count__'])
-                _stroke_w_    = self.__interpolatedSizeExpr__(self.link_size_range, _lc_min_, _lc_max_)
+                _stroke_w_    = self.__varySizeExpr__(self.link_size_range, _link_scale_[1])
                 _sw_attr_ops_ = [pl.lit('" stroke-width="'), _stroke_w_.round(2)]
             else:
                 _stroke_w_    = pl.lit(float(_sz_))
@@ -2196,9 +2244,13 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
         if self.node_size is None:
             pass
         elif self.node_size == 'vary':
-            _nc_min_, _nc_max_ = self.__countMinMax__(self.df_node['__count__'])
+            self.__warnNegativeVaryCounts__(self.df_node['__count__'], 'node')
+            _sh_ = self._shared_vary_max_
+            _nc_max_ = float(_sh_[1]) if _sh_ is not None and _sh_[1] is not None \
+                       else self.__countMinMax__(self.df_node['__count__'])[1]
+            self._node_count_max_ = _nc_max_
             self.df_node = self.df_node.with_columns(
-                self.__interpolatedSizeExpr__(self.node_size_range, _nc_min_, _nc_max_).alias('__sz__')
+                self.__varySizeExpr__(self.node_size_range, _nc_max_, area=True).alias('__sz__')
             )
             _str_op_ = [
                 pl.lit('<circle cx="'), pl.col('__sx__'), pl.lit('" cy="'), pl.col('__sy__'),
@@ -2343,18 +2395,6 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
             for _node_ in _nm_list_:
                 self.color_nodes_final[_node_] = _hex_
 
-        # Compute instance-level count range for SM_COUNT support in renderSmallMultiples
-        _all_counts_ = []
-        if self.df_link is not None and '__count__' in self.df_link.columns:
-            _all_counts_.append(self.df_link['__count__'].cast(pl.Float64))
-        if self.df_node is not None and '__count__' in self.df_node.columns:
-            _all_counts_.append(self.df_node['__count__'].cast(pl.Float64))
-        if _all_counts_:
-            _combined_ = pl.concat(_all_counts_)
-            _min_v_ = cast('float | None', _combined_.min())
-            _max_v_ = cast('float | None', _combined_.max())
-            self._count_min_ = float(_min_v_) if _min_v_ is not None else 0.0
-            self._count_max_ = float(_max_v_) if _max_v_ is not None else 1.0
 
     #
     # __renderConvexHull__() - render convex hull annotations
@@ -2589,8 +2629,12 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
                 _kwargs_['_shared_view_x_'] = (_ref_.wx0, _ref_.wx1)
             if self.p2s.SM_Y in self.sm_shared:
                 _kwargs_['_shared_view_y_'] = (_ref_.wy0, _ref_.wy1)
-            if self.p2s.SM_COUNT in self.sm_shared and _ref_._count_min_ is not None:
-                _kwargs_['count_range_shared'] = (_ref_._count_min_, _ref_._count_max_)
+            if self.p2s.SM_COUNT in self.sm_shared:
+                # links and nodes are counts of different things, so each shares its own
+                # largest count (PLANNING.md §5 C-linkp-vary-minmax, D3); one range over
+                # both had scaled every link against the node totals
+                _lmax_ = _ref_._link_count_scale_[1] if _ref_._link_count_scale_ is not None else None
+                _kwargs_['_shared_vary_max_'] = (_lmax_, _ref_._node_count_max_)
             if self.p2s.SM_COLOR in self.sm_shared and _ref_._color_stat_min_ is not None:
                 _kwargs_['color_stat_range_shared'] = (_ref_._color_stat_min_, _ref_._color_stat_max_)
         return {k: LinkP(df=v, template=self, p2s=self.p2s, **_kwargs_) for k, v in df_lu.items()}

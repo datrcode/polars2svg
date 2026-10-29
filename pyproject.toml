@@ -124,18 +124,14 @@ mlx-cpu    = ["mlx[cpu]; sys_platform == 'linux'", "polars2svg[layouts]"]
 mlx-cuda   = ["mlx[cuda12]; sys_platform == 'linux'", "polars2svg[layouts]"]
 mlx-cuda13 = ["mlx[cuda13]; sys_platform == 'linux'", "polars2svg[layouts]"]
 
-# PNG export (component.save('x.png') / .savePNG()). Pillow is already a core
-# dependency; svglib+reportlab do the SVG->PNG rasterization, rlPyCairo is the
-# renderPM backend needed on Linux. Install with: pip install polars2svg[export]
+# PNG export (component.save('x.png') / .savePNG()). cairosvg rasterizes; it is
+# pure Python over cairocffi, which loads the cairo C library at run time: present
+# on most Linux desktops and servers, `brew install cairo` on macOS, and a separate
+# cairo runtime on Windows (README). Install with: pip install polars2svg[export]
 #
-# svglib is capped below 2.0: svglib 2.x applies CSS px->pt conversion to the
-# SVG's width/height (200px -> 150pt), which at renderPM's default 72dpi shrinks
-# every export to 0.75 scale and mis-scales nested <svg> tiles (smallp /
-# spreadlinesp). svglib 1.x carries px straight through as points (1px -> 1px at
-# 72dpi), which is the rasterization the PNG goldens are validated against. See
-# svgToPNGBytes() in export.py. reportlab 5 is fine with svglib 1.x, so the
-# floor stays open to it (reportlab>=4.0 now admits 5.0) — the cap is on svglib.
-export = ["svglib>=1.5,<2", "reportlab>=4.0", "rlPyCairo>=0.3"]
+# The floor is security-driven, like pillow's: 2.9.1 is the first release fixing
+# PYSEC-2026-4204, after 2.9.0's PYSEC-2026-2122, so it sits at the locked version.
+export = ["cairosvg>=2.9.1"]
 
 # Graph-layout algorithms: linkp's/chordp's pluggable layouts, the graph-layout
 # mixin (treemaps, force-directed, neighborhood clustering, ...), and shapely
@@ -163,7 +159,6 @@ all = ["polars2svg[interactive,layouts,export,mlx]"]
 
 # Dev/test-only tooling (PEP 735). Not published to wheel METADATA.
 # Install with: uv pip install -e . --group dev   (or `uv sync`, which includes it by default)
-# svglib rasterization needs reportlab at use-time — keep them together here.
 # Includes every optional extra (layouts, interactive, export) so the full test
 # suite — which exercises linkp/chordp/interactive variants — runs unmodified.
 [dependency-groups]
@@ -185,17 +180,13 @@ dev = [
                 # (it skips, rather than fails, where fontTools is absent)
   "ipykernel",
   "kagglehub",
-  "svglib<2",   # capped for the same reason as the [export] extra: svglib 2's
-                # px->pt conversion shrinks PNG output and breaks nested-<svg>
-                # goldens. Keeps local test runs on the tested rasterization path.
-  "reportlab",
-  "rlPyCairo",  # reportlab 5.x renderPM backend (Linux); rasterizes SVG->PNG in golden tests
+  "cairosvg",   # the PNG golden tests rasterize whether or not `export` is installed
 ]
 
 # This group carries TEST-ONLY tooling.  It used to re-list the contents of the
 # `layouts`, `interactive` and `export` extras as well, which was two copies of
-# every floor and had already drifted: `svglib<2` here against `svglib>=1.5,<2`
-# there, and bare `reportlab`/`rlPyCairo` against `>=4.0`/`>=0.3`.
+# every floor and had already drifted: one rasterizer pin here, a different one
+# in the extra.
 # tools/diff_packaging_prod.sh guards dev-vs-prod, not dev-vs-itself, so nothing
 # would have caught it.  Name the extras at install time instead:
 #
@@ -203,8 +194,9 @@ dev = [
 #   uv sync --extra layouts --extra interactive --extra export --group dev
 #
 # mlx stays out of both: the clean-room .venv must not have it (see CLAUDE.md),
-# and .venv-mlx adds it explicitly.  svglib/reportlab/rlPyCairo remain here
-# because the golden-image tests rasterize whether or not `export` is installed.
+# and .venv-mlx adds it explicitly.  cairosvg remains here, unpinned (the extra
+# holds the floor), because the golden-image tests rasterize whether or not
+# `export` is installed.
 
 [project.urls]
 Homepage   = "https://github.com/datrcode/polars2svg"
@@ -312,7 +304,7 @@ disallow_subclassing_any = true
 [[tool.mypy.overrides]]
 module = [
   "shapely.*", "scipy.*", "networkx.*", "sklearn.*", "squarify",
-  "mlx.*", "reportlab.*", "pyperclip",
+  "mlx.*", "cairosvg.*", "pyperclip",
   "re._parser", "re._constants",
 ]
 ignore_missing_imports = true

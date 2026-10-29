@@ -64,8 +64,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     it shelves the shown frame), `shelf()`, `unpinFrame(name)` and
     `onShelve(callback)`.
 
+- **linkpi: a `forceatlas2` layout operation.** `shift-w` offers `forceatlas2` (`f`),
+  NetworkX's ForceAtlas2 (Jacomy et al., 2014). It scales repulsion by node degree, so
+  leaves settle next to their hub and hubs move outward with their leaves. It lays out
+  the whole graph, unweighted, and does nothing while a selection is active. It costs
+  about twice what `spring nx` does, at 21 s and 0.9 GB for 4,000 nodes, so it asks
+  before running on more than 4,000. It appears only with NetworkX 3.4 or later.
+- **`p2s.leafReattachLayout(g, core_layout)`** lays out a graph without its degree-1
+  nodes and then puts them back around their parents. `core_layout` is any function
+  from a graph to a `pos` dict, such as `networkx.spring_layout`. Each parent keeps a
+  few stand-in leaves during the layout so that room is left for the real ones. A
+  parent's leaves go in the gap between its edges that the stand-ins settled in, at half
+  the median edge length. If that gap is too narrow for them, they form a sunflower disc
+  in the same direction. An edge whose two ends are both leaves stays in the layout.
+
 ### Changed
 
+- **linkpi's `spring nx` places leaves itself.** With no selection, `spring nx` now runs
+  through `leafReattachLayout`. Spring alone pushed a degree-1 node out to the edge of
+  the layout or piled it on its hub with the others. Now each hub's leaves sit in a
+  compact fan or disc in the space spring left beside it. The iteration budget for large
+  graphs counts the nodes spring lays out, so it no longer counts the leaves. With a
+  selection, `spring nx` still moves only the selected nodes.
 - **`stack_controli` needs more height for its shelf.** The minimum height now includes
   the shelf (about 60px at the default four entries) and a status row. A widget built at
   the old minimum raises a `ValueError` that names the fix: make it taller, or pass a
@@ -76,8 +96,71 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the 38 advisories published against pillow in October 2026 (PYSEC-2026-4326..4328,
   GHSA-78g4-xqwv-q3g8 and 34 CVEs). The lock also moves certifi to 2026.10.23 for
   PYSEC-2026-4320.
+- **The lock moves tornado to 6.6** for CVE-2026-115927, CVE-2026-116577 and
+  CVE-2026-116578, published against 6.5.10. tornado arrives through the `interactive`
+  extra (panel and bokeh), so no requirement in `pyproject.toml` changes; a fresh install
+  already resolves 6.6.
+- **PNG export uses cairosvg.** `pip install polars2svg[export]` now installs
+  `cairosvg>=2.9.1` in place of svglib, reportlab and rlPyCairo. cairosvg loads the
+  cairo graphics library at run time: most Linux systems have it, macOS needs
+  `brew install cairo`, and Windows needs a cairo runtime such as GTK's, where pycairo's
+  Windows wheels used to bundle one. Without it, `save('.png')` raises an `ImportError`
+  that says what to install. Linux no longer needs a compiler or cairo's headers to
+  install the extra. SVG export is unchanged and needs none of this.
+  - PNG text is drawn in the bundled Noto Sans, the face the layout is measured in. It
+    was Helvetica.
+  - An area the drawing leaves unpainted is transparent in the PNG, as a browser shows
+    the SVG. It was white. Only spreadlinesp's letterbox margins are affected; every
+    other component paints its own canvas.
+  - The warning about `<textPath>` labels missing from a PNG is gone: cairosvg draws
+    them.
+- **linkp's curve link labels carry their `dy` on a `<tspan>` inside the `<textPath>`.**
+  Browsers draw this exactly as before; cairosvg reads `dy` only there. Code that parses
+  the label markup will find the offset on the `<tspan>`, not on the `<text>`.
+- **linkp's `'vary'` sizes are proportional from zero, and nodes are sized by area.** A
+  link with twice the count is twice as wide, and a node with twice the count has twice
+  the area. The largest count gets the top of `link_size_range` / `node_size_range`, and
+  the first value is a floor no link or node is drawn below. They were min-max: the
+  smallest count went to the floor and the largest to the top, so links of 998, 999 and
+  1000 rows ranged from 0.25 to 4 px, equal counts all drew at the floor, and node radius,
+  not area, followed the count.
+  - Link widths are one scale across every relationship. Each relationship had been
+    scaled on its own.
+  - A negative `count=` draws at the floor and logs a warning, as histop and timep do.
+  - `count_range_shared=(lo, hi)` takes `hi` as the largest count; `lo` is unused.
+  - Small multiples sharing `SM_COUNT` share the largest link and the largest node
+    separately. One range over both had scaled every panel's links against node totals,
+    drawing them thinner than their own counts called for.
+- **chordp's `link_size='vary'` follows the same rule.** Chord width is proportional to
+  `count=` from zero, the largest chord at the top of `link_size_range` and its first
+  value a floor; a negative count draws at the floor and logs a warning. Under `SM_COUNT`
+  the panels share the largest chord, where node totals had been in the range too.
+
+### Deprecated
+
+- **`spreadlinesp(anno=)`.** It will be removed when instance-level annotations replace
+  it, and passing one now logs a warning. Until then it works as before: its keys must be
+  bin labels as `.ts_list` shows them, so `anno={1: …}` on an integer time column draws
+  nothing, where `anno={'1': …}` draws the line.
 
 ### Fixed
+
+- **`save('.png')` draws translucent marks translucent.** Every `opacity` and
+  `fill-opacity` was ignored, so xyp `opacity=`, linkp's node, link and hull opacity,
+  background fills and piep's faded small-multiples base all came out solid. A known
+  issue since 0.5.1.
+
+- **`save('.png')` draws text at its full size.** Every label in a PNG was three
+  quarters of its size, while the drawing around it was not. A known issue since 0.5.1.
+
+- **`save('.png')` no longer stretches spreadlinesp.** A drawing whose `viewBox` has a
+  different aspect ratio from its canvas was scaled unevenly, so every spreadlinesp node
+  came out as an ellipse. It is now scaled uniformly and centred, as in a browser.
+
+- **`chordp()` no longer hangs on a negative `count=`.** With the node order derived
+  (no `order=` or `pos=`), any edge whose count summed below zero made `chordp()` run
+  forever. An edge's negative count is now drawn as zero, for the node order and for
+  `'vary'` sizes, and a warning names the edges, as histop and timep do.
 
 - **`spreadlinesp(time_order=)`: dates and datetimes name their bins.** Each value was
   turned into a string and compared with the bin labels, and a Python datetime's string

@@ -85,6 +85,9 @@ except ImportError:
     _NCPLayout = None
     _NCP_AVAILABLE = False
 
+# ForceAtlas2 arrived in networkx 3.4; the layouts extra's floor is 3.2.
+_FA2_AVAILABLE = hasattr(nx, 'forceatlas2_layout')
+
 # Background producers need no guard: FlowFieldBackground is numpy + polars only.
 from .flow_field_background import FlowFieldBackground as _FlowFieldBackground
 
@@ -113,6 +116,8 @@ _LAYOUT_OP_MENU_ = [
     ('N', 'neighborhood (graph)'),
     ('e', 'even distribution'),
 ]
+if _FA2_AVAILABLE:
+    _LAYOUT_OP_MENU_.append(('f', 'forceatlas2'))
 if _TFDP_AVAILABLE:
     _LAYOUT_OP_MENU_.append(('t', 't-fdp'))
 if _NCP_AVAILABLE:
@@ -2812,6 +2817,7 @@ class LINKPI(SelectionAPIMixin, _TooltipMixin_, JSComponent):
         self.NEIGHBORHOOD_SPATIAL = 'neighborhood (spatial)'
         self.NEIGHBORHOOD_GRAPH   = 'neighborhood (graph)'
         self.EVEN_DISTRIBUTION    = 'even distribution'
+        self.FORCEATLAS2          = 'forceatlas2'
         self.TFDP_LAYOUT          = 't-fdp'
         self.NCP_PACK             = 'ncp pack'
         self.SUBNET_TREEMAP_24    = 'subnet treemap /24'
@@ -3606,10 +3612,14 @@ class LINKPI(SelectionAPIMixin, _TooltipMixin_, JSComponent):
             return _iters_
 
         def _spring_nx_(ln, g, sel):
-            _iters_ = _spring_iterations_(g.number_of_nodes())
-            # No selection: lay out the whole graph, as before.
+            # No selection: lay out the whole graph, with its degree-1 nodes held back and
+            # fanned around their parents afterwards -- spring alone flings them outward or
+            # piles them on their hub.  The iteration budget follows what spring actually
+            # lays out, the core, which is smaller than the graph.
             if len(sel) == 0:
-                return nx.spring_layout(g, iterations=_iters_)
+                return rt.leafReattachLayout(g, lambda core: nx.spring_layout(
+                    core, iterations=_spring_iterations_(core.number_of_nodes())))
+            _iters_ = _spring_iterations_(g.number_of_nodes())
             # With a selection, pin everything else.  A selection can carry edge entities
             # and nodes belonging to other stack levels, so the pinned set is derived from
             # the graph's own nodes rather than by subtracting from it.
@@ -3649,6 +3659,7 @@ class LINKPI(SelectionAPIMixin, _TooltipMixin_, JSComponent):
         _SPRING_NX_TREATMENT_ = treatment_for(self.SPRING_NX)
         _NCP_TREATMENT_       = treatment_for(self.NCP_PACK)
         _TFDP_TREATMENT_      = treatment_for(self.TFDP_LAYOUT)
+        _FA2_TREATMENT_       = treatment_for(self.FORCEATLAS2)
 
         registry = {
             # With no selection this lays out the whole graph.  With one, it moves only the
@@ -3681,6 +3692,19 @@ class LINKPI(SelectionAPIMixin, _TooltipMixin_, JSComponent):
                 CHEAP),
             self.EVEN_DISTRIBUTION:    RegistryEntry(_even_distribution_, ASSUMED_CHEAP),
         }
+        if _FA2_AVAILABLE:
+            # ForceAtlas2 (Jacomy et al. 2014) scales repulsion by (deg(u)+1)(deg(v)+1), so
+            # a leaf barely pushes back and settles beside its hub, and hubs drift outward
+            # with their leaves -- the same problem spring nx's leaf reattachment works
+            # around, solved inside the force model.  Unweighted: counts in the tens of
+            # thousands would turn its linear attraction into a collapse.  networkx's
+            # version has no fixed= to pin the rest of the graph, so it declines with a
+            # selection, as circle pack does.
+            def _forceatlas2_(ln: Any, g: Any, sel: Any) -> Any:
+                if len(sel) > 0:
+                    return None
+                return nx.forceatlas2_layout(g.to_undirected(as_view=True) if g.is_directed() else g)
+            registry[self.FORCEATLAS2] = RegistryEntry(_forceatlas2_, _FA2_TREATMENT_)
         if _TFDP_AVAILABLE:
             def _tfdp_(ln, g, sel):
                 _b_ = Budget(should_stop=self._cancelRequested_)

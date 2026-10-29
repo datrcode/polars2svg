@@ -15,7 +15,7 @@
 # Neither failure looks like a metrics bug downstream -- an overflowing label just reads as
 # a label that is slightly too long -- so nothing else in the suite would notice.  The
 # SVG-string goldens compare our markup to our markup, and the PNG goldens rasterize through
-# svglib/reportlab, which is a third font engine again.
+# cairo, which draws the bundled face but measures with its own engine.
 #
 # The contract, held here in both directions:
 #

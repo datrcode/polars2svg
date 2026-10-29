@@ -156,10 +156,20 @@ NCP_PACK = Treatment(truncatable=True, killable=True,
 # all.  No confirmation: asking before a one-second operation is worse than running it.
 TFDP = Treatment(truncatable=True, killable=True, levers=('max_iter',), confirm_above=None)
 
+# networkx's forceatlas2_layout.  Imported, so there is no loop of ours to truncate, and
+# dense: every iteration builds n x n pairwise arrays.  Measured 0.58 / 1.51 / 6.00 / 20.84 s
+# and 0.10 / 0.15 / 0.28 / 0.92 GB peak RSS at n=500/1000/2000/4000 on Barabasi-Albert m=2
+# graphs (2026-10-29) -- ~3.5x per doubling, twice spring nx at n=4000.  The next doubling
+# is over a minute and several GB, so it asks above 4000, where it already costs about what
+# spring nx does at its own threshold.
+FORCEATLAS2 = Treatment(truncatable=False, killable=True,
+                        levers=('max_iter',), confirm_above=4000)
+
 LAYOUT_TREATMENTS = {
-    'spring nx': SPRING_NX,
-    'ncp pack':  NCP_PACK,
-    't-fdp':     TFDP,
+    'spring nx':   SPRING_NX,
+    'forceatlas2': FORCEATLAS2,
+    'ncp pack':    NCP_PACK,
+    't-fdp':       TFDP,
 }
 
 

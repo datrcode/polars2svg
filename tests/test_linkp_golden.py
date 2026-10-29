@@ -96,6 +96,36 @@ class TestLinkPCollapsedNodeGolden(unittest.TestCase):
         assert_image_matches_golden(lp.svg, 'linkp_collapsed_nodes')
 
 
+class TestLinkPVarySizeGolden(unittest.TestCase):
+    '''Golden-file regression test for node_size='vary' / link_size='vary' (PLANNING.md §5
+    C-linkp-vary-minmax, rule C).  No linkp golden drew 'vary' before, so a change to the
+    sizing rule moved nothing a golden compares.
+
+    A hub and twelve leaves of 1 .. 55 rows (the hub counts 146): link width is
+    proportional to count and node area is, each floored at its range's first value, so
+    the smallest leaves sit at the floor and the 55-row leaf is r 2.5 beside the hub's 4.
+    tests/test_linkp_vary_sizing.py reads the same frame's sizes back against the rule.
+    '''
+    _COUNTS_ = [1, 1, 1, 2, 2, 3, 5, 8, 13, 21, 34, 55]
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.p2s = Polars2SVG()
+
+    def test_size_vary(self):
+        import math
+        _df_ = pl.DataFrame({'fm': ['H'] * 12, 'to': [f'L{i:02d}' for i in range(12)], 'n': self._COUNTS_})
+        _pos_ = {'H': (0.0, 0.0)} | {f'L{i:02d}': (math.cos(2 * math.pi * i / 12), math.sin(2 * math.pi * i / 12))
+                                      for i in range(12)}
+        lp = self.p2s.linkp(_df_, relationships=[('fm', 'to')], pos=_pos_, count='n',
+                            node_size='vary', link_size='vary', wxh=(256, 256))
+        # the golden is only meaningful if the sizes vary: 7 distinct widths, 10 radii
+        self.assertEqual(len(set(re.findall(r'<line[^>]*stroke-width="([0-9.]+)"', lp.svg))), 7)
+        self.assertEqual(len(set(re.findall(r'<circle[^>]*\br="([0-9.]+)"', lp.svg))), 10)
+        assert_svg_matches_golden(lp.svg, 'linkp_size_vary')
+        assert_image_matches_golden(lp.svg, 'linkp_size_vary')
+
+
 class TestLinkPOffCanvasCullGolden(unittest.TestCase):
     '''Golden-file regression test for a zoomed render (PLANNING.md S2).
 
@@ -131,11 +161,9 @@ class TestLinkPLinkLabelGolden(unittest.TestCase):
     canonicalized onto one baseline and pushed to opposite sides of it rather than
     overprinting.
 
-    Both PNG goldens show their link labels, by different routes.  svglib 1.6.0
-    implements no <textPath> at all, so svgToPNGBytes() flattens each curve label into
-    per-glyph rotated <text> along the same path before rendering (PLANNING.md
-    C-textpath-png); the curve PNG therefore covers that flattening, and the line PNG
-    the plain rotated text.
+    Both PNG goldens show their link labels.  cairosvg lays the curve labels out along
+    their paths itself, reading each one's dy off the <tspan> inside its <textPath>;
+    the line PNG covers the plain rotated text.
     '''
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)

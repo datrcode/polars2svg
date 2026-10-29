@@ -479,17 +479,7 @@ class ChP(P2SComponentColorMixin, ExportMixin):
                 if len(_sub_) > 0:
                     _sub_ = _sub_.with_columns(self.p2s.rgbFromHexPolarsOperations('__lc_hex__', '__r_f__', '__g_f__', '__b_f__'))
                     if self.link_size == 'vary':
-                        if self.count_range_shared is not None:
-                            _lc_min_, _lc_max_ = float(self.count_range_shared[0]), float(self.count_range_shared[1])
-                        else:
-                            _mn_, _mx_ = _sub_['__count__'].min(), _sub_['__count__'].max()
-                            _lc_min_ = float(_mn_) if _mn_ is not None else 0.0
-                            _lc_max_ = float(_mx_) if _mx_ is not None else 1.0
-                        _sub_ = _sub_.with_columns(
-                            (pl.lit(float(self.link_size_range[0])) +
-                             pl.lit(float(self.link_size_range[1] - self.link_size_range[0])) *
-                             (pl.col('__count__').cast(pl.Float64) - _lc_min_) /
-                             (0.01 + _lc_max_ - _lc_min_)).alias('__w_f__'))
+                        _sub_ = _sub_.with_columns(self.__linkVarySizeExpr__(_sub_['__count__']).alias('__w_f__'))
                         _w_arg_: str | float = '__w_f__'
                     else:
                         _w_arg_ = _lk_w_
@@ -951,7 +941,7 @@ class ChP(P2SComponentColorMixin, ExportMixin):
         # Collect unique nodes via Polars (avoids materialising large Python sets)
         self.nodes_all = set(pl.concat(_node_series_).unique().to_list())
         # Concat the separate dataframes together (there's usually only one)
-        self.df_edge_weights = pl.concat(_dfs_)
+        self.df_edge_weights = self.__clampNegativeCounts__(pl.concat(_dfs_))
         # Determine node ordering
         if self._shared_view_x_ is not None:
             # SM_X: use the order from the reference panel so all panels are consistent
@@ -1432,6 +1422,44 @@ class ChP(P2SComponentColorMixin, ExportMixin):
     # - uses Polars group_by + concat_str to build SVG strings without Python row loops
     # - computes link attachment points from df_node arc geometry
     #
+    #
+    # __clampNegativeCounts__() - an edge whose count= sums below zero is drawn as zero
+    # (PLANNING.md §5 C-chordp-negative-count-hang, by the C-negative-counts decision: clamp,
+    # warn, document).  Clamped right after aggregating, so everything downstream sees what
+    # is drawn: the derived order, node 'vary' arcs and 'vary' chord widths.  The derived
+    # order is why it cannot wait -- leafWalkFromEdges() turns each weight w into a distance
+    # 1 / (w + eps), and Dijkstra never finishes over a negative one, so chordp hung.
+    # df_edge_weights has one row per (__fm__, __to__) with a '__count__'.
+    #
+    def __clampNegativeCounts__(self, df_edges: pl.DataFrame) -> pl.DataFrame:
+        if '__count__' not in df_edges.columns or not df_edges['__count__'].dtype.is_numeric(): return df_edges
+        _neg_ = df_edges.filter(pl.col('__count__') < 0).select('__fm__', '__to__').sort('__fm__', '__to__').rows()
+        if not _neg_: return df_edges
+        _shown_ = ', '.join(f'{_f_} -> {_t_}' for _f_, _t_ in _neg_[:5]) + \
+                  (f' and {len(_neg_) - 5:,} more' if len(_neg_) > 5 else '')
+        self.p2s.logger.warning(
+            f'ChP: count={self.count!r} sums below zero in {len(_neg_):,} '
+            f'edge{"s" if len(_neg_) != 1 else ""} ({_shown_}); a negative count is drawn as zero')
+        return df_edges.with_columns(pl.col('__count__').clip(lower_bound=0))
+
+    #
+    # __linkVarySizeExpr__() - link_size='vary' stroke width from '__count__', linkp's rule
+    # (PLANNING.md §5 C-linkp-vary-minmax, rule C, D4): proportional from zero, the largest
+    # count -- count_range_shared's max under SM_COUNT -- at link_size_range[1], and
+    # link_size_range[0] a floor no link is drawn below, which is where a zero count draws
+    # (a negative one is already zero: __clampNegativeCounts__).  `counts` are the drawn links'.
+    #
+    def __linkVarySizeExpr__(self, counts: pl.Series) -> pl.Expr:
+        if self.count_range_shared is not None:
+            _hi_ = float(self.count_range_shared[1])
+        else:
+            _mx_ = cast('float | None', counts.cast(pl.Float64).max())
+            _hi_ = float(_mx_) if _mx_ is not None else 0.0
+        _floor_, _top_ = float(self.link_size_range[0]), float(self.link_size_range[1])
+        if _hi_ <= 0.0: return pl.lit(_floor_)
+        return pl.max_horizontal(pl.lit(_floor_),
+                                 pl.lit(_top_) * (pl.col('__count__').cast(pl.Float64) / _hi_).clip(0.0, 1.0))
+
     def __renderLinks__(self) -> None:
         # __init__ gates the render stage on `self.df is not None`, so this cannot
         # fire; the guard is what lets a checker see it.  Same idiom as the other
@@ -1660,20 +1688,8 @@ class ChP(P2SComponentColorMixin, ExportMixin):
 
             # ── Step I: stroke width ───────────────────────────────────────────
             if self.link_size == 'vary':
-                if self.count_range_shared is not None:
-                    _lc_min_ = float(self.count_range_shared[0])
-                    _lc_max_ = float(self.count_range_shared[1])
-                else:
-                    _min_v_ = _df_link_['__count__'].min()
-                    _max_v_ = _df_link_['__count__'].max()
-                    _lc_min_ = float(_min_v_) if _min_v_ is not None else 0.0
-                    _lc_max_ = float(_max_v_) if _max_v_ is not None else 1.0
-                _stroke_w_ = (
-                    pl.lit(float(self.link_size_range[0])) +
-                    pl.lit(float(self.link_size_range[1] - self.link_size_range[0])) *
-                    (pl.col('__count__').cast(pl.Float64) - _lc_min_) /
-                    (0.01 + _lc_max_ - _lc_min_)
-                )
+                _stroke_w_ = self.__linkVarySizeExpr__(
+                    _df_link_.drop_nulls(subset=['__fm_x__', '__to_x__'])['__count__'])
             else:
                 _stroke_w_ = pl.lit(_sz_)
 
@@ -2221,11 +2237,13 @@ class ChP(P2SComponentColorMixin, ExportMixin):
             self.color_nodes_final[str(_nm_)] = _hex_
 
         # ── 5. Compute instance-level count range for renderSmallMultiples ─────
+        # Drawn links only.  count_range_shared feeds nothing but link_size='vary' (node
+        # 'vary' sizes arcs and never reads it), and with node totals in the range every
+        # panel's links were scaled against them (PLANNING.md §5 C-linkp-vary-minmax, D4).
         _all_counts_ = []
         if self.df_link is not None and '__count__' in self.df_link.columns:
-            _all_counts_.append(self.df_link['__count__'].cast(pl.Float64))
-        if self.df_node is not None and '__count__' in self.df_node.columns:
-            _all_counts_.append(self.df_node['__count__'].cast(pl.Float64))
+            _drawn_ = self.df_link.drop_nulls(subset=[_c_ for _c_ in ('__fm_x__', '__to_x__') if _c_ in self.df_link.columns])
+            _all_counts_.append(_drawn_['__count__'].cast(pl.Float64))
         if _all_counts_:
             _combined_ = pl.concat(_all_counts_)
             _min_v_ = _combined_.min()

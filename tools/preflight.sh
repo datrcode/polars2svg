@@ -65,10 +65,11 @@ cd "$_ROOT_" || exit 1
 #
 # The three --extra flags and --no-deps mirror ci.yml exactly; keep them that way.
 # Without the extras this audits six packages and says nothing about panel, bokeh,
-# lxml, requests, urllib3 or reportlab. Without --no-deps, pip-audit resolves by
-# INSTALLING into a throwaway venv, and `export` pulls rlPyCairo -> pycairo, which
-# has no Linux wheel and needs cairo's headers -- green on a Mac with cairo around,
-# a build failure on CI's runner.  --no-deps alone is not enough: it skips resolution
+# requests, urllib3 or cairosvg. Without --no-deps, pip-audit resolves by INSTALLING
+# into a throwaway venv, which builds anything without a wheel for the host -- a
+# result that then depends on the machine, not the lock (pycairo, when `export` still
+# pulled it, built on a Mac with cairo around and failed on CI's runner).  --no-deps
+# alone is not enough: it skips resolution
 # but still invokes pip.  --disable-pip is what keeps pip out, and it is only accepted
 # alongside --no-deps.
 _REQS_="$(mktemp -t p2s-preflight-reqs)"
@@ -158,7 +159,7 @@ _step_editable_() {
 # preflight reports the count without needing the suite.  Driving the count to
 # zero was considered and declined (PLANNING.md D5) -- this is a floor to ratchet
 # down, not a target.
-_MYPY_CEILING_=56
+_MYPY_CEILING_=52
 
 _step_mypy_() {
     printf '  %-34s' "mypy (resolved, ceiling $_MYPY_CEILING_)"

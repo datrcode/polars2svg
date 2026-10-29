@@ -124,9 +124,14 @@ from polars2svg.export import svgToPNGBytes
 
 
 def rasterize_svg(svg):
-    '''Render an SVG string to a PIL RGB Image using svglib + reportlab.'''
+    '''Render an SVG string to a PIL RGB Image through svgToPNGBytes() (cairosvg).
+
+    The PNG keeps any area the SVG leaves unpainted transparent (spreadlinesp's
+    letterbox margins); a straight RGB conversion would turn those black, so they are
+    composited onto white, the canvas the goldens were drawn against.'''
     from PIL import Image
-    return Image.open(io.BytesIO(svgToPNGBytes(svg))).convert('RGB')
+    _im_ = Image.open(io.BytesIO(svgToPNGBytes(svg))).convert('RGBA')
+    return Image.alpha_composite(Image.new('RGBA', _im_.size, (255, 255, 255, 255)), _im_).convert('RGB')
 
 
 
@@ -152,7 +157,7 @@ def rasterize_svg(svg):
 # 3.37/5.0 (67% consumed) on smallp_small_wxh_single_slot_all_remainder from a
 # 2026-08-05 font change, while still reporting green.
 #
-# The escape hatch is for a rasterizer upgrade (reportlab/svglib/Pillow are not
+# The escape hatch is for a rasterizer upgrade (cairosvg/cairo/Pillow are not
 # pinned to an exact version).  If one lands, EVERY golden drifts at once, which
 # is a legible signal rather than a mystery -- regenerate deliberately with
 # UPDATE_GOLDEN=1, or set P2S_PNG_GOLDEN_DRIFT to triage before doing so.
@@ -227,7 +232,7 @@ def assert_image_matches_golden(svg, name, tolerance=None, drift_tolerance=None)
 
     Platform note: the PNG goldens are rasterized bitmaps and are therefore
     tied to the rasterization backend that produced them. They were generated
-    on macOS; on other platforms the backend (Linux uses rlPyCairo) produces
+    on macOS; on other platforms cairo's font rasterizer and hinting produce
     minor anti-aliasing differences that exceed `tolerance` even when the SVG
     output is byte-identical. The cross-platform guarantee is the exact-string
     check in assert_svg_matches_golden (which passes everywhere); this bitmap

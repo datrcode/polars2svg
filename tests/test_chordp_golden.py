@@ -40,6 +40,15 @@ class TestChordPGolden(unittest.TestCase):
         assert_svg_matches_golden(cp.svg, 'chordp_node_size_vary')
         assert_image_matches_golden(cp.svg, 'chordp_node_size_vary')
 
+    def test_link_size_vary(self):
+        # rule C (PLANNING.md §5 C-linkp-vary-minmax, D4): chord width proportional to
+        # count= from zero, the 5.0 chord at link_size_range[1]; no golden drew it before
+        cp = self.p2s.chordp(**_params(count='weight', link_size='vary'))
+        self.assertIn('stroke-width="4.0"', cp.svg)          # the largest chord
+        self.assertIn('stroke-width="0.8"', cp.svg)          # weight 1.0: 4 * 1/5
+        assert_svg_matches_golden(cp.svg, 'chordp_link_size_vary')
+        assert_image_matches_golden(cp.svg, 'chordp_link_size_vary')
+
     def test_node_color_hex(self):
         cp = self.p2s.chordp(**_params(node_color='#ff0000'))
         assert_svg_matches_golden(cp.svg, 'chordp_node_color_hex')

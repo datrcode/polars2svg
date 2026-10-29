@@ -52,6 +52,7 @@
     "tooltip",
     "tooltip_delay_ms",
     "tooltip_payload",
+    "tooltip_probe",
     "tooltip_seq",
     "tooltip_x",
     "tooltip_y",
@@ -181,7 +182,7 @@
         },
         "pickermenu": {
           "tag": "g",
-          "kids": 14,
+          "kids": 15,
           "text": "layout operation:[s] spring nx (asks >8,000 nodes)[h] hyper tree[d] hyper tree donut[l] landmark mds[L] landmark mds pos"
         }
       }
@@ -282,7 +283,7 @@
         },
         "pickermenu": {
           "tag": "g",
-          "kids": 14,
+          "kids": 15,
           "text": "layout operation:[s] spring nx (asks >8,000 nodes)[h] hyper tree[d] hyper tree donut[l] landmark mds[L] landmark mds pos"
         }
       }
@@ -383,7 +384,7 @@
         },
         "pickermenu": {
           "tag": "g",
-          "kids": 14,
+          "kids": 15,
           "text": "layout operation:[s] spring nx (asks >8,000 nodes)[h] hyper tree[d] hyper tree donut[l] landmark mds[L] landmark mds pos"
         }
       }

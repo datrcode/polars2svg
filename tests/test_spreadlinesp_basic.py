@@ -85,6 +85,20 @@ class TestSpreadLinesPBasic(unittest.TestCase):
         sp = self.p2s.spreadlinesp(_make_df(), _rels(), ego='a', time='time', anno={1: 'Event A'})
         assert_valid_svg(self, sp.svg)
 
+    def test_anno_is_deprecated(self):
+        '''Decided 2026-10-28 (PLANNING.md §5 C-spreadlinesp-anno-key): anno= is to be replaced
+        by instance-level annotations, so passing one warns, naming the contract it keeps
+        until then.  The default {} warns nothing.'''
+        for _f_ in self.p2s.logger.filters:     # the logger says each message once per process
+            if type(_f_).__name__ == 'OnceFilter': _f_.seen_messages.clear()
+        _msg_ = ("SpreadLinesP: anno= is deprecated and will be removed when instance-level "
+                 "annotations replace it; until then its keys must be bin labels as .ts_list shows them")
+        with self.assertLogs(self.p2s.logger, level='WARNING') as _cm_:
+            self.p2s.spreadlinesp(_make_df(), _rels(), ego='a', time='time', anno={'1': 'Event A'})
+        self.assertIn(_msg_, [r.getMessage() for r in _cm_.records])
+        with self.assertNoLogs(self.p2s.logger, level='WARNING'):
+            self.p2s.spreadlinesp(_make_df(), _rels(), ego='a', time='time')
+
     def test_highlight_nodes(self):
         sp = self.p2s.spreadlinesp(_make_df(), _rels(), ego='a', time='time',
                                    highlight_nodes={'b'})

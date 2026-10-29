@@ -162,15 +162,16 @@ the DataFrame, or evaluate untrusted expressions.
   is. Do not build an `svg_list` entry out of anything you would not paste into
   the page yourself.
 
-  What that verbatim embedding does **not** reach is the filesystem.
-  `savePNG()` / `save('*.png')` rasterize through svglib, which resolves
-  `xlink:href` on `<image>` and `<use>` against the *source path* of the document
-  it parsed — so rasterizing from a file path would turn an external reference in
-  a tiled child SVG into a local file read whose contents land in the exported
-  PNG. `polars2svg/export.py` hands svglib a stream rather than a path, which
-  leaves svglib with no base path to resolve against and makes it decline
-  external references outright; relative, absolute, traversal, `file://` and
-  external-`<use>` spellings are all inert.
+  What that verbatim embedding does **not** reach is the filesystem or the
+  network. `savePNG()` / `save('*.png')` rasterize through cairosvg, which hands
+  every external reference (`href` on `<image>` and `<use>`, a CSS `url()`) to a
+  fetcher. `polars2svg/export.py` passes one that serves inline `data:` URLs and
+  returns an empty document for anything else, and rasterizes from the
+  document's bytes with `unsafe=False`, so XML entities and external DTDs are
+  refused as well. A reference in a tiled child SVG therefore never becomes a
+  local file read whose contents land in the exported PNG, or a request from the
+  machine doing the export; relative, absolute, traversal, `file://`, `http://`
+  and external-`<use>` spellings are all inert.
   `tests/test_export_save.py::TestRasterizeDoesNotReadLocalFiles` pins this end
   to end, so it holds as a tested property rather than an accident of how the
   rasterizer happens to be called. Trusting `svg_list` therefore means trusting

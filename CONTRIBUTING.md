@@ -291,8 +291,8 @@ check whether `uv pip install` has pulled a newer polars than the lock pins.
 The Linux clean-room job is deliberately not covered: it exists to exercise
 linux/amd64 inside a stock `python:3.13-slim` container, which is precisely what
 a local macOS run cannot reproduce. Reproducing it needs Docker plus
-[`act`](https://github.com/nektos/act), and each run recompiles pycairo from the
-sdist inside the container — leave that one to CI.
+[`act`](https://github.com/nektos/act), and each run reinstalls the container's
+system packages and the whole wheel — leave that one to CI.
 
 `.github/workflows/release.yml` is separate — it only fires on a `v*` tag push
 and publishes to PyPI via Trusted Publishing. Contributors don't need to touch

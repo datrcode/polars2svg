@@ -28,10 +28,10 @@ p2s.chordp(df, [("fm", "to")], count="weight", node_size="vary",
 | Parameter | Forms | Notes |
 |-----------|-------|-------|
 | `relationships` | `[('from', 'to')]`, tuple fields | Tuple fields concatenate with `\|`. |
-| `count` | `p2s.ROW_COUNTp` (default), `'field'`, `('field', p2s.SETp)` | Sets edge weights: feeds the derived node order always; scales arc/ribbon **geometry** only with `node_size='vary'` / `link_size='vary'`. With order pinned and fixed sizes it is inert (one-time warning). |
+| `count` | `p2s.ROW_COUNTp` (default), `'field'`, `('field', p2s.SETp)` | Sets edge weights: feeds the derived node order always; scales arc/ribbon **geometry** only with `node_size='vary'` / `link_size='vary'`. With order pinned and fixed sizes it is inert (one-time warning). An edge whose count sums below zero is treated as zero, with a warning. |
 | `color` | `'src'`, `'dst'`, `'field'`, `('field', enum)`, `'#rrggbb'` | `'src'` / `'dst'` inherit the endpoint node's color. |
 | `node_color` | `p2s.COLOR_BY_NODE_NAME`, `'#rrggbb'`, `'field'` | |
-| `node_size`, `link_size` | fixed (default) or `'vary'` | `'vary'` scales by count. |
+| `node_size`, `link_size` | fixed (default) or `'vary'` | `node_size='vary'` sizes each node's arc by its count. `link_size='vary'` makes chord width proportional to count from zero, the largest chord at the top of `link_size_range` (default `(0.25, 4)`) and its first value a floor. |
 | `link_shape` | `'curve'` (default), `'bundled'` | |
 | `order` | list | Pin the ring order explicitly. |
 | `legend` | `True`, position string, dict | |

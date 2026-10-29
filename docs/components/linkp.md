@@ -33,7 +33,8 @@ p2s.linkp(df, [("src", "dst")], node_color="tier", color="tier",
 | `relationships` | `[('from', 'to')]`, `[('from', 'to', 'predicate')]`, tuple fields | Tuple fields concatenate with `\|`. |
 | `pos` | `{node: [x, y], ...}` | networkx-style; nodes absent from `pos` get random positions. |
 | `color` | `'field'`, `'#rrggbb'`, `p2s.CROW_MAGNITUDEp` … | Applies to links and nodes; `node_color=` overrides for nodes. |
-| `node_size`, `link_size` | `'small' / 'medium' / ... '`, `'vary'` | Fixed sizes by default. |
+| `node_size`, `link_size` | `'small' / 'medium' / ... '`, `'vary'` | Fixed sizes by default. `'vary'` is proportional to `count=` from zero: a link twice the count is twice as wide, a node twice the count has twice the area. Link widths share one scale across every relationship. |
+| `node_size_range`, `link_size_range` | `(floor, max)` | For `'vary'`: the largest count is drawn at `max`, and nothing is drawn below `floor`. Defaults `(0.3, 4)` radius and `(0.25, 4)` width. |
 | `count` | `p2s.ROW_COUNTp`, `'field'`, … | **Only drives geometry once `node_size='vary'` / `link_size='vary'`** — at fixed sizes it has no visible effect (a one-time warning fires if set anyway). |
 | `draw_node_labels` | `True` / `False` | Node labels; default `False`. `node_labels={value: display}` renames what is drawn. |
 | `draw_link_labels` | `True` / `False` | Edge labels; default `False`. Read from the **third** element of a relationship tuple — `[('src', 'dst', 'predicate')]` — so a two-element `relationships` has nothing to draw. `link_labels={value: display}` renames them. |

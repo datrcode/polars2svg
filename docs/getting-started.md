@@ -21,6 +21,12 @@ pip install polars2svg[all]         # everything above
 Calling a component that needs an extra you haven't installed (e.g. `chordp()`
 or `panelize()`) raises a clear `ImportError` naming the extra to install.
 
+`[export]` rasterizes with cairosvg, which loads the cairo graphics library at
+run time. Most Linux systems already have it (`apt install libcairo2` if not); on
+macOS, `brew install cairo`. Windows has no cairo of its own, so install a cairo
+runtime first, for example GTK's. Without one, `save('chart.png')` raises an
+`ImportError` that says so. SVG export needs none of this.
+
 Requires **Python ≥ 3.12**.
 
 ## Quickstart

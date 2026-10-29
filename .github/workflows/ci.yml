@@ -86,7 +86,7 @@ jobs:
         # local .venv is lock-aligned. A polars bump moving this is a deliberate
         # re-baseline, not a regression; name the new version when you raise it.
         run: |
-          _CEILING_=56
+          _CEILING_=52
           set +e
           _out_="$(uv run --no-sync mypy polars2svg 2>&1)"; _rc_=$?
           set -e

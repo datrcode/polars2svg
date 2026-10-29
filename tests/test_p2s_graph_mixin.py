@@ -296,6 +296,30 @@ class TestFilterDataFrameByGraph(unittest.TestCase):
         self.assertEqual(result.rows(), [(1, 'a'), (2, 'b')])
 
 
+class TestCollapseDataFrameEdgesToOneRow(unittest.TestCase):
+
+    @classmethod
+    def setUpClass(cls):
+        cls.p2s  = Polars2SVG()
+        cls.rels = [('fm', 'to')]
+        cls.df   = pl.DataFrame({'fm': ['a', 'c', 'a', None, None, 'c'],
+                                 'to': ['b', 'd', 'b', 'x',  'x',  'd'],
+                                 'n':  [0, 1, 2, 3, 4, 5]})
+
+    def test_no_selection_keeps_each_edges_earliest_row_in_order(self):
+        result = self.p2s.collapseDataFrameEdgesToOneRow(self.df, self.rels)
+        self.assertEqual(result['n'].to_list(), [0, 1, 3])
+        self.assertEqual(result.columns, self.df.columns)
+
+    def test_selection_collapses_only_adjacent_edges(self):
+        result = self.p2s.collapseDataFrameEdgesToOneRow(self.df, self.rels, {'a'})
+        self.assertEqual(result['n'].to_list(), [0, 1, 3, 4, 5])
+
+    def test_null_endpoint_edge_collapses_when_its_other_end_is_selected(self):
+        result = self.p2s.collapseDataFrameEdgesToOneRow(self.df, self.rels, {'x'})
+        self.assertEqual(result['n'].to_list(), [0, 1, 2, 3, 5])
+
+
 class TestLayoutMethods(unittest.TestCase):
 
     @classmethod

@@ -335,17 +335,30 @@ class P2SGraphMixin:
                     df = self.createConcatColumn(df, _relationship_[1], _to_)
             new_relationships.append((_fm_, _to_))
 
+        # One row-mask expression rather than a group_by() iteration, for the reason given in
+        # filterDataFrameByGraph(): the iteration builds every edge's rows as a DataFrame of
+        # their own. A row is kept when it is its edge's earliest row, or when its edge is
+        # not adjacent to the selection. Adjacency is decided in Python, once per distinct
+        # (fm, to) pair, with the same test as before. nulls_equal=True matters here: a pair
+        # with a null endpoint is an edge of its own, and is adjacent when its other
+        # endpoint is selected.
         selected = selected or set()
-        _idx_ = '__cde_idx__'
+        _idx_, _adj_ = '__cde_idx__', '__cde_adjacent__'
         df = df.with_row_index(_idx_)
-        _keep_ = set()
-        for _relationship_ in new_relationships:
-            for k, k_df in df.group_by(_relationship_):
-                _adjacent_ = (k[0] in selected) or (k[1] in selected)
-                if len(selected) == 0 or _adjacent_: _keep_.add(k_df[_idx_].min())      # collapse to earliest row
-                else:                                _keep_.update(k_df[_idx_].to_list()) # keep all rows
+        _keep_ = pl.lit(False)
+        for i, _relationship_ in enumerate(new_relationships):
+            _keys_  = list(_relationship_)
+            _first_ = pl.col(_idx_) == pl.col(_idx_).min().over(_keys_)  # collapse to earliest row
+            if len(selected) == 0:
+                _keep_ = _keep_ | _first_
+                continue
+            _pairs_ = df.select(_keys_).unique()
+            _pairs_ = _pairs_.with_columns(pl.Series(f'{_adj_}{i}', [(_k_[0] in selected) or (_k_[1] in selected)
+                                                                     for _k_ in _pairs_.iter_rows()], dtype=pl.Boolean))
+            df      = df.join(_pairs_, on=_keys_, how='left', nulls_equal=True, maintain_order='left')
+            _keep_  = _keep_ | _first_ | ~pl.col(f'{_adj_}{i}')           # not adjacent: keep all rows
 
-        return df.filter(pl.col(_idx_).is_in(_keep_)).select(_orig_columns_)
+        return df.filter(_keep_).select(_orig_columns_)
 
     # -------------------------------------------------------------------------
     # Ported from rtsvg/rt_graph_layouts_mixin.py (David Trimm, Apache 2.0)

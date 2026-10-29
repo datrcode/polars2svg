@@ -86,13 +86,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   compact fan or disc in the space spring left beside it. The iteration budget for large
   graphs counts the nodes spring lays out, so it no longer counts the leaves. With a
   selection, `spring nx` still moves only the selected nodes.
-- **linkpi removes nodes up to 30x faster.** `x` (remove the selected nodes) took about
-  4 s on a netflow graph of 30,000 edges thinned to one row each by `ctrl-shift-x`; it
-  now takes about 0.13 s. `f` and `F` gain the same way, most on a large base frame.
-  The time went into `filterDataFrameByGraph()`, which built a separate DataFrame for
-  every edge. It now selects the matching rows in one join. The rows it keeps are the
-  same, and they now stay in their original order instead of being grouped by edge in an
-  order that changed from run to run.
+- **linkpi removes nodes up to 30x faster, and collapses edges up to 100x faster.** `x`
+  (remove the selected nodes) took about 4 s on a netflow graph of 30,000 edges thinned
+  to one row each by `ctrl-shift-x`; it now takes about 0.13 s. `f` and `F` gain the
+  same way, most on a large base frame. `ctrl-shift-x` itself took about 2 s on a
+  2-million-row frame and now takes under 0.05 s. The time went into
+  `filterDataFrameByGraph()` and `collapseDataFrameEdgesToOneRow()`, which built a
+  separate DataFrame for every edge. Each now works on the whole frame at once. The rows
+  they keep are the same. `filterDataFrameByGraph()`'s rows now stay in their original
+  order instead of being grouped by edge in an order that changed from run to run.
 - **`stack_controli` needs more height for its shelf.** The minimum height now includes
   the shelf (about 60px at the default four entries) and a status row. A widget built at
   the old minimum raises a `ValueError` that names the fix: make it taller, or pass a

@@ -1855,7 +1855,8 @@ class Polars2SVG(P2SColorsMixin,
             tmpl = p2s.xyp(x='x', y='y', sm_shared={p2s.SM_X, p2s.SM_Y})  # dataless template
             p2s.smallp(df, tmpl, 'region')                               # one panel per region
 
-        sm_template        = XYp | Timep | Histop             # see the sm_shared variable w/in the template
+        sm_template        = XYp | Timep | Histop | Piep      # see the sm_shared variable w/in the template
+                           | LinkP | ChP | SpreadLinesP
 
         --- split mode (mutually exclusive with cycle_by) ---
 

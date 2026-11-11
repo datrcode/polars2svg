@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   call still raises a `TypeError`, which now names the second frame instead of printing
   it.
 
+- **`smallp()`'s docstring lists every panel template.** `sm_template` was documented as
+  `XYp | Timep | Histop`; piep, linkp, chordp and spreadlinesp work as panels too.
+
 ## [0.6.0] — 2026-10-29
 
 ### Added

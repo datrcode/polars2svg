@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`xyp(new_df, drawn_xyp)` draws `new_df` with `drawn_xyp`'s settings.** Passing a
+  drawn xyp as the template together with a new frame raised `TypeError: Unknown
+  argument @ index 0` when the frame was positional, whether the template was positional
+  or `template=`. Only `df=new_df` and `drawn_xyp.render_with(new_df)` worked. Every
+  form now works, as it already did on the other components. Passing two frames in one
+  call still raises a `TypeError`, which now names the second frame instead of printing
+  it.
+
 ## [0.6.0] — 2026-10-29
 
 ### Added

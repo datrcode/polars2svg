@@ -646,8 +646,15 @@ class XYp(P2SBackgroundMixin, ExportMixin):
         # can name positional dispatch as the likely cause (see positionalDispatchHint).
         self._x_from_positional_, self._y_from_positional_ = False, False
         _is_x_, _is_y_ = True, False
+        # The one-frame-per-call check counts the frames passed *here*, not self.df:
+        # a template clone has already copied the template's frame into self.df, and
+        # the new frame must replace it (as in histop/timep -- tests/test_template_call_forms.py).
+        _positional_df_seen_ = False
         for i in range(len(args)):
-            if   isinstance(args[i], pl.DataFrame) and self.df is None:
+            if   isinstance(args[i], pl.DataFrame):
+                if _positional_df_seen_:
+                    raise TypeError(f'XYp.__parseInput__():  a second DataFrame @ index {i} -- pass only one df')
+                _positional_df_seen_ = True
                 self.df = self.df_orig = args[i]
             elif isinstance(args[i], str) or isinstance(args[i], tuple) or isinstance(args[i], list):
                 # A hex color positioned as x/y is almost certainly a color= value

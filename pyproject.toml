@@ -173,7 +173,7 @@ dev = [
   # or an audit was measured against a moving tool.  Rule sets change between
   # minors -- pin the minor, raise it deliberately.  See PLANNING.md Q1.
   "ruff>=0.17,<0.18",
-  "mypy>=2.3,<2.4",
+  "mypy>=2.3,<2.5",
   "fonttools",  # build-time tool for tools/gen_font_metrics.py; here so
                 # tests/test_font_metrics_consistency.py can re-derive the baked
                 # metrics from the bundled TTF and catch a stale generated table

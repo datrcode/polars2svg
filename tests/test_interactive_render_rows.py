@@ -277,9 +277,29 @@ class TestCountFields(unittest.TestCase):
         _rows_ = PiepRenderRows(self.p2s.piep(self.df, 'svc'), count_fields=['bytes'])
         self.assertEqual([_l_ for _, _l_ in self._count_(_rows_).items], ['rows', 'bytes'])
 
+    # User feedback 2026-11-16 (M1 in 20261123_user_feedback_plan.md): ROW_COUNTp is the
+    # spelling a caller reaches for, and rows is always offered anyway.
+    def test_row_count_in_the_list_adds_nothing(self):
+        _t_ = self.p2s.histop(self.df, 'svc', count='bytes')
+        for _fields_ in ([self.p2s.ROW_COUNTp, 'pkts'], ['pkts', self.p2s.ROW_COUNTp]):
+            with self.subTest(fields=_fields_):
+                _items_ = self._count_(HistopRenderRows(_t_, count_fields=_fields_)).items
+                self.assertEqual([list(_i_) for _i_ in _items_],
+                                 [['r', 'rows'], ['f', 'bytes'], ['1', 'pkts']],
+                                 'rows once, on r, and pkts keeps the first field key')
+
 
 @unittest.skipUnless(_PANEL_AVAILABLE_, 'panel not installed')
 class TestCountFieldsOnTheView(TestCountFields):
+
+    def test_the_views_accept_row_count_in_count_fields(self):
+        _ts_ = self.df.with_columns(ts=pl.datetime_range(pl.datetime(2026, 1, 1), pl.datetime(2026, 1, 6),
+                                                         '1d', eager=True))
+        _v_ = self.p2s.timepi(self.p2s.timep(_ts_, 'ts', count='bytes'),
+                              count_fields=[self.p2s.ROW_COUNTp, 'pkts'])
+        self.assertEqual([_l_ for _, _l_ in _v_.menu_items['count']], ['rows', 'bytes', 'pkts'])
+        _v_ = self.p2s.histopi(self.p2s.histop(self.df, 'svc'), count_fields=self.p2s.ROW_COUNTp)
+        self.assertEqual([_l_ for _, _l_ in _v_.menu_items['count']], ['rows'])
 
     def test_the_view_switches_to_a_named_field(self):
         _v_ = self.p2s.histopi(self.p2s.histop(self.df, 'svc'), count_fields=['bytes'])

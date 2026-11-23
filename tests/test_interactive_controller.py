@@ -2157,13 +2157,107 @@ class TestLINKPISubnetLayouts(unittest.TestCase):
         self.assertTrue(ctrl.layout_background['192.168.1.0/24'].contains(Point(_pos_['192.168.1.9'])))
         self.assertEqual(len({tuple(_pos_[_n_]) for _n_ in _nodes_}), len(_nodes_))
 
-    def test_with_a_selection_it_does_nothing(self):
-        ctrl = self._make_ctrl()
-        ctrl.selected_entities = {'10.0.0.1'}
-        _before_ = dict(ctrl.dfs_layout[0].pos)
-        self.assertFalse(ctrl.apply_layout_operation('subnet treemap /24'))
-        self.assertEqual(dict(ctrl.dfs_layout[0].pos), _before_)
-        self.assertIsNone(ctrl.layout_background)
+    # ── with a selection: only the selection, inside its own box ─────────────
+    # User feedback 2026-11-16 (M2 in 20261123_user_feedback_plan.md): many addresses
+    # talking to one hub, already placed where the analyst wants them -- now group them.
+    _HUB_    = '1.1.1.1'
+    _SPOKES_ = ([f'10.0.0.{_i_}' for _i_ in range(1, 6)] + [f'10.0.1.{_i_}' for _i_ in range(1, 4)] +
+                [f'172.16.5.{_i_}' for _i_ in range(1, 5)] + ['host-x'])
+
+    def _hub_ctrl(self):
+        import math
+        _n_   = len(self._SPOKES_)
+        _df_  = pl.DataFrame({'fm': [self._HUB_] * _n_, 'to': self._SPOKES_})
+        # The spokes on an arc to the right of the hub, interleaved so that grouping them
+        # has to move them; the hub well outside their box.
+        _order_ = self._SPOKES_[::2] + self._SPOKES_[1::2]
+        _pos_ = {_s_: (0.7 + 0.2 * math.cos(-1.2 + 2.4 * _i_ / (_n_ - 1)),
+                       0.5 + 0.3 * math.sin(-1.2 + 2.4 * _i_ / (_n_ - 1))) for _i_, _s_ in enumerate(_order_)}
+        _pos_[self._HUB_] = (0.1, 0.5)
+        ctrl = self._make_ctrl(df=_df_, pos=_pos_)
+        ctrl.selected_entities = set(self._SPOKES_)
+        return ctrl
+
+    def _box_(self, pos, nodes):
+        _xs_, _ys_ = [pos[_n_][0] for _n_ in nodes], [pos[_n_][1] for _n_ in nodes]
+        return (min(_xs_), min(_ys_), max(_xs_), max(_ys_))
+
+    def test_a_selection_is_grouped_by_subnet_inside_its_own_box(self):
+        from shapely.geometry import Point
+        from polars2svg.p2s_graph_mixin import nodeSubnet
+        ctrl = self._hub_ctrl()
+        _pos_    = ctrl.dfs_layout[0].pos
+        _box_    = self._box_(_pos_, self._SPOKES_)
+        _hub_xy_ = tuple(_pos_[self._HUB_])
+        self.assertTrue(ctrl.apply_layout_operation('subnet treemap /24'))
+        # The nodes consume the whole box (DT: unpadded) -- and nothing else moved.
+        for _got_, _want_ in zip(self._box_(_pos_, self._SPOKES_), _box_):
+            self.assertAlmostEqual(_got_, _want_, places=9)
+        self.assertEqual(tuple(_pos_[self._HUB_]), _hub_xy_)
+        # No background before, so the cells are the background -- and they hold only the
+        # selection's subnets, each node in its own.
+        _cells_ = ctrl.layout_background
+        self.assertEqual(ctrl.background_provenance, 'layout')
+        self.assertEqual(set(_cells_), {'10.0.0.0/24', '10.0.1.0/24', '172.16.5.0/24', 'non-IPv4'})
+        for _s_ in self._SPOKES_:
+            _key_ = nodeSubnet(_s_, 24) if _s_ != 'host-x' else 'non-IPv4'
+            self.assertTrue(_cells_[_key_].contains(Point(_pos_[_s_])), f'{_s_} not in {_key_}')
+        _keys_ = sorted(_cells_)
+        for _i_, _a_ in enumerate(_keys_):
+            for _b_ in _keys_[_i_ + 1:]:
+                self.assertAlmostEqual(_cells_[_a_].intersection(_cells_[_b_]).area, 0.0, places=12,
+                                       msg=f'{_a_} overlaps {_b_}')
+
+    def test_repeating_it_on_the_same_selection_changes_nothing(self):
+        """The treemap's gutter keeps its nodes short of the box; without the stretch to
+        the box, every 'w' would shrink the group a little further."""
+        ctrl = self._hub_ctrl()
+        ctrl.apply_layout_operation('subnet treemap /24')
+        _first_ = {_s_: tuple(ctrl.dfs_layout[0].pos[_s_]) for _s_ in self._SPOKES_}
+        ctrl.apply_layout_operation('subnet treemap /24')
+        for _s_ in self._SPOKES_:
+            for _a_, _b_ in zip(ctrl.dfs_layout[0].pos[_s_], _first_[_s_]):
+                self.assertAlmostEqual(_a_, _b_, places=9, msg=_s_)
+
+    def test_an_existing_background_is_kept_even_when_hidden(self):
+        """DT: never replace a background that exists, even one that is not shown."""
+        from polars2svg.interactive_controller import _BACKGROUND_STATES_
+        for _make_bg_, _provenance_ in (
+                (lambda c: c.applyBackgroundOperation('subnet regions /16'), 'context'),
+                (lambda c: c.apply_layout_operation('subnet treemap /16'), 'layout')):
+            for _hidden_ in (False, True):
+                with self.subTest(provenance=_provenance_, hidden=_hidden_):
+                    ctrl = self._hub_ctrl()
+                    ctrl.selected_entities = set()
+                    _make_bg_(ctrl)
+                    if _hidden_:
+                        _commit_config(ctrl, 'background_state_choice', _BACKGROUND_STATES_[0])
+                    _bg_ = ctrl.layout_background
+                    self.assertIsNotNone(_bg_)
+                    ctrl.selected_entities = set(self._SPOKES_)
+                    _box_ = self._box_(ctrl.dfs_layout[0].pos, self._SPOKES_)
+                    self.assertTrue(ctrl.apply_layout_operation('subnet treemap /24'))
+                    self.assertIs(ctrl.layout_background, _bg_)
+                    self.assertEqual(ctrl.background_provenance, _provenance_)
+                    for _got_, _want_ in zip(self._box_(ctrl.dfs_layout[0].pos, self._SPOKES_), _box_):
+                        self.assertAlmostEqual(_got_, _want_, places=9)
+
+    def test_a_selection_spanning_no_area_is_refused_with_a_note(self):
+        """A treemap needs an area to divide; padding one was rejected (DT), so a point or
+        a line is refused -- visibly, rather than as a keystroke that did nothing."""
+        for _sel_ in ({'10.0.0.1'},                                        # a point
+                      {'10.0.0.1', '10.0.0.2', '10.0.1.5'}):               # a line, below
+            with self.subTest(selection=sorted(_sel_)):
+                ctrl = self._make_ctrl(pos={'10.0.0.1': (0.2, 0.4), '10.0.0.2': (0.5, 0.4),
+                                            '10.0.1.5': (0.8, 0.4), '10.0.1.7': (0.3, 0.9),
+                                            '10.0.0.3': (0.6, 0.9), '192.168.1.10': (0.9, 0.1),
+                                            '192.168.1.9': (0.1, 0.1), 'host-x': (0.5, 0.6)})
+                ctrl.selected_entities = set(_sel_)
+                _before_ = dict(ctrl.dfs_layout[0].pos)
+                self.assertFalse(ctrl.apply_layout_operation('subnet treemap /24'))
+                self.assertEqual(dict(ctrl.dfs_layout[0].pos), _before_)
+                self.assertIsNone(ctrl.layout_background)
+                self.assertIn('span no area', ctrl._last_cost_note_)
 
     # ── the background producers: subnet regions, nothing moves ──────────────
     _BG_LABELS_ = ['subnet regions /24', 'subnet regions /16']
@@ -2869,6 +2963,84 @@ class TestLINKPITimingMarksCycle(unittest.TestCase):
         ctrl = self._ctrl(_make_link_df())
         self._set(ctrl, arrows=True);  self.assertEqual(self._state(ctrl), (True, False))
         self._set(ctrl, arrows=False); self.assertEqual(self._state(ctrl), (False, False))
+
+
+class TestLINKPISettingsSurviveARebase(unittest.TestCase):
+    """B1 in 20261123_user_feedback_plan.md: settings reverted on the push after a rebase.
+
+    Every pushed layer is a clone of ``_linkp_``, and a setting reaches future layers by
+    being written to layer 0 -- which works only while layer 0 IS ``_linkp_``.
+    ``replaceBaseDataframe()`` (the stack control's rebase, ctrl+shift+c) built a fresh
+    layer 0 and left ``_linkp_`` on the old one, so a setting changed afterwards reached
+    every layer but the template, and the next push cloned the stale template: timing
+    marks, labels and sizes all reverted to what they were at the rebase.
+    """
+
+    _MARK_ = 'stroke-width="1.5"'   # a timing mark; see TestLINKPITimingMarksCycle
+
+    def _df(self):
+        return pl.DataFrame({'fm': ['a', 'b', 'c', 'a'], 'to': ['b', 'c', 'a', 'c'],
+                             'ts': [datetime(2024, 1, d) for d in (1, 2, 3, 4)]})
+
+    def _ctrl(self, **kw):
+        from polars2svg.interactive_controller import linkpi
+        p2s = Polars2SVG()
+        return linkpi(p2s.linkp(self._df(), relationships=[('fm', 'to')], pos=_make_pos(), **kw))
+
+    def _top(self, ctrl):
+        return ctrl.dfs_layout[ctrl.df_level]
+
+    def test_layer_zero_is_the_template_after_a_rebase(self):
+        ctrl = self._ctrl()
+        self.assertIs(ctrl._linkp_, ctrl.dfs_layout[0])
+        asyncio.run(ctrl.replaceBaseDataframe(self._df().head(3)))
+        self.assertIs(ctrl._linkp_, ctrl.dfs_layout[0])
+
+    def test_marks_turned_on_after_a_rebase_stay_on_through_a_push(self):
+        """The report as it happened: marks on from the panel, push, marks gone."""
+        ctrl = self._ctrl()
+        asyncio.run(ctrl.replaceBaseDataframe(self._df()))
+        _commit_config(ctrl, 'timing_marks_choice', 'on')
+        _commit_config(ctrl, 'label_mode_choice',   'node labels')
+        self.assertTrue(ctrl.pushStack(self._df().head(3)))
+        _top_ = self._top(ctrl)
+        self.assertEqual(_top_._time_field_, 'ts')
+        self.assertTrue(_top_.draw_node_labels)
+        self.assertIn(self._MARK_, ctrl.mod_inner)
+        self.assertEqual((ctrl.timing_marks_choice, ctrl.label_mode_choice), ('on', 'node labels'))
+
+    def test_every_setting_changed_after_a_rebase_survives_a_push(self):
+        """Not only the two rows reported: anything the template carries reverted, in
+        either direction -- here marks built on are turned off, and a size picker moves."""
+        ctrl = self._ctrl(time='ts')
+        asyncio.run(ctrl.replaceBaseDataframe(self._df()))
+        _commit_config(ctrl, 'timing_marks_choice', 'off')
+        _commit_config(ctrl, 'link_arrows_choice',  'on')
+        ctrl.link_size_choice = 'large'
+        self.assertTrue(ctrl.pushStack(self._df().head(3)))
+        _top_ = self._top(ctrl)
+        self.assertIsNone(_top_._time_field_)
+        self.assertTrue(_top_.link_arrows)
+        self.assertEqual(_top_.link_size, 'large')
+        self.assertNotIn(self._MARK_, ctrl.mod_inner)
+
+    def test_through_the_controller_rebase_then_push(self):
+        """The same, along the path the stack control takes: replaceStack() reaches the
+        view through replaceBaseDataframe(), and the push comes back through display()."""
+        ctrl = self._ctrl()
+        mvc  = InteractionController()
+        mvc.addStack('default', self._df())
+        mvc.link(ctrl, [], on='stack', stack='default')
+        ctrl.mvc = mvc
+        asyncio.run(mvc.replaceStack(ctrl, self._df()))
+        _commit_config(ctrl, 'timing_marks_choice', 'on')
+        _commit_config(ctrl, 'label_mode_choice',   'node labels')
+        self.assertTrue(asyncio.run(mvc.pushStack(ctrl, self._df().head(3))))
+        self.assertEqual(ctrl.df_level, 1)
+        _top_ = self._top(ctrl)
+        self.assertEqual(_top_._time_field_, 'ts')
+        self.assertTrue(_top_.draw_node_labels)
+        self.assertIn(self._MARK_, ctrl.mod_inner)
 
 
 class TestPanelizePayloadGuard(_UnfilteredLoggerMixin, unittest.TestCase):

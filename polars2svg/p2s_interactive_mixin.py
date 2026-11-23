@@ -100,7 +100,9 @@ class P2SInteractiveMixin:
         (bar selection). Pass the result to ``panelize()``.
 
         ``count_fields=[...]`` names the further columns the settings panel's count row
-        may switch to -- by default it offers rows and the field the view was built with.'''
+        may switch to -- by default it offers rows and the field the view was built with.
+        Rows is always offered (key ``r``), so ``p2s.ROW_COUNTp`` in the list is accepted
+        and adds nothing.'''
         return _importInteractiveController_().histopi(_histop_, **kwargs)
 
     def timepi(self, _timep_: Any, **kwargs: Any) -> Any:
@@ -108,7 +110,9 @@ class P2SInteractiveMixin:
         (time-range selection). Pass the result to ``panelize()``.
 
         ``count_fields=[...]`` names the further columns the settings panel's count row
-        may switch to -- by default it offers rows and the field the view was built with.'''
+        may switch to -- by default it offers rows and the field the view was built with.
+        Rows is always offered (key ``r``), so ``p2s.ROW_COUNTp`` in the list is accepted
+        and adds nothing.'''
         return _importInteractiveController_().timepi(_timep_, **kwargs)
 
     def linkpi(self, _linkp_: Any, mvc: Any = None, **kwargs: Any) -> Any:
@@ -132,7 +136,9 @@ class P2SInteractiveMixin:
         (arc/ribbon selection). Pass the result to ``panelize()``.
 
         ``count_fields=[...]`` names the further columns the settings panel's count row
-        may switch to -- by default it offers rows and the field the view was built with.'''
+        may switch to -- by default it offers rows and the field the view was built with.
+        Rows is always offered (key ``r``), so ``p2s.ROW_COUNTp`` in the list is accepted
+        and adds nothing.'''
         return _importInteractiveController_().chordpi(_chordp_, **kwargs)
 
     def piepi(self, _piep_: Any, **kwargs: Any) -> Any:
@@ -140,7 +146,9 @@ class P2SInteractiveMixin:
         (wedge selection). Pass the result to ``panelize()``.
 
         ``count_fields=[...]`` names the further columns the settings panel's count row
-        may switch to -- by default it offers rows and the field the view was built with.'''
+        may switch to -- by default it offers rows and the field the view was built with.
+        Rows is always offered (key ``r``), so ``p2s.ROW_COUNTp`` in the list is accepted
+        and adds nothing.'''
         return _importInteractiveController_().piepi(_piep_, **kwargs)
 
     def spreadlinepi(self, _spread_: Any, **kwargs: Any) -> Any:

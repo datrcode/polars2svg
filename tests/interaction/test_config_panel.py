@@ -336,6 +336,40 @@ def test_the_two_timing_rows_are_independent(timing_page):
     timing_page.assert_panel_value('arrows', 'on')            # still untouched
 
 
+def test_settings_survive_a_push_with_no_rebase(timing_page):
+    """B1 in 20261123_user_feedback_plan.md: marks and labels set from the panel were
+    lost on a stack push.  The cause found was a rebase splitting the template from
+    layer 0 (tests/test_interactive_controller.py, TestLINKPISettingsSurviveARebase);
+    this is the browser path with no rebase, so a second cause would show here.  Both
+    directions: marks were built on and go off, labels were built off and go on."""
+    _open(timing_page)
+    timing_page.press('t'); timing_page.press(' ')
+    timing_page.assert_panel_value('timing marks', 'off')
+    timing_page.press('l'); timing_page.press(' ')
+    timing_page.assert_panel_value('labels', 'node labels')
+    timing_page.press('Escape')                               # flushes the commit
+    timing_page.assert_panel_closed()
+    _view_ = timing_page.app.view()
+    assert_eventually(lambda: _view_.dfs_layout[0]._time_field_ is None
+                              and _view_.dfs_layout[0].draw_node_labels,
+                      'the panel settings never reached the LinkP')
+
+    _ax_, _ay_ = timing_page.node_screen_xy('a')
+    timing_page.drag(_ax_ - 12, _ay_ - 12, _ax_ + 12, _ay_ + 12)
+    timing_page.assert_selected(1)
+    _before_ = timing_page.mod_html()
+    timing_page.press_at('a', 'x')                            # remove 'a': push a level
+    timing_page.wait_for_mod_change(_before_)
+    assert_eventually(lambda: _view_.df_level == 1, "'x' did not push a level")
+
+    _top_ = _view_.dfs_layout[_view_.df_level]
+    assert _top_._time_field_ is None, 'timing marks came back on the pushed level'
+    assert _top_.draw_node_labels,     'node labels went off on the pushed level'
+    _open(timing_page)
+    timing_page.assert_panel_value('timing marks', 'off')
+    timing_page.assert_panel_value('labels', 'node labels')
+
+
 # ── CP7: the commit is debounced ─────────────────────────────────────────────
 
 def test_cycling_past_a_value_does_not_commit_it(timing_page):

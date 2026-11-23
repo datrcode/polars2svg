@@ -7,7 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **linkpi: the subnet treemap works on a selection.** With nodes selected, `w` on
+  `subnet treemap /24` or `/16` now groups just those nodes by subnet, inside the box they
+  already span. The rest of the graph stays where it is. The grouped nodes fill the whole
+  box, so pressing `w` again changes nothing. The cells become the background only when
+  there is no background yet. An existing one is kept, even if it is switched off. A
+  selection that spans no area (a single point or a straight line) is refused with a
+  note. Before this, `w` with a selection did nothing.
+
+### Changed
+
+- **`count_fields=` accepts `p2s.ROW_COUNTp`.** The count row always offers rows (key
+  `r`), so naming it in `count_fields=` on histopi, timepi, piepi or chordpi adds nothing.
+  It used to raise a `TypeError`.
+
 ### Fixed
+
+- **linkpi: settings no longer revert on the first push after a rebase.** After the
+  stack control's rebase (`ctrl+shift+c`), or any `replaceStack()`, panel settings changed
+  afterwards were lost on the next stack push. That covered timing marks, labels, arrows,
+  and the size, shape and opacity pickers. Each reverted to its value at the time of the
+  rebase.
 
 - **`xyp(new_df, drawn_xyp)` draws `new_df` with `drawn_xyp`'s settings.** Passing a
   drawn xyp as the template together with a new frame raised `TypeError: Unknown

@@ -310,6 +310,7 @@ def count_row(template: Any, also: Gate = _always_, fields: list | None = None) 
         _choices_.append(('f', _init_, template.count))
     _keys_ = iter(_COUNT_FIELD_KEYS_)
     for _spec_ in (fields or []):
+        if _spec_ is _p_.ROW_COUNTp: continue                              # always 'r', above
         if _label_(_spec_) in [_l_ for _, _l_, _ in _choices_]: continue   # already offered
         _choices_.append((next(_keys_, AS_BUILT_MNEMONIC), _label_(_spec_), _spec_))
     _live_ = len(_choices_) > 1

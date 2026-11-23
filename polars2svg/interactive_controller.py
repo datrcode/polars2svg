@@ -134,6 +134,12 @@ _IP_LAYOUT_OP_MENU_ = [
 ]
 _IP_DETECT_FRACTION_ = 0.5
 
+#: Returned by a layout handler in place of its cells: "leave the background as it is".
+#: Without it the dispatcher reads a layout with no cells as one that clears a
+#: layout-owned background (__layoutOperation__).  The subnet treemap run on a selection
+#: returns it whenever a background already exists, shown or not (DT, 2026-11-23).
+_KEEP_BACKGROUND_: Any = object()
+
 # (mnemonic, label) for the shift-b background-producer picker (and the settings
 # panel's 'background producer' row).  A background OPERATION is not a layout
 # operation: it moves no nodes, so it does not go through apply_layout_operation()
@@ -1313,13 +1319,19 @@ class _InteractivePBase(SelectionAPIMixin, _TooltipMixin_, JSComponent):
         if _cls_ is None or not _cls_.accepts_count_fields:
             raise TypeError(f'{_name_}: count_fields= is for a view with a count row '
                             f'(histopi, timepi, piepi, chordpi)')
-        _fields_ = [count_fields] if isinstance(count_fields, (str, tuple)) else list(count_fields)
+        _rows_   = plot.p2s.ROW_COUNTp
+        _fields_ = [count_fields] if isinstance(count_fields, (str, tuple)) or count_fields is _rows_ \
+                   else list(count_fields)
         _df_ = plot.df_orig
         for _spec_ in _fields_:
+            # Rows is always on the count row (count_row()), so naming it is accepted and
+            # adds nothing -- the spelling a caller reaches for should not be an error.
+            if _spec_ is _rows_: continue
             _cols_ = [_spec_] if isinstance(_spec_, str) else \
                      [_f_ for _f_ in _spec_ if isinstance(_f_, str)] if isinstance(_spec_, tuple) else None
             if _cols_ is None:
-                raise TypeError(f'{_name_}: count_fields= takes column names or count= specs, not {_spec_!r}')
+                raise TypeError(f'{_name_}: count_fields= takes column names or count= specs '
+                                f'(rows is always offered), not {_spec_!r}')
             for _c_ in _cols_:
                 if _df_ is not None and not plot.p2s.columnInDataFrame(_c_, _df_):
                     raise ValueError(f'{_name_}: count_fields= names {_c_!r}, which is not a column'
@@ -3075,6 +3087,11 @@ class LINKPI(SelectionAPIMixin, _TooltipMixin_, JSComponent):
         _vw_  = self.dfs_layout[self.df_level].view_window
         _new_ln_ = self._linkp_.render_with(df, pos=_pos_, view_window=_vw_)
         _g_      = self.rt_self.createNetworkXGraph(df, self.ln_params['relationships'])
+        # The new layer 0 IS the template from here on (see updateLinkNodeParam()).  Left
+        # pointing at the old one, every later setting reached the layers but not the
+        # template, and the next push cloned the stale template -- reverting timing marks,
+        # labels, sizes, everything set since the rebase (20261123_user_feedback_plan.md B1).
+        self._linkp_           = _new_ln_
         self.dfs               = [df]
         self.dfs_layout        = [_new_ln_]
         self.graphs            = [_g_]
@@ -3738,15 +3755,66 @@ class LINKPI(SelectionAPIMixin, _TooltipMixin_, JSComponent):
             # contract=False: a node's cell depends on its own address, and a merged stack
             # of nodes from several subnets would all land in one representative's cell.
             # CHEAP: 5 ms on VAST's 1,298 hosts, 0.76 s at ~200k (PLANNING.md G5).
+            # With a selection, only the selected nodes move, inside the box they already
+            # span -- see __subnetTreemapInSelection__().
             def _subnet_treemap_(mask: int) -> Callable[[Any, Any, Any], Any]:
                 def _handler_(ln: Any, g: Any, sel: Any) -> Any:
                     if len(sel) > 0:
-                        return None
+                        return self.__subnetTreemapInSelection__(ln, g, sel, mask)
                     return rt.ipSubnetTreeMapLayout(g, subnet_mask=mask, cell_inset=0.2, return_cells=True)
                 return _handler_
             registry[self.SUBNET_TREEMAP_24] = RegistryEntry(_subnet_treemap_(24), CHEAP, contract=False)
             registry[self.SUBNET_TREEMAP_16] = RegistryEntry(_subnet_treemap_(16), CHEAP, contract=False)
         return registry
+
+    #
+    # __subnetTreemapInSelection__() - the subnet treemap over the selected nodes only,
+    # inside the box they already span (user feedback 2026-11-16; M2 in
+    # 20261123_user_feedback_plan.md).  The use: many addresses talking to one, already
+    # placed where the analyst wants them, now to be grouped by subnet.
+    #
+    # - The box is the selection's own min/max, unpadded (DT): the layout consumes
+    #   exactly the space the user gave it.  The treemap leaves a gutter inside every
+    #   cell, so its nodes land short of the box -- and a repeated 'w' would shrink the
+    #   group each time.  The result is therefore stretched, per axis, until the NODES
+    #   span the box, and the cells with them (they then reach just past it, by the
+    #   gutter).  Running it twice gives the same picture.
+    # - A box with no width or height cannot hold a treemap (squarify divides by its
+    #   area), so it is refused with a note rather than padded.
+    # - Background: the cells become the background only when there is none.  An
+    #   existing one -- a layout's, a producer's, or one switched off -- is kept (DT).
+    #
+    def __subnetTreemapInSelection__(self, ln: Any, g: Any, sel: Collection[Any], mask: int) -> Any:
+        _nodes_ = [_n_ for _n_ in sel if _n_ in ln.pos and g.has_node(_n_)]
+        if not _nodes_: return None
+        _xs_ = [float(ln.pos[_n_][0]) for _n_ in _nodes_]
+        _ys_ = [float(ln.pos[_n_][1]) for _n_ in _nodes_]
+        _bx0_, _by0_, _bx1_, _by1_ = min(_xs_), min(_ys_), max(_xs_), max(_ys_)
+        if _bx1_ <= _bx0_ or _by1_ <= _by0_:
+            self._last_cost_note_ = (f'subnet treemap /{mask}: the selected nodes span no area '
+                                     f'(a point or a line) -- spread them out first')
+            self._surfaceCostNote_()
+            return None
+        _pos_, _cells_ = self.rt_self.ipSubnetTreeMapLayout(
+            g.subgraph(_nodes_), subnet_mask=mask, cell_inset=0.2, return_cells=True,
+            bounds=(_bx0_, _by0_, _bx1_, _by1_))
+
+        # Stretch so the nodes span the box.  An axis the nodes do not spread along (one
+        # row of nodes) is centred instead of scaled.
+        def _fit_(lo: float, hi: float, b0: float, b1: float) -> Callable[[float], float]:
+            if hi > lo: return lambda v: b0 + (v - lo) * (b1 - b0) / (hi - lo)
+            return lambda v: v + (b0 + b1) / 2.0 - lo
+        _nx_ = [float(_p_[0]) for _p_ in _pos_.values()]
+        _ny_ = [float(_p_[1]) for _p_ in _pos_.values()]
+        _fx_ = _fit_(min(_nx_), max(_nx_), _bx0_, _bx1_)
+        _fy_ = _fit_(min(_ny_), max(_ny_), _by0_, _by1_)
+        _pos_ = {_n_: (_fx_(float(_p_[0])), _fy_(float(_p_[1]))) for _n_, _p_ in _pos_.items()}
+        if self.layout_background is not None:
+            return _pos_, _KEEP_BACKGROUND_
+        from shapely.geometry import box as _box_
+        _cells_ = {_k_: _box_(_fx_(_c_.bounds[0]), _fy_(_c_.bounds[1]), _fx_(_c_.bounds[2]), _fy_(_c_.bounds[3]))
+                   for _k_, _c_ in _cells_.items()}
+        return _pos_, _cells_
 
     #
     # __buildBackgroundRegistry__() - {label: handler} for the producers 'b' runs.
@@ -4023,8 +4091,11 @@ class LINKPI(SelectionAPIMixin, _TooltipMixin_, JSComponent):
             # none of its own it clears only a background that BELONGED to a
             # layout; a contextual one (shift-b) survives, since the user asked
             # for it against these positions and may be re-laying them out
-            # precisely because of what it showed them.
-            if _cells_:
+            # precisely because of what it showed them.  _KEEP_BACKGROUND_ leaves
+            # whichever is there alone: a layout of part of the graph.
+            if _cells_ is _KEEP_BACKGROUND_:
+                pass
+            elif _cells_:
                 self.layout_background     = _cells_
                 self.background_provenance = 'layout'
                 self._bg_op_label_         = _layout_op_

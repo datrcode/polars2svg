@@ -28,3 +28,12 @@ p2s.spreadlinesp(df, [("src", "dst")], ego="alice", time="ts", wxh=(520, 260))
 | `legend` | `True`, position string, dict | Auto-selected from the resolved color mode. |
 
 Interactive variant: `p2s.spreadlinepi(...)`.
+
+## Citation
+
+The SpreadLine layout was developed by Yun-Hsin Kuo, Dongyu Liu, and
+Kwan-Liu Ma. If you use `spreadlinesp` in published work, please cite:
+
+> Y.-H. Kuo, D. Liu, and K.-L. Ma, "SpreadLine: Visualizing Egocentric Dynamic
+> Influence," *IEEE Transactions on Visualization and Computer Graphics*
+> (Proc. IEEE VIS 2024). [arXiv:2408.08992](https://arxiv.org/abs/2408.08992)

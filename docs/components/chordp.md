@@ -37,3 +37,20 @@ p2s.chordp(df, [("fm", "to")], count="weight", node_size="vary",
 | `legend` | `True`, position string, dict | |
 
 Interactive variant: `p2s.chordpi(...)`.
+
+## Citation
+
+The chord diagram was introduced by Martin Krzywinski and colleagues in the
+Circos tool. If you use `chordp` in published work, please cite:
+
+> M. Krzywinski, J. Schein, I. Birol, J. Connors, R. Gascoyne, D. Horsman,
+> S. J. Jones, and M. A. Marra, "Circos: an information aesthetic for
+> comparative genomics," *Genome Research*, vol. 19, no. 9, pp. 1639–1645,
+> 2009. [doi:10.1101/gr.092759.109](https://doi.org/10.1101/gr.092759.109)
+
+The `link_shape='bundled'` option uses hierarchical edge bundling:
+
+> D. Holten, "Hierarchical Edge Bundles: Visualization of Adjacency Relations
+> in Hierarchical Data," *IEEE Transactions on Visualization and Computer
+> Graphics*, vol. 12, no. 5, pp. 741–748, 2006.
+> [doi:10.1109/TVCG.2006.147](https://doi.org/10.1109/TVCG.2006.147)

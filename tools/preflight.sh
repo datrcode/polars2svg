@@ -37,6 +37,10 @@
 #     and needs none, since CI installs fresh into a clean runner.  It is
 #     here because the copy-instead-of-link failure has recurred three
 #     times and is invisible from the repo root (audit 20260915 H2).
+#   - so is the `.venv matches uv.lock` step, for the same reason: a port or a
+#     pull brings a new uv.lock but never re-syncs .venv, and the mismatch
+#     otherwise surfaces as a mypy count over its ceiling that looks like a
+#     code regression.  It names the drifted packages and the re-sync command.
 #
 # The third CI job (`Linux clean-room wheel install + tests`) is deliberately
 # NOT here: it builds the wheel and runs the suite inside a stock
@@ -126,13 +130,84 @@ _step_editable_() {
 }
 
 
+# .venv must match uv.lock, or the mypy count below means nothing: mypy's ceiling is
+# calibrated against the lock, and a stale .venv moves it.  This has bitten three
+# times, each time looking like a code regression: 2026-10-04 (numpy 2.5.3 over the
+# locked 2.4.6, 56 vs 57); production 2026-10-04 (a bare --reinstall); production
+# 2026-11-27 (a port brought a new uv.lock and nothing re-synced .venv: numpy 2.4.6
+# against 2.5.5, 52 > 51).  A port carries uv.lock but cannot carry an environment,
+# so this checks it wherever preflight runs.
+#
+# Every package the lock pins for this platform (`uv export --frozen`, the same three
+# extras plus the dev group) is compared with what .venv has installed.  Packages
+# installed beyond the lock -- the playwright pair, which sits outside it on purpose --
+# are not checked.  LOCAL-ONLY, like the editable check: CI installs from the lock.
+_SYNC_CMD_='VIRTUAL_ENV="$PWD/.venv" uv sync --frozen --extra layouts --extra interactive --extra export --group dev'
+_DRIFT_=0
+_step_lock_() {
+    printf '  %-34s' '.venv matches uv.lock'
+    local _pins_ _out_ _rc_
+    if ! _pins_="$(uv export --frozen --no-hashes --no-emit-project \
+                   --extra layouts --extra interactive --extra export --group dev 2>&1)"; then
+        printf 'FAIL (uv export failed)\n'
+        printf '%s\n' "$_pins_" | tail -5 | sed 's/^/      /'
+        printf '\n'
+        _FAILED_+=('lock'); _DRIFT_=1
+        return
+    fi
+    _out_="$(printf '%s\n' "$_pins_" | .venv/bin/python -c '
+import sys
+from importlib.metadata import PackageNotFoundError, version
+from packaging.requirements import Requirement
+from packaging.version import Version
+bad, n = [], 0
+for line in sys.stdin:
+    line = line.strip()
+    if not line or line.startswith(("#", "-")):
+        continue
+    req = Requirement(line)
+    if req.marker is not None and not req.marker.evaluate({"extra": ""}):
+        continue                        # pinned for another platform
+    want = next(iter(req.specifier)).version
+    n += 1
+    try:
+        have = version(req.name)
+    except PackageNotFoundError:
+        have = None
+    if have is None or Version(have) != Version(want):
+        shown = have if have is not None else "(not installed)"
+        bad.append(f"{req.name} {shown} -> lock {want}")
+if n == 0:
+    print("no pins read from uv export"); sys.exit(2)
+print(f"{len(bad)} of {n}")
+print("\n".join(bad[:12]))
+if len(bad) > 12:
+    print(f"... and {len(bad) - 12} more")
+sys.exit(1 if bad else 0)
+' 2>&1)"; _rc_=$?
+    if [ "$_rc_" -eq 0 ]; then
+        printf 'ok (%s pins)\n' "$(printf '%s\n' "$_out_" | head -n 1 | sed 's/^0 of //')"
+        return
+    fi
+    if [ "$_rc_" -eq 1 ]; then
+        printf 'FAIL (%s pins differ)\n' "$(printf '%s\n' "$_out_" | head -n 1)"
+        printf '%s\n' "$_out_" | tail -n +2 | sed 's/^/      /'
+    else
+        printf 'FAIL (could not compare)\n'
+        printf '%s\n' "$_out_" | tail -5 | sed 's/^/      /'
+    fi
+    printf '      re-sync: %s\n' "$_SYNC_CMD_"
+    printf '      (that removes playwright, outside the lock: reinstall ci.yml'"'"'s pins after)\n\n'
+    _FAILED_+=('lock'); _DRIFT_=1
+}
+
 # mypy runs from .venv rather than uvx, and that changes what it means.  `uvx mypy`
 # resolves into an isolated env with no polars, numpy or PIL, so every operation on
 # a DataFrame/Series/ndarray is Any and type-checks trivially: it printed "Success:
 # no issues found in 47 source files" on 2026-09-13 while the same config resolved
 # against .venv found 730 errors in 17 files.  See PLANNING.md Q1 and audit F1.
 #
-# It cannot be a plain pass/fail step yet.  60 is the standing count, and a gate
+# It cannot be a plain pass/fail step yet.  The standing count is not zero, and a gate
 # that is always red is a gate you learn to ignore -- the same reason the test suite
 # is not in this script.  So it is a CEILING: green at or below the number, red
 # above it.  That is enough to catch the drift that motivated Q1 (the count moved
@@ -172,7 +247,7 @@ _step_mypy_() {
     if [ "$_rc_" -gt 1 ]; then
         printf 'FAIL (mypy did not run, exit %d)\n' "$_rc_"
         printf '%s\n' "$_out_" | tail -5 | sed 's/^/      /'
-        printf '      is the dev group installed?  VIRTUAL_ENV="$PWD/.venv" uv pip install -e %s --group dev\n\n' "'.[layouts,interactive,export]'" 
+        printf '      is the dev group installed?  %s\n\n' "$_SYNC_CMD_"
         _FAILED_+=('mypy')
         return
     fi
@@ -183,13 +258,19 @@ _step_mypy_() {
         printf 'ok (%d)\n' "$_n_"
     else
         printf 'FAIL (%d > %d)\n' "$_n_" "$_MYPY_CEILING_"
-        printf '%s\n' "$_out_" | grep ': error: ' | tail -20 | sed 's/^/      /'
-        printf '\n'
+        if [ "$_DRIFT_" -eq 1 ]; then
+            # Not a code regression until .venv matches the lock; the list would mislead.
+            printf '      .venv does not match uv.lock (above): re-sync, then re-run\n\n'
+        else
+            printf '%s\n' "$_out_" | grep ': error: ' | tail -20 | sed 's/^/      /'
+            printf '\n'
+        fi
         _FAILED_+=('mypy')
     fi
 }
 
 _step_editable_
+_step_lock_
 _step_mypy_
 _step_ 'bandit (security scan)'  uvx bandit -r polars2svg/
 _step_ 'ruff'                    .venv/bin/python -m ruff check .

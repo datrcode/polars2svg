@@ -3176,7 +3176,7 @@ class LINKPI(SelectionAPIMixin, _TooltipMixin_, JSComponent):
                 except re.error: pass # invalid regex -- contributes no matches
 
             _deadline_    = time.monotonic() + _budget_
-            _node_labels_ = _self_._linkp_.node_labels or {}
+            _node_labels_ = _self_._linkp_.labelDict() or {}
             str_to_node   = {str(n): n for n in all_nodes} if _node_labels_ else {}
             try:
                 for _regex_ in _compiled_:
@@ -3230,7 +3230,7 @@ class LINKPI(SelectionAPIMixin, _TooltipMixin_, JSComponent):
             if isinstance(selection, str): _substrings_ = set([selection])
             else:                          _substrings_ = set(selection)
             _set_ = set()
-            _node_labels_ = self._linkp_.node_labels or {}
+            _node_labels_ = self._linkp_.labelDict() or {}
             str_to_node   = {str(n): n for n in all_nodes} if _node_labels_ else {}
             for _substring_ in _substrings_:
                 if ignore_case: _substring_ = _substring_.lower()
@@ -3258,7 +3258,7 @@ class LINKPI(SelectionAPIMixin, _TooltipMixin_, JSComponent):
             if ignore_case: selection_as_set = {x.lower() for x in selection_as_set}
 
             # Iterate through the nodes...
-            _node_labels_ = self._linkp_.node_labels or {}
+            _node_labels_ = self._linkp_.labelDict() or {}
             if _node_labels_: # node labels handled a little differently
                 _set_ = set()
                 str_to_node = {str(n): n for n in all_nodes}
@@ -3295,7 +3295,7 @@ class LINKPI(SelectionAPIMixin, _TooltipMixin_, JSComponent):
     # selectedEntities() - return the selected entities
     #
     def selectedEntities(self):
-        _node_labels_ = self._linkp_.node_labels or {}
+        _node_labels_ = self._linkp_.labelDict() or {}
         _set_ = set()
         if _node_labels_:
             for _node_ in self.selected_entities:
@@ -3312,7 +3312,7 @@ class LINKPI(SelectionAPIMixin, _TooltipMixin_, JSComponent):
     # - if there are no node_labels, this should return the same as selectedEntities()
     #
     def selectedNodes(self):
-        _node_labels_ = self._linkp_.node_labels or {}
+        _node_labels_ = self._linkp_.labelDict() or {}
         if _node_labels_:
             _set_, covered = set(), set()
             for _node_ in _node_labels_.keys():
@@ -4557,8 +4557,9 @@ class LINKPI(SelectionAPIMixin, _TooltipMixin_, JSComponent):
                         if self.shiftkey: # copy the label lookups (if they exist)
                             _list_ = []
                             for x in self.selected_entities:
-                                if 'node_labels' in self.ln_params and x in self.ln_params['node_labels']: _list_.append(self.ln_params['node_labels'][x])
-                                else:                                                                      _list_.append(x)
+                                _lookup_ = self._linkp_.labelDict() or {}
+                                if x in _lookup_: _list_.append(_lookup_[x])
+                                else:             _list_.append(x)
                             self._copyToClipboard_(_list_)
                         else: # copy the nodes as they are named within the dataframe
                             self._copyToClipboard_(self.selected_entities)

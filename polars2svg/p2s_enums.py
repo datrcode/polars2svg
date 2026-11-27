@@ -12,7 +12,9 @@
 # Members are bound onto the instance by name (p2s.SCALARp, p2s.BARCHARTp, ...)
 # by the ENUM_CLASSES loop in Polars2SVG.__init__.
 #
+from dataclasses import dataclass
 from enum import Enum
+from typing import Any
 
 
 class P2SEnum(Enum):
@@ -215,6 +217,14 @@ class NodeColorP(P2SEnum):
     COLOR_BY_DST_NODE  = 3
 
 
+class NodeLabelP(P2SEnum):
+    '''A source for one line of a node label (linkp ``node_labels=[...]``).
+    ``p2s.NODE_IDp`` is the node's own name.  Every other source is spelled by its
+    value: a dict is a lookup, a ``(key, value)`` pair reads columns, and
+    ``p2s.labelLine(...)`` adds options.'''
+    NODE_IDp = 1
+
+
 class PieStyleP(P2SEnum):
     '''Piechart rendering style (piep), passed as ``style=``.'''
     PIEp    = 1
@@ -245,13 +255,13 @@ class OrderKeyP(P2SEnum):
 RENDER_ENUM_CLASSES: tuple[type[Enum], ...] = (
     RowCountP, DistributionPlacementP, DistributionScaleP,
     LineWidthP, LineStyleP, LineColorP, LineOpacityP,
-    SmallMultipleP, BarStyleP, SelectShapeP, NodeColorP, PieStyleP, OrderBucketP,
+    SmallMultipleP, BarStyleP, SelectShapeP, NodeColorP, NodeLabelP, PieStyleP, OrderBucketP,
     OrderKeyP,
 )
 
 RenderEnum = (RowCountP | DistributionPlacementP | DistributionScaleP
               | LineWidthP | LineStyleP | LineColorP | LineOpacityP
-              | SmallMultipleP | BarStyleP | SelectShapeP | NodeColorP
+              | SmallMultipleP | BarStyleP | SelectShapeP | NodeColorP | NodeLabelP
               | PieStyleP | OrderBucketP | OrderKeyP)
 
 
@@ -290,3 +300,16 @@ ColorSpec = (ColorTypeP | RowCountP | str | dict[str, str]
 # contracts that used to share one `Any`.
 #
 ResolvedColorSpec = str | tuple[str | ColorTypeP | FieldTypeP | RowCountP, ...]
+
+
+#
+# LabelLine - one line of a linkp node label, with options.  Built by
+# ``p2s.labelLine(source, name=)``; a bare source (NODE_IDp, a dict, a pair, a list
+# of pairs) in ``node_labels=[...]`` is the same thing with no options.  Frozen so a
+# template clone can share it.  ``source`` is validated where it is used (LinkP), not
+# here, because the checks need the dataframe.
+#
+@dataclass(frozen=True)
+class LabelLine:
+    source: Any
+    name:   str | None = None

@@ -12,7 +12,7 @@ from polars2svg.p2s_background_mixin import P2SBackgroundMixin
 from polars2svg.exceptions import DataError
 from polars2svg.od_flow_layout import ODFlowLayout
 from polars2svg.layout_budget import Budget
-from polars2svg.p2s_enums import SelectShapeP
+from polars2svg.p2s_enums import SelectShapeP, NodeLabelP, LabelLine
 
 class LinkPKwargs(TypedDict, total=False):
     """Keyword arguments accepted by ``p2s.linkp()`` / ``LinkP(...)``.
@@ -195,6 +195,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
     _legend_region_:        tuple | None
     _legend_stat_max_:      float | None
     _legend_stat_min_:      float | None
+    _label_lines_:          list | None
     _link_count_scale_:     tuple | None
     _time_enum_:            Any
     _time_field_:           Any
@@ -621,7 +622,8 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
         # before the normalization below and long before a render, rather than left to
         # fail on len() somewhere in the middle of one -- see rejectBoolParam().
         self.p2s.rejectBoolParam(self.node_labels, 'LinkP', 'node_labels',
-                                 'a {node_name: display_str} dict', 'draw_node_labels')
+                                 'a {node_name: display_str} dict or a list of label lines', 'draw_node_labels')
+        self._label_lines_ = self.__parseLabelLines__(self.node_labels)
         self.p2s.rejectBoolParam(self.link_labels, 'LinkP', 'link_labels',
                                  'a {label_value: display_str} dict', 'draw_link_labels')
         self.p2s.rejectBoolParam(self.label_only, 'LinkP', 'label_only',
@@ -676,6 +678,8 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
             else: raise ValueError(f'LinkP: relationship tuples must have 2 or 3 parts, got {_edge_!r}')
             i += 1
 
+        self.__validateLabelLines__()
+
         # color= is checked here rather than in __validateInput__: the categorical column
         # below is pre-built from its field, and a misspelt one would fail inside polars first
         self.__validateColorSpec__(self.color, 'color')
@@ -692,6 +696,135 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
             )
         # Node categorical color is derived in __renderNodes__ after concatenating all edge endpoints,
         # so each node's color reflects field values seen across all its edges (both fm and to sides).
+
+    #
+    # Label lines: node_labels=[...] -- one element per line of a node's label.
+    #
+    #   p2s.NODE_IDp                       the node's own name
+    #   {node: str}                        a lookup (need not name every node)
+    #   (key, value)                       value read from the rows where the node is `key`
+    #   [(key, value), (key, value), ...]  one line fed by several roles, merged
+    #   p2s.labelLine(source, name=)       any of the above, shown as name=value
+    #
+    # key and value are each a column name or a tuple of column names.  A tuple key is
+    # joined with '|' exactly as a tuple relationship endpoint is, so it matches that
+    # node's name.  A dict alone (the old form) is not a list and keeps wrapping as before.
+    #
+    @staticmethod
+    def _isColumnSpec_(x: Any) -> bool:
+        return (isinstance(x, str) and x != '') or \
+               (isinstance(x, tuple) and len(x) > 0 and all(isinstance(c, str) and c != '' for c in x))
+
+    @staticmethod
+    def _isPair_(x: Any) -> bool:
+        return isinstance(x, tuple) and len(x) == 2 and LinkP._isColumnSpec_(x[0]) and LinkP._isColumnSpec_(x[1])
+
+    def __parseLabelLines__(self, node_labels: Any) -> list | None:
+        if node_labels is None or isinstance(node_labels, dict): return None
+        if not isinstance(node_labels, list):
+            raise TypeError(f'LinkP: node_labels= takes a {{node: str}} dict or a list of label lines, '
+                            f'not {type(node_labels).__name__}')
+        if len(node_labels) == 0:
+            raise ValueError('LinkP: node_labels= is an empty list; give at least one label line')
+        _lines_, _names_ = [], set()
+        for _i_, _el_ in enumerate(node_labels):
+            _name_: str | None = None
+            _line_: dict[str, Any]
+            if isinstance(_el_, LabelLine): _name_, _el_ = _el_.name, _el_.source
+            _where_ = f'LinkP: node_labels[{_i_}]'
+            if _el_ is NodeLabelP.NODE_IDp:
+                _line_ = {'kind': 'id', 'name': _name_}
+            elif isinstance(_el_, dict):
+                _line_ = {'kind': 'map', 'name': _name_, 'map': {str(k): str(v) for k, v in _el_.items()}}
+            elif LinkP._isPair_(_el_):
+                _line_ = {'kind': 'pairs', 'name': _name_, 'pairs': [LinkP._pairCols_(_el_)]}
+            elif isinstance(_el_, list) and len(_el_) > 0 and all(LinkP._isPair_(_p_) for _p_ in _el_):
+                _line_ = {'kind': 'pairs', 'name': _name_, 'pairs': [LinkP._pairCols_(_p_) for _p_ in _el_]}
+            elif isinstance(_el_, str):
+                raise ValueError(f"{_where_}: the column {_el_!r} has to say which node it describes; "
+                                 f"write (node_column, {_el_!r}), for example ('sip', {_el_!r})")
+            else:
+                raise TypeError(f'{_where_}: not a label line (got {_el_!r}); use p2s.NODE_IDp, a dict, '
+                                f'a (node_column, label_column) pair, or a list of pairs')
+            if _name_ is not None:
+                if _name_ in _names_: raise ValueError(f'LinkP: node_labels has two lines named {_name_!r}')
+                _names_.add(_name_)
+            _lines_.append(_line_)
+        return _lines_
+
+    @staticmethod
+    def _pairCols_(pair: tuple) -> tuple:
+        return tuple((c,) if isinstance(c, str) else tuple(c) for c in pair)
+
+    # Fresh construction checks the columns; a template clone (a stack layer) may be handed a
+    # frame without one, and then that pair simply yields no line.  The key has to be a
+    # relationship endpoint either way: nothing else can be a node's name.
+    def __validateLabelLines__(self) -> None:
+        if not self._label_lines_: return
+        _endpoints_ = set()
+        for _edge_ in self.relationships_orig or []:
+            for _e_ in (_edge_[0], _edge_[1]):
+                _endpoints_.add((_e_,) if isinstance(_e_, str) else tuple(_e_))
+        _cols_ = set(self.df.columns) if self.df is not None else set()
+        for _i_, _line_ in enumerate(self._label_lines_):
+            for _key_, _val_ in _line_.get('pairs', []):
+                if _key_ not in _endpoints_:
+                    _have_ = sorted(('|'.join(e) if len(e) > 1 else e[0]) for e in _endpoints_)
+                    raise ValueError(f'LinkP: node_labels[{_i_}]: {_key_ if len(_key_) > 1 else _key_[0]!r} is not a '
+                                     f'node column of any relationship, so it cannot name a node; the node '
+                                     f'columns are {_have_}')
+                if self.template is None and self.df is not None:
+                    _missing_ = [c for c in _key_ + _val_ if c not in _cols_]
+                    if _missing_: raise ValueError(f'LinkP: node_labels[{_i_}]: column(s) {_missing_} not in the DataFrame')
+
+    # The {node: str} view of node_labels: the dict itself, or the dict lines of a list.
+    # Search and copy read this; they match a node by what a lookup calls it.
+    def labelDict(self) -> dict | None:
+        if self.node_labels is None or isinstance(self.node_labels, dict): return self.node_labels
+        _merged_: dict = {}
+        for _line_ in reversed(self._label_lines_ or []):
+            if _line_['kind'] == 'map': _merged_.update(_line_['map'])
+        return _merged_ or None
+
+    def _labelDisplay_(self, name: str) -> str:
+        return self.p2s.nullNodeDisplay(name) if name.startswith(self.p2s.NULL_NODE_PREFIX) else name
+
+    # Most common value of a pair line for each node: ties go to the first row, and the
+    # others are counted rather than dropped, 'googledns (+1)'.
+    def _pairLineValues_(self, pairs: list, names: list) -> dict:
+        if self.df is None or not names: return {}
+        _frames_ = []
+        for _key_, _val_ in pairs:
+            if any(c not in self.df.columns for c in _key_ + _val_): continue
+            _k_ = pl.concat_str([pl.col(c).cast(pl.String) for c in _key_], separator='|')
+            _v_ = pl.concat_str([pl.col(c).cast(pl.String) for c in _val_], separator='|')
+            _frames_.append(self.df.select(_k_.alias('k'), _v_.alias('v'), pl.int_range(pl.len()).alias('i'))
+                                  .filter(pl.col('k').is_in(names) & pl.col('v').is_not_null() & (pl.col('v') != '')))
+        if not _frames_: return {}
+        _best_ = (pl.concat(_frames_).group_by(['k', 'v']).agg(pl.len().alias('n'), pl.col('i').min().alias('i0'))
+                    .sort(['k', 'n', 'i0'], descending=[False, True, False])
+                    .group_by('k', maintain_order=True).agg(pl.col('v').first(), pl.len().alias('d')))
+        return {k: (v if d == 1 else f'{v} (+{d - 1})') for k, v, d in _best_.iter_rows()}
+
+    # name -> the text of each of its lines, skipping empty ones.  A node with no line at
+    # all is absent, which is how a dict that does not name it already behaves.
+    def _labelLinesFor_(self, names: list) -> dict:
+        _per_line_ = []
+        for _line_ in self._label_lines_ or []:
+            if   _line_['kind'] == 'id':  _m_ = {n: self._labelDisplay_(n) for n in names}
+            elif _line_['kind'] == 'map': _m_ = {n: _line_['map'][n] for n in names if _line_['map'].get(n, '') != ''}
+            else:                         _m_ = self._pairLineValues_(_line_['pairs'], names)
+            if _line_['name']: _m_ = {n: f"{_line_['name']}={v}" for n, v in _m_.items()}
+            _per_line_.append(_m_)
+        _out_ = {}
+        for _n_ in names:
+            _texts_ = [_m_[_n_] for _m_ in _per_line_ if _n_ in _m_]
+            if _texts_: _out_[_n_] = _texts_
+        return _out_
+
+    @staticmethod
+    def _truncateLine_(text: str, width: int) -> str:
+        return text if len(text) <= width else text[:max(width - 1, 0)] + '…'
 
     #
     # _wrap_label_() - word-wrap a label string into lines
@@ -2328,7 +2461,11 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
                 _df_labels_ = _df_labels_.filter(
                     pl.col('__first__').is_in([str(_e_) for _e_ in self.label_only]))
 
-            if self.node_labels is not None and len(self.node_labels) > 0:
+            _by_name_ = (self._labelLinesFor_(_df_labels_['__first__'].to_list())
+                         if self._label_lines_ is not None else None)
+            if _by_name_ is not None:
+                _df_labels_ = _df_labels_.with_columns(pl.col('__first__').alias('__label__'))
+            elif self.node_labels is not None and len(self.node_labels) > 0:
                 _label_map_ = {str(k): str(v) for k, v in self.node_labels.items()}
                 _df_labels_ = _df_labels_.with_columns(
                     pl.col('__first__').replace_strict(_label_map_, default=None).alias('__label__')
@@ -2357,10 +2494,15 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
             # one.  Escape last; see that function's header.
             _E_ = self.p2s.svgEscape
             _lbl_set_ = set()
-            for _sx_, _sy_, _sz_, _label_ in _df_labels_.select('__sx__', '__sy__', '__sz__', '__label__').iter_rows():
+            for _sx_, _sy_, _sz_, _label_, _first_ in _df_labels_.select('__sx__', '__sy__', '__sz__', '__label__', '__first__').iter_rows():
                 if not _label_:
                     continue
-                _lines_ = self._wrap_label_(_label_, self.label_line_width, self.label_max_lines, self.label_ellipsis)
+                if _by_name_ is not None:
+                    # One row per line of the list, each cut to the width and never wrapped,
+                    # so label_max_lines (a wrapped-row cap) does not apply to a list.
+                    _lines_ = [self._truncateLine_(_t_, self.label_line_width) for _t_ in _by_name_.get(_first_, [])]
+                else:
+                    _lines_ = self._wrap_label_(_label_, self.label_line_width, self.label_max_lines, self.label_ellipsis)
                 if not _lines_:
                     continue
                 _y0_ = _sy_ + _sz_ + self.txt_h
@@ -2894,7 +3036,9 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
         # exists to answer "what did I just select" and a selected node with no label
         # answers nothing.
         _label_map_ = ({str(k): str(v) for k, v in self.node_labels.items()}
-                       if self.node_labels else {})
+                       if isinstance(self.node_labels, dict) and self.node_labels else {})
+        _by_name_   = (self._labelLinesFor_([str(n) for n in _df_.filter(pl.col('__nodes__') == 1)['__first__'].to_list()])
+                       if self._label_lines_ is not None else None)
 
         # One label per screen coordinate, ordered so the payload is stable across renders.
         _cols_  = ['__sx__', '__sy__', '__nodes__', '__first__'] + (['__sz__'] if _has_sz_ else [])
@@ -2907,12 +3051,20 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
             # one summarizing label rather than the name of whichever entity sorted first.
             if _row_['__nodes__'] > 1:
                 _label_ = f"{_row_['__nodes__']} nodes"
+            elif _by_name_ is not None:
+                # The overlay answers "what did I just select", so a node whose lines are
+                # all empty still shows its own name.
+                _label_ = ' '
             else:
                 _label_ = _label_map_.get(_row_['__first__'], _row_['__first__'])
                 if _label_.startswith(self.p2s.NULL_NODE_PREFIX):
                     _label_ = self.p2s.nullNodeDisplay(_label_)
             if not _label_: continue
-            _lines_ = self._wrap_label_(_label_, self.label_line_width, -1, False)
+            if _by_name_ is not None and _row_['__nodes__'] == 1:
+                _lines_ = [self._truncateLine_(_t_, self.label_line_width)
+                           for _t_ in (_by_name_.get(_row_['__first__']) or [self._labelDisplay_(_row_['__first__'])])]
+            else:
+                _lines_ = self._wrap_label_(_label_, self.label_line_width, -1, False)
             if not _lines_: continue
             _w_  = max(self.p2s.textLength(_l_, self.txt_h) for _l_ in _lines_)
             _y0_ = _sy_ + _sz_ + self.txt_h

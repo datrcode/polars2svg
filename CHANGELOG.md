@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **linkp: a node label can have several lines.** `node_labels=` takes a list, one
+  element per line: `p2s.NODE_IDp` (the node's name), a `{node: str}` dict, a
+  `(node_column, label_column)` pair that reads the label from the rows where the node is
+  that column, or a list of pairs merged into one line (a host that is a `sip` in some rows
+  and a `dip` in others). Either column can be a tuple of columns: a tuple key matches a
+  tuple relationship endpoint, and a tuple label joins its values with `|`. A node with
+  several values shows the most common one and `(+n)` for the rest. `p2s.labelLine(source,
+  name='status')` shows `status=value`. A column always has to say which node it describes.
+  Each line is cut to `label_line_width` with an ellipsis, and `label_max_lines` does not
+  apply to a list. Search and copy in linkpi read the dict lines. A dict on its own works as
+  before.
+
 - **linkpi: the subnet treemap works on a selection.** With nodes selected, `w` on
   `subnet treemap /24` or `/16` now groups just those nodes by subnet, inside the box they
   already span. The rest of the graph stays where it is. The grouped nodes fill the whole

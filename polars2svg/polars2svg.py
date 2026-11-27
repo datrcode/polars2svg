@@ -324,6 +324,8 @@ class Polars2SVG(P2SColorsMixin,
     BarStyleP              = _enums_.BarStyleP
     SelectShapeP           = _enums_.SelectShapeP
     NodeColorP             = _enums_.NodeColorP
+    NodeLabelP             = _enums_.NodeLabelP
+    LabelLine              = _enums_.LabelLine
     PieStyleP              = _enums_.PieStyleP
     OrderBucketP           = _enums_.OrderBucketP
     OrderKeyP              = _enums_.OrderKeyP
@@ -442,6 +444,7 @@ class Polars2SVG(P2SColorsMixin,
     COLOR_BY_NODE_NAME:                  _enums_.NodeColorP
     COLOR_BY_SRC_NODE:                   _enums_.NodeColorP
     COLOR_BY_DST_NODE:                   _enums_.NodeColorP
+    NODE_IDp:                            _enums_.NodeLabelP
     PIEp:                                _enums_.PieStyleP
     DONUTp:                              _enums_.PieStyleP
     WAFFLEp:                             _enums_.PieStyleP
@@ -1447,6 +1450,9 @@ class Polars2SVG(P2SColorsMixin,
                                                             #   node is drawn below floor
         draw_node_labels = False                           # when True, draw text labels on non-collapsed nodes
         node_labels    = None                              # {node_name: label_str}; a node absent from the dict is not labeled
+                                                            # or a LIST, one element per line: p2s.NODE_IDp | {node: str} | (node_col, label_col)
+                                                            # | [(node_col, label_col), ...] (merged) | p2s.labelLine(src, name='status').
+                                                            # Either column may be a tuple of columns. See CHANGELOG.
         label_only     = set()                             # restrict labels to these NAMES (list or str also accepted); if
                                                             # empty, everything is labeled.  Gates both channels: a node by its
                                                             # name, an edge by its label value (a '*' edge survives if any of
@@ -2382,6 +2388,25 @@ class Polars2SVG(P2SColorsMixin,
         key). The returned record is immutable.
         '''
         return _BackgroundShape_(shape, **fields)
+
+    #
+    # labelLine() - one line of a linkp node label, with options
+    #
+    def labelLine(self, source: Any, name: str | None = None) -> '_enums_.LabelLine':
+        '''One line of ``linkp(..., node_labels=[...])`` with options.
+
+        ``source`` is ``p2s.NODE_IDp``, a ``{node: str}`` dict, a ``(key, value)`` column
+        pair or a list of pairs.  ``name`` is shown in front of the value as ``name=value``.
+
+        Example::
+
+            p2s.labelLine({'8.8.8.8': 'up'}, name='status')     # status=up
+        '''
+        if isinstance(source, _enums_.LabelLine):
+            raise TypeError('polars2svg.labelLine(): source is already a label line')
+        if name is not None and (not isinstance(name, str) or name == ''):
+            raise TypeError(f'polars2svg.labelLine(): name must be a non-empty string, got {name!r}')
+        return _enums_.LabelLine(source, name)
 
     #
     # tField() - create a transformation field

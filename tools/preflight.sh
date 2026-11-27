@@ -72,7 +72,7 @@ cd "$_ROOT_" || exit 1
 # alone is not enough: it skips resolution
 # but still invokes pip.  --disable-pip is what keeps pip out, and it is only accepted
 # alongside --no-deps.
-_REQS_="$(mktemp -t p2s-preflight-reqs)"
+_REQS_="$(mktemp "${TMPDIR:-/tmp}/p2s-preflight-reqs.XXXXXX")"  # BSD and GNU alike; GNU -t demands X's
 trap 'rm -f "$_REQS_"' EXIT
 
 _FAILED_=()

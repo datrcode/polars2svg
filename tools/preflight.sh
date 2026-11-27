@@ -76,6 +76,11 @@ cd "$_ROOT_" || exit 1
 # alone is not enough: it skips resolution
 # but still invokes pip.  --disable-pip is what keeps pip out, and it is only accepted
 # alongside --no-deps.
+#
+# --frozen (2026-11-27): audit the lock as committed.  Without it, `uv export` re-locks
+# first whenever pyproject.toml has moved without a `uv lock` -- so preflight silently
+# rewrote uv.lock, and audited a resolution nobody had reviewed.  With it, a stale lock
+# is audited as it stands; the `.venv matches uv.lock` step and the suite judge the rest.
 _REQS_="$(mktemp "${TMPDIR:-/tmp}/p2s-preflight-reqs.XXXXXX")"  # BSD and GNU alike; GNU -t demands X's
 trap 'rm -f "$_REQS_"' EXIT
 
@@ -284,7 +289,7 @@ _step_ 'ruff'                    .venv/bin/python -m ruff check .
 # CI's 10s/20s -- this script is meant to be interactive and fast, and a dev who
 # hits three failures in a row can just run it again.
 _step_ 'pip-audit (dependencies)' bash -c \
-    "uv export --no-hashes --no-dev --no-emit-project \
+    "uv export --frozen --no-hashes --no-dev --no-emit-project \
          --extra interactive --extra layouts --extra export -o '$_REQS_' >/dev/null || exit 1
      for _attempt_ in 1 2 3; do
          uvx pip-audit --no-deps --disable-pip --timeout 30 -r '$_REQS_' && exit 0

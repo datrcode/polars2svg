@@ -445,6 +445,7 @@ class Polars2SVG(P2SColorsMixin,
     COLOR_BY_SRC_NODE:                   _enums_.NodeColorP
     COLOR_BY_DST_NODE:                   _enums_.NodeColorP
     NODE_IDp:                            _enums_.NodeLabelP
+    COLOR_BY_TEXT:                       _enums_.NodeLabelP
     PIEp:                                _enums_.PieStyleP
     DONUTp:                              _enums_.PieStyleP
     WAFFLEp:                             _enums_.PieStyleP
@@ -2392,21 +2393,39 @@ class Polars2SVG(P2SColorsMixin,
     #
     # labelLine() - one line of a linkp node label, with options
     #
-    def labelLine(self, source: Any, name: str | None = None) -> '_enums_.LabelLine':
+    def labelLine(self, source: Any, name: str | None = None, color: Any = None,
+                  size: float | None = None, wrap: bool = False) -> '_enums_.LabelLine':
         '''One line of ``linkp(..., node_labels=[...])`` with options.
 
         ``source`` is ``p2s.NODE_IDp``, a ``{node: str}`` dict, a ``(key, value)`` column
-        pair or a list of pairs.  ``name`` is shown in front of the value as ``name=value``.
+        pair or a list of pairs.  Every option defaults to "inherit".
+
+        - ``name``  is shown in front of the value as ``name=value``.
+        - ``color`` is ``None`` (the label text colour), a ``'#rrggbb'`` string for the whole
+          line, or ``p2s.COLOR_BY_TEXT``: the colour the colorizer gives the line's value, so
+          one value is one colour on every node.
+        - ``size``  is the font size in pixels (default: the component's ``txt_h``).
+        - ``wrap``  ``False`` draws the line as one row, cut with an ellipsis at
+          ``label_line_width``. ``True`` wraps it at ``label_line_width`` into at most
+          ``label_max_lines`` rows (ellipsis per ``label_ellipsis``); a newline in the value
+          always starts a new row.
 
         Example::
 
-            p2s.labelLine({'8.8.8.8': 'up'}, name='status')     # status=up
+            p2s.labelLine({'8.8.8.8': 'up'}, name='status', color=p2s.COLOR_BY_TEXT, size=8, wrap=True)
         '''
         if isinstance(source, _enums_.LabelLine):
             raise TypeError('polars2svg.labelLine(): source is already a label line')
         if name is not None and (not isinstance(name, str) or name == ''):
             raise TypeError(f'polars2svg.labelLine(): name must be a non-empty string, got {name!r}')
-        return _enums_.LabelLine(source, name)
+        if not (color is None or color is _enums_.NodeLabelP.COLOR_BY_TEXT or isinstance(color, self.HexColorString)):
+            raise TypeError(f"polars2svg.labelLine(): color must be None, a '#rrggbb' string or p2s.COLOR_BY_TEXT, got {color!r}")
+        if size is not None and (isinstance(size, bool) or not isinstance(size, (int, float))
+                                 or not 0 < size < float('inf')):
+            raise TypeError(f'polars2svg.labelLine(): size must be a positive number of pixels, got {size!r}')
+        if not isinstance(wrap, bool):
+            raise TypeError(f'polars2svg.labelLine(): wrap must be True or False, got {wrap!r}')
+        return _enums_.LabelLine(source, name, color, None if size is None else float(size), wrap)
 
     #
     # tField() - create a transformation field

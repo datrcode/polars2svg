@@ -196,6 +196,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
     _legend_stat_max_:      float | None
     _legend_stat_min_:      float | None
     _label_lines_:          list | None
+    _node_label_fmt_:       list
     _link_count_scale_:     tuple | None
     _time_enum_:            Any
     _time_field_:           Any
@@ -375,10 +376,13 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
         # _node_label_info_ carries the label as the caller wrote it -- __renderNodes__
         # escapes only on its way into markup (p2s_text_mixin.svgEscape), so there is no
         # entity here to undo; the glyph atlas draws characters.
-        for _sx_, _y0_, _lines_ in getattr(self, '_node_label_info_', []):
+        for (_sx_, _y0_, _lines_), (_sizes_, _fills_) in zip(getattr(self, '_node_label_info_', []),
+                                                            getattr(self, '_node_label_fmt_', [])):
+            _y_ = _y0_
             for _li_, _line_ in enumerate(_lines_):
-                _dl_.text(self.p2s, _line_, _sx_, _y0_ + _li_ * self.txt_h,
-                          txt_h=self.txt_h, anchor='middle', svg='')
+                if _li_ > 0: _y_ += _sizes_[_li_]
+                _dl_.text(self.p2s, _line_, _sx_, _y_, txt_h=_sizes_[_li_], color=_fills_[_li_],
+                          anchor='middle', svg='')
         # Legend (recorded during __renderSVG__)
         if getattr(self, '_dl_legend_', None) is not None: _dl_.extend(self._dl_legend_)
         # Border
@@ -730,7 +734,10 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
         for _i_, _el_ in enumerate(node_labels):
             _name_: str | None = None
             _line_: dict[str, Any]
-            if isinstance(_el_, LabelLine): _name_, _el_ = _el_.name, _el_.source
+            _color_: Any = None
+            _size_: float | None = None
+            _wrap_ = False
+            if isinstance(_el_, LabelLine): _name_, _color_, _size_, _wrap_, _el_ = _el_.name, _el_.color, _el_.size, _el_.wrap, _el_.source
             _where_ = f'LinkP: node_labels[{_i_}]'
             if _el_ is NodeLabelP.NODE_IDp:
                 _line_ = {'kind': 'id', 'name': _name_}
@@ -746,6 +753,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
             else:
                 raise TypeError(f'{_where_}: not a label line (got {_el_!r}); use p2s.NODE_IDp, a dict, '
                                 f'a (node_column, label_column) pair, or a list of pairs')
+            _line_['color'], _line_['size'], _line_['wrap'] = _color_, _size_, _wrap_
             if _name_ is not None:
                 if _name_ in _names_: raise ValueError(f'LinkP: node_labels has two lines named {_name_!r}')
                 _names_.add(_name_)
@@ -791,7 +799,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
 
     # Most common value of a pair line for each node: ties go to the first row, and the
     # others are counted rather than dropped, 'googledns (+1)'.
-    def _pairLineValues_(self, pairs: list, names: list) -> dict:
+    def _pairLineValues_(self, pairs: list, names: list) -> dict[str, tuple[str, str]]:
         if self.df is None or not names: return {}
         _frames_ = []
         for _key_, _val_ in pairs:
@@ -804,27 +812,67 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
         _best_ = (pl.concat(_frames_).group_by(['k', 'v']).agg(pl.len().alias('n'), pl.col('i').min().alias('i0'))
                     .sort(['k', 'n', 'i0'], descending=[False, True, False])
                     .group_by('k', maintain_order=True).agg(pl.col('v').first(), pl.len().alias('d')))
-        return {k: (v if d == 1 else f'{v} (+{d - 1})') for k, v, d in _best_.iter_rows()}
+        return {k: (v, '' if d == 1 else f' (+{d - 1})') for k, v, d in _best_.iter_rows()}
 
-    # name -> the text of each of its lines, skipping empty ones.  A node with no line at
-    # all is absent, which is how a dict that does not name it already behaves.
-    def _labelLinesFor_(self, names: list) -> dict:
+    # name -> its lines as (text, size, fill, wrap), skipping empty ones.  A node with no line at
+    # all is absent, which is how a dict that does not name it already behaves.  size is the
+    # line's own or txt_h; fill is None (the label colour) or a hex.  COLOR_BY_TEXT hashes the
+    # value alone, not the name= prefix or the (+n) suffix, so a value is one colour wherever
+    # it appears; the whole line is painted.
+    def _labelLinesFor_(self, names: list) -> dict[str, list[tuple[str, float, str | None, bool]]]:
         _per_line_ = []
         for _line_ in self._label_lines_ or []:
-            if   _line_['kind'] == 'id':  _m_ = {n: self._labelDisplay_(n) for n in names}
-            elif _line_['kind'] == 'map': _m_ = {n: _line_['map'][n] for n in names if _line_['map'].get(n, '') != ''}
+            _m_: dict[str, tuple[str, str]]
+            if   _line_['kind'] == 'id':  _m_ = {n: (self._labelDisplay_(n), '') for n in names}
+            elif _line_['kind'] == 'map': _m_ = {n: (_line_['map'][n], '') for n in names if _line_['map'].get(n, '') != ''}
             else:                         _m_ = self._pairLineValues_(_line_['pairs'], names)
-            if _line_['name']: _m_ = {n: f"{_line_['name']}={v}" for n, v in _m_.items()}
-            _per_line_.append(_m_)
+            _pre_  = f"{_line_['name']}=" if _line_['name'] else ''
+            _size_ = float(_line_['size']) if _line_['size'] is not None else float(self.txt_h)
+            _col_  = _line_['color']
+            _wrap_ = _line_['wrap']
+            if _col_ is NodeLabelP.COLOR_BY_TEXT:
+                _hex_ = self.p2s.colors({v for v, _ in _m_.values()})
+                _per_line_.append({n: (_pre_ + v + suf, _size_, _hex_[v], _wrap_) for n, (v, suf) in _m_.items()})
+            else:
+                _per_line_.append({n: (_pre_ + v + suf, _size_, _col_, _wrap_) for n, (v, suf) in _m_.items()})
         _out_ = {}
         for _n_ in names:
-            _texts_ = [_m_[_n_] for _m_ in _per_line_ if _n_ in _m_]
-            if _texts_: _out_[_n_] = _texts_
+            _rows_ = [_m_[_n_] for _m_ in _per_line_ if _n_ in _m_]
+            if _rows_: _out_[_n_] = _rows_
         return _out_
 
     @staticmethod
     def _truncateLine_(text: str, width: int) -> str:
         return text if len(text) <= width else text[:max(width - 1, 0)] + '…'
+
+    # One row, or wrapped rows.  A newline in a value always starts a row: each paragraph is
+    # wrapped on its own, blank ones dropped, and the rows are then capped at max_lines (-1 is
+    # no cap), the last one ending in an ellipsis when the cap cut something and ellipsis is on.
+    def _wrapRows_(self, text: str, width: int, max_lines: int, ellipsis: bool) -> list[str]:
+        _rows_: list[str] = []
+        for _para_ in text.splitlines():
+            if _para_.strip(): _rows_.extend(self._wrap_label_(_para_, width, -1, False))
+        if max_lines != -1 and len(_rows_) > max_lines:
+            _rows_ = _rows_[:max_lines]
+            if ellipsis and _rows_:
+                _last_ = _rows_[-1]
+                _rows_[-1] = _last_[:width - 1] + '…' if len(_last_) >= width else _last_ + '…'
+        return _rows_
+
+    # The (text, size, fill, wrap) lines of one node -> parallel lists, one entry per drawn row.
+    # An unwrapped line is one row, its newlines read as spaces; a wrapped one is several rows
+    # that share the line's size and fill.
+    def _expandRows_(self, rows: list, max_lines: int) -> tuple[list[str], list[float], list[str | None]]:
+        _lines_: list[str] = []
+        _sizes_: list[float] = []
+        _fills_: list[str | None] = []
+        for _t_, _s_, _f_, _w_ in rows:
+            _r_ = (self._wrapRows_(_t_, self.label_line_width, max_lines, self.label_ellipsis) if _w_
+                   else [self._truncateLine_(' '.join(_p_ for _p_ in _t_.splitlines() if _p_.strip()), self.label_line_width)])
+            _lines_.extend(_r_)
+            _sizes_.extend([_s_] * len(_r_))
+            _fills_.extend([_f_] * len(_r_))
+        return _lines_, _sizes_, _fills_
 
     #
     # _wrap_label_() - word-wrap a label string into lines
@@ -2446,6 +2494,7 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
         # Labels (deferred to after main node SVG)
         self._node_label_svg_  = []
         self._node_label_info_ = []   # (sx, y0, lines) -- for the WebGPU glyph path
+        self._node_label_fmt_  = []   # ([size per line], [fill per line]), parallel to _node_label_info_
         if self.draw_node_labels and len(_svg_strs_) > 0:
             _sz_for_label_ = _node_size_lu_.get(self.node_size, self.node_size) \
                 if isinstance(self.node_size, str) else (float(self.node_size) if self.node_size is not None else 5)
@@ -2497,33 +2546,44 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
             for _sx_, _sy_, _sz_, _label_, _first_ in _df_labels_.select('__sx__', '__sy__', '__sz__', '__label__', '__first__').iter_rows():
                 if not _label_:
                     continue
+                _sizes_: list = []
+                _fills_: list = []
                 if _by_name_ is not None:
-                    # One row per line of the list, each cut to the width and never wrapped,
-                    # so label_max_lines (a wrapped-row cap) does not apply to a list.
-                    _lines_ = [self._truncateLine_(_t_, self.label_line_width) for _t_ in _by_name_.get(_first_, [])]
+                    # An element is one row cut to the width, or with wrap=True wrapped into at
+                    # most label_max_lines rows of its own.
+                    _lines_, _sizes_, _fills_ = self._expandRows_(_by_name_.get(_first_, []), self.label_max_lines)
                 else:
                     _lines_ = self._wrap_label_(_label_, self.label_line_width, self.label_max_lines, self.label_ellipsis)
+                    _sizes_ = [float(self.txt_h)] * len(_lines_)
+                    _fills_ = [None] * len(_lines_)
                 if not _lines_:
                     continue
-                _y0_ = _sy_ + _sz_ + self.txt_h
+                _y0_ = _sy_ + _sz_ + _sizes_[0]
                 # PLANNING.md S2: measure the wrapped label's own ink box (text-anchor is
-                # middle, so it straddles __sx__; the first line rises one txt_h above the
-                # baseline and each further line drops one below).  Culled here rather than
-                # on the string, so the SVG and the GPU list drop the same labels -- and
+                # middle, so it straddles __sx__; the first line rises one size above the
+                # baseline and each further line drops one size below).  Culled here rather
+                # than on the string, so the SVG and the GPU list drop the same labels -- and
                 # measured on the unescaped line, which is what actually gets drawn.
-                _hw_ = max(self.p2s.textLength(_l_, self.txt_h) for _l_ in _lines_) / 2.0
-                if not self.__onCanvas__(_sx_ - _hw_, _y0_ - self.txt_h,
-                                         _sx_ + _hw_, _y0_ + len(_lines_) * self.txt_h):
+                _hw_ = max(self.p2s.textLength(_l_, _s_) for _l_, _s_ in zip(_lines_, _sizes_)) / 2.0
+                if not self.__onCanvas__(_sx_ - _hw_, _y0_ - _sizes_[0],
+                                         _sx_ + _hw_, _y0_ + sum(_sizes_)):
                     continue
                 self._node_label_info_.append((_sx_, _y0_, _lines_))
+                self._node_label_fmt_.append((_sizes_, _fills_))
+                # size and fill are written only where they differ from the text's own, so a
+                # label with no options is the markup it always was.
+                def _attrs_(_i_: int) -> str:
+                    return (f' font-size="{_sizes_[_i_]:g}px"' if _sizes_[_i_] != self.txt_h else '') + \
+                           (f' fill="{_fills_[_i_]}"' if _fills_[_i_] else '')
                 if len(_lines_) == 1:
                     _lbl_set_.add(
-                        f'<text x="{_sx_}" y="{_y0_}" font-size="{self.txt_h}px" text-anchor="middle">{_E_(_lines_[0])}</text>'
+                        f'<text x="{_sx_}" y="{_y0_}" font-size="{_sizes_[0]:g}px" text-anchor="middle"'
+                        f'{(" fill=" + chr(34) + _fills_[0] + chr(34)) if _fills_[0] else ""}>{_E_(_lines_[0])}</text>'
                     )
                 else:
-                    _spans_ = [f'<tspan x="{_sx_}" dy="0">{_E_(_lines_[0])}</tspan>']
-                    for _l_ in _lines_[1:]:
-                        _spans_.append(f'<tspan x="{_sx_}" dy="{self.txt_h}">{_E_(_l_)}</tspan>')
+                    _spans_ = [f'<tspan x="{_sx_}" dy="0"{_attrs_(0)}>{_E_(_lines_[0])}</tspan>']
+                    for _i_ in range(1, len(_lines_)):
+                        _spans_.append(f'<tspan x="{_sx_}" dy="{_sizes_[_i_]:g}"{_attrs_(_i_)}>{_E_(_lines_[_i_])}</tspan>')
                     _lbl_set_.add(
                         f'<text x="{_sx_}" y="{_y0_}" font-size="{self.txt_h}px" text-anchor="middle">{"".join(_spans_)}</text>'
                     )
@@ -3061,8 +3121,8 @@ class LinkP(P2SComponentColorMixin, P2SBackgroundMixin, ExportMixin):
                     _label_ = self.p2s.nullNodeDisplay(_label_)
             if not _label_: continue
             if _by_name_ is not None and _row_['__nodes__'] == 1:
-                _lines_ = [self._truncateLine_(_t_, self.label_line_width)
-                           for _t_ in (_by_name_.get(_row_['__first__']) or [self._labelDisplay_(_row_['__first__'])])]
+                _lines_ = (self._expandRows_(_by_name_.get(_row_['__first__'], []), -1)[0]
+                           or [self._truncateLine_(self._labelDisplay_(_row_['__first__']), self.label_line_width)])
             else:
                 _lines_ = self._wrap_label_(_label_, self.label_line_width, -1, False)
             if not _lines_: continue

@@ -221,8 +221,10 @@ class NodeLabelP(P2SEnum):
     '''A source for one line of a node label (linkp ``node_labels=[...]``).
     ``p2s.NODE_IDp`` is the node's own name.  Every other source is spelled by its
     value: a dict is a lookup, a ``(key, value)`` pair reads columns, and
-    ``p2s.labelLine(...)`` adds options.'''
-    NODE_IDp = 1
+    ``p2s.labelLine(...)`` adds options.  ``p2s.COLOR_BY_TEXT`` is a ``labelLine``
+    ``color=``: the line takes the colour the colorizer gives its text.'''
+    NODE_IDp      = 1
+    COLOR_BY_TEXT = 2
 
 
 class PieStyleP(P2SEnum):
@@ -313,3 +315,6 @@ ResolvedColorSpec = str | tuple[str | ColorTypeP | FieldTypeP | RowCountP, ...]
 class LabelLine:
     source: Any
     name:   str | None = None
+    color:  Any = None            # None | '#rrggbb' | NodeLabelP.COLOR_BY_TEXT
+    size:   float | None = None   # px; None is the component's txt_h
+    wrap:   bool = False          # False: one row, cut with an ellipsis; True: wrapped rows

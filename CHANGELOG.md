@@ -29,6 +29,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   selection that spans no area (a single point or a straight line) is refused with a
   note. Before this, `w` with a selection did nothing.
 
+- **linkp label lines: colour and size per line.** `p2s.labelLine(source, color=, size=)`.
+  `color=` is `None` (the label colour), a `'#rrggbb'` string for the whole line, or
+  `p2s.COLOR_BY_TEXT`, which gives a line the colour the colorizer gives its text, so one
+  value is one colour on every node, layer and render. The `name=` prefix and the `(+n)`
+  suffix do not change the colour. `size=` is the font size in pixels and defaults to
+  `txt_h`, so a line names only its exception (`txt_h=6` with `size=10` on the node id).
+  Each line is placed and clipped at its own size.
+
+- **linkp label lines: `wrap=True` for a multi-row line.** `p2s.labelLine(source, wrap=True)`
+  wraps that line at `label_line_width` into at most `label_max_lines` rows, ending in an
+  ellipsis when `label_ellipsis` is on. A newline in a value always starts a new row, and
+  blank paragraphs are dropped. The cap is per line, so `label_max_lines` now means what it
+  does for a bare dict. Every row shares the line's `size=` and `color=`. Without `wrap`, a
+  line is one row cut with an ellipsis, and its newlines read as spaces. A bare dict is
+  exactly `[p2s.labelLine(d, wrap=True)]`.
+
 ### Changed
 
 - **`count_fields=` accepts `p2s.ROW_COUNTp`.** The count row always offers rows (key

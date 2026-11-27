@@ -79,7 +79,7 @@ jobs:
         #
         # The count is a function of the dependency versions as well as the
         # code, so it only means something against a stated environment. This
-        # one is uv.lock's: polars 1.41.2, numpy 2.4.6, mypy 2.3.1, the three
+        # one is uv.lock's: polars 2.2.0, numpy 2.5.5, mypy 2.4.1, the three
         # extras above, no mlx. A .venv built ad-hoc with `uv pip install -e .`
         # drifts ahead of the lock and reports a different number -- which is why `uv sync` is
         # the install step here and why preflight's number matches only while a
@@ -210,7 +210,7 @@ jobs:
         # A real finding still fails the build: pip-audit exits non-zero for
         # those on attempt 1, and the retries reproduce it deterministically.
         run: |
-          uv export --no-hashes --no-dev --no-emit-project \
+          uv export --frozen --no-hashes --no-dev --no-emit-project \
               --extra interactive --extra layouts --extra export \
               -o /tmp/requirements-audit.txt
           for _attempt_ in 1 2 3; do

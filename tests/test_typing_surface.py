@@ -349,7 +349,7 @@ class TestMypyErrorRatchet(unittest.TestCase):
     polars types aggregate returns as a ten-way PythonLiteral union, so a polars
     release can move these numbers with no code change here.  That is a deliberate re-baseline -- rerun, update the table,
     and say which version in the commit -- not a regression.  Measured against
-    uv.lock: polars 2.2.0 (same count as 2.1.0), numpy 2.5.5, mypy 2.3.1, extras layouts+interactive+
+    uv.lock: polars 2.2.0, numpy 2.5.5, mypy 2.4.1, extras layouts+interactive+
     export, no mlx.  tools/preflight.sh and ci.yml carry the matching global
     ceiling; this table is the per-module half, so a fix in one module can no
     longer mask a regression in another.

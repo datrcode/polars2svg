@@ -14,9 +14,11 @@ browser tests must come after every unit test in their process (see
 
 Setup, once:
 
-    # NOTE the venv hazard: a bare `uv pip install` in these repos resolves
-    # VIRTUAL_ENV to racetrack's .venv.  Always pass --python explicitly.
-    uv pip install --python "$PWD/.venv/bin/python" pytest-playwright
+    # Both packages sit outside uv.lock; install the exact pins from the
+    # browser-interaction job in .github/workflows/ci.yml.  Pass --python
+    # explicitly: a bare `uv pip install` follows whatever VIRTUAL_ENV the shell
+    # inherited, not the directory you are in.  Any `uv sync` removes them again.
+    uv pip install --python "$PWD/.venv/bin/python" "pytest-playwright==<pin>" "playwright==<pin>"
     ./.venv/bin/python -m playwright install chromium
 
 **Style departure, deliberate.**  Every other test file in this repo is

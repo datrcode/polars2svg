@@ -20,7 +20,7 @@
 # Caveats worth knowing before you trust a green run:
 #
 #   - mypy is a CEILING, not a clean bill of health -- see _MYPY_CEILING_ below.
-#     60 real errors stand behind it.
+#     That many real errors stand behind it; the number is there, not here.
 #   - ruff checks the whole tree as of Q3 (2026-09-14), not just polars2svg/.
 #     tests/ had never been linted and held 106 E9/F findings including an F821;
 #     those are fixed and the scope now matches ci.yml's.
@@ -143,8 +143,8 @@ _step_editable_() {
 # `uv pip install -e .` drifts ahead of uv.lock (it had polars 1.44.2 against the
 # lock's 1.41.2), and the two report different counts -- 729 vs 730, the odd one
 # in ncp_layout.py.  So the ceiling only means something against a stated
-# environment.  Measured 2026-09-13 against uv.lock: polars 1.41.2, numpy 2.4.6,
-# mypy 2.3.1, extras layouts+interactive+export, no mlx.  Keep .venv aligned with
+# environment.  Last measured 2026-11-27 against uv.lock: polars 2.2.0, numpy 2.5.5,
+# mypy 2.4.1, extras layouts+interactive+export, no mlx.  Keep .venv aligned with
 # the lock (`uv sync --extra layouts --extra interactive --extra export --group
 # dev`) and this agrees with CI exactly; a polars bump legitimately moves it and
 # is a deliberate re-baseline, not a regression.
